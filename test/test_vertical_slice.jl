@@ -142,6 +142,17 @@ catch e
     println("Correctly rejected impossible observation: ", e.msg)
 end
 
+# Partial -Inf elimination: one hypothesis ruled out, others survive
+partial_b = Belief([:a, :b, :c])
+partial_lik(h, o) = h == :a ? -Inf : 0.0
+partial_post = update(partial_b, 1, partial_lik)
+pw = weights(partial_post)
+println("Partial -Inf elimination weights: ", pw)
+@assert pw[1] ≈ 0.0 atol=1e-15 "eliminated hypothesis should have weight ≈ 0"
+@assert pw[2] ≈ 0.5 atol=1e-10 "surviving hypotheses should share posterior equally"
+@assert pw[3] ≈ 0.5 atol=1e-10 "surviving hypotheses should share posterior equally"
+println("Partial -Inf elimination: PASSED")
+
 println()
 
 # ─── Test new supporting forms ───

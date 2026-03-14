@@ -85,7 +85,7 @@ function update(belief::Belief{H}, observation, likelihood) where H
     new_logw = copy(belief.logw)
     for i in eachindex(belief.hyps)
         ll = likelihood(belief.hyps[i], observation)
-        isfinite(ll) || error("likelihood returned non-finite value for hypothesis $i")
+        !isnan(ll) || error("likelihood returned NaN for hypothesis $i")
         new_logw[i] += ll
     end
     # Check for complete extinction (all -Inf)
