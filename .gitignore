@@ -1,0 +1,8 @@
+# Julia
+*.jl.cov
+*.jl.mem
+*.jl.*.cov
+Manifest.toml
+
+# Serena cache (config is committed, cache is not)
+.serena/cache/
