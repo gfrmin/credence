@@ -21,7 +21,7 @@ Everything else is a derived combinator.
 module Primitives
 
 export Belief, update, decide
-export weights, hypotheses, expected_utility
+export weights, hypotheses, expected_utility, weighted_sum
 
 # =================================================================
 # PRIMITIVE 1: belief
@@ -144,6 +144,19 @@ function decide_verbose(belief::Belief, actions, utility)
     eus = Dict(a => expected_utility(belief, a, utility) for a in actions)
     best = argmax(eus)
     (action=best, eu=eus[best], all_eu=eus)
+end
+
+# =================================================================
+# weighted_sum: generic expectation under a belief
+# =================================================================
+#
+# Σ_i w_i · fn(h_i)
+# This is what expected_utility does with the action curried in.
+# Exposed as a supporting computation form, not a new primitive.
+
+function weighted_sum(belief::Belief, fn)
+    w = weights(belief)
+    sum(w[i] * fn(belief.hyps[i]) for i in eachindex(w))
 end
 
 end # module Primitives

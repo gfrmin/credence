@@ -63,12 +63,19 @@ These exist to make the DSL Turing-complete but introduce
 no new decision-theoretic capability:
 
     (let <name> <expr> <body>)      binding
+    (define <name> <expr>)          top-level binding (mutates env)
     (lambda (<params>) <body>)      abstraction
     (if <cond> <then> <else>)       conditional
     (do <e1> ... <en>)              sequence
     (list <e1> ... <en>)            data construction
-    Arithmetic: + - * / log exp     for likelihood/utility definitions
+    (map <fn> <lst>)                apply fn to each element
+    (fold <fn> <lst>)               reduce (first element is init)
+    (first <lst>)                   first element of a list
+    (weighted-sum <belief> <fn>)    Σ_i w_i · fn(h_i)
+    (max <a> <b> ...)               maximum of 2+ values
+    Arithmetic: + * (variadic), - / (binary), log exp
     Comparison: = > <               for conditional logic
+    String literals: "..."          for print messages
 
 ## What Claude Code may change
 
@@ -80,13 +87,17 @@ The SEMANTICS — how primitives compile to Julia:
     - Add backends (Gen.jl, POMDPs.jl interop)
     - Optimise: caching, parallelism, SIMD
 
-The STANDARD LIBRARY — derived combinators built from the three primitives:
+The STANDARD LIBRARY — derived combinators built from the three primitives
+(defined in `src/stdlib.bdsl`, auto-loaded by `run_dsl`):
 
-    voi     = E_o[decide(update(b,o))] - decide(b)
-    predict = marginalise hypotheses' observation models
-    forget  = shrink weights toward uniform
-    fuse    = update(update(b, o1), o2)
-    thompson-sample = sample h ~ weights, decide as if h is true
+    eu              = Σ_i w_i · u(h_i, a)              (expected utility)
+    best-eu         = max_a eu(b, a, u)                 (best EU over actions)
+    predictive-prob = Σ_i w_i · exp(lik(h_i, o))       (observation probability)
+    voi             = E_o[best-eu(update(b,o))] - best-eu(b)
+    predict         = marginalise hypotheses' observation models (TODO)
+    forget          = shrink weights toward uniform (TODO)
+    fuse            = update(update(b, o1), o2) (TODO)
+    thompson-sample = sample h ~ weights, decide as if h is true (TODO)
 
 Tests, examples, documentation, tooling.
 
@@ -169,12 +180,14 @@ received). State changes alone do not constitute ground truth.
 
     src/
       parse.jl          S-expression parser (the entire front-end)
-      primitives.jl     belief, update, decide (the entire theory)
+      primitives.jl     belief, update, decide, weighted_sum (the theory)
       eval.jl           Evaluator / compiler (DSL → Julia calls)
+      stdlib.bdsl       Standard library (eu, best-eu, voi, etc.)
       BayesianDSL.jl    Module entry point
     examples/
-      coin.bdsl         Biased coin learning
-      tool_selection.bdsl  VOI-based tool choice (mini Credence)
+      coin.bdsl             Biased coin learning
+      tool_selection.bdsl   VOI-based tool choice (mini Credence)
+      credence_engine.bdsl  Full credence-engine decision loop
     test/
       test_vertical_slice.jl  End-to-end validation
 

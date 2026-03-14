@@ -13,7 +13,7 @@ export SExpr, Atom, SList, parse_sexpr, parse_all
 abstract type SExpr end
 
 struct Atom <: SExpr
-    value::Union{Symbol, Float64, Int, Bool}
+    value::Union{Symbol, Float64, Int, Bool, String}
 end
 
 struct SList <: SExpr
@@ -42,6 +42,14 @@ function tokenise(src::String)
         if c == '(' || c == ')'
             push!(tokens, string(c))
             i += 1
+        elseif c == '"'  # string literal
+            j = i + 1
+            while j <= length(chars) && chars[j] != '"'
+                j += 1
+            end
+            j <= length(chars) || error("unterminated string literal")
+            push!(tokens, String(chars[i:j]))  # includes quotes
+            i = j + 1
         elseif c == ';'  # line comment
             while i <= length(chars) && chars[i] != '\n'
                 i += 1
@@ -62,6 +70,13 @@ end
 
 # Parse atom: try number, then bool, then symbol
 function parse_atom(token::String)
+    # String literal
+    if length(token) >= 2 && token[1] == '"' && token[end] == '"'
+        return Atom(token[2:end-1])
+    end
+    # Inf / -Inf (before numeric parsing for clarity)
+    token == "Inf" && return Atom(Inf)
+    token == "-Inf" && return Atom(-Inf)
     # Try integer
     v = tryparse(Int, token)
     v !== nothing && return Atom(v)
