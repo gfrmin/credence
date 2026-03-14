@@ -21,9 +21,16 @@ Run tests:
 Run an example:
     julia -e "push!(LOAD_PATH, \"src\"); using BayesianDSL; run_dsl(read(\"examples/coin.bdsl\", String))"
 
+Run the credence agent (host-driven):
+    julia examples/host_credence_agent.jl
+
 Use the module from Julia REPL:
     push!(LOAD_PATH, "src")
     using BayesianDSL
+
+Load DSL and get callable closures (host-driver pattern):
+    env = load_dsl(read("examples/credence_agent.bdsl", String))
+    agent_step = env[Symbol("agent-step")]
 
 No external dependencies — Julia stdlib only. No Project.toml yet.
 
@@ -79,6 +86,11 @@ competing with update — and there is only one learning mechanism.
     (map <fn> <lst>)                apply fn to each element
     (fold <fn> <lst>)               reduce (first element is init)
     (first <lst>)                   first element of a list
+    (second <lst>)                  second element of a list
+    (nth <lst> <idx>)               0-based index into a list
+    (sample <belief>)               draw one hypothesis proportional to weights
+    (weights <belief>)              inspect normalised belief weights
+    (print <expr>)                  print value and return it
     (weighted-sum <belief> <fn>)    Σ_i w_i · fn(h_i)
     (max <a> <b> ...)               maximum of 2+ values
     Arithmetic: + * (variadic), - / (binary), log exp
@@ -102,9 +114,13 @@ The STANDARD LIBRARY — derived combinators built from the three primitives
     best-eu         = max_a eu(b, a, u)                 (best EU over actions)
     predictive-prob = Σ_i w_i · exp(lik(h_i, o))       (observation probability)
     voi             = E_o[best-eu(update(b,o))] - best-eu(b)
+    best-action     = argmax_a eu(b, a, u)                     (action with highest EU)
+    thompson-sample = sample h ~ weights, decide as if h is true
+    bernoulli-lik   = log P(obs | rate)                        (Bernoulli log-likelihood)
+    answer-lik      = log P(response | true-answer, r, n)      (n-ary answer likelihood)
+    update-reliability = update reliability belief with ground-truth feedback
     predict         = marginalise hypotheses' observation models (TODO)
     fuse            = update(update(b, o1), o2) (TODO)
-    thompson-sample = sample h ~ weights, decide as if h is true (TODO)
 
 Tests, examples, documentation, tooling.
 
@@ -194,6 +210,15 @@ violates the axioms.
     │  BMPS-style learned weights │
     └─────────────────────────────┘
 
+## Host-driver pattern
+
+Complex agents split into two layers:
+- **DSL agent** (.bdsl): pure decision functions (no I/O, no mutation)
+- **Julia host** (.jl): drives iteration, manages persistent state, simulates/connects to environment
+
+The host calls `load_dsl` to get callable closures, then orchestrates
+the agent loop. The DSL remains pure; side effects live in the host.
+
 ## Project structure
 
     src/
@@ -206,6 +231,8 @@ violates the axioms.
       coin.bdsl             Biased coin learning
       tool_selection.bdsl   VOI-based tool choice (mini Credence)
       credence_engine.bdsl  Full credence-engine decision loop
+      credence_agent.bdsl   Agent DSL (pure functions, host-driven)
+      host_credence_agent.jl  Julia host driver for credence agent
     test/
       test_vertical_slice.jl  End-to-end validation
 
@@ -214,6 +241,10 @@ DSL source files use the `.bdsl` extension.
 Weights are stored in log-space internally (`logw` field). Use
 `weights(b)` to get normalized probabilities. This is a cross-file
 invariant — never exponentiate manually.
+
+Constructors: `Belief(hyps)` for uniform prior, `Belief{H}(hyps, logw)`
+for explicit log-weights (auto-normalises). The parametric form is used
+by host drivers to build joint beliefs from outer products.
 
 ## Key references
 
