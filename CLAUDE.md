@@ -1,0 +1,200 @@
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
+# CLAUDE.md — Constitution for the Bayesian Agent DSL
+
+> Read this entire document before writing any code.
+> Every design decision was derived from first principles.
+
+---
+
+## What this project is
+
+A minimal domain-specific language for specifying Bayesian
+decision-making agents. S-expression syntax. Compiles to Julia.
+Grounded in axiomatic decision theory (Cox, Savage, de Finetti).
+
+## Development commands
+
+Run tests:
+    julia test/test_vertical_slice.jl
+
+Run an example:
+    julia -e 'push!(LOAD_PATH, "src"); using BayesianDSL; run_dsl(read("examples/coin.bdsl", String))'
+
+Use the module from Julia REPL:
+    push!(LOAD_PATH, "src")
+    using BayesianDSL
+
+No external dependencies — Julia stdlib only. No Project.toml yet.
+
+## The axioms (not negotiable, not derivable, not changeable)
+
+These are the metal. They are asserted, not computed:
+
+    A1. Preferences are complete and transitive     (Savage P1)
+    A2. Beliefs satisfy the product rule             (Cox)
+    A3. No sure loss                                 (Dutch book coherence)
+
+From which UNIQUELY follow:
+
+    → Beliefs must be probabilities                  (Cox's theorem)
+    → Learning must be Bayesian conditioning          (Bayes' rule)
+    → Action must maximise expected utility           (Savage's theorem)
+
+## The DSL (frozen — do not modify)
+
+The grammar:
+
+    expr = atom | '(' expr* ')'
+
+The three primitives:
+
+    (belief h1 h2 ...)              weighted hypotheses (uniform prior)
+    (update <belief> <obs> <lik>)   Bayesian conditioning
+    (decide <belief> <acts> <util>) expected utility maximisation
+
+Everything else is a derived combinator. The DSL grammar and primitives
+are IMMUTABLE. They are forced by the axioms. Adding a fourth primitive
+is a mathematical error, not a design choice.
+
+## The supporting forms (frozen — do not modify)
+
+These exist to make the DSL Turing-complete but introduce
+no new decision-theoretic capability:
+
+    (let <name> <expr> <body>)      binding
+    (lambda (<params>) <body>)      abstraction
+    (if <cond> <then> <else>)       conditional
+    (do <e1> ... <en>)              sequence
+    (list <e1> ... <en>)            data construction
+    Arithmetic: + - * / log exp     for likelihood/utility definitions
+    Comparison: = > <               for conditional logic
+
+## What Claude Code may change
+
+The SEMANTICS — how primitives compile to Julia:
+
+    - Improve update to dispatch to conjugate fast-paths
+    - Improve decide to use bounded-depth planning
+    - Add particle resampling when ESS drops
+    - Add backends (Gen.jl, POMDPs.jl interop)
+    - Optimise: caching, parallelism, SIMD
+
+The STANDARD LIBRARY — derived combinators built from the three primitives:
+
+    voi     = E_o[decide(update(b,o))] - decide(b)
+    predict = marginalise hypotheses' observation models
+    forget  = shrink weights toward uniform
+    fuse    = update(update(b, o1), o2)
+    thompson-sample = sample h ~ weights, decide as if h is true
+
+Tests, examples, documentation, tooling.
+
+## What Claude Code may NOT change
+
+- The grammar
+- The three primitives
+- The axioms
+- The separation between DSL and compilation target
+- The principle that hypotheses are S-expressions (inspectable data)
+
+## Forbidden patterns
+
+These are not style preferences. They are mathematical errors.
+If you find yourself reaching for one, the model is wrong — fix that.
+
+### Never add an explore primitive
+Exploration is a CONSEQUENCE of value of information, which is a
+COMPOSITION of update and decide. If the agent isn't exploring,
+its observation model is wrong or its utility doesn't value
+information. Fix the model. Do not bolt on exploration.
+
+### Never add loop detection
+If the agent loops, it means update is not changing the beliefs,
+which means the observations carry no information under the current
+hypotheses. The hypothesis space is inadequate. Expand it.
+Do not patch the symptom.
+
+### Never add exploration bonuses
+Epsilon-greedy, UCB bonuses, optimism-in-the-face-of-uncertainty
+heuristics — these are all approximations to proper Bayesian
+exploration (Thompson sampling, VOI, Bayes-adaptive planning).
+Use the principled version or document why the approximation
+is necessary with a complexity argument.
+
+### Never make update optional or skippable
+If there is an observation, it must update beliefs. Ignoring
+evidence violates A3 (Dutch book coherence). If the observation
+is uninformative, the likelihood will be flat and weights won't
+change — that's fine. But you don't get to skip the step.
+
+### Never use 0.5 as a default prior for binary hypotheses
+With N hypotheses, the prior is 1/N for each. For 2 hypotheses,
+that happens to be 0.5, but the reasoning is "maximum entropy
+over N states" not "binary so fifty-fifty." This matters when
+N changes.
+
+### Never compare (VOI - cost) > expected_utility
+The correct comparison is VOI > cost. The value of information
+is the improvement over current best EU, not an absolute value
+to be compared against the current best EU.
+
+### Ground truth for sensor learning: positive rewards only
+When updating beliefs about sensor reliability, only count
+observations where the ground truth is known (positive reward
+received). State changes alone do not constitute ground truth.
+
+## Architecture
+
+    ┌─────────────────────────────┐
+    │  DSL (S-expressions)        │  ← what the user writes
+    │  Three primitives.          │     IMMUTABLE
+    │  Composition.               │
+    ├─────────────────────────────┤
+    │  Semantics layer            │  ← enforces axioms
+    │  Validates well-formedness  │     IMMUTABLE constraints
+    │  Selects backend            │     MUTABLE dispatch
+    ├─────────────────────────────┤
+    │  Julia compilation target   │  ← where computation happens
+    │  Conjugate fast-paths       │     MUTABLE (improve freely)
+    │  Particle methods           │
+    │  Gen.jl / POMDPs.jl        │
+    ├─────────────────────────────┤
+    │  Metareasoning              │  ← controls compute budget
+    │  VOC-based stopping         │     MUTABLE (improve freely)
+    │  BMPS-style learned weights │
+    └─────────────────────────────┘
+
+## Project structure
+
+    src/
+      parse.jl          S-expression parser (the entire front-end)
+      primitives.jl     belief, update, decide (the entire theory)
+      eval.jl           Evaluator / compiler (DSL → Julia calls)
+      BayesianDSL.jl    Module entry point
+    examples/
+      coin.bdsl         Biased coin learning
+      tool_selection.bdsl  VOI-based tool choice (mini Credence)
+    test/
+      test_vertical_slice.jl  End-to-end validation
+
+DSL source files use the `.bdsl` extension.
+
+Weights are stored in log-space internally (`logw` field). Use
+`weights(b)` to get normalized probabilities. This is a cross-file
+invariant — never exponentiate manually.
+
+## Key references
+
+    Cox (1946)          — probability from consistency
+    Savage (1954)       — utility + probability from preferences
+    Jaynes (2003)       — Probability Theory: The Logic of Science
+    Hutter (2005)       — AIXI: the Platonic limit
+    Leike & Hutter (2015) — AIXI's optimality is vacuous
+    Russell & Wefald (1991) — rational metareasoning
+    Lieder & Griffiths (2017) — strategy selection as metareasoning
+    McCarthy (1960)     — why S-expressions
+
+## One-line summary
+
+Three axioms force three primitives; everything else is composition.

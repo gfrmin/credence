@@ -1,0 +1,61 @@
+; ============================================================
+; Example: Learning a biased coin
+; ============================================================
+;
+; A coin has unknown bias θ ∈ {0.1, 0.3, 0.5, 0.7, 0.9}.
+; We observe flips and must decide: is it biased towards
+; heads (θ > 0.5) or tails (θ < 0.5)?
+;
+; The agent has three things:
+;   1. Beliefs about which θ is true (uniform prior)
+;   2. An observation model (Bernoulli likelihood)
+;   3. A utility function (correct answer = 1, wrong = -1)
+;
+; Everything is belief, update, decide. Nothing else.
+; ============================================================
+
+; The hypothesis space: five possible biases
+; Each hypothesis is just its θ value
+
+(let prior (belief 0.1 0.3 0.5 0.7 0.9)
+
+  ; The likelihood: P(heads | θ) = θ, P(tails | θ) = 1 - θ
+  (let coin-likelihood
+    (lambda (theta obs)
+      (if (= obs 1)
+        (log theta)              ; heads: log P(H|θ) = log θ
+        (log (- 1.0 theta))))    ; tails: log P(T|θ) = log(1-θ)
+
+    ; Observe: H, H, T, H, H, H, T, H
+    (let after-data
+      (update
+        (update
+          (update
+            (update
+              (update
+                (update
+                  (update
+                    (update prior 1 coin-likelihood)  ; H
+                  1 coin-likelihood)                   ; H
+                0 coin-likelihood)                     ; T
+              1 coin-likelihood)                       ; H
+            1 coin-likelihood)                         ; H
+          1 coin-likelihood)                           ; T
+        0 coin-likelihood)                             ; H (typo fixed: this should reflect actual data)
+      1 coin-likelihood)                               ; H
+
+      ; What does the agent believe now?
+      (do
+        (print (weights after-data))
+
+        ; Utility: +1 for correct, -1 for wrong
+        ; "guess-high" is right when θ > 0.5
+        ; "guess-low" is right when θ < 0.5
+        (let utility
+          (lambda (theta action)
+            (if (= action 1)
+              (if (> theta 0.5) 1.0 -1.0)    ; guess-high
+              (if (< theta 0.5) 1.0 -1.0)))  ; guess-low
+
+          ; Decide!
+          (decide after-data (list 1 0) utility))))))

@@ -1,0 +1,67 @@
+; ============================================================
+; Example: Value-of-information tool selection (mini Credence)
+; ============================================================
+;
+; An agent must answer a question. The true answer is A or B.
+; It can:
+;   (1) Answer now (free but risky)
+;   (2) Query a tool first (costs 0.3, but updates beliefs)
+;
+; VOI is not a primitive. It's computed from update and decide:
+;   VOI = E_o[EU(decide(update(b,o)))] - EU(decide(b))
+;
+; The agent queries iff VOI > cost.
+; ============================================================
+
+; Hypotheses: (true-answer, tool-reliability)
+; h1: answer is A, tool is 80% reliable
+; h2: answer is B, tool is 80% reliable
+; (Both hypotheses agree the tool is 80% reliable but
+;  disagree about ground truth)
+
+(let prior (belief 1 2)   ; 1 = "answer is A", 2 = "answer is B"
+
+  ; Utility for answering: +1 right, -1 wrong, minus tool cost
+  (let answer-utility
+    (lambda (true-answer my-answer)
+      (if (= true-answer my-answer) 1.0 -1.0))
+
+    ; Current best decision WITHOUT querying
+    (let current-decision (decide prior (list 1 2) answer-utility)
+
+      (do
+        (print current-decision)
+
+        ; Now compute VOI manually (it's just update + decide)
+        ; Tool says "A" with P=0.8 if truth=A, P=0.2 if truth=B
+        (let tool-likelihood
+          (lambda (truth tool-says)
+            (if (= truth tool-says)
+              (log 0.8)       ; correct report
+              (log 0.2)))     ; incorrect report
+
+          ; If tool says "A": what would we decide?
+          (let posterior-a (update prior 1 tool-likelihood)
+            (let eu-after-a (decide posterior-a (list 1 2) answer-utility)
+
+              ; If tool says "B": what would we decide?
+              (let posterior-b (update prior 2 tool-likelihood)
+                (let eu-after-b (decide posterior-b (list 1 2) answer-utility)
+
+                  ; P(tool says A) = Σ_h P(tool=A|h) P(h)
+                  ; Under uniform prior: 0.5 * 0.8 + 0.5 * 0.2 = 0.5
+                  ; (symmetry: P(tool says B) = 0.5 too)
+                  (let p-tool-a 0.5
+                    (let p-tool-b 0.5
+
+                      ; VOI = E[EU after] - EU now
+                      (let voi (- (+ (* p-tool-a (eu eu-after-a 1 answer-utility))
+                                     (* p-tool-b (eu eu-after-b 2 answer-utility)))
+                                  0.0)  ; current EU is 0 (uniform, symmetric)
+
+                        (let tool-cost 0.3
+
+                          (do
+                            (print voi)
+                            ; Should we query? VOI > cost?
+                            (print (> voi tool-cost))))))))))))))))
