@@ -278,6 +278,152 @@ result = run_dsl(credence_source)
 println("Credence engine completed successfully.")
 
 println()
+
+# ─── Test new supporting forms: sample, second, nth ───
+
+println("=" ^ 60)
+println("TEST 12: sample, second, nth")
+println("=" ^ 60)
+
+# sample: deterministic case (single hypothesis)
+result = run_dsl("(sample (belief 42))")
+@assert result == 42 "sample from single-hypothesis belief should return that hypothesis"
+println("sample (belief 42) = ", result, " (expected: 42)")
+
+# sample: statistical test (50 draws from skewed belief)
+counts = run_dsl("""
+(let b (update (belief 1 2) 1 (lambda (h o) (if (= h o) (log 0.9) (log 0.1))))
+  (let draws (map (lambda (_) (sample b)) (list 1 2 3 4 5 6 7 8 9 10
+                                                11 12 13 14 15 16 17 18 19 20
+                                                21 22 23 24 25 26 27 28 29 30
+                                                31 32 33 34 35 36 37 38 39 40
+                                                41 42 43 44 45 46 47 48 49 50))
+    (fold + (map (lambda (d) (if (= d 1) 1.0 0.0)) draws))))
+""")
+@assert counts > 30 "sample distribution seems wrong: expected ~45/50 to be 1, got $counts"
+println("sample statistical test: $counts/50 draws were h=1 (expected ~45)")
+
+# second
+@assert run_dsl("(second (list 10 20 30))") == 20 "second failed"
+println("second (list 10 20 30) = 20")
+
+# nth (0-based)
+@assert run_dsl("(nth (list 10 20 30 40) 0)") == 10 "nth 0 failed"
+@assert run_dsl("(nth (list 10 20 30 40) 3)") == 40 "nth 3 failed"
+println("nth: 0→10, 3→40")
+
+println()
+
+# ─── Test stdlib combinators: best-action, bernoulli-lik, answer-lik, update-reliability ───
+
+println("=" ^ 60)
+println("TEST 13: Stdlib combinators (best-action, likelihoods, update-reliability)")
+println("=" ^ 60)
+
+# best-action agrees with decide
+ba_test = run_dsl("""
+(let b (update (belief 1 2 3) 2 (lambda (h o) (if (= h o) (log 0.8) (log 0.1))))
+  (best-action b (list 1 2 3) (lambda (h a) (if (= h a) 1.0 -1.0))))
+""")
+@assert ba_test == 2 "best-action should pick hypothesis 2 after strong evidence"
+println("best-action after update on h=2: ", ba_test, " (expected: 2)")
+
+# bernoulli-lik
+@assert abs(run_dsl("(bernoulli-lik 0.8 1)") - log(0.8)) < 1e-10 "bernoulli-lik correct failed"
+@assert abs(run_dsl("(bernoulli-lik 0.8 0)") - log(0.2)) < 1e-10 "bernoulli-lik incorrect failed"
+println("bernoulli-lik: correct")
+
+# answer-lik
+@assert abs(run_dsl("(answer-lik 2 2 0.8 4)") - log(0.8)) < 1e-10 "answer-lik correct failed"
+@assert abs(run_dsl("(answer-lik 2 1 0.8 4)") - log(0.2/3)) < 1e-10 "answer-lik incorrect failed"
+println("answer-lik: correct")
+
+# update-reliability: after observing correct, high-r hypotheses gain weight
+rel_test = run_dsl("""
+(let prior (belief 0.2 0.5 0.8)
+  (let posterior (update-reliability prior 1)
+    (list (weights prior) (weights posterior))))
+""")
+prior_w = rel_test[1]
+post_w = rel_test[2]
+@assert post_w[3] > prior_w[3] "r=0.8 should gain weight after correct observation"
+@assert post_w[1] < prior_w[1] "r=0.2 should lose weight after correct observation"
+println("update-reliability: r=0.8 gained weight, r=0.2 lost weight after correct obs")
+
+println()
+
+# ─── Load agent env for tests 14-15 ───
+agent_env = load_dsl(read(joinpath(@__DIR__, "..", "examples", "credence_agent.bdsl"), String))
+
+# ─── Test joint belief update ───
+
+println("=" ^ 60)
+println("TEST 14: Joint (answer, reliability) belief update")
+println("=" ^ 60)
+
+joint_test = run_dsl("""
+(let joint (belief (list 0 0.3) (list 0 0.7)
+                   (list 1 0.3) (list 1 0.7)
+                   (list 2 0.3) (list 2 0.7)
+                   (list 3 0.3) (list 3 0.7))
+  (let updated (update-on-response joint 2 4)
+    (weights updated)))
+""", env=copy(agent_env))
+# Hypotheses: (0,0.3),(0,0.7),(1,0.3),(1,0.7),(2,0.3),(2,0.7),(3,0.3),(3,0.7)
+@assert joint_test[6] > joint_test[5] "higher reliability should have more weight for correct answer"
+@assert joint_test[5] > joint_test[1] "correct answer should dominate over wrong answer"
+println("Joint update: (answer=2, r=0.7) has highest weight after response=2")
+
+println()
+
+# ─── Test agent-step integration ───
+
+println("=" ^ 60)
+println("TEST 15: agent-step integration")
+println("=" ^ 60)
+
+# Uniform prior over 4 answers, one tool → VOI should exceed cost → agent queries
+agent_test = run_dsl("""
+(let joint (belief (list 0 0.5) (list 0 0.8)
+                   (list 1 0.5) (list 1 0.8)
+                   (list 2 0.5) (list 2 0.8)
+                   (list 3 0.5) (list 3 0.8))
+  (let tool-infos (list (list joint 2.0 0.9 0))
+    (let util (lambda (h a) (if (= a -1) 0.0 (if (= (first h) a) 10.0 -5.0)))
+      (agent-step tool-infos (list 0 1 2 3) (list -1 0 1 2 3) 4 util))))
+""", env=copy(agent_env))
+@assert agent_test[1] == 2 "agent should query (action type 2) when VOI > cost"
+@assert agent_test[2] == 0 "agent should query tool 0 (only tool available)"
+println("agent-step with uniform prior: queries tool 0 (VOI > cost)")
+
+# After strong evidence: agent should submit
+submit_test = run_dsl("""
+(let joint (belief (list 0 0.5) (list 0 0.8)
+                   (list 1 0.5) (list 1 0.8)
+                   (list 2 0.5) (list 2 0.8)
+                   (list 3 0.5) (list 3 0.8))
+  (let updated (update-on-response joint 2 4)
+    (let tool-infos (list (list updated 2.0 0.9 0))
+      (let util (lambda (h a) (if (= a -1) 0.0 (if (= (first h) a) 10.0 -5.0)))
+        (agent-step tool-infos (list 0 1 2 3) (list -1 0 1 2 3) 4 util)))))
+""", env=copy(agent_env))
+@assert submit_test[1] == 0 "agent should submit after strong evidence"
+@assert submit_test[2] == 2 "agent should submit answer 2 (observed response)"
+println("agent-step after evidence for answer=2: submits 2")
+
+println()
+
+# ─── Test load_dsl ───
+
+println("=" ^ 60)
+println("TEST 16: load_dsl returns environment with callable closures")
+println("=" ^ 60)
+
+env = load_dsl("(define double (lambda (x) (* x 2)))")
+@assert env[:double](21) == 42 "load_dsl closure should be callable"
+println("load_dsl: double(21) = 42")
+
+println()
 println("=" ^ 60)
 println("ALL TESTS PASSED")
 println("=" ^ 60)

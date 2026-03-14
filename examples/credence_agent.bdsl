@@ -1,0 +1,60 @@
+; ============================================================
+; credence_agent.bdsl — Bayesian decision-theoretic tool selection
+;
+; Pure DSL functions. The host drives iteration and manages state.
+; Joint beliefs over (answer, reliability) pairs preserve full
+; uncertainty — no point-estimate approximation.
+; ============================================================
+
+; joint-lik: likelihood function for joint (answer, reliability) hypotheses
+; Curried on n-answers.
+(define joint-lik
+  (lambda (n-answers)
+    (lambda (h obs)
+      (answer-lik (first h) obs (second h) n-answers))))
+
+; agent-step: given tool infos, return the optimal action
+; Each tool-info is [joint-bel, cost, coverage-prob, tool-idx]
+; Returns [action-type, value] where:
+;   0 = submit answer, 1 = abstain, 2 = query tool
+(define agent-step
+  (lambda (tool-infos answers all-actions n-answers util)
+    (let lik (joint-lik n-answers)
+    (let ref-bel (first (first tool-infos))
+    (let eu-current (best-eu ref-bel all-actions util)
+    (let query-pairs
+      (map (lambda (ti)
+             (let bel (first ti)
+             (let cost (second ti)
+             (let cov (nth ti 2)
+             (list (- (+ eu-current (* cov (voi bel answers all-actions util lik))) cost)
+                   ti)))))
+           tool-infos)
+    (let best-query
+      (fold (lambda (best pair)
+              (if (> (first pair) (first best)) pair best))
+            query-pairs)
+    (let best-query-value (first best-query)
+    (let best-tool-info (second best-query)
+    (if (> best-query-value eu-current)
+      (list 2 (nth best-tool-info 3))
+      (let best-act (best-action ref-bel all-actions util)
+      (if (= best-act -1)
+        (list 1 0)
+        (list 0 best-act)))))))))))))
+
+; update-on-response: update a joint (answer, reliability) belief
+; when a tool responds
+(define update-on-response
+  (lambda (joint-bel response n-answers)
+    (update joint-bel response (joint-lik n-answers))))
+
+; update-category: update category belief based on whether a tool responded
+; coverage-fn maps category index to P(tool responds | category)
+(define update-category
+  (lambda (cat-bel tool-responded coverage-fn)
+    (update cat-bel tool-responded
+      (lambda (cat obs)
+        (if (= obs 1)
+          (log (coverage-fn cat))
+          (log (- 1.0 (coverage-fn cat))))))))

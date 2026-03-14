@@ -40,6 +40,39 @@
                observations))
            current)))))
 
+; best-action: return the action with highest EU
+; Uses map to create (action, eu) pairs, fold to find the max.
+(define best-action
+  (lambda (bel acts util)
+    (first
+      (fold (lambda (best pair)
+              (if (> (second pair) (second best)) pair best))
+            (map (lambda (a) (list a (eu bel a util))) acts)))))
+
+; thompson-sample: sample a hypothesis, act as if it's the only truth
+(define thompson-sample
+  (lambda (bel acts util)
+    (let h (sample bel)
+      (best-action (belief h) acts util))))
+
+; bernoulli-lik: log-likelihood for a Bernoulli observation
+(define bernoulli-lik
+  (lambda (r obs)
+    (if (= obs 1) (log r) (log (- 1.0 r)))))
+
+; answer-lik: log-likelihood that a tool with reliability r returns
+; response when the true answer is true-answer, over n choices
+(define answer-lik
+  (lambda (true-answer response r n)
+    (if (= true-answer response)
+      (log r)
+      (log (/ (- 1.0 r) (- n 1))))))
+
+; update-reliability: update a reliability belief with ground-truth feedback
+(define update-reliability
+  (lambda (rel-bel was-correct)
+    (update rel-bel was-correct bernoulli-lik)))
+
 ; Self-test: VOI of a flat (uninformative) likelihood must be zero.
 ; Theorem: if observations carry no information, they have no value.
 ; A flat log-likelihood (all zeros) means exp(0)=1 for every

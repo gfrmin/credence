@@ -11,7 +11,7 @@ using .Parse
 using .Primitives
 using .Eval
 
-export run_dsl, parse_sexpr, parse_all
+export run_dsl, load_dsl, parse_sexpr, parse_all
 export Belief, update, decide, weights, hypotheses, weighted_sum
 
 end # module

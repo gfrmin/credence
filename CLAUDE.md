@@ -60,7 +60,15 @@ is a mathematical error, not a design choice.
 ## The supporting forms (frozen — do not modify)
 
 These exist to make the DSL Turing-complete but introduce
-no new decision-theoretic capability:
+no new decision-theoretic capability.
+
+A supporting form may read from beliefs (like weighted-sum) or
+construct new beliefs from hypotheses (like belief), but it may
+NOT modify the weights of an existing belief. Only update modifies
+weights, because only Bayesian conditioning is sanctioned by the
+axioms. Any operation that produces a belief with altered weights
+without conditioning on an observation is a second learning mechanism
+competing with update — and there is only one learning mechanism.
 
     (let <name> <expr> <body>)      binding
     (define <name> <expr>)          top-level binding (mutates env)
@@ -95,7 +103,6 @@ The STANDARD LIBRARY — derived combinators built from the three primitives
     predictive-prob = Σ_i w_i · exp(lik(h_i, o))       (observation probability)
     voi             = E_o[best-eu(update(b,o))] - best-eu(b)
     predict         = marginalise hypotheses' observation models (TODO)
-    forget          = shrink weights toward uniform (TODO)
     fuse            = update(update(b, o1), o2) (TODO)
     thompson-sample = sample h ~ weights, decide as if h is true (TODO)
 
@@ -154,6 +161,17 @@ to be compared against the current best EU.
 When updating beliefs about sensor reliability, only count
 observations where the ground truth is known (positive reward
 received). State changes alone do not constitute ground truth.
+
+### Never add a forget or decay mechanism
+Non-stationarity is a property of the world, not a computational
+operation on beliefs. If reliability might drift, include drift-rate
+in the hypothesis space — hypotheses that predict stability get
+upweighted when the world is stable, and hypotheses that predict
+change get upweighted when the world shifts. The effective forgetting
+rate emerges from the posterior rather than being imposed as a
+parameter. Any mechanism that modifies belief weights outside of
+Bayesian conditioning (update) is a second learning channel that
+violates the axioms.
 
 ## Architecture
 

@@ -16,6 +16,9 @@ The ONLY forms that exist:
     (map fn lst)                    → apply fn to each element
     (fold fn lst)                   → reduce lst with fn (first elem is init)
     (first lst)                     → first element of a list
+    (second lst)                    → second element of a list
+    (nth lst idx)                   → 0-based index into a list
+    (sample belief)                 → draw one hypothesis proportional to weights
     (weighted-sum belief fn)        → Σ_i w_i · fn(h_i)
     (max a b ...)                   → maximum of 2+ values
 
@@ -32,7 +35,7 @@ module Eval
 using ..Parse: SExpr, Atom, SList, parse_sexpr, parse_all
 using ..Primitives: Belief, update, decide, weights, expected_utility, weighted_sum
 
-export eval_dsl, run_dsl
+export eval_dsl, run_dsl, load_dsl
 
 # Environment: name → value bindings
 const Env = Dict{Symbol, Any}
@@ -207,6 +210,36 @@ function eval_dsl(expr::SList, env::Env)
             return first(eval_dsl(args[1], env))
         end
 
+        # ─── second: second element of a list ───
+        if sym == :second
+            length(args) == 1 || error("second takes one argument")
+            return eval_dsl(args[1], env)[2]
+        end
+
+        # ─── nth: 0-based index into a list ───
+        if sym == :nth
+            length(args) == 2 || error("nth requires: list, index")
+            lst = eval_dsl(args[1], env)
+            idx = eval_dsl(args[2], env)
+            return lst[Int(idx) + 1]
+        end
+
+        # ─── sample: draw one hypothesis from a belief ───
+        if sym == :sample
+            length(args) == 1 || error("sample takes one argument")
+            b = eval_dsl(args[1], env)
+            w = weights(b)
+            r = rand()
+            cumw = 0.0
+            for i in eachindex(w)
+                cumw += w[i]
+                if r < cumw
+                    return b.hyps[i]
+                end
+            end
+            return b.hyps[end]
+        end
+
         # ─── max: variadic maximum ───
         if sym == :max
             length(args) >= 2 || error("max requires at least 2 arguments")
@@ -264,6 +297,21 @@ function run_dsl(source::String; env::Env=default_env())
         result = eval_dsl(expr, env)
     end
     result
+end
+
+"""Load a DSL program and return the environment with all definitions."""
+function load_dsl(source::String; env::Env=default_env())
+    env[:__toplevel__] = true
+    stdlib_path = joinpath(@__DIR__, "stdlib.bdsl")
+    if isfile(stdlib_path)
+        for expr in parse_all(read(stdlib_path, String))
+            eval_dsl(expr, env)
+        end
+    end
+    for expr in parse_all(source)
+        eval_dsl(expr, env)
+    end
+    env
 end
 
 end # module Eval
