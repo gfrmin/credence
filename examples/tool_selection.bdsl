@@ -55,8 +55,8 @@
                     (let p-tool-b 0.5
 
                       ; VOI = E[EU after] - EU now
-                      (let voi (- (+ (* p-tool-a (eu eu-after-a 1 answer-utility))
-                                     (* p-tool-b (eu eu-after-b 2 answer-utility)))
+                      (let voi (- (+ (* p-tool-a (eu posterior-a 1 answer-utility))
+                                     (* p-tool-b (eu posterior-b 2 answer-utility)))
                                   0.0)  ; current EU is 0 (uniform, symmetric)
 
                         (let tool-cost 0.3

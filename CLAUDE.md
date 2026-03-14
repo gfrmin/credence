@@ -19,7 +19,7 @@ Run tests:
     julia test/test_vertical_slice.jl
 
 Run an example:
-    julia -e 'push!(LOAD_PATH, "src"); using BayesianDSL; run_dsl(read("examples/coin.bdsl", String))'
+    julia -e "push!(LOAD_PATH, \"src\"); using BayesianDSL; run_dsl(read(\"examples/coin.bdsl\", String))"
 
 Use the module from Julia REPL:
     push!(LOAD_PATH, "src")
