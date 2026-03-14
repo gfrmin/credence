@@ -22,6 +22,7 @@ module Primitives
 
 export Belief, update, decide
 export weights, hypotheses, expected_utility, weighted_sum
+export BetaBelief, mean, variance, to_belief
 
 # =================================================================
 # PRIMITIVE 1: belief
@@ -157,6 +158,73 @@ end
 function weighted_sum(belief::Belief, fn)
     w = weights(belief)
     sum(w[i] * fn(belief.hyps[i]) for i in eachindex(w))
+end
+
+# =================================================================
+# CONJUGATE FAST-PATH: BetaBelief (internal optimisation)
+# =================================================================
+#
+# When the hypothesis space is a continuous reliability ∈ [0,1]
+# and the likelihood is Bernoulli, the posterior is analytically
+# Beta(α, β). This avoids O(N) grid reweighting.
+#
+# BetaBelief is constructed and managed by host-level Julia code.
+# No DSL syntax. No eval.jl changes. Removing this section must
+# produce identical results for every .bdsl program, just slower.
+
+struct BetaBelief
+    alpha::Float64
+    beta::Float64
+
+    function BetaBelief(alpha::Float64, beta::Float64)
+        alpha > 0 || error("alpha must be positive")
+        beta > 0 || error("beta must be positive")
+        new(alpha, beta)
+    end
+end
+
+# Uniform prior: Beta(1,1)
+BetaBelief() = BetaBelief(1.0, 1.0)
+
+mean(b::BetaBelief) = b.alpha / (b.alpha + b.beta)
+variance(b::BetaBelief) = b.alpha * b.beta / ((b.alpha + b.beta)^2 * (b.alpha + b.beta + 1))
+
+"""Conjugate Bernoulli update: obs ∈ {0, 1} → O(1) α/β increment."""
+function update(b::BetaBelief, observation, likelihood)
+    if observation == 1 || observation == 1.0
+        BetaBelief(b.alpha + 1.0, b.beta)
+    elseif observation == 0 || observation == 0.0
+        BetaBelief(b.alpha, b.beta + 1.0)
+    else
+        error("BetaBelief conjugate update requires binary observation (0 or 1)")
+    end
+end
+
+# Fold over a sequence of binary observations
+function update(b::BetaBelief, observations::AbstractVector, likelihood)
+    result = b
+    for obs in observations
+        result = update(result, obs, likelihood)
+    end
+    result
+end
+
+const _BETA_QUAD_N = 64
+
+"""Numerical quadrature over [0,1] with Beta(α,β) weight."""
+function weighted_sum(b::BetaBelief, fn; n::Int=_BETA_QUAD_N)
+    grid = range(1/(2n), 1-1/(2n), length=n)
+    logw = [(b.alpha - 1) * log(x) + (b.beta - 1) * log(1 - x) for x in grid]
+    max_lw = maximum(logw)
+    w = exp.(logw .- max_lw)
+    w ./= sum(w)
+    sum(w[i] * fn(grid[i]) for i in eachindex(w))
+end
+
+"""Convert BetaBelief to a discrete Belief on the given grid."""
+function to_belief(b::BetaBelief, grid::Vector{Float64})
+    logw = [(b.alpha - 1) * log(r) + (b.beta - 1) * log(1 - r) for r in grid]
+    Belief{Float64}(copy(grid), logw)
 end
 
 end # module Primitives

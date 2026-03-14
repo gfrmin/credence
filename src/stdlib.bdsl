@@ -73,6 +73,23 @@
   (lambda (rel-bel was-correct)
     (update rel-bel was-correct bernoulli-lik)))
 
+; coverage-voi: VOI weighted by tool coverage probability
+(define coverage-voi
+  (lambda (bel observations acts util lik coverage-prob)
+    (* coverage-prob (voi bel observations acts util lik))))
+
+; net-voi: coverage-weighted VOI minus cost — the decision quantity for tool selection
+(define net-voi
+  (lambda (bel observations acts util lik coverage-prob cost)
+    (- (coverage-voi bel observations acts util lik coverage-prob) cost)))
+
+; predictive-answer-prob: marginalize reliability out of a joint (answer, reliability) belief
+; Returns P(answer) = Σ_i w_i · I(h_i.answer = answer)
+(define predictive-answer-prob
+  (lambda (joint-bel answer)
+    (weighted-sum joint-bel
+      (lambda (h) (if (= (first h) answer) 1.0 0.0)))))
+
 ; Self-test: VOI of a flat (uninformative) likelihood must be zero.
 ; Theorem: if observations carry no information, they have no value.
 ; A flat log-likelihood (all zeros) means exp(0)=1 for every

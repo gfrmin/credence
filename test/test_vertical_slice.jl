@@ -423,6 +423,162 @@ env = load_dsl("(define double (lambda (x) (* x 2)))")
 @assert env[:double](21) == 42 "load_dsl closure should be callable"
 println("load_dsl: double(21) = 42")
 
+# ─── Test stdlib: coverage-voi, net-voi, predictive-answer-prob ───
+
+println("=" ^ 60)
+println("TEST 17: coverage-voi, net-voi, predictive-answer-prob")
+println("=" ^ 60)
+
+# coverage-voi = coverage_prob * voi
+cvoi_test = run_dsl("""
+(let prior (belief 1 2)
+  (let u (lambda (truth act) (if (= truth act) 1.0 -1.0))
+    (let lik (lambda (truth obs) (if (= truth obs) (log 0.8) (log 0.2)))
+      (let v (voi prior (list 1 2) (list 1 2) u lik)
+        (let cv (coverage-voi prior (list 1 2) (list 1 2) u lik 0.7)
+          (list v cv))))))
+""")
+raw_voi = cvoi_test[1]
+cov_voi = cvoi_test[2]
+@assert abs(cov_voi - 0.7 * raw_voi) < 1e-10 "coverage-voi should equal coverage * voi"
+println("coverage-voi = 0.7 * voi: $(round(cov_voi, digits=6)) = 0.7 * $(round(raw_voi, digits=6))")
+
+# net-voi = coverage-voi - cost
+nvoi_test = run_dsl("""
+(let prior (belief 1 2)
+  (let u (lambda (truth act) (if (= truth act) 1.0 -1.0))
+    (let lik (lambda (truth obs) (if (= truth obs) (log 0.8) (log 0.2)))
+      (let nv (net-voi prior (list 1 2) (list 1 2) u lik 0.7 0.1)
+        (let cv (coverage-voi prior (list 1 2) (list 1 2) u lik 0.7)
+          (list nv cv))))))
+""")
+net_v = nvoi_test[1]
+cov_v = nvoi_test[2]
+@assert abs(net_v - (cov_v - 0.1)) < 1e-10 "net-voi should equal coverage-voi - cost"
+println("net-voi = coverage-voi - cost: $(round(net_v, digits=6)) = $(round(cov_v, digits=6)) - 0.1")
+
+# predictive-answer-prob marginalises correctly
+pap_test = run_dsl("""
+(let joint (belief (list 0 0.3) (list 0 0.7)
+                   (list 1 0.3) (list 1 0.7)
+                   (list 2 0.3) (list 2 0.7)
+                   (list 3 0.3) (list 3 0.7))
+  (list (predictive-answer-prob joint 0)
+        (predictive-answer-prob joint 1)
+        (predictive-answer-prob joint 2)
+        (predictive-answer-prob joint 3)))
+""")
+@assert abs(sum(pap_test) - 1.0) < 1e-10 "predictive-answer-prob should sum to 1"
+@assert abs(pap_test[1] - 0.25) < 1e-10 "uniform joint → each answer has prob 0.25"
+println("predictive-answer-prob: $(round.(pap_test, digits=4)) (sum=$(round(sum(pap_test), digits=4)))")
+
+println()
+
+# ─── Test agent-step uses net-voi (same behavior) ───
+
+println("=" ^ 60)
+println("TEST 18: agent-step still works after net-voi refactor")
+println("=" ^ 60)
+
+agent_env2 = load_dsl(read(joinpath(@__DIR__, "..", "examples", "credence_agent.bdsl"), String))
+refactor_test = run_dsl("""
+(let joint (belief (list 0 0.5) (list 0 0.8)
+                   (list 1 0.5) (list 1 0.8)
+                   (list 2 0.5) (list 2 0.8)
+                   (list 3 0.5) (list 3 0.8))
+  (let tool-infos (list (list joint 2.0 0.9 0))
+    (let util (lambda (h a) (if (= a -1) 0.0 (if (= (first h) a) 10.0 -5.0)))
+      (agent-step tool-infos (list 0 1 2 3) (list -1 0 1 2 3) 4 util))))
+""", env=copy(agent_env2))
+@assert refactor_test[1] == 2 "agent should still query after net-voi refactor"
+println("agent-step with net-voi: queries tool 0 (VOI > cost)")
+
+println()
+
+# ─── Test BetaBelief ───
+
+println("=" ^ 60)
+println("TEST 19: BetaBelief conjugate fast-path")
+println("=" ^ 60)
+
+# Uniform prior
+bb = BetaBelief()
+@assert abs(mean(bb) - 0.5) < 1e-10 "Beta(1,1) mean should be 0.5"
+println("BetaBelief(): mean=$(mean(bb))")
+
+# Update with successes
+bb2 = update(bb, 1, nothing)
+bb2 = update(bb2, 1, nothing)
+bb2 = update(bb2, 0, nothing)
+@assert bb2.alpha == 3.0 "after 2 successes, alpha should be 3"
+@assert bb2.beta == 2.0 "after 1 failure, beta should be 2"
+@assert abs(mean(bb2) - 0.6) < 1e-10 "Beta(3,2) mean should be 0.6"
+println("After HHS: alpha=$(bb2.alpha), beta=$(bb2.beta), mean=$(mean(bb2))")
+
+# Variance
+v = variance(bb2)
+expected_var = 3.0 * 2.0 / (25.0 * 6.0)
+@assert abs(v - expected_var) < 1e-10 "Beta(3,2) variance"
+println("Variance: $v (expected: $expected_var)")
+
+# weighted_sum matches discrete approximation
+bb3 = BetaBelief(5.0, 3.0)
+ws_beta = weighted_sum(bb3, x -> x^2)
+# Analytical E[X^2] for Beta(a,b) = a*(a+1) / ((a+b)*(a+b+1))
+expected_x2 = 5.0 * 6.0 / (8.0 * 9.0)
+@assert abs(ws_beta - expected_x2) < 0.01 "weighted_sum should approximate E[X^2]"
+println("weighted_sum(Beta(5,3), x->x²) = $(round(ws_beta, digits=4)) (expected: $(round(expected_x2, digits=4)))")
+
+# to_belief conversion
+grid = [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9]
+bb_belief = to_belief(bb3, grid)
+@assert length(bb_belief) == 9 "converted belief should have 9 hypotheses"
+bb_w = weights(bb_belief)
+@assert bb_w[8] > bb_w[2] "Beta(5,3) should have more weight near 0.8 than 0.2"
+println("to_belief: Beta(5,3) on grid, weight at 0.8 > weight at 0.2")
+
+# to_belief weighted_sum matches BetaBelief weighted_sum
+ws_discrete = weighted_sum(bb_belief, x -> x^2)
+@assert abs(ws_beta - ws_discrete) < 0.05 "BetaBelief and discrete weighted_sum should roughly agree"
+println("BetaBelief vs discrete weighted_sum: $(round(ws_beta, digits=4)) ≈ $(round(ws_discrete, digits=4))")
+
+# Sequence update
+bb4 = update(BetaBelief(), [1, 1, 0, 1, 0], nothing)
+@assert bb4.alpha == 4.0 && bb4.beta == 3.0 "sequence update should accumulate"
+println("Sequence update [1,1,0,1,0]: alpha=$(bb4.alpha), beta=$(bb4.beta)")
+
+println()
+
+# ─── Test persistence roundtrip ───
+
+println("=" ^ 60)
+println("TEST 20: State persistence roundtrip")
+println("=" ^ 60)
+
+test_state_file = tempname()
+test_rel = [[Belief([0.3, 0.5, 0.7]) for _ in 1:2] for _ in 1:2]
+test_cat = Belief(Float64[0, 1, 2])
+# Update one belief so it's non-uniform
+test_rel[1][1] = update(test_rel[1][1], 1, (h, o) -> o == 1 ? log(h) : log(1-h))
+
+save_state(test_state_file;
+           rel_beliefs=test_rel, cat_belief=test_cat,
+           total_score=42.0, total_cost=10.0)
+
+loaded = load_state(test_state_file)
+@assert loaded[:total_score] == 42.0 "score should roundtrip"
+@assert loaded[:total_cost] == 10.0 "cost should roundtrip"
+@assert length(loaded[:rel_beliefs]) == 2 "rel_beliefs structure preserved"
+@assert abs(sum(weights(loaded[:cat_belief])) - 1.0) < 1e-10 "cat_belief normalised"
+
+# Check that the updated belief roundtripped correctly
+orig_w = weights(test_rel[1][1])
+loaded_w = weights(loaded[:rel_beliefs][1][1])
+@assert all(abs.(orig_w .- loaded_w) .< 1e-10) "belief weights should roundtrip exactly"
+println("Persistence roundtrip: score=42.0, cost=10.0, beliefs preserved")
+
+rm(test_state_file; force=true)
+
 println()
 println("=" ^ 60)
 println("ALL TESTS PASSED")

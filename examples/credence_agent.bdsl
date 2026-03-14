@@ -27,7 +27,7 @@
              (let bel (first ti)
              (let cost (second ti)
              (let cov (nth ti 2)
-             (list (- (+ eu-current (* cov (voi bel answers all-actions util lik))) cost)
+             (list (+ eu-current (net-voi bel answers all-actions util lik cov cost))
                    ti)))))
            tool-infos)
     (let best-query
