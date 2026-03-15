@@ -14,7 +14,7 @@ push!(LOAD_PATH, joinpath(@__DIR__, "..", "src"))
 using CredenceV2_2
 using CredenceV2_2: expect, condition, draw, optimise, value, weights, mean
 using CredenceV2_2: CategoricalMeasure, BetaMeasure, Finite, Interval, Kernel, Measure
-using CredenceV2_2: density, save_state, load_state
+using CredenceV2_2: density, log_density_at, save_state, load_state
 
 # ─── State file ───
 
@@ -52,8 +52,7 @@ Returns a CategoricalMeasure over (answer, reliability) pairs."""
 function make_joint_belief(answer_w::Vector{Float64}, rel_m::BetaMeasure,
                            answers::Vector{Float64}, rel_grid::Vector{Float64})
     # Discretise the BetaMeasure onto the grid
-    rel_logw = [(rel_m.alpha - 1) * log(max(r, 1e-300)) +
-                (rel_m.beta - 1) * log(max(1 - r, 1e-300)) for r in rel_grid]
+    rel_logw = [log_density_at(rel_m, r) for r in rel_grid]
     max_lw = maximum(rel_logw)
     rel_w = exp.(rel_logw .- max_lw)
     rel_w ./= sum(rel_w)
@@ -98,8 +97,7 @@ function update_reliability_joint!(rel_beliefs_t::Vector{BetaMeasure},
         for (ri, r) in enumerate(rel_grid)
             push!(hyps, [Float64(c - 1), r])
             lp_cat = log(max(cat_w[c], 1e-300))
-            lp_rel = (bm.alpha - 1) * log(max(r, 1e-300)) +
-                     (bm.beta - 1) * log(max(1 - r, 1e-300))
+            lp_rel = log_density_at(bm, r)
             push!(logw, lp_cat + lp_rel)
         end
     end
@@ -210,6 +208,17 @@ function run_agent(; n_questions=50)
                 tool_idx = available[tool_local_idx]
                 question_cost += tool_costs[tool_idx]
 
+                # Coverage kernel (shared by both branches)
+                cat_kernel_space = cat_belief.space
+                binary = Finite([0.0, 1.0])
+                cov_kernel = Kernel(
+                    cat_kernel_space, binary,
+                    c -> (let p = tool_coverage_table[tool_idx][Int(c) + 1];
+                          o -> o == 1.0 ? log(p) : log(1.0 - p) end),
+                    (c, o) -> (let p = tool_coverage_table[tool_idx][Int(c) + 1];
+                               o == 1.0 ? log(p) : log(1.0 - p) end)
+                )
+
                 # Simulate tool response
                 if rand() < tool_coverage_table[tool_idx][true_cat + 1]
                     response = if rand() < tool_true_rel[tool_idx][true_cat + 1]
@@ -225,28 +234,9 @@ function run_agent(; n_questions=50)
                     k = answer_kernel(rel_m, Float64(n_answers))
                     answer_measure = update_on_response_fn(answer_measure, k, Float64(response))
 
-                    # Update category belief (tool responded)
-                    cat_kernel_space = cat_belief.space
-                    binary = Finite([0.0, 1.0])
-                    cov_kernel = Kernel(
-                        cat_kernel_space, binary,
-                        c -> (let p = tool_coverage_table[tool_idx][Int(c) + 1];
-                              o -> o == 1.0 ? log(p) : log(1.0 - p) end),
-                        (c, o) -> (let p = tool_coverage_table[tool_idx][Int(c) + 1];
-                                   o == 1.0 ? log(p) : log(1.0 - p) end)
-                    )
                     cat_belief = condition(cat_belief, cov_kernel, 1.0)
                 else
                     tool_responses[tool_idx] = nothing
-                    cat_kernel_space = cat_belief.space
-                    binary = Finite([0.0, 1.0])
-                    cov_kernel = Kernel(
-                        cat_kernel_space, binary,
-                        c -> (let p = tool_coverage_table[tool_idx][Int(c) + 1];
-                              o -> o == 1.0 ? log(p) : log(1.0 - p) end),
-                        (c, o) -> (let p = tool_coverage_table[tool_idx][Int(c) + 1];
-                                   o == 1.0 ? log(p) : log(1.0 - p) end)
-                    )
                     cat_belief = condition(cat_belief, cov_kernel, 0.0)
                 end
 

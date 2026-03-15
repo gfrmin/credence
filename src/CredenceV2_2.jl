@@ -18,7 +18,7 @@ export run_dsl, load_dsl, parse_sexpr, parse_all
 export Space, Finite, Interval, ProductSpace, support
 export Measure, CategoricalMeasure, BetaMeasure, GaussianMeasure
 export Kernel, kernel_source, kernel_target
-export condition, expect, push_measure, density
+export condition, expect, push_measure, density, log_density_at
 export draw, optimise, value
 export weights, mean, variance
 export save_state, load_state

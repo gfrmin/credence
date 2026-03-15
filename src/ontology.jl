@@ -19,7 +19,7 @@ export Measure, CategoricalMeasure, BetaMeasure, GaussianMeasure
 export Kernel, kernel_source, kernel_target, kernel_generate
 export condition, expect, push_measure, density
 export draw, optimise, value
-export weights, mean, variance
+export weights, mean, variance, log_density_at
 
 # ================================================================
 # TYPE 1: Space
@@ -141,7 +141,7 @@ end
 
 function expect(m::BetaMeasure, f; n::Int=64)
     grid = range(1/(2n), 1-1/(2n), length=n)
-    logw = [(m.alpha - 1) * log(x) + (m.beta - 1) * log(1 - x) for x in grid]
+    logw = [log_density_at(m, x) for x in grid]
     max_lw = maximum(logw)
     w = exp.(logw .- max_lw)
     w ./= sum(w)
@@ -195,7 +195,7 @@ function _condition_by_grid(m::Measure, k::Kernel, observation; n::Int=64)
     grid = collect(range(s.lo + 1e-10, s.hi - 1e-10, length=n))
     logw = Float64[]
     for (i, h) in enumerate(grid)
-        lp = _log_density_at(m, h)
+        lp = log_density_at(m, h)
         ll = density(k, h, observation)
         !isnan(ll) || error("density returned NaN for hypothesis $i")
         push!(logw, lp + ll)
@@ -203,8 +203,8 @@ function _condition_by_grid(m::Measure, k::Kernel, observation; n::Int=64)
     CategoricalMeasure(Finite(grid), logw)
 end
 
-_log_density_at(m::BetaMeasure, x) = (m.alpha - 1) * log(x) + (m.beta - 1) * log(1 - x)
-_log_density_at(m::GaussianMeasure, x) = -0.5 * ((x - m.mu) / m.sigma)^2
+log_density_at(m::BetaMeasure, x) = (m.alpha - 1) * log(x) + (m.beta - 1) * log(1 - x)
+log_density_at(m::GaussianMeasure, x) = -0.5 * ((x - m.mu) / m.sigma)^2
 
 # ================================================================
 # AXIOM-CONSTRAINED FUNCTION: push_measure
