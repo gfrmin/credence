@@ -1,106 +1,91 @@
 """
-    eval.jl — Evaluator for the Bayesian DSL.
+    eval.jl — Evaluator for Credence v2.2
 
-Maps S-expressions to primitive operations.
-The ONLY forms that exist:
+The frozen layer: three type constructors.
+    (space ...)    → Space
+    (measure ...)  → Measure
+    (kernel ...)   → Kernel
 
-    (belief h1 h2 h3 ...)          → Belief([h1, h2, h3, ...])
-    (update <belief> <obs> <lik>)   → update(belief, obs, likelihood)
-    (decide <belief> <actions> <u>) → decide(belief, actions, utility)
-    (let <name> <expr> <body>)      → bind name to expr, evaluate body
-    (define <name> <expr>)          → top-level binding (mutates env)
-    (list e1 e2 ...)                → Vector of evaluated expressions
-    (lambda (<params>) <body>)      → anonymous function
-    (do e1 e2 ... en)               → evaluate all, return last
-    (print <expr>)                  → print and return value
-    (map fn lst)                    → apply fn to each element
-    (fold fn lst)                   → reduce lst with fn (first elem is init)
-    (first lst)                     → first element of a list
-    (second lst)                    → second element of a list
-    (nth lst idx)                   → 0-based index into a list
-    (sample belief)                 → draw one hypothesis proportional to weights
-    (weighted-sum belief fn)        → Σ_i w_i · fn(h_i)
-    (max a b ...)                   → maximum of 2+ values
+Axiom-constrained functions exposed to the DSL environment:
+    condition, expect, push, density
 
-Arithmetic and comparison for utility/likelihood definitions:
-    (+ a b ...) (- a b) (* a b ...) (/ a b)
-    (> a b) (< a b) (= a b)
-    (if <cond> <then> <else>)
-    (log <x>) (exp <x>)
-
-That's the whole language.
+Everything else: lambda calculus + supporting forms.
 """
 module Eval
 
 using ..Parse: SExpr, Atom, SList, parse_sexpr, parse_all
-using ..Primitives: Belief, update, decide, weights, expected_utility, weighted_sum
+using ..Ontology
 
 export eval_dsl, run_dsl, load_dsl
 
-# Environment: name → value bindings
 const Env = Dict{Symbol, Any}
 
 function default_env()
     Env(
+        # Constants
         :pi => π,
-        :e  => ℯ,
-        # These exist alongside the special forms so that fold/map can
-        # receive them as callable values: (fold + lst), (map f lst).
-        # Special forms only trigger as head of a list expression;
-        # as arguments, these resolve to Julia functions via the env.
+
+        # Axiom-constrained functions, exposed as callable values.
+        # The DSL calls these like any other function.
+        # Their BEHAVIOUR is frozen (Bayesian inversion, integration,
+        # composition, density). Their presence in the env is how the
+        # DSL accesses them — not via special forms.
+        :condition => condition,
+        :expect    => expect,
+        :push      => push_measure,
+        :density   => density,
+
+        # Utility functions for fold/map
         :+ => +,
         :* => *,
+        :- => -,
         :max => max,
         :min => min,
     )
 end
 
-# Evaluate a single S-expression in an environment
+# ── Atom evaluation ──
+
 function eval_dsl(expr::Atom, env::Env)
     v = expr.value
     if v isa Symbol
         haskey(env, v) || error("unbound symbol: $v")
         return env[v]
     else
-        return v  # number or bool literal
+        return v
     end
 end
 
+# ── List evaluation ──
+
 function eval_dsl(expr::SList, env::Env)
     isempty(expr.items) && error("empty expression")
-
     head = expr.items[1]
     args = @view expr.items[2:end]
 
-    # Special forms (don't evaluate all args immediately)
     if head isa Atom && head.value isa Symbol
         sym = head.value
 
-        # ─── belief: the first primitive ───
-        if sym == :belief
-            hyps = [eval_dsl(a, env) for a in args]
-            return Belief(hyps)
+        # ═══════════════════════════════════════
+        # FROZEN: Type constructors
+        # ═══════════════════════════════════════
+
+        if sym == :space
+            return _eval_space(args, env)
         end
 
-        # ─── update: the second primitive ───
-        if sym == :update
-            length(args) == 3 || error("update requires exactly 3 arguments: belief, observation, likelihood")
-            b = eval_dsl(args[1], env)
-            obs = eval_dsl(args[2], env)
-            lik = eval_dsl(args[3], env)
-            return update(b, obs, lik)
+        if sym == :measure
+            return _eval_measure(args, env)
         end
 
-        # ─── decide: the third primitive ───
-        if sym == :decide
-            length(args) == 3 || error("decide requires exactly 3 arguments: belief, actions, utility")
-            b = eval_dsl(args[1], env)
-            acts = eval_dsl(args[2], env)
-            u = eval_dsl(args[3], env)
-            return decide(b, acts, u)
+        if sym == :kernel
+            return _eval_kernel(args, env)
         end
 
-        # ─── let: binding ───
+        # ═══════════════════════════════════════
+        # Supporting forms (lambda calculus + sugar)
+        # ═══════════════════════════════════════
+
         if sym == :let
             length(args) == 3 || error("let requires: name, value, body")
             name = args[1]
@@ -111,7 +96,6 @@ function eval_dsl(expr::SList, env::Env)
             return eval_dsl(args[3], inner)
         end
 
-        # ─── define: top-level binding ───
         if sym == :define
             get(env, :__toplevel__, false) ||
                 error("define is only permitted at top level. Use let for local bindings.")
@@ -123,7 +107,6 @@ function eval_dsl(expr::SList, env::Env)
             return val
         end
 
-        # ─── lambda: function creation ───
         if sym == :lambda
             length(args) == 2 || error("lambda requires: (params) body")
             params_expr = args[1]
@@ -140,166 +123,233 @@ function eval_dsl(expr::SList, env::Env)
                 length(call_args) == length(param_names) ||
                     error("expected $(length(param_names)) args, got $(length(call_args))")
                 inner = copy(captured_env)
-                for (name, val) in zip(param_names, call_args)
-                    inner[name] = val
+                for (n, v) in zip(param_names, call_args)
+                    inner[n] = v
                 end
                 eval_dsl(body, inner)
             end
         end
 
-        # ─── if: conditional ───
         if sym == :if
             length(args) == 3 || error("if requires: condition, then, else")
             cond = eval_dsl(args[1], env)
             return cond ? eval_dsl(args[2], env) : eval_dsl(args[3], env)
         end
 
-        # ─── do: sequence ───
         if sym == :do
             result = nothing
-            for a in args
-                result = eval_dsl(a, env)
-            end
+            for a in args; result = eval_dsl(a, env); end
             return result
         end
 
-        # ─── list: construct a vector ───
         if sym == :list
             return [eval_dsl(a, env) for a in args]
         end
 
-        # ─── print: inspect and return ───
         if sym == :print
-            length(args) == 1 || error("print takes one argument")
             val = eval_dsl(args[1], env)
             println(val)
             return val
         end
 
-        # ─── weights: inspect belief weights ───
-        if sym == :weights
-            length(args) == 1 || error("weights takes one argument")
-            b = eval_dsl(args[1], env)
-            return weights(b)
-        end
+        # ── Collection operations ──
 
-        # ─── map: apply function to each element ───
         if sym == :map
-            length(args) == 2 || error("map requires: function, list")
             f = eval_dsl(args[1], env)
             lst = eval_dsl(args[2], env)
             return [f(x) for x in lst]
         end
 
-        # ─── fold: reduce list (first element is initial accumulator) ───
         if sym == :fold
-            length(args) == 2 || error("fold requires: function, list")
             f = eval_dsl(args[1], env)
             lst = eval_dsl(args[2], env)
             length(lst) > 0 || error("fold requires non-empty list")
             acc = first(lst)
-            for x in Iterators.drop(lst, 1)
-                acc = f(acc, x)
-            end
+            for x in Iterators.drop(lst, 1); acc = f(acc, x); end
             return acc
         end
 
-        # ─── first: first element of a list ───
-        if sym == :first
-            length(args) == 1 || error("first takes one argument")
-            return first(eval_dsl(args[1], env))
-        end
-
-        # ─── second: second element of a list ───
-        if sym == :second
-            length(args) == 1 || error("second takes one argument")
-            return eval_dsl(args[1], env)[2]
-        end
-
-        # ─── nth: 0-based index into a list ───
+        if sym == :first;  return first(eval_dsl(args[1], env)); end
+        if sym == :second; return eval_dsl(args[1], env)[2]; end
         if sym == :nth
-            length(args) == 2 || error("nth requires: list, index")
             lst = eval_dsl(args[1], env)
             idx = eval_dsl(args[2], env)
             return lst[Int(idx) + 1]
         end
+        if sym == :length; return length(eval_dsl(args[1], env)); end
 
-        # ─── sample: draw one hypothesis from a belief ───
-        if sym == :sample
-            length(args) == 1 || error("sample takes one argument")
-            b = eval_dsl(args[1], env)
-            w = weights(b)
-            r = rand()
-            cumw = 0.0
-            for i in eachindex(w)
-                cumw += w[i]
-                if r < cumw
-                    return b.hyps[i]
-                end
-            end
-            return b.hyps[end]
+        # ── Query operations on types ──
+
+        if sym == :weights
+            return weights(eval_dsl(args[1], env))
+        end
+        if sym == :mean
+            return mean(eval_dsl(args[1], env))
+        end
+        if sym == :variance
+            return variance(eval_dsl(args[1], env))
+        end
+        if sym == :support
+            return support(eval_dsl(args[1], env))
+        end
+        if sym == Symbol("kernel-target")
+            return kernel_target(eval_dsl(args[1], env))
         end
 
-        # ─── max: variadic maximum ───
-        if sym == :max
-            length(args) >= 2 || error("max requires at least 2 arguments")
-            return maximum(eval_dsl(a, env) for a in args)
-        end
+        # ── Arithmetic ──
 
-        # ─── weighted-sum: generic expectation under a belief ───
-        if sym == Symbol("weighted-sum")
-            length(args) == 2 || error("weighted-sum requires: belief, function")
-            b = eval_dsl(args[1], env)
-            f = eval_dsl(args[2], env)
-            return weighted_sum(b, f)
-        end
+        if sym == :+; return sum(eval_dsl(a, env) for a in args); end
+        if sym == :*; return prod(eval_dsl(a, env) for a in args); end
+        if sym == :-; return eval_dsl(args[1], env) - eval_dsl(args[2], env); end
+        if sym == :/; return eval_dsl(args[1], env) / eval_dsl(args[2], env); end
+        if sym == :log; return log(eval_dsl(args[1], env)); end
+        if sym == :exp; return exp(eval_dsl(args[1], env)); end
+        if sym == :max; return maximum(eval_dsl(a, env) for a in args); end
 
-        # ─── arithmetic (+ and * are variadic, - and / remain binary) ───
-        if sym == :+
-            length(args) >= 2 || error("+ requires at least 2 arguments")
-            return sum(eval_dsl(a, env) for a in args)
-        end
-        if sym == :*
-            length(args) >= 2 || error("* requires at least 2 arguments")
-            return prod(eval_dsl(a, env) for a in args)
-        end
-        if sym == :- return eval_dsl(args[1], env) - eval_dsl(args[2], env) end
-        if sym == :/ return eval_dsl(args[1], env) / eval_dsl(args[2], env) end
-        if sym == :log return log(eval_dsl(args[1], env)) end
-        if sym == :exp return exp(eval_dsl(args[1], env)) end
+        # ── Comparison ──
 
-        # ─── comparison ───
-        if sym == :(=) return eval_dsl(args[1], env) == eval_dsl(args[2], env) end
-        if sym == :> return eval_dsl(args[1], env) > eval_dsl(args[2], env) end
-        if sym == :< return eval_dsl(args[1], env) < eval_dsl(args[2], env) end
+        if sym == :(=); return eval_dsl(args[1], env) == eval_dsl(args[2], env); end
+        if sym == :>;   return eval_dsl(args[1], env) >  eval_dsl(args[2], env); end
+        if sym == :<;   return eval_dsl(args[1], env) <  eval_dsl(args[2], env); end
     end
 
-    # Function application: evaluate head, call with evaluated args
+    # ── Function application ──
     func = eval_dsl(head, env)
     evaluated_args = [eval_dsl(a, env) for a in args]
     return func(evaluated_args...)
 end
 
-"""Run a DSL program (string of S-expressions)."""
+# ═══════════════════════════════════════
+# Type constructors
+# ═══════════════════════════════════════
+
+function _eval_space(args, env)
+    tag = args[1]
+    tag isa Atom && tag.value isa Symbol || error("space type must be a symbol")
+
+    if tag.value == :finite
+        vals = Any[]
+        for a in @view args[2:end]
+            if a isa Atom
+                push!(vals, a.value)
+            else
+                push!(vals, eval_dsl(a, env))
+            end
+        end
+        return Finite(vals)
+
+    elseif tag.value == :interval
+        lo = eval_dsl(args[2], env)
+        hi = eval_dsl(args[3], env)
+        return Interval(Float64(lo), Float64(hi))
+
+    elseif tag.value == :product
+        factors = [eval_dsl(a, env) for a in @view args[2:end]]
+        return ProductSpace(factors)
+
+    else
+        error("unknown space type: $(tag.value)")
+    end
+end
+
+function _eval_measure(args, env)
+    space = eval_dsl(args[1], env)
+    spec = args[2]
+    spec isa Atom && spec.value isa Symbol || error("measure spec must be a symbol")
+    return _make_measure(space, spec.value, @view(args[3:end]), env)
+end
+
+function _make_measure(space::Finite{T}, spec::Symbol, args, env) where T
+    if spec == :uniform
+        return CategoricalMeasure(space)
+    elseif spec == :categorical
+        ws = [Float64(eval_dsl(a, env)) for a in args]
+        logw = [log(max(w, 1e-300)) for w in ws]
+        return CategoricalMeasure(space, logw)
+    else
+        error("unknown measure for Finite space: $spec")
+    end
+end
+
+function _make_measure(space::Interval, spec::Symbol, args, env)
+    if spec == :beta
+        α = Float64(eval_dsl(args[1], env))
+        β = Float64(eval_dsl(args[2], env))
+        return BetaMeasure(space, α, β)
+    elseif spec == :gaussian
+        μ = Float64(eval_dsl(args[1], env))
+        σ = Float64(eval_dsl(args[2], env))
+        return GaussianMeasure(space, μ, σ)
+    elseif spec == :uniform
+        if space.lo == 0.0 && space.hi == 1.0
+            return BetaMeasure(space, 1.0, 1.0)
+        else
+            mid = (space.lo + space.hi) / 2
+            width = (space.hi - space.lo) * 10
+            return GaussianMeasure(space, mid, width)
+        end
+    else
+        error("unknown measure for Interval space: $spec")
+    end
+end
+
+function _eval_kernel(args, env)
+    length(args) == 3 || error("kernel requires: source-space, target-space, generator")
+    source = eval_dsl(args[1], env)
+    target = eval_dsl(args[2], env)
+    gen = eval_dsl(args[3], env)
+
+    # Build log_density from the generator and target space
+    # The generator returns a distribution spec for each hypothesis.
+    # The log_density evaluates that spec at a given observation.
+    log_dens = _make_log_density(target, gen)
+
+    Kernel(source, target, gen, log_dens)
+end
+
+function _make_log_density(target::Finite, gen::Function)
+    # Generator returns a distribution spec. For finite targets,
+    # the spec should be callable: (observation) → log-probability
+    function(h, o)
+        dist_spec = gen(h)
+        # If gen returns a function, call it on o
+        if dist_spec isa Function
+            return dist_spec(o)
+        else
+            error("kernel generator must return a function for finite target spaces")
+        end
+    end
+end
+
+function _make_log_density(target::Interval, gen::Function)
+    function(h, o)
+        dist_spec = gen(h)
+        if dist_spec isa Function
+            return dist_spec(o)
+        else
+            error("kernel generator must return a function for interval target spaces")
+        end
+    end
+end
+
+# ═══════════════════════════════════════
+# Entry points
+# ═══════════════════════════════════════
+
 function run_dsl(source::String; env::Env=default_env())
     env[:__toplevel__] = true
-    # Load standard library
     stdlib_path = joinpath(@__DIR__, "stdlib.bdsl")
     if isfile(stdlib_path)
         for expr in parse_all(read(stdlib_path, String))
             eval_dsl(expr, env)
         end
     end
-    # Run user code
     exprs = parse_all(source)
     result = nothing
-    for expr in exprs
-        result = eval_dsl(expr, env)
-    end
+    for expr in exprs; result = eval_dsl(expr, env); end
     result
 end
 
-"""Load a DSL program and return the environment with all definitions."""
 function load_dsl(source::String; env::Env=default_env())
     env[:__toplevel__] = true
     stdlib_path = joinpath(@__DIR__, "stdlib.bdsl")
@@ -308,9 +358,7 @@ function load_dsl(source::String; env::Env=default_env())
             eval_dsl(expr, env)
         end
     end
-    for expr in parse_all(source)
-        eval_dsl(expr, env)
-    end
+    for expr in parse_all(source); eval_dsl(expr, env); end
     env
 end
 

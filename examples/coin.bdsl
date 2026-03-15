@@ -1,61 +1,52 @@
 ; ============================================================
-; Example: Learning a biased coin
+; coin.bdsl (v2.2) — Learning a biased coin
+;
+; v1:   (belief 0.1 0.3 0.5) — untyped. (update b obs lik) — three
+;       unrelated arguments. Likelihood was a loose lambda.
+;
+; v2:   (model ...) bundled prior + likelihood. But model, problem,
+;       optimise were all "primitives".
+;
+; v2.2: Three types: Space, Measure, Kernel.
+;       condition and expect are functions, not special forms.
+;       optimise is stdlib, not primitive.
+;       The kernel IS the likelihood — typed, inspectable,
+;       declaring both source and target spaces.
 ; ============================================================
-;
-; A coin has unknown bias θ ∈ {0.1, 0.3, 0.5, 0.7, 0.9}.
-; We observe flips and must decide: is it biased towards
-; heads (θ > 0.5) or tails (θ < 0.5)?
-;
-; The agent has three things:
-;   1. Beliefs about which θ is true (uniform prior)
-;   2. An observation model (Bernoulli likelihood)
-;   3. A utility function (correct answer = 1, wrong = -1)
-;
-; Everything is belief, update, decide. Nothing else.
-; ============================================================
 
-; The hypothesis space: five possible biases
-; Each hypothesis is just its θ value
+; The three types in action:
 
-(let prior (belief 0.1 0.3 0.5 0.7 0.9)
+(let H (space :finite 0.1 0.3 0.5 0.7 0.9)    ; hypothesis space
+  (let O (space :finite 0 1)                     ; observation space
+    (let A (space :finite 1 0)                   ; action space
 
-  ; The likelihood: P(heads | θ) = θ, P(tails | θ) = 1 - θ
-  (let coin-likelihood
-    (lambda (theta obs)
-      (if (= obs 1)
-        (log theta)              ; heads: log P(H|θ) = log θ
-        (log (- 1.0 theta))))    ; tails: log P(T|θ) = log(1-θ)
+      ; The kernel: for each bias θ, Bernoulli(θ) over {0,1}
+      (let k (kernel H O
+                (lambda (theta)
+                  (lambda (obs)
+                    (if (= obs 1)
+                      (log theta)
+                      (log (- 1.0 theta))))))
 
-    ; Observe: H, H, T, H, H, H, T, H
-    (let after-data
-      (update
-        (update
-          (update
-            (update
-              (update
-                (update
-                  (update
-                    (update prior 1 coin-likelihood)  ; H
-                  1 coin-likelihood)                   ; H
-                0 coin-likelihood)                     ; T
-              1 coin-likelihood)                       ; H
-            1 coin-likelihood)                         ; H
-          1 coin-likelihood)                           ; T
-        0 coin-likelihood)                             ; H (typo fixed: this should reflect actual data)
-      1 coin-likelihood)                               ; H
+        ; Start with maximum ignorance
+        (let prior (measure H :uniform)
 
-      ; What does the agent believe now?
-      (do
-        (print (weights after-data))
+          ; Observations arrive from the host: H H T H
+          (let posterior
+            (condition (condition (condition (condition prior k 1) k 1) k 0) k 1)
 
-        ; Utility: +1 for correct, -1 for wrong
-        ; "guess-high" is right when θ > 0.5
-        ; "guess-low" is right when θ < 0.5
-        (let utility
-          (lambda (theta action)
-            (if (= action 1)
-              (if (> theta 0.5) 1.0 -1.0)    ; guess-high
-              (if (< theta 0.5) 1.0 -1.0)))  ; guess-low
+            (do
+              (print (weights posterior))
 
-          ; Decide!
-          (decide after-data (list 1 0) utility))))))
+              ; Preference: bet on heads pays 2θ-1, bet on tails pays 1-2θ
+              (let pref (lambda (theta action)
+                          (if (= action 1)
+                            (- (* 2.0 theta) 1.0)
+                            (- 1.0 (* 2.0 theta))))
+
+                (do
+                  (print (optimise posterior A pref))
+                  (print (value posterior A pref))
+
+                  ; VOI: should we flip once more before betting?
+                  (print (voi posterior k A pref (list 0 1))))))))))))

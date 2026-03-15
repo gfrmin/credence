@@ -1,32 +1,209 @@
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
-
-# CLAUDE.md — Constitution for the Bayesian Agent DSL
+# CLAUDE.md — Constitution for Credence v2.2
 
 > Read this entire document before writing any code.
-> Every design decision was derived from first principles.
-
----
 
 ## What this project is
 
-A minimal domain-specific language for specifying Bayesian
-decision-making agents. S-expression syntax. Compiles to Julia.
-Grounded in axiomatic decision theory (Cox, Savage, de Finetti).
+A minimal DSL for Bayesian decision-making agents. S-expression
+syntax. Compiles to Julia. Grounded in axiomatic decision theory.
+
+## The axioms (mathematical truths, not design choices)
+
+    A1. Beliefs are probability measures                  (Cox)
+    A2. Rational action maximises expected utility        (Savage)
+    A3. Learning is conditioning on evidence              (Bayes, de Finetti)
+    A4. There is one learning mechanism and one
+        decision mechanism                                (Dutch book coherence)
+
+## The frozen layer: three types
+
+The DSL has exactly three kinds of object. These are the
+ontology of Bayesian decision theory. They do not change.
+
+    Space   — a set of possibilities
+    Measure — a probability distribution over a space
+    Kernel  — a conditional distribution between two spaces
+
+Everything else — every operation, every combinator, every
+named concept — is a function over these three types.
+
+### Space constructors
+
+    (space :finite a b c ...)       finite discrete set
+    (space :interval lo hi)         bounded real interval
+    (space :product S1 S2 ...)      cartesian product
+
+### Measure constructors
+
+    (measure S :uniform)            maximum entropy
+    (measure S :categorical w1 w2)  explicit weights
+    (measure S :beta α β)           Beta distribution on [0,1]
+    (measure S :gaussian μ σ)       Gaussian on an interval
+
+### Kernel constructors
+
+    (kernel H O generator)          H → Measure(O)
+        H: source space (hypothesis space)
+        O: target space (observation space)
+        generator: (lambda (h) distribution-spec)
+
+A kernel is a morphism in the Markov category. It specifies,
+for each hypothesis, what distribution over observations the
+agent expects. It is the agent's theory of how hypotheses
+generate data.
+
+## The axiom-constrained functions
+
+These functions are in the standard library, not the frozen layer.
+Their INTERFACE may change. Their BEHAVIOUR is constrained by the
+axioms and must not be violated.
+
+    condition : Measure(H) × Kernel(H,O) × O → Measure(H)
+        Bayesian inversion. The unique coherent way to update
+        a belief given evidence. Must implement Bayes' rule.
+        No other function may modify a measure's weights.
+
+    expect : Measure(S) × (S → ℝ) → ℝ
+        Integration against a measure. This is what a measure IS:
+        a thing that assigns expected values to functions. EU, VOI,
+        predictive probability — all are expectations.
+
+    push : Measure(H) × Kernel(H,T) → Measure(T)
+        Pushforward / composition. Given a distribution over
+        hypotheses and a kernel to another space, produce the
+        induced distribution. expect is push to ℝ.
+
+    density : Kernel(H,O) × H × O → ℝ
+        The kernel's density at a point. What condition needs
+        to compute the likelihood ratio.
+
+## The derived functions (stdlib)
+
+These are compositions of the axiom-constrained functions with
+ordinary computation. They are convenience, not capability.
+Their interfaces are negotiable and will evolve.
+
+    optimise   = argmax over actions of expect(measure, pref)
+    value      = max over actions of expect(measure, pref)
+    predictive = expect(measure, density(kernel, ·, obs))
+    voi        = expect over obs of [value after condition] - value before
+    model      = packaging of measure + kernel (convenience)
+    problem    = packaging of model + actions + preference (convenience)
+
+## What Claude Code may change
+
+The standard library: function signatures, new combinators,
+packaging of types into convenient bundles.
+
+The Julia implementations: how condition dispatches (conjugate,
+particle, quadrature). How expect computes (summation, quadrature,
+Monte Carlo). How push constructs new measures. The computational
+strategy is determined by the types of the spaces involved and
+is invisible to the DSL user.
+
+The set of named distributions and space types.
+
+Tests, examples, documentation, host drivers.
+
+## What Claude Code may NOT change
+
+The three types: Space, Measure, Kernel.
+
+The axiom constraints: condition must be Bayesian inversion,
+expect must be integration, no other function may modify
+a measure's weights.
+
+The purity of the DSL: no side effects, no IO, no mutation.
+The host provides observations and executes actions.
+
+The S-expression grammar: expr = atom | '(' expr* ')'
+
+## Forbidden patterns
+
+These are mathematical errors, not style preferences.
+
+### No second learning mechanism
+Only condition modifies beliefs. Any function that produces a
+measure with altered weights without conditioning on an
+observation violates A4. This includes: forget, decay, exploration
+bonuses, ad-hoc reweighting. If the world changes, include
+drift-rate in the hypothesis space.
+
+### No second decision mechanism
+Only EU maximisation (via expect + argmax) selects actions.
+Epsilon-greedy, UCB bonuses, and similar heuristics are
+not forbidden as CONCEPTS — they may emerge as EU-maximising
+strategies when computational cost enters the utility function.
+But they must not be hard-coded as mechanisms outside of EU
+maximisation.
+
+### No opaque likelihood functions
+Likelihoods are kernels, not bare lambdas. A kernel declares
+its source space, target space, and generative structure. This
+enables the compiler to select computational backends and detect
+conjugate structure. (lambda (h o) ...) as a likelihood is a
+v1 pattern that should not appear in v2.2.
+
+### Heuristics are EU maximisation, not approximations
+When computational cost enters the utility function, a faster
+approximate strategy may have higher EU than the exact Bayesian
+computation. This is not an approximation — it IS the optimal
+strategy. Heuristics belong in the Julia execution layer as
+alternative implementations of expect/condition/push, selected
+by the same EU-maximisation machinery the agent uses for
+everything else. The DSL specification does not change.
+
+## The host boundary
+
+The DSL constructs mathematical objects (measures, kernels, numbers).
+The host realises them (draws values, executes actions, drives loops).
+
+draw : Measure(S) → S is the ONLY source of randomness. It lives
+in the ontology module, exported for Julia callers, NOT in the
+DSL's default_env.
+
+optimise and value live in the ontology module alongside expect
+and condition. One implementation per operation. The host calls
+them; the host does not reimplement them.
+
+If you need randomness → use draw in the host.
+If you need decisions → use optimise/value from the ontology, or
+call the DSL's optimise via run_dsl.
+
+Do not reimplement expect, condition, optimise, or value in the
+host. Call the ontology module's exports.
+
+## Rejected patterns (with reasoning)
+
+PROPOSED: Add (sample measure) to the DSL for Thompson sampling.
+REJECTED: sample is randomness, randomness is a side effect,
+the DSL is pure. Construct the posterior in the DSL, call
+draw() in the host.
+
+PROPOSED: Add host_decide() / host_optimise() in the host driver.
+REJECTED: optimise and value belong in the ontology alongside
+expect and condition. One implementation per operation. The host
+driver is pure orchestration — it calls ontology functions.
+
+PROPOSED: (thompson-sample m actions pref) in stdlib that calls sample.
+REJECTED: Compounds both errors above. Thompson sampling is
+draw (host) + argmax (ordinary computation). The DSL computed
+the posterior; its job is done.
 
 ## Development commands
 
 Run tests:
-    julia test/test_vertical_slice.jl
+    julia test/test_v2.2.jl
 
 Run an example:
-    julia -e "push!(LOAD_PATH, \"src\"); using BayesianDSL; run_dsl(read(\"examples/coin.bdsl\", String))"
+    julia -e 'push!(LOAD_PATH, "src"); using CredenceV2_2; run_dsl(read("examples/coin.bdsl", String))'
 
 Run the credence agent (host-driven):
     julia examples/host_credence_agent.jl
 
 Use the module from Julia REPL:
     push!(LOAD_PATH, "src")
-    using BayesianDSL
+    using CredenceV2_2
 
 Load DSL and get callable closures (host-driver pattern):
     env = load_dsl(read("examples/credence_agent.bdsl", String))
@@ -34,229 +211,75 @@ Load DSL and get callable closures (host-driver pattern):
 
 No external dependencies — Julia stdlib only. No Project.toml yet.
 
-## The axioms (not negotiable, not derivable, not changeable)
-
-These are the metal. They are asserted, not computed:
-
-    A1. Preferences are complete and transitive     (Savage P1)
-    A2. Beliefs satisfy the product rule             (Cox)
-    A3. No sure loss                                 (Dutch book coherence)
-
-From which UNIQUELY follow:
-
-    → Beliefs must be probabilities                  (Cox's theorem)
-    → Learning must be Bayesian conditioning          (Bayes' rule)
-    → Action must maximise expected utility           (Savage's theorem)
-
-## The DSL (frozen — do not modify)
-
-The grammar:
-
-    expr = atom | '(' expr* ')'
-
-The three primitives:
-
-    (belief h1 h2 ...)              weighted hypotheses (uniform prior)
-    (update <belief> <obs> <lik>)   Bayesian conditioning
-    (decide <belief> <acts> <util>) expected utility maximisation
-
-Everything else is a derived combinator. The DSL grammar and primitives
-are IMMUTABLE. They are forced by the axioms. Adding a fourth primitive
-is a mathematical error, not a design choice.
-
-## The supporting forms (frozen — do not modify)
-
-These exist to make the DSL Turing-complete but introduce
-no new decision-theoretic capability.
-
-A supporting form may read from beliefs (like weighted-sum) or
-construct new beliefs from hypotheses (like belief), but it may
-NOT modify the weights of an existing belief. Only update modifies
-weights, because only Bayesian conditioning is sanctioned by the
-axioms. Any operation that produces a belief with altered weights
-without conditioning on an observation is a second learning mechanism
-competing with update — and there is only one learning mechanism.
-
-    (let <name> <expr> <body>)      binding
-    (define <name> <expr>)          top-level binding (mutates env)
-    (lambda (<params>) <body>)      abstraction
-    (if <cond> <then> <else>)       conditional
-    (do <e1> ... <en>)              sequence
-    (list <e1> ... <en>)            data construction
-    (map <fn> <lst>)                apply fn to each element
-    (fold <fn> <lst>)               reduce (first element is init)
-    (first <lst>)                   first element of a list
-    (second <lst>)                  second element of a list
-    (nth <lst> <idx>)               0-based index into a list
-    (sample <belief>)               draw one hypothesis proportional to weights
-    (weights <belief>)              inspect normalised belief weights
-    (print <expr>)                  print value and return it
-    (weighted-sum <belief> <fn>)    Σ_i w_i · fn(h_i)
-    (max <a> <b> ...)               maximum of 2+ values
-    Arithmetic: + * (variadic), - / (binary), log exp
-    Comparison: = > <               for conditional logic
-    String literals: "..."          for print messages
-
-## What Claude Code may change
-
-The SEMANTICS — how primitives compile to Julia:
-
-    - Improve update to dispatch to conjugate fast-paths
-    - Improve decide to use bounded-depth planning
-    - Add particle resampling when ESS drops
-    - Add backends (Gen.jl, POMDPs.jl interop)
-    - Optimise: caching, parallelism, SIMD
-
-The STANDARD LIBRARY — derived combinators built from the three primitives
-(defined in `src/stdlib.bdsl`, auto-loaded by `run_dsl`):
-
-    eu              = Σ_i w_i · u(h_i, a)              (expected utility)
-    best-eu         = max_a eu(b, a, u)                 (best EU over actions)
-    predictive-prob = Σ_i w_i · exp(lik(h_i, o))       (observation probability)
-    voi             = E_o[best-eu(update(b,o))] - best-eu(b)
-    best-action     = argmax_a eu(b, a, u)                     (action with highest EU)
-    thompson-sample = sample h ~ weights, decide as if h is true
-    bernoulli-lik   = log P(obs | rate)                        (Bernoulli log-likelihood)
-    answer-lik      = log P(response | true-answer, r, n)      (n-ary answer likelihood)
-    update-reliability = update reliability belief with ground-truth feedback
-    predict         = marginalise hypotheses' observation models (TODO)
-    fuse            = update(update(b, o1), o2) (TODO)
-
-Tests, examples, documentation, tooling.
-
-## What Claude Code may NOT change
-
-- The grammar
-- The three primitives
-- The axioms
-- The separation between DSL and compilation target
-- The principle that hypotheses are S-expressions (inspectable data)
-
-## Forbidden patterns
-
-These are not style preferences. They are mathematical errors.
-If you find yourself reaching for one, the model is wrong — fix that.
-
-### Never add an explore primitive
-Exploration is a CONSEQUENCE of value of information, which is a
-COMPOSITION of update and decide. If the agent isn't exploring,
-its observation model is wrong or its utility doesn't value
-information. Fix the model. Do not bolt on exploration.
-
-### Never add loop detection
-If the agent loops, it means update is not changing the beliefs,
-which means the observations carry no information under the current
-hypotheses. The hypothesis space is inadequate. Expand it.
-Do not patch the symptom.
-
-### Never add exploration bonuses
-Epsilon-greedy, UCB bonuses, optimism-in-the-face-of-uncertainty
-heuristics — these are all approximations to proper Bayesian
-exploration (Thompson sampling, VOI, Bayes-adaptive planning).
-Use the principled version or document why the approximation
-is necessary with a complexity argument.
-
-### Never make update optional or skippable
-If there is an observation, it must update beliefs. Ignoring
-evidence violates A3 (Dutch book coherence). If the observation
-is uninformative, the likelihood will be flat and weights won't
-change — that's fine. But you don't get to skip the step.
-
-### Never use 0.5 as a default prior for binary hypotheses
-With N hypotheses, the prior is 1/N for each. For 2 hypotheses,
-that happens to be 0.5, but the reasoning is "maximum entropy
-over N states" not "binary so fifty-fifty." This matters when
-N changes.
-
-### Never compare (VOI - cost) > expected_utility
-The correct comparison is VOI > cost. The value of information
-is the improvement over current best EU, not an absolute value
-to be compared against the current best EU.
-
-### Ground truth for sensor learning: positive rewards only
-When updating beliefs about sensor reliability, only count
-observations where the ground truth is known (positive reward
-received). State changes alone do not constitute ground truth.
-
-### Never add a forget or decay mechanism
-Non-stationarity is a property of the world, not a computational
-operation on beliefs. If reliability might drift, include drift-rate
-in the hypothesis space — hypotheses that predict stability get
-upweighted when the world is stable, and hypotheses that predict
-change get upweighted when the world shifts. The effective forgetting
-rate emerges from the posterior rather than being imposed as a
-parameter. Any mechanism that modifies belief weights outside of
-Bayesian conditioning (update) is a second learning channel that
-violates the axioms.
-
-## Architecture
-
-    ┌─────────────────────────────┐
-    │  DSL (S-expressions)        │  ← what the user writes
-    │  Three primitives.          │     IMMUTABLE
-    │  Composition.               │
-    ├─────────────────────────────┤
-    │  Semantics layer            │  ← enforces axioms
-    │  Validates well-formedness  │     IMMUTABLE constraints
-    │  Selects backend            │     MUTABLE dispatch
-    ├─────────────────────────────┤
-    │  Julia compilation target   │  ← where computation happens
-    │  Conjugate fast-paths       │     MUTABLE (improve freely)
-    │  Particle methods           │
-    │  Gen.jl / POMDPs.jl        │
-    ├─────────────────────────────┤
-    │  Metareasoning              │  ← controls compute budget
-    │  VOC-based stopping         │     MUTABLE (improve freely)
-    │  BMPS-style learned weights │
-    └─────────────────────────────┘
-
-## Host-driver pattern
-
-Complex agents split into two layers:
-- **DSL agent** (.bdsl): pure decision functions (no I/O, no mutation)
-- **Julia host** (.jl): drives iteration, manages persistent state, simulates/connects to environment
-
-The host calls `load_dsl` to get callable closures, then orchestrates
-the agent loop. The DSL remains pure; side effects live in the host.
-
 ## Project structure
 
     src/
-      parse.jl          S-expression parser (the entire front-end)
-      primitives.jl     belief, update, decide, weighted_sum (the theory)
-      eval.jl           Evaluator / compiler (DSL → Julia calls)
-      stdlib.bdsl       Standard library (eu, best-eu, voi, etc.)
-      BayesianDSL.jl    Module entry point
+      parse.jl            S-expression parser (the entire front-end)
+      ontology.jl         Three types + axiom-constrained functions + draw/optimise/value
+      eval.jl             Evaluator / compiler (DSL → Julia calls)
+      stdlib.bdsl         Standard library (optimise, value, voi, etc.)
+      persistence.jl      Save/load agent state across sessions
+      CredenceV2_2.jl     Module entry point
     examples/
-      coin.bdsl             Biased coin learning
-      tool_selection.bdsl   VOI-based tool choice (mini Credence)
-      credence_engine.bdsl  Full credence-engine decision loop
-      credence_agent.bdsl   Agent DSL (pure functions, host-driven)
-      host_credence_agent.jl  Julia host driver for credence agent
+      coin.bdsl                 Biased coin learning
+      credence_agent.bdsl       Agent DSL (pure functions, host-driven)
+      grid_agent.bdsl           Bayesian grid-world navigation
+      host_credence_agent.jl    Julia host driver for credence agent
     test/
-      test_vertical_slice.jl  End-to-end validation
+      test_v2.2.jl              End-to-end validation
 
 DSL source files use the `.bdsl` extension.
 
 Weights are stored in log-space internally (`logw` field). Use
-`weights(b)` to get normalized probabilities. This is a cross-file
+`weights(m)` to get normalized probabilities. This is a cross-file
 invariant — never exponentiate manually.
 
-Constructors: `Belief(hyps)` for uniform prior, `Belief{H}(hyps, logw)`
-for explicit log-weights (auto-normalises). The parametric form is used
-by host drivers to build joint beliefs from outer products.
+Constructors: `CategoricalMeasure(Finite(vals))` for uniform prior,
+`CategoricalMeasure{T}(Finite{T}(vals), logw)` for explicit log-weights
+(auto-normalises). `BetaMeasure(α, β)` for Beta on [0,1].
+
+## Architecture
+
+    ┌─────────────────────────────┐
+    │  Three types                │  FROZEN
+    │  Space, Measure, Kernel     │
+    ├─────────────────────────────┤
+    │  Axiom-constrained fns      │  Behaviour frozen,
+    │  condition, expect, push    │  interface negotiable
+    ├─────────────────────────────┤
+    │  Standard library           │  MUTABLE
+    │  optimise, voi, model, etc  │
+    ├─────────────────────────────┤
+    │  Julia execution layer      │  MUTABLE
+    │  Conjugate, quadrature,     │
+    │  particle, heuristic        │
+    └─────────────────────────────┘
+
+    Host (Julia): provides observations, executes actions,
+    drives loops, manages persistent state. The DSL is pure.
+
+## On metareasoning
+
+There is no separate metareasoning layer. The choice of how
+much to compute is itself a decision problem: beliefs about
+computational cost, expected improvement from further
+computation, EU maximisation over the choice of strategy.
+This is expressible in the same DSL the agent uses for
+everything else. The Julia layer implements the strategies;
+the DSL specifies the choice among them.
 
 ## Key references
 
-    Cox (1946)          — probability from consistency
-    Savage (1954)       — utility + probability from preferences
-    Jaynes (2003)       — Probability Theory: The Logic of Science
-    Hutter (2005)       — AIXI: the Platonic limit
-    Leike & Hutter (2015) — AIXI's optimality is vacuous
-    Russell & Wefald (1991) — rational metareasoning
-    Lieder & Griffiths (2017) — strategy selection as metareasoning
-    McCarthy (1960)     — why S-expressions
+    Cox (1946)                — probability from consistency
+    Savage (1954)             — utility + probability from preferences
+    Jaynes (2003)             — Probability Theory: The Logic of Science
+    Hutter (2005)             — AIXI: the Platonic limit
+    Russell & Wefald (1991)   — rational metareasoning
+    Lieder & Griffiths (2020) — resource-rationality
+    Fritz (2020)              — Markov categories
+    Staton (2017)             — measure-theoretic PPL semantics
+    McCarthy (1960)           — why S-expressions
 
 ## One-line summary
 
-Three axioms force three primitives; everything else is composition.
+Three types, axiom-constrained functions, everything else is stdlib.

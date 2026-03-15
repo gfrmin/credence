@@ -1,60 +1,109 @@
 ; ============================================================
-; credence_agent.bdsl — Bayesian decision-theoretic tool selection
+; credence_agent.bdsl (v2.2) — Bayesian tool selection
 ;
-; Pure DSL functions. The host drives iteration and manages state.
-; Joint beliefs over (answer, reliability) pairs preserve full
-; uncertainty — no point-estimate approximation.
+; The agent that motivated the entire project. Selects among
+; tools to answer multiple-choice questions, learning tool
+; reliability from feedback.
+;
+; v1:   Reliability was (belief 0.1 0.2 ... 0.9) — a discrete
+;       grid that collapsed after one wrong answer.
+; v2:   Beta(1,1) native, but model/problem were primitives.
+; v2.2: Three types only. condition/expect are regular functions.
+;       The kernel explicitly types the observation model.
 ; ============================================================
 
-; joint-lik: likelihood function for joint (answer, reliability) hypotheses
-; Curried on n-answers.
-(define joint-lik
-  (lambda (n-answers)
-    (lambda (h obs)
-      (answer-lik (first h) obs (second h) n-answers))))
+; ── Spaces ──
+(define answer-space (space :finite 0 1 2 3))
+(define binary-space (space :finite 0 1))
+(define reliability-space (space :interval 0 1))
 
-; agent-step: given tool infos, return the optimal action
-; Each tool-info is [joint-bel, cost, coverage-prob, tool-idx]
-; Returns [action-type, value] where:
-;   0 = submit answer, 1 = abstain, 2 = query tool
+; ── Reliability kernel ──
+; For a given reliability r, the probability of getting the
+; right answer is r, wrong answer is (1-r)/(n-1)
+(define answer-kernel
+  (lambda (reliability-measure n)
+    (kernel answer-space answer-space
+      (lambda (true-answer)
+        (lambda (response)
+          ; Marginalise reliability out:
+          ; log ∫ P(response|answer,r) P(r) dr
+          (log (expect reliability-measure
+            (lambda (r)
+              (if (= true-answer response)
+                r
+                (/ (- 1.0 r) (- n 1)))))))))))
+
+; ── Reliability kernel for learning ──
+; Observation: was the tool correct? Binary.
+(define reliability-kernel
+  (kernel reliability-space binary-space
+    (lambda (r)
+      (lambda (was-correct)
+        (if (= was-correct 1)
+          (log r)
+          (log (- 1.0 r)))))))
+
+; ── Agent step: decide what to do ──
+; Given beliefs about the answer, beliefs about tool reliability,
+; tool costs, and the abstain/submit payoffs, choose:
+;   submit answer | abstain | query a tool
+;
+; This is pure EU maximisation. The "exploration" of uncertain
+; tools happens naturally through VOI — no epsilon-greedy,
+; no exploration bonus.
 (define agent-step
-  (lambda (tool-infos answers all-actions n-answers util)
-    (let lik (joint-lik n-answers)
-    (let ref-bel (first (first tool-infos))
-    (let eu-current (best-eu ref-bel all-actions util)
-    (let query-pairs
-      (map (lambda (ti)
-             (let bel (first ti)
-             (let cost (second ti)
-             (let cov (nth ti 2)
-             (list (+ eu-current (net-voi bel answers all-actions util lik cov cost))
-                   ti)))))
-           tool-infos)
-    (let best-query
-      (fold (lambda (best pair)
-              (if (> (first pair) (first best)) pair best))
-            query-pairs)
-    (let best-query-value (first best-query)
-    (let best-tool-info (second best-query)
-    (if (> best-query-value eu-current)
-      (list 2 (nth best-tool-info 3))
-      (let best-act (best-action ref-bel all-actions util)
-      (if (= best-act -1)
-        (list 1 0)
-        (list 0 best-act)))))))))))))
+  (lambda (answer-measure reliability-measures tool-costs submit-value abstain-value)
+    (let n (length (support answer-space))
+      (let action-space (space :finite -1 0 1 2 3)
 
-; update-on-response: update a joint (answer, reliability) belief
-; when a tool responds
+        ; Preference: submit correct = submit-value, wrong = 0, abstain = abstain-value
+        (let pref (lambda (true-answer action)
+                    (if (= action -1) abstain-value
+                      (if (= true-answer action) submit-value 0.0)))
+
+          ; Current best EU
+          (let current-val (value answer-measure action-space pref)
+
+            ; Build tool index list dynamically from reliability-measures length
+            (let n-tools (length reliability-measures)
+            (let tool-indices
+              (if (= n-tools 1) (list 0)
+                (if (= n-tools 2) (list 0 1)
+                  (list 0 1 2)))
+
+            ; For each tool, compute net VOI
+            (let tool-evals
+              (map (lambda (i)
+                     (let rel-m (nth reliability-measures i)
+                       (let cost (nth tool-costs i)
+                         (let k (answer-kernel rel-m n)
+                           (let v (voi answer-measure k action-space pref
+                                       (support answer-space))
+                             (list (- v cost) i))))))
+                   tool-indices)
+
+              ; Find best tool
+              (let best-tool (fold (lambda (a b)
+                                     (if (> (first a) (first b)) a b))
+                                   tool-evals)
+
+                ; If best tool has positive net VOI, query it.
+                ; Otherwise submit or abstain.
+                (if (> (first best-tool) 0.0)
+                  (list 2 (second best-tool))           ; query tool
+                  (let act (optimise answer-measure action-space pref)
+                    (if (= act -1)
+                      (list 1 0)                         ; abstain
+                      (list 0 act))))))))))))))          ; submit
+
+; ── update-on-response: alias for condition (readability only) ──
+; No additional semantics beyond condition.
 (define update-on-response
-  (lambda (joint-bel response n-answers)
-    (update joint-bel response (joint-lik n-answers))))
+  (lambda (answer-measure k response)
+    (condition answer-measure k response)))
 
-; update-category: update category belief based on whether a tool responded
-; coverage-fn maps category index to P(tool responds | category)
+; ── update-category: alias for condition (readability only) ──
+; No additional semantics beyond condition.
 (define update-category
-  (lambda (cat-bel tool-responded coverage-fn)
-    (update cat-bel tool-responded
-      (lambda (cat obs)
-        (if (= obs 1)
-          (log (coverage-fn cat))
-          (log (- 1.0 (coverage-fn cat))))))))
+  (lambda (cat-measure cat-kernel responded)
+    (condition cat-measure cat-kernel responded)))

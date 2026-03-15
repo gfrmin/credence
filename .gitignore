@@ -4,5 +4,8 @@
 *.jl.*.cov
 Manifest.toml
 
+# Agent state files
+.credence_state.bin
+
 # Serena cache (config is committed, cache is not)
 .serena/cache/

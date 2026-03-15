@@ -1,0 +1,73 @@
+; ============================================================
+; grid_agent.bdsl (v2.2) — Bayesian grid-world navigation
+;
+; Maps https://github.com/gfrmin/bayesian-agent to the DSL.
+;
+; The Python agent uses Normal-Normal conjugate models for
+; food energy beliefs and Thompson sampling for decisions.
+; In v2.2 this is: Gaussian measures, typed kernels,
+; and push (for Thompson policy) + expect (for EU).
+;
+; The host provides: visible food items, energy feedback,
+; agent position. The DSL computes: beliefs and decisions.
+; ============================================================
+
+; ── Spaces ──
+(define energy-space (space :interval -10 10))
+(define feedback-space (space :interval -10 10))
+
+; ── Food belief: Gaussian measure over expected energy ──
+; Prior: N(0, 3.16) — neutral expectation, high uncertainty
+; This is one per food type; the host maintains the collection.
+(define initial-food-belief
+  (measure energy-space :gaussian 0.0 3.16))
+
+; ── Observation kernel: food gives noisy energy reading ──
+; If true mean energy is μ, observed energy is N(μ, 1.0)
+(define food-kernel
+  (kernel energy-space feedback-space
+    (lambda (mu)
+      (lambda (obs)
+        ; log N(obs | mu, 1.0)
+        (- 0.0 (* 0.5 (* (- obs mu) (- obs mu))))))))
+
+; ── Update belief after eating ──
+; The host calls this after the agent eats a food and observes energy.
+; condition: Measure(energy) × Kernel × observation → Measure(energy)
+(define update-food-belief
+  (lambda (belief observed-energy)
+    (condition belief food-kernel observed-energy)))
+
+; ── Expected value of a food item ──
+; E[μ] under the current belief — what the agent thinks the food is worth
+(define expected-energy
+  (lambda (belief)
+    (expect belief (lambda (mu) mu))))
+
+; ── Thompson value of a food item ──
+; The Thompson policy needs E[u(μ, eat)] - distance-cost.
+; In the DSL, this is just an expectation.
+; The host samples from the Thompson policy measure to get
+; the actual decision.
+(define food-value
+  (lambda (belief distance movement-cost)
+    (- (expect belief (lambda (mu) mu))
+       (* distance movement-cost))))
+
+; ── Select best food by expected value ──
+; Given a list of (belief, distance) pairs, select the index
+; of the food with highest expected value net of distance cost.
+;
+; For Thompson sampling: the host would instead draw from
+; the posterior of each food and compare draws. The DSL
+; computes the posterior; the host draws from it.
+(define select-food
+  (lambda (food-infos movement-cost)
+    (let values (map (lambda (info)
+                       (food-value (first info) (second info) movement-cost))
+                     food-infos)
+      (let best-val (fold max values)
+        ; Return index of best
+        (fold (lambda (a b) (if (> (first a) (first b)) a b))
+              (map (lambda (i) (list (nth values i) i))
+                   (list 0 1 2)))))))

@@ -2,11 +2,13 @@
     persistence.jl — Save/load agent state across sessions.
 
 Uses Julia's Serialization stdlib for reliable roundtrip of
-Belief objects, score totals, and configuration.
+v2.2 ontology types (CategoricalMeasure, BetaMeasure, etc.),
+score totals, and configuration.
 """
 module Persistence
 
 using Serialization
+using ..Ontology
 
 export save_state, load_state
 

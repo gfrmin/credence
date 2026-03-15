@@ -1,105 +1,74 @@
 ; ============================================================
-; stdlib.bdsl — Standard library for the Bayesian DSL
+; stdlib.bdsl — Credence v2.2 standard library
 ;
-; All combinators defined in the DSL itself as inspectable
-; S-expressions. Built from the three primitives + supporting forms.
+; Three types: Space, Measure, Kernel
+; Axiom-constrained functions: condition, expect, push, density
+; Everything here is composed from those.
 ; ============================================================
 
-; EU(a) = Σ_i w_i · u(h_i, a)
-; This is weighted-sum with the action threaded through the utility.
+; ── optimise: the ONE decision mechanism ──
+; argmax over actions of E[pref(h, a)]
+; Returns the best action.
+(define optimise
+  (lambda (m actions pref)
+    (first (fold (lambda (best candidate)
+                   (if (> (second candidate) (second best))
+                     candidate
+                     best))
+                 (map (lambda (a)
+                        (list a (expect m (lambda (h) (pref h a)))))
+                      (support actions))))))
+
+; ── value: EU of the optimal action ──
+(define value
+  (lambda (m actions pref)
+    (second (fold (lambda (best candidate)
+                    (if (> (second candidate) (second best))
+                      candidate
+                      best))
+                  (map (lambda (a)
+                         (list a (expect m (lambda (h) (pref h a)))))
+                       (support actions))))))
+
+; ── eu: expected utility of a specific action ──
 (define eu
-  (lambda (bel a util)
-    (weighted-sum bel (lambda (h) (util h a)))))
+  (lambda (m action pref)
+    (expect m (lambda (h) (pref h action)))))
 
-; max_a EU(a) = max over actions of expected utility
-(define best-eu
-  (lambda (bel acts util)
-    (fold max (map (lambda (a) (eu bel a util)) acts))))
+; ── predictive: P(observation | measure, kernel) ──
+; The probability of seeing obs, marginalised over hypotheses
+(define predictive
+  (lambda (m k obs)
+    (expect m (lambda (h) (exp (density k h obs))))))
 
-; P(o|b) = Σ_i w_i · exp(lik(h_i, o))
-; This is a weighted sum of exponentiated likelihoods — NOT an expected utility.
-(define predictive-prob
-  (lambda (bel obs lik)
-    (weighted-sum bel (lambda (h) (exp (lik h obs))))))
-
-; VOI = Σ_o [P(o)/Z · best-eu(update(b,o,lik))] - best-eu(b)
-; where Z = Σ_o P(o) ensures proper normalisation.
+; ── voi: value of information ──
+; How much would one observation from kernel k improve the
+; decision over actions with preference pref?
 ;
-; Note: predictive-prob is computed twice per observation (once for
-; total-weight, once in the weighted map). This is correct and readable.
-; Do not optimise.
+; VOI = E_o[value(condition(m,k,o))] - value(m)
+; where E_o is weighted by predictive probability
 (define voi
-  (lambda (bel observations acts util lik)
-    (let current (best-eu bel acts util)
-      (let total-weight
-        (fold + (map (lambda (o) (predictive-prob bel o lik)) observations))
-        (- (fold +
-             (map (lambda (o)
-               (* (/ (predictive-prob bel o lik) total-weight)
-                  (best-eu (update bel o lik) acts util)))
-               observations))
-           current)))))
+  (lambda (m k actions pref possible-obs)
+    (let current-val (value m actions pref)
+      (let total-weight (fold + (map (lambda (o) (predictive m k o))
+                                     possible-obs))
+        (- (fold + (map (lambda (o)
+                          (* (/ (predictive m k o) total-weight)
+                             (value (condition m k o) actions pref)))
+                        possible-obs))
+           current-val)))))
 
-; best-action: return the action with highest EU
-; Uses map to create (action, eu) pairs, fold to find the max.
-(define best-action
-  (lambda (bel acts util)
-    (first
-      (fold (lambda (best pair)
-              (if (> (second pair) (second best)) pair best))
-            (map (lambda (a) (list a (eu bel a util))) acts)))))
-
-; thompson-sample: sample a hypothesis, act as if it's the only truth
-(define thompson-sample
-  (lambda (bel acts util)
-    (let h (sample bel)
-      (best-action (belief h) acts util))))
-
-; bernoulli-lik: log-likelihood for a Bernoulli observation
-(define bernoulli-lik
-  (lambda (r obs)
-    (if (= obs 1) (log r) (log (- 1.0 r)))))
-
-; answer-lik: log-likelihood that a tool with reliability r returns
-; response when the true answer is true-answer, over n choices
-(define answer-lik
-  (lambda (true-answer response r n)
-    (if (= true-answer response)
-      (log r)
-      (log (/ (- 1.0 r) (- n 1))))))
-
-; update-reliability: update a reliability belief with ground-truth feedback
-(define update-reliability
-  (lambda (rel-bel was-correct)
-    (update rel-bel was-correct bernoulli-lik)))
-
-; coverage-voi: VOI weighted by tool coverage probability
-(define coverage-voi
-  (lambda (bel observations acts util lik coverage-prob)
-    (* coverage-prob (voi bel observations acts util lik))))
-
-; net-voi: coverage-weighted VOI minus cost — the decision quantity for tool selection
+; ── net-voi: VOI minus the cost of observing ──
 (define net-voi
-  (lambda (bel observations acts util lik coverage-prob cost)
-    (- (coverage-voi bel observations acts util lik coverage-prob) cost)))
+  (lambda (m k actions pref possible-obs cost)
+    (- (voi m k actions pref possible-obs) cost)))
 
-; predictive-answer-prob: marginalize reliability out of a joint (answer, reliability) belief
-; Returns P(answer) = Σ_i w_i · I(h_i.answer = answer)
-(define predictive-answer-prob
-  (lambda (joint-bel answer)
-    (weighted-sum joint-bel
-      (lambda (h) (if (= (first h) answer) 1.0 0.0)))))
-
-; Self-test: VOI of a flat (uninformative) likelihood must be zero.
-; Theorem: if observations carry no information, they have no value.
-; A flat log-likelihood (all zeros) means exp(0)=1 for every
-; hypothesis-observation pair — update is a no-op, EU doesn't change.
-(let _flat-voi
-  (voi (belief 1 2)
-       (list 1 2)
-       (list 1 2)
-       (lambda (h a) (if (= h a) 1.0 0.0))
-       (lambda (h o) 0.0))
-  (if (> _flat-voi 0.001)
-    (print "STDLIB BUG: VOI of flat likelihood must be zero")
-    0))
+; ── Self-test: VOI of flat kernel must be zero ──
+(let s (space :finite 1 2)
+  (let m (measure s :uniform)
+    (let k (kernel s s (lambda (h) (lambda (o) 0.0)))
+      (let v (voi m k s (lambda (h a) (if (= h a) 1.0 0.0))
+                  (list 1 2))
+        (if (> v 0.001)
+          (print "STDLIB BUG: VOI of flat kernel must be zero")
+          0)))))

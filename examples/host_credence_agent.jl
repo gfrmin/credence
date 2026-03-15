@@ -1,34 +1,63 @@
 #!/usr/bin/env julia
 """
-    host_credence_agent.jl — Julia host driver for the credence agent
+    host_credence_agent.jl — Julia host driver for the credence agent (v2.2)
 
 Loads the DSL agent specification, drives the question loop,
 maintains per-tool per-category reliability beliefs across questions,
 and simulates tool responses.
+
+Uses v2.2 ontology types: CategoricalMeasure, BetaMeasure, Kernel.
+All decision-theoretic computation goes through the ontology module.
 """
 
 push!(LOAD_PATH, joinpath(@__DIR__, "..", "src"))
-using BayesianDSL
+using CredenceV2_2
+using CredenceV2_2: expect, condition, draw, optimise, value, weights, mean
+using CredenceV2_2: CategoricalMeasure, BetaMeasure, Finite, Interval, Kernel, Measure
+using CredenceV2_2: density, save_state, load_state
 
 # ─── State file ───
 
 const STATE_FILE = joinpath(@__DIR__, ".credence_state.bin")
 
-# ─── Julia helpers ───
+# ─── Host-level helpers ───
 
-"""Mix per-category reliability beliefs weighted by category posterior."""
-function mix_reliability(cat_weights::Vector{Float64}, per_cat_rels::Vector{<:Belief})
-    n = length(per_cat_rels[1])
-    mixed = zeros(n)
-    for (c, cw) in enumerate(cat_weights)
-        mixed .+= cw .* weights(per_cat_rels[c])
-    end
-    mixed
+"""Thompson sampling: draw (host) + optimise (ontology)."""
+function thompson_action(posterior::Measure, actions::Finite, pref)
+    h = draw(posterior)
+    point = CategoricalMeasure(Finite([h]))
+    optimise(point, actions, pref)
 end
 
-"""Build joint belief from answer weights × reliability weights."""
-function make_joint_belief(answer_w::Vector{Float64}, rel_w::Vector{Float64},
+"""Mix per-category reliability beliefs weighted by category posterior.
+Returns a BetaMeasure that approximates the mixture via moment-matching."""
+function mix_reliability(cat_weights::Vector{Float64}, per_cat_rels::Vector{BetaMeasure})
+    # Moment-match: compute mixture mean and variance, fit Beta
+    mixed_mean = sum(cat_weights[c] * mean(per_cat_rels[c]) for c in eachindex(cat_weights))
+    mixed_var = sum(cat_weights[c] * (variance(per_cat_rels[c]) + mean(per_cat_rels[c])^2)
+                    for c in eachindex(cat_weights)) - mixed_mean^2
+    # Fit Beta(α, β) from mean and variance
+    if mixed_var < 1e-12 || mixed_mean < 1e-10 || mixed_mean > 1.0 - 1e-10
+        return BetaMeasure(mixed_mean * 100, (1.0 - mixed_mean) * 100)
+    end
+    ν = mixed_mean * (1 - mixed_mean) / mixed_var - 1
+    ν = max(ν, 2.0)  # ensure α, β > 0
+    α = mixed_mean * ν
+    β = (1 - mixed_mean) * ν
+    BetaMeasure(α, β)
+end
+
+"""Build joint belief from answer weights × reliability weights.
+Returns a CategoricalMeasure over (answer, reliability) pairs."""
+function make_joint_belief(answer_w::Vector{Float64}, rel_m::BetaMeasure,
                            answers::Vector{Float64}, rel_grid::Vector{Float64})
+    # Discretise the BetaMeasure onto the grid
+    rel_logw = [(rel_m.alpha - 1) * log(max(r, 1e-300)) +
+                (rel_m.beta - 1) * log(max(1 - r, 1e-300)) for r in rel_grid]
+    max_lw = maximum(rel_logw)
+    rel_w = exp.(rel_logw .- max_lw)
+    rel_w ./= sum(rel_w)
+
     hyps = Vector{Float64}[]
     logw = Float64[]
     for (ai, aw) in enumerate(answer_w)
@@ -37,72 +66,72 @@ function make_joint_belief(answer_w::Vector{Float64}, rel_w::Vector{Float64},
             push!(logw, log(max(aw, 1e-300)) + log(max(rw, 1e-300)))
         end
     end
-    Belief{Vector{Float64}}(hyps, logw)
+    CategoricalMeasure{Vector{Float64}}(Finite{Vector{Float64}}(hyps), logw)
 end
 
-"""Extract answer marginal from a joint (answer, reliability) belief."""
-function answer_marginal(joint::Belief, n_answers::Int)
+"""Extract answer marginal from a joint (answer, reliability) measure."""
+function answer_marginal(joint::CategoricalMeasure, n_answers::Int)
     w = weights(joint)
     marginal = zeros(n_answers)
-    for (i, h) in enumerate(joint.hyps)
+    for (i, h) in enumerate(joint.space.values)
         marginal[Int(h[1]) + 1] += w[i]
     end
     marginal
 end
 
 """
-Infer category distribution from question text using keyword patterns.
-Returns a weight vector over categories (unnormalised).
-Falls back to uniform if no patterns match.
-"""
-function infer_category(text::String, patterns::Dict{Int,Vector{Regex}})
-    n_cat = maximum(keys(patterns); init=0)
-    w = ones(n_cat)
-    for (cat, regexes) in patterns
-        for r in regexes
-            if occursin(r, text)
-                w[cat] *= 3.0  # boost matching categories
-            end
-        end
-    end
-    w ./ sum(w)
-end
-
-"""
 Update per-category reliability beliefs using joint (category, reliability) belief.
-Exact Bayesian approach: construct joint over (category, reliability), update with
-the was_correct observation, decompose back into per-category posteriors.
+Construct joint over (category, reliability), condition with a Kernel, decompose.
 """
-function update_reliability_joint!(rel_beliefs_t::Vector{<:Belief},
+function update_reliability_joint!(rel_beliefs_t::Vector{BetaMeasure},
                                    cat_w::Vector{Float64},
                                    rel_grid::Vector{Float64},
                                    was_correct::Float64)
     n_cat = length(rel_beliefs_t)
+
+    # Build joint measure over (category, reliability)
     hyps = Vector{Float64}[]
     logw = Float64[]
     for c in 1:n_cat
-        rw = weights(rel_beliefs_t[c])
+        # Discretise BetaMeasure onto grid
+        bm = rel_beliefs_t[c]
         for (ri, r) in enumerate(rel_grid)
             push!(hyps, [Float64(c - 1), r])
-            push!(logw, log(max(cat_w[c], 1e-300)) + log(max(rw[ri], 1e-300)))
+            lp_cat = log(max(cat_w[c], 1e-300))
+            lp_rel = (bm.alpha - 1) * log(max(r, 1e-300)) +
+                     (bm.beta - 1) * log(max(1 - r, 1e-300))
+            push!(logw, lp_cat + lp_rel)
         end
     end
-    joint = Belief{Vector{Float64}}(hyps, logw)
+    joint_space = Finite{Vector{Float64}}(hyps)
+    joint = CategoricalMeasure{Vector{Float64}}(joint_space, logw)
 
-    # Bernoulli likelihood on the reliability component
-    lik = (h, obs) -> obs == 1.0 ? log(h[2]) : log(1.0 - h[2])
-    updated = update(joint, was_correct, lik)
+    # Bernoulli kernel on the reliability component
+    binary_space = Finite([0.0, 1.0])
+    bern_kernel = Kernel(
+        joint_space, binary_space,
+        h -> o -> o == 1.0 ? log(h[2]) : log(1.0 - h[2]),
+        (h, o) -> o == 1.0 ? log(h[2]) : log(1.0 - h[2])
+    )
+    updated = condition(joint, bern_kernel, was_correct)
 
     # Decompose: extract per-category reliability posteriors
+    # Fit Beta from posterior moments per category
     uw = weights(updated)
     n_rel = length(rel_grid)
     for c in 1:n_cat
-        cat_logw = Float64[]
         offset = (c - 1) * n_rel
-        for ri in 1:n_rel
-            push!(cat_logw, log(max(uw[offset + ri], 1e-300)))
-        end
-        rel_beliefs_t[c] = Belief{Float64}(copy(rel_grid), cat_logw)
+        cat_mass = sum(uw[offset + ri] for ri in 1:n_rel)
+        if cat_mass < 1e-15; continue; end
+        # Compute mean and variance of reliability for this category
+        m = sum(uw[offset + ri] * rel_grid[ri] for ri in 1:n_rel) / cat_mass
+        v = sum(uw[offset + ri] * rel_grid[ri]^2 for ri in 1:n_rel) / cat_mass - m^2
+        # Fit Beta from moments
+        m = clamp(m, 1e-6, 1 - 1e-6)
+        v = max(v, 1e-12)
+        ν = m * (1 - m) / v - 1
+        ν = max(ν, 2.0)
+        rel_beliefs_t[c] = BetaMeasure(m * ν, (1 - m) * ν)
     end
 end
 
@@ -116,22 +145,26 @@ function run_agent(; n_questions=50)
 
     # ─── Configuration ───
     n_answers = 4
-    n_tools = 2
+    n_tools = 3
     n_categories = 5
     rel_grid = [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9]
     answers = Float64[0, 1, 2, 3]
-    all_actions = Float64[-1, 0, 1, 2, 3]  # -1 = abstain
-    tool_costs = [2.0, 0.5]
+    tool_costs = [2.0, 0.5, 1.0]
     tool_true_rel = [[0.85, 0.70, 0.80, 0.60, 0.70],
-                      [0.60, 0.80, 0.50, 0.90, 0.60]]
+                      [0.60, 0.80, 0.50, 0.90, 0.60],
+                      [0.75, 0.75, 0.75, 0.75, 0.75]]
     tool_coverage_table = [[0.9, 0.7, 0.8, 0.6, 0.7],
-                            [0.6, 0.8, 0.5, 0.9, 0.6]]
+                            [0.6, 0.8, 0.5, 0.9, 0.6],
+                            [0.8, 0.8, 0.8, 0.8, 0.8]]
     reward_correct, penalty_wrong, reward_abstain = 10.0, -5.0, 0.0
-    util = (h, a) -> a == -1.0 ? reward_abstain : (h[1] == a ? reward_correct : penalty_wrong)
+
+    answer_space = Finite(answers)
+    submit_value = reward_correct
+    abstain_value = reward_abstain
 
     # ─── Persistent state (load if available) ───
-    rel_beliefs = [[Belief(copy(rel_grid)) for _ in 1:n_categories] for _ in 1:n_tools]
-    cat_belief = Belief(Float64.(collect(0:n_categories-1)))
+    rel_beliefs = [[BetaMeasure() for _ in 1:n_categories] for _ in 1:n_tools]
+    cat_belief = CategoricalMeasure(Finite(Float64.(collect(0:n_categories-1))))
     total_score = 0.0
     total_cost = 0.0
 
@@ -150,7 +183,8 @@ function run_agent(; n_questions=50)
         true_answer = rand(0:n_answers-1)
         true_cat = rand(0:n_categories-1)
 
-        answer_w = fill(1.0 / n_answers, n_answers)
+        # Start with uniform answer belief
+        answer_measure = CategoricalMeasure(Finite(answers))
         available = collect(1:n_tools)
         tool_responses = Dict{Int,Union{Int,Nothing}}()
         question_cost = 0.0
@@ -159,20 +193,21 @@ function run_agent(; n_questions=50)
         while !done && !isempty(available)
             cat_w = weights(cat_belief)
 
-            # Build tool-infos for available tools
-            tool_infos = Any[]
-            for t in available
-                eff_rel_w = mix_reliability(cat_w, rel_beliefs[t])
-                joint = make_joint_belief(answer_w, eff_rel_w, answers, rel_grid)
-                cov = sum(cat_w .* tool_coverage_table[t])
-                push!(tool_infos, Any[joint, tool_costs[t], cov, Float64(t - 1)])
-            end
+            # Build per-tool reliability measures (mix across categories)
+            rel_measures = [mix_reliability(cat_w, rel_beliefs[t]) for t in available]
 
-            decision = agent_step_fn(tool_infos, answers, all_actions, Float64(n_answers), util)
+            # Call DSL agent-step
+            decision = agent_step_fn(
+                answer_measure,
+                [rel_measures[i] for i in eachindex(available)],
+                [tool_costs[t] for t in available],
+                submit_value, abstain_value
+            )
             action_type = Int(decision[1])
 
-            if action_type == 2  # query
-                tool_idx = Int(decision[2]) + 1
+            if action_type == 2  # query tool
+                tool_local_idx = Int(decision[2]) + 1
+                tool_idx = available[tool_local_idx]
                 question_cost += tool_costs[tool_idx]
 
                 # Simulate tool response
@@ -184,19 +219,35 @@ function run_agent(; n_questions=50)
                     end
                     tool_responses[tool_idx] = response
 
-                    # Update joint belief → extract new answer marginal
-                    ti_idx = findfirst(ti -> Int(ti[4]) + 1 == tool_idx, tool_infos)
-                    updated_joint = update_on_response_fn(tool_infos[ti_idx][1],
-                                                           Float64(response), Float64(n_answers))
-                    answer_w = answer_marginal(updated_joint, n_answers)
+                    # Update answer belief via DSL
+                    rel_m = rel_measures[tool_local_idx]
+                    answer_kernel = env[Symbol("answer-kernel")]
+                    k = answer_kernel(rel_m, Float64(n_answers))
+                    answer_measure = update_on_response_fn(answer_measure, k, Float64(response))
 
                     # Update category belief (tool responded)
-                    cov_fn = c -> tool_coverage_table[tool_idx][Int(c) + 1]
-                    cat_belief = update_category_fn(cat_belief, 1.0, cov_fn)
+                    cat_kernel_space = cat_belief.space
+                    binary = Finite([0.0, 1.0])
+                    cov_kernel = Kernel(
+                        cat_kernel_space, binary,
+                        c -> (let p = tool_coverage_table[tool_idx][Int(c) + 1];
+                              o -> o == 1.0 ? log(p) : log(1.0 - p) end),
+                        (c, o) -> (let p = tool_coverage_table[tool_idx][Int(c) + 1];
+                                   o == 1.0 ? log(p) : log(1.0 - p) end)
+                    )
+                    cat_belief = condition(cat_belief, cov_kernel, 1.0)
                 else
                     tool_responses[tool_idx] = nothing
-                    cov_fn = c -> tool_coverage_table[tool_idx][Int(c) + 1]
-                    cat_belief = update_category_fn(cat_belief, 0.0, cov_fn)
+                    cat_kernel_space = cat_belief.space
+                    binary = Finite([0.0, 1.0])
+                    cov_kernel = Kernel(
+                        cat_kernel_space, binary,
+                        c -> (let p = tool_coverage_table[tool_idx][Int(c) + 1];
+                              o -> o == 1.0 ? log(p) : log(1.0 - p) end),
+                        (c, o) -> (let p = tool_coverage_table[tool_idx][Int(c) + 1];
+                                   o == 1.0 ? log(p) : log(1.0 - p) end)
+                    )
+                    cat_belief = condition(cat_belief, cov_kernel, 0.0)
                 end
 
                 filter!(t -> t != tool_idx, available)
@@ -208,7 +259,7 @@ function run_agent(; n_questions=50)
                 total_score += score
                 total_cost += question_cost
 
-                # Update reliability beliefs using joint (category, reliability) approach
+                # Update reliability beliefs with ground truth
                 cat_w = weights(cat_belief)
                 for (t, resp) in tool_responses
                     resp === nothing && continue
@@ -229,11 +280,11 @@ function run_agent(; n_questions=50)
 
         # All tools exhausted — submit or abstain based on current beliefs
         if !done
-            joint = make_joint_belief(answer_w, fill(1.0/length(rel_grid), length(rel_grid)),
-                                      answers, rel_grid)
-            best = decide(joint, answers, (h, a) -> h[1] == a ? reward_correct : penalty_wrong)
-            if best.eu > reward_abstain
-                submitted = Int(best.action)
+            pref = (h, a) -> a == h ? reward_correct : penalty_wrong
+            best_eu = value(answer_measure, answer_space, pref)
+            if best_eu > reward_abstain
+                best_a = optimise(answer_measure, answer_space, pref)
+                submitted = Int(best_a)
                 was_correct = submitted == true_answer
                 score = was_correct ? reward_correct : penalty_wrong
                 total_score += score
