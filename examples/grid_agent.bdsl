@@ -13,8 +13,8 @@
 ; ============================================================
 
 ; ── Spaces ──
-(define energy-space (space :interval -10 10))
-(define feedback-space (space :interval -10 10))
+(define energy-space (space :euclidean 1))
+(define feedback-space (space :euclidean 1))
 
 ; ── Food belief: Gaussian measure over expected energy ──
 ; Prior: N(0, 3.16) — neutral expectation, high uncertainty

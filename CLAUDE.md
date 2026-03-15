@@ -32,13 +32,15 @@ named concept — is a function over these three types.
     (space :finite a b c ...)       finite discrete set
     (space :interval lo hi)         bounded real interval
     (space :product S1 S2 ...)      cartesian product
+    (space :euclidean n)            R^n (honest domain for Gaussians)
+    (space :positive-reals)         R+ (domain for precision/variance)
 
 ### Measure constructors
 
     (measure S :uniform)            maximum entropy
     (measure S :categorical w1 w2)  explicit weights
     (measure S :beta α β)           Beta distribution on [0,1]
-    (measure S :gaussian μ σ)       Gaussian on an interval
+    (measure S :gaussian μ σ)       Gaussian on Euclidean space
 
 ### Kernel constructors
 

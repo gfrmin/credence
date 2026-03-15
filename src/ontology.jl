@@ -14,12 +14,12 @@ Axiom-constrained functions (behaviour frozen, interface negotiable):
 """
 module Ontology
 
-export Space, Finite, Interval, ProductSpace, Simplex, support
-export Measure, CategoricalMeasure, BetaMeasure, GaussianMeasure, DirichletMeasure
+export Space, Finite, Interval, ProductSpace, Simplex, Euclidean, PositiveReals, support
+export Measure, CategoricalMeasure, BetaMeasure, GaussianMeasure, DirichletMeasure, ProductMeasure, MixtureMeasure
 export Kernel, kernel_source, kernel_target, kernel_generate
 export condition, expect, push_measure, density
 export draw, optimise, value
-export weights, mean, variance, log_density_at
+export weights, mean, variance, log_density_at, prune, truncate
 
 # ================================================================
 # TYPE 1: Space
@@ -43,6 +43,12 @@ end
 struct Simplex <: Space
     k::Int  # Δ^(k-1): vectors of length k, non-negative, summing to 1
 end
+
+struct Euclidean <: Space
+    dim::Int
+end
+
+struct PositiveReals <: Space end
 
 support(s::Finite) = s.values
 
@@ -102,7 +108,7 @@ variance(m::BetaMeasure) = m.alpha * m.beta / ((m.alpha + m.beta)^2 * (m.alpha +
 # ── Gaussian: continuous on interval ──
 
 struct GaussianMeasure <: Measure
-    space::Interval
+    space::Euclidean
     mu::Float64
     sigma::Float64
 end
@@ -127,6 +133,46 @@ end
 
 weights(m::DirichletMeasure) = m.alpha ./ sum(m.alpha)
 mean(m::DirichletMeasure) = weights(m)
+
+# ── Product: independent joint ──
+
+struct ProductMeasure <: Measure
+    space::ProductSpace
+    factors::Vector{Measure}
+
+    function ProductMeasure(space::ProductSpace, factors::Vector{<:Measure})
+        length(space.factors) == length(factors) || error("space and factors must match")
+        new(space, Vector{Measure}(factors))
+    end
+end
+
+ProductMeasure(factors::Vector{<:Measure}) =
+    ProductMeasure(ProductSpace(Space[f.space for f in factors]), factors)
+
+# ── Mixture: weighted combination ──
+
+struct MixtureMeasure <: Measure
+    space::Space
+    components::Vector{Measure}
+    log_weights::Vector{Float64}
+
+    function MixtureMeasure(space::Space, components::Vector{<:Measure}, log_weights::Vector{Float64})
+        length(components) == length(log_weights) || error("components and weights must match")
+        length(components) > 0 || error("mixture must have at least one component")
+        max_lw = maximum(log_weights)
+        log_total = max_lw + log(sum(exp.(log_weights .- max_lw)))
+        new(space, Vector{Measure}(components), log_weights .- log_total)
+    end
+end
+
+MixtureMeasure(components::Vector{<:Measure}, log_weights::Vector{Float64}) =
+    MixtureMeasure(components[1].space, components, log_weights)
+
+function weights(m::MixtureMeasure)
+    max_lw = maximum(m.log_weights)
+    w = exp.(m.log_weights .- max_lw)
+    w ./ sum(w)
+end
 
 # ================================================================
 # TYPE 3: Kernel
@@ -171,7 +217,9 @@ function expect(m::BetaMeasure, f; n::Int=64)
 end
 
 function expect(m::GaussianMeasure, f; n::Int=64)
-    grid = range(m.space.lo + 1e-10, m.space.hi - 1e-10, length=n)
+    lo = m.mu - 4 * m.sigma
+    hi = m.mu + 4 * m.sigma
+    grid = range(lo, hi, length=n)
     logw = [-0.5 * ((x - m.mu) / m.sigma)^2 for x in grid]
     max_lw = maximum(logw)
     w = exp.(logw .- max_lw)
@@ -186,6 +234,19 @@ function expect(m::DirichletMeasure, f; n_samples::Int=1000)
         total += f(θ)
     end
     total / n_samples
+end
+
+function expect(m::ProductMeasure, f; n_samples::Int=1000)
+    total = 0.0
+    for _ in 1:n_samples
+        total += f(draw(m))
+    end
+    total / n_samples
+end
+
+function expect(m::MixtureMeasure, f)
+    w = weights(m)
+    sum(w[i] * expect(m.components[i], f) for i in eachindex(w))
 end
 
 # ================================================================
@@ -233,9 +294,22 @@ function condition(m::DirichletMeasure, k::Kernel, observation)
     DirichletMeasure(m.space, m.categories, new_alpha)
 end
 
-function _condition_by_grid(m::Measure, k::Kernel, observation; n::Int=64)
-    s = m isa BetaMeasure ? m.space : m.space
-    grid = collect(range(s.lo + 1e-10, s.hi - 1e-10, length=n))
+function _condition_by_grid(m::BetaMeasure, k::Kernel, observation; n::Int=64)
+    grid = collect(range(m.space.lo + 1e-10, m.space.hi - 1e-10, length=n))
+    logw = Float64[]
+    for (i, h) in enumerate(grid)
+        lp = log_density_at(m, h)
+        ll = density(k, h, observation)
+        !isnan(ll) || error("density returned NaN for hypothesis $i")
+        push!(logw, lp + ll)
+    end
+    CategoricalMeasure(Finite(grid), logw)
+end
+
+function _condition_by_grid(m::GaussianMeasure, k::Kernel, observation; n::Int=64)
+    lo = m.mu - 4 * m.sigma
+    hi = m.mu + 4 * m.sigma
+    grid = collect(range(lo, hi, length=n))
     logw = Float64[]
     for (i, h) in enumerate(grid)
         lp = log_density_at(m, h)
@@ -249,6 +323,58 @@ end
 log_density_at(m::BetaMeasure, x) = (m.alpha - 1) * log(x) + (m.beta - 1) * log(1 - x)
 log_density_at(m::GaussianMeasure, x) = -0.5 * ((x - m.mu) / m.sigma)^2
 log_density_at(m::DirichletMeasure, x) = sum((m.alpha[i] - 1) * log(x[i]) for i in eachindex(m.alpha))
+log_density_at(m::ProductMeasure, x) =
+    sum(log_density_at(m.factors[i], x[i]) for i in eachindex(m.factors))
+
+function log_density_at(m::MixtureMeasure, x)
+    terms = [m.log_weights[i] + log_density_at(m.components[i], x) for i in eachindex(m.components)]
+    max_t = maximum(terms)
+    max_t + log(sum(exp(t - max_t) for t in terms))
+end
+
+# ── MixtureMeasure condition: condition each component (theorem) ──
+
+function _predictive_ll(m::CategoricalMeasure, k::Kernel, obs)
+    w = weights(m)
+    total = sum(w[i] * exp(k.log_density(m.space.values[i], obs)) for i in eachindex(w))
+    log(max(total, 1e-300))
+end
+
+function _predictive_ll(m::Measure, k::Kernel, obs; n_samples::Int=200)
+    total = 0.0
+    for _ in 1:n_samples
+        total += exp(k.log_density(draw(m), obs))
+    end
+    log(max(total / n_samples, 1e-300))
+end
+
+function condition(m::MixtureMeasure, k::Kernel, obs)
+    new_components = Measure[]
+    new_log_wts = Float64[]
+    for (i, comp) in enumerate(m.components)
+        pred_ll = _predictive_ll(comp, k, obs)
+        conditioned = condition(comp, k, obs)
+        base_lw = m.log_weights[i] + pred_ll
+        if conditioned isa MixtureMeasure
+            for (j, sub) in enumerate(conditioned.components)
+                push!(new_components, sub)
+                push!(new_log_wts, base_lw + conditioned.log_weights[j])
+            end
+        else
+            push!(new_components, conditioned)
+            push!(new_log_wts, base_lw)
+        end
+    end
+    MixtureMeasure(m.space, new_components, new_log_wts)
+end
+
+# ── General condition fallback: importance sampling ──
+
+function condition(m::Measure, k::Kernel, obs; n_particles::Int=1000)
+    samples = [draw(m) for _ in 1:n_particles]
+    log_weights = Float64[k.log_density(s, obs) for s in samples]
+    CategoricalMeasure(Finite(samples), log_weights)
+end
 
 # ================================================================
 # AXIOM-CONSTRAINED FUNCTION: push_measure
@@ -328,7 +454,7 @@ function draw(m::BetaMeasure)
 end
 
 function draw(m::GaussianMeasure)
-    clamp(m.mu + m.sigma * randn(), m.space.lo, m.space.hi)
+    m.mu + m.sigma * randn()
 end
 
 # ── Gamma sampling (Marsaglia-Tsang) for Dirichlet draw ──
@@ -359,6 +485,35 @@ function draw(m::DirichletMeasure)
     g = [_draw_gamma(a) for a in m.alpha]
     g ./= sum(g)
     g
+end
+
+draw(m::ProductMeasure) = Any[draw(f) for f in m.factors]
+
+function draw(m::MixtureMeasure)
+    w = weights(m)
+    r = rand()
+    cumw = 0.0
+    for i in eachindex(w)
+        cumw += w[i]
+        r < cumw && return draw(m.components[i])
+    end
+    draw(m.components[end])
+end
+
+# ── Mixture maintenance ──
+
+function prune(m::MixtureMeasure; threshold::Float64=-20.0)
+    max_lw = maximum(m.log_weights)
+    keep = [i for i in eachindex(m.log_weights) if m.log_weights[i] - max_lw > threshold]
+    length(keep) == length(m.components) && return m
+    MixtureMeasure(m.space, m.components[keep], m.log_weights[keep])
+end
+
+function truncate(m::MixtureMeasure; max_components::Int=10)
+    length(m.components) <= max_components && return m
+    perm = sortperm(m.log_weights, rev=true)
+    keep = perm[1:min(max_components, length(perm))]
+    MixtureMeasure(m.space, m.components[keep], m.log_weights[keep])
 end
 
 # ================================================================

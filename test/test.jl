@@ -406,5 +406,188 @@ end
 println()
 
 println("=" ^ 60)
+println("TEST 18: General condition fallback — unknown measure-kernel combo")
+println("=" ^ 60)
+
+using Random
+let
+    Random.seed!(123)
+    # BetaMeasure with a non-Bernoulli kernel (Interval → Finite with 3 outcomes)
+    m = BetaMeasure(2.0, 5.0)  # mean = 2/7 ≈ 0.286
+    obs_space = Finite([:low, :mid, :high])
+    k = Kernel(Interval(0.0, 1.0), obs_space,
+        θ -> (o -> begin
+            if o == :low;  log(1.0 - θ)
+            elseif o == :mid; log(0.5)
+            else; log(θ)
+            end
+        end),
+        (θ, o) -> begin
+            if o == :low;  log(1.0 - θ)
+            elseif o == :mid; log(0.5)
+            else; log(θ)
+            end
+        end)
+
+    posterior = condition(m, k, :high; n_particles=5000)
+    @assert posterior isa CategoricalMeasure
+    w = weights(posterior)
+    @assert abs(sum(w) - 1.0) < 1e-10
+    # Observing :high favours higher θ, so posterior mean should be > prior mean
+    post_mean = expect(posterior, x -> x)
+    @assert post_mean > mean(m)
+    println("PASSED: General fallback fires. Prior mean=", round(mean(m), digits=3),
+            ", posterior mean=", round(post_mean, digits=3))
+end
+println()
+
+println("=" ^ 60)
+println("TEST 19: ProductMeasure — draw and expect")
+println("=" ^ 60)
+
+let
+    Random.seed!(42)
+    beta = BetaMeasure(2.0, 3.0)  # mean = 0.4
+    cat = CategoricalMeasure(Finite([:a, :b, :c]))
+    pm = ProductMeasure(Measure[beta, cat])
+
+    s = draw(pm)
+    @assert length(s) == 2
+    @assert s[1] isa Float64
+    @assert s[2] in [:a, :b, :c]
+
+    e = expect(pm, x -> x[1]; n_samples=5000)
+    @assert abs(e - 0.4) < 0.05
+    println("PASSED: ProductMeasure draw returns 2-vector, E[x₁] ≈ ", round(e, digits=3))
+end
+println()
+
+println("=" ^ 60)
+println("TEST 20: ProductMeasure condition via general fallback")
+println("=" ^ 60)
+
+let
+    Random.seed!(42)
+    cat = CategoricalMeasure(Finite([0, 1]))  # uniform over {0, 1}
+    theta0 = BetaMeasure(2.0, 2.0)  # mean = 0.5
+    theta1 = BetaMeasure(2.0, 2.0)  # mean = 0.5
+    pm = ProductMeasure(Measure[cat, theta0, theta1])
+
+    # Kernel: if cat=0, Bernoulli(θ₀); if cat=1, Bernoulli(θ₁)
+    obs_space = Finite([0, 1])
+    k = Kernel(ProductSpace(Space[Finite([0, 1]), Interval(0.0, 1.0), Interval(0.0, 1.0)]),
+               obs_space,
+               h -> (o -> begin
+                   c = h[1]; t0 = h[2]; t1 = h[3]
+                   θ = c == 0 ? t0 : t1
+                   o == 1 ? log(θ) : log(1.0 - θ)
+               end),
+               (h, o) -> begin
+                   c = h[1]; t0 = h[2]; t1 = h[3]
+                   θ = c == 0 ? t0 : t1
+                   o == 1 ? log(θ) : log(1.0 - θ)
+               end)
+
+    posterior = condition(pm, k, 1; n_particles=5000)
+    @assert posterior isa CategoricalMeasure
+    # Posterior is a CategoricalMeasure over sampled product vectors
+    w = weights(posterior)
+    @assert abs(sum(w) - 1.0) < 1e-10
+    println("PASSED: ProductMeasure conditioned via general fallback, ",
+            length(w), " particles")
+end
+println()
+
+println("=" ^ 60)
+println("TEST 21: MixtureMeasure condition preserves structure")
+println("=" ^ 60)
+
+let
+    Random.seed!(42)
+    b1 = BetaMeasure(3.0, 1.0)  # skewed high
+    b2 = BetaMeasure(1.0, 3.0)  # skewed low
+    mix = MixtureMeasure(Interval(0.0, 1.0), Measure[b1, b2], [0.0, 0.0])  # equal weights
+
+    # Bernoulli kernel on [0,1]
+    obs_space = Finite([0, 1])
+    k = Kernel(Interval(0.0, 1.0), obs_space,
+        θ -> (o -> o == 1 ? log(θ) : log(1.0 - θ)),
+        (θ, o) -> o == 1 ? log(θ) : log(1.0 - θ))
+
+    posterior = condition(mix, k, 1)
+    @assert posterior isa MixtureMeasure
+    @assert length(posterior.components) == 2
+    # After observing success, component with higher θ (b1: Beta(3,1)) should get more weight
+    w = weights(posterior)
+    @assert w[1] > w[2]  # Beta(3,1) component should dominate
+    # Components should be updated Beta measures
+    @assert posterior.components[1] isa BetaMeasure
+    @assert posterior.components[2] isa BetaMeasure
+    println("PASSED: MixtureMeasure condition → MixtureMeasure, weights = ", round.(w, digits=3))
+end
+println()
+
+println("=" ^ 60)
+println("TEST 22: MixtureMeasure expect")
+println("=" ^ 60)
+
+let
+    Random.seed!(42)
+    b1 = BetaMeasure(4.0, 2.0)  # mean = 2/3
+    b2 = BetaMeasure(2.0, 4.0)  # mean = 1/3
+    mix = MixtureMeasure(Interval(0.0, 1.0), Measure[b1, b2], [log(0.7), log(0.3)])
+
+    # E[θ] = 0.7 * 2/3 + 0.3 * 1/3 ≈ 0.567
+    result = expect(mix, θ -> θ)
+    expected = 0.7 * (4.0/6.0) + 0.3 * (2.0/6.0)
+    @assert abs(result - expected) < 0.02
+    println("PASSED: MixtureMeasure E[θ] = ", round(result, digits=4),
+            " (expected ≈ ", round(expected, digits=4), ")")
+end
+println()
+
+println("=" ^ 60)
+println("TEST 23: MixtureMeasure prune")
+println("=" ^ 60)
+
+let
+    b1 = BetaMeasure(5.0, 2.0)
+    b2 = BetaMeasure(1.0, 1.0)
+    b3 = BetaMeasure(2.0, 5.0)
+    # b1 dominant, b2 and b3 negligible
+    mix = MixtureMeasure(Interval(0.0, 1.0), Measure[b1, b2, b3],
+                         [0.0, -25.0, -30.0])
+
+    pruned = prune(mix; threshold=-20.0)
+    @assert length(pruned.components) == 1
+    # Expect unchanged within tolerance (b2, b3 had negligible weight)
+    e_before = expect(mix, θ -> θ)
+    e_after = expect(pruned, θ -> θ)
+    @assert abs(e_before - e_after) < 0.01
+    println("PASSED: Pruned 3 → ", length(pruned.components), " component(s), ",
+            "E[θ] before=", round(e_before, digits=4), " after=", round(e_after, digits=4))
+end
+println()
+
+println("=" ^ 60)
+println("TEST 24: MixtureMeasure draw")
+println("=" ^ 60)
+
+let
+    Random.seed!(42)
+    b1 = BetaMeasure(3.0, 3.0)
+    b2 = BetaMeasure(1.0, 1.0)
+    mix = MixtureMeasure(Interval(0.0, 1.0), Measure[b1, b2], [0.0, 0.0])
+
+    for _ in 1:100
+        s = draw(mix)
+        @assert s isa Float64
+        @assert 0.0 <= s <= 1.0
+    end
+    println("PASSED: 100 draws from MixtureMeasure all valid Float64 in [0,1]")
+end
+println()
+
+println("=" ^ 60)
 println("ALL TESTS PASSED")
 println("=" ^ 60)

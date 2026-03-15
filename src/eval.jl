@@ -192,6 +192,24 @@ function eval_dsl(expr::SList, env::Env)
         if sym == :support
             return support(eval_dsl(args[1], env))
         end
+        if sym == Symbol("product-measure")
+            factors = Measure[eval_dsl(a, env) for a in args]
+            return ProductMeasure(factors)
+        end
+        if sym == Symbol("mixture-measure")
+            components = Measure[]
+            log_wts = Float64[]
+            for a in args
+                a isa SList || error("mixture-measure entries must be (weight measure)")
+                length(a.items) == 2 || error("each mixture entry must be (weight measure)")
+                w = Float64(eval_dsl(a.items[1], env))
+                m = eval_dsl(a.items[2], env)
+                m isa Measure || error("mixture-measure entries must be measures")
+                push!(components, m)
+                push!(log_wts, log(max(w, 1e-300)))
+            end
+            return MixtureMeasure(components[1].space, components, log_wts)
+        end
         if sym == Symbol("kernel-target")
             return kernel_target(eval_dsl(args[1], env))
         end
@@ -251,6 +269,13 @@ function _eval_space(args, env)
         k = Int(eval_dsl(args[2], env))
         return Simplex(k)
 
+    elseif tag.value == :euclidean
+        n = Int(eval_dsl(args[2], env))
+        return Euclidean(n)
+
+    elseif tag.value == Symbol("positive-reals")
+        return PositiveReals()
+
     else
         error("unknown space type: $(tag.value)")
     end
@@ -280,20 +305,26 @@ function _make_measure(space::Interval, spec::Symbol, args, env)
         α = Float64(eval_dsl(args[1], env))
         β = Float64(eval_dsl(args[2], env))
         return BetaMeasure(space, α, β)
-    elseif spec == :gaussian
-        μ = Float64(eval_dsl(args[1], env))
-        σ = Float64(eval_dsl(args[2], env))
-        return GaussianMeasure(space, μ, σ)
     elseif spec == :uniform
         if space.lo == 0.0 && space.hi == 1.0
             return BetaMeasure(space, 1.0, 1.0)
         else
-            mid = (space.lo + space.hi) / 2
-            width = (space.hi - space.lo) * 10
-            return GaussianMeasure(space, mid, width)
+            error("uniform on Interval only defined for [0,1] (Beta(1,1)). Use Euclidean for Gaussian.")
         end
     else
         error("unknown measure for Interval space: $spec")
+    end
+end
+
+function _make_measure(space::Euclidean, spec::Symbol, args, env)
+    if spec == :gaussian
+        μ = Float64(eval_dsl(args[1], env))
+        σ = Float64(eval_dsl(args[2], env))
+        return GaussianMeasure(space, μ, σ)
+    elseif spec == :uniform
+        error("uniform measure on Euclidean space is not well-defined (use :gaussian)")
+    else
+        error("unknown measure for Euclidean space: $spec")
     end
 end
 
@@ -343,6 +374,17 @@ function _make_log_density(target::Interval, gen::Function)
             return dist_spec(o)
         else
             error("kernel generator must return a function for interval target spaces")
+        end
+    end
+end
+
+function _make_log_density(target::Euclidean, gen::Function)
+    function(h, o)
+        dist_spec = gen(h)
+        if dist_spec isa Function
+            return dist_spec(o)
+        else
+            error("kernel generator must return a function for Euclidean target spaces")
         end
     end
 end
