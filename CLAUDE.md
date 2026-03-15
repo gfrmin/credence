@@ -1,4 +1,4 @@
-# CLAUDE.md — Constitution for Credence v2.2
+# CLAUDE.md — Constitution for Credence
 
 > Read this entire document before writing any code.
 
@@ -142,7 +142,7 @@ Likelihoods are kernels, not bare lambdas. A kernel declares
 its source space, target space, and generative structure. This
 enables the compiler to select computational backends and detect
 conjugate structure. (lambda (h o) ...) as a likelihood is a
-v1 pattern that should not appear in v2.2.
+v1 pattern that should not appear.
 
 ### Heuristics are EU maximisation, not approximations
 When computational cost enters the utility function, a faster
@@ -193,17 +193,17 @@ the posterior; its job is done.
 ## Development commands
 
 Run tests:
-    julia test/test_v2.2.jl
+    julia test/test.jl
 
 Run an example:
-    julia -e 'push!(LOAD_PATH, "src"); using CredenceV2_2; run_dsl(read("examples/coin.bdsl", String))'
+    julia -e 'push!(LOAD_PATH, "src"); using Credence; run_dsl(read("examples/coin.bdsl", String))'
 
 Run the credence agent (host-driven):
     julia examples/host_credence_agent.jl
 
 Use the module from Julia REPL:
     push!(LOAD_PATH, "src")
-    using CredenceV2_2
+    using Credence
 
 Load DSL and get callable closures (host-driver pattern):
     env = load_dsl(read("examples/credence_agent.bdsl", String))
@@ -219,14 +219,14 @@ No external dependencies — Julia stdlib only. No Project.toml yet.
       eval.jl             Evaluator / compiler (DSL → Julia calls)
       stdlib.bdsl         Standard library (optimise, value, voi, etc.)
       persistence.jl      Save/load agent state across sessions
-      CredenceV2_2.jl     Module entry point
+      Credence.jl         Module entry point
     examples/
       coin.bdsl                 Biased coin learning
       credence_agent.bdsl       Agent DSL (pure functions, host-driven)
       grid_agent.bdsl           Bayesian grid-world navigation
       host_credence_agent.jl    Julia host driver for credence agent
     test/
-      test_v2.2.jl              End-to-end validation
+      test.jl                   End-to-end validation
 
 DSL source files use the `.bdsl` extension.
 

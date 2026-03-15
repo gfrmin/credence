@@ -1,20 +1,20 @@
 #!/usr/bin/env julia
 """
-    host_credence_agent.jl — Julia host driver for the credence agent (v2.2)
+    host_credence_agent.jl — Julia host driver for the credence agent
 
 Loads the DSL agent specification, drives the question loop,
 maintains per-tool per-category reliability beliefs across questions,
 and simulates tool responses.
 
-Uses v2.2 ontology types: CategoricalMeasure, BetaMeasure, Kernel.
+Uses ontology types: CategoricalMeasure, BetaMeasure, Kernel.
 All decision-theoretic computation goes through the ontology module.
 """
 
 push!(LOAD_PATH, joinpath(@__DIR__, "..", "src"))
-using CredenceV2_2
-using CredenceV2_2: expect, condition, draw, optimise, value, weights, mean
-using CredenceV2_2: CategoricalMeasure, BetaMeasure, Finite, Interval, Kernel, Measure
-using CredenceV2_2: density, log_density_at, save_state, load_state
+using Credence
+using Credence: expect, condition, draw, optimise, value, weights, mean
+using Credence: CategoricalMeasure, BetaMeasure, Finite, Interval, Kernel, Measure
+using Credence: density, log_density_at, save_state, load_state
 
 # ─── State file ───
 

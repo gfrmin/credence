@@ -1,12 +1,12 @@
 ; ============================================================
-; grid_agent.bdsl (v2.2) — Bayesian grid-world navigation
+; grid_agent.bdsl — Bayesian grid-world navigation
 ;
 ; Maps https://github.com/gfrmin/bayesian-agent to the DSL.
 ;
 ; The Python agent uses Normal-Normal conjugate models for
 ; food energy beliefs and Thompson sampling for decisions.
-; In v2.2 this is: Gaussian measures, typed kernels,
-; and push (for Thompson policy) + expect (for EU).
+; Gaussian measures, typed kernels, push (for Thompson policy)
+; + expect (for EU).
 ;
 ; The host provides: visible food items, energy feedback,
 ; agent position. The DSL computes: beliefs and decisions.

@@ -1,17 +1,11 @@
 ; ============================================================
-; coin.bdsl (v2.2) — Learning a biased coin
+; coin.bdsl — Learning a biased coin
 ;
-; v1:   (belief 0.1 0.3 0.5) — untyped. (update b obs lik) — three
-;       unrelated arguments. Likelihood was a loose lambda.
-;
-; v2:   (model ...) bundled prior + likelihood. But model, problem,
-;       optimise were all "primitives".
-;
-; v2.2: Three types: Space, Measure, Kernel.
-;       condition and expect are functions, not special forms.
-;       optimise is stdlib, not primitive.
-;       The kernel IS the likelihood — typed, inspectable,
-;       declaring both source and target spaces.
+; Three types: Space, Measure, Kernel.
+; condition and expect are functions, not special forms.
+; optimise is stdlib, not primitive.
+; The kernel IS the likelihood — typed, inspectable,
+; declaring both source and target spaces.
 ; ============================================================
 
 ; The three types in action:

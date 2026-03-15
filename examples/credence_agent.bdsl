@@ -1,15 +1,12 @@
 ; ============================================================
-; credence_agent.bdsl (v2.2) — Bayesian tool selection
+; credence_agent.bdsl — Bayesian tool selection
 ;
 ; The agent that motivated the entire project. Selects among
 ; tools to answer multiple-choice questions, learning tool
 ; reliability from feedback.
 ;
-; v1:   Reliability was (belief 0.1 0.2 ... 0.9) — a discrete
-;       grid that collapsed after one wrong answer.
-; v2:   Beta(1,1) native, but model/problem were primitives.
-; v2.2: Three types only. condition/expect are regular functions.
-;       The kernel explicitly types the observation model.
+; Three types only. condition/expect are regular functions.
+; The kernel explicitly types the observation model.
 ; ============================================================
 
 ; ── Spaces ──

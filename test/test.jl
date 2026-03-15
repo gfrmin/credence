@@ -1,6 +1,6 @@
 #!/usr/bin/env julia
 """
-    test_v2.2.jl — Tests for the three-types DSL.
+    test.jl — Tests for the three-types DSL.
 
 Verifies: type constructors, axiom-constrained functions
 (condition, expect, push, density), and derived stdlib
@@ -8,7 +8,7 @@ Verifies: type constructors, axiom-constrained functions
 """
 
 push!(LOAD_PATH, joinpath(@__DIR__, "..", "src"))
-using CredenceV2_2
+using Credence
 
 println("=" ^ 60)
 println("TEST 1: Spaces are first-class typed objects")
@@ -291,6 +291,118 @@ result = run_dsl("""
 """)
 @assert abs(result - 5.0) < 1e-10
 println("PASSED: expect passed as value to higher-order function, result = ", result)
+println()
+
+println("=" ^ 60)
+println("TEST 13: DirichletMeasure — weights")
+println("=" ^ 60)
+
+result = run_dsl("""
+(weights (measure (space :simplex 3) :dirichlet (space :finite 0 1 2) 2 3 5))
+""")
+@assert abs(result[1] - 0.2) < 1e-10
+@assert abs(result[2] - 0.3) < 1e-10
+@assert abs(result[3] - 0.5) < 1e-10
+println("PASSED: Dir(2,3,5) weights = ", result)
+println()
+
+println("=" ^ 60)
+println("TEST 14: DirichletMeasure — conjugate update via condition(m, k, obs)")
+println("=" ^ 60)
+
+# Construct Dirichlet and Categorical kernel in Julia directly
+# (kernel source is Simplex, target is Finite)
+let
+    cats = Finite([0, 1, 2])
+    m = DirichletMeasure(Simplex(3), cats, [1.0, 1.0, 1.0])
+    k = Kernel(Simplex(3), cats,
+        θ -> (o -> begin; idx = findfirst(==(o), cats.values); log(θ[idx]); end),
+        (θ, o) -> begin; idx = findfirst(==(o), cats.values); log(θ[idx]); end)
+
+    m2 = condition(m, k, 1)
+    w = weights(m2)
+    @assert abs(w[1] - 0.25) < 1e-10
+    @assert abs(w[2] - 0.50) < 1e-10
+    @assert abs(w[3] - 0.25) < 1e-10
+    println("PASSED: Dir(1,1,1) + observe 1 → weights ", w, " (expected [0.25, 0.5, 0.25])")
+
+    # Two more observations
+    m3 = condition(condition(m2, k, 0), k, 2)
+    w3 = weights(m3)
+    # Dir(2,2,2) → [1/3, 1/3, 1/3]
+    @assert all(abs.(w3 .- 1/3) .< 1e-10)
+    println("PASSED: Dir(1,1,1) + observe 1,0,2 → weights ", w3)
+end
+println()
+
+println("=" ^ 60)
+println("TEST 15: DirichletMeasure — draw sums to 1")
+println("=" ^ 60)
+
+let
+    d = DirichletMeasure(Simplex(3), Finite([0, 1, 2]), [2.0, 3.0, 5.0])
+    for _ in 1:100
+        s = draw(d)
+        @assert abs(sum(s) - 1.0) < 1e-10
+        @assert all(x -> x > 0, s)
+        @assert length(s) == 3
+    end
+    # Also test with small alpha (exercises α < 1 path)
+    d2 = DirichletMeasure(Simplex(3), Finite([0, 1, 2]), [0.5, 0.5, 0.5])
+    for _ in 1:100
+        s = draw(d2)
+        @assert abs(sum(s) - 1.0) < 1e-10
+        @assert all(x -> x >= 0, s)
+    end
+    println("PASSED: 200 draws all sum to 1.0, all components positive")
+end
+println()
+
+println("=" ^ 60)
+println("TEST 16: DirichletMeasure — expect over the simplex (Monte Carlo)")
+println("=" ^ 60)
+
+using Random
+let
+    Random.seed!(42)
+    d = DirichletMeasure(Simplex(3), Finite([0, 1, 2]), [2.0, 3.0, 5.0])
+    # E[θ_1] = alpha_1 / sum(alpha) = 0.2
+    result = expect(d, θ -> θ[1])
+    @assert abs(result - 0.2) < 0.05
+    println("PASSED: E[θ₁] under Dir(2,3,5) = ", round(result, digits=4), " (expected ≈ 0.2)")
+
+    # E[θ_1 * θ_2] = α₁α₂ / (S(S+1)) where S = sum(α) = 10
+    result2 = expect(d, θ -> θ[1] * θ[2]; n_samples=5000)
+    expected = 2.0 * 3.0 / (10.0 * 11.0)  # ≈ 0.0545
+    @assert abs(result2 - expected) < 0.02
+    println("PASSED: E[θ₁θ₂] under Dir(2,3,5) = ", round(result2, digits=5), " (expected ≈ ", round(expected, digits=5), ")")
+end
+println()
+
+println("=" ^ 60)
+println("TEST 17: DirichletMeasure — posterior predictive via push_measure")
+println("=" ^ 60)
+
+let
+    cats = Finite([10, 20, 30])
+    d = DirichletMeasure(Simplex(3), cats, [2.0, 3.0, 5.0])
+    k = Kernel(Simplex(3), cats,
+        θ -> (o -> begin; idx = findfirst(==(o), cats.values); log(θ[idx]); end),
+        (θ, o) -> begin; idx = findfirst(==(o), cats.values); log(θ[idx]); end)
+
+    pred = push_measure(d, k)
+    @assert pred isa CategoricalMeasure
+    w = weights(pred)
+    @assert abs(w[1] - 0.2) < 1e-10
+    @assert abs(w[2] - 0.3) < 1e-10
+    @assert abs(w[3] - 0.5) < 1e-10
+    println("PASSED: push_measure → CategoricalMeasure with weights ", w)
+
+    # E[category_value] via the pushforward
+    result = expect(pred, x -> x)
+    @assert abs(result - 23.0) < 1e-10
+    println("PASSED: E[X] via push_measure = ", result, " (expected 23.0)")
+end
 println()
 
 println("=" ^ 60)

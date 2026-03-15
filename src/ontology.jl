@@ -14,8 +14,8 @@ Axiom-constrained functions (behaviour frozen, interface negotiable):
 """
 module Ontology
 
-export Space, Finite, Interval, ProductSpace, support
-export Measure, CategoricalMeasure, BetaMeasure, GaussianMeasure
+export Space, Finite, Interval, ProductSpace, Simplex, support
+export Measure, CategoricalMeasure, BetaMeasure, GaussianMeasure, DirichletMeasure
 export Kernel, kernel_source, kernel_target, kernel_generate
 export condition, expect, push_measure, density
 export draw, optimise, value
@@ -38,6 +38,10 @@ end
 
 struct ProductSpace <: Space
     factors::Vector{Space}
+end
+
+struct Simplex <: Space
+    k::Int  # Δ^(k-1): vectors of length k, non-negative, summing to 1
 end
 
 support(s::Finite) = s.values
@@ -106,6 +110,24 @@ end
 mean(m::GaussianMeasure) = m.mu
 variance(m::GaussianMeasure) = m.sigma^2
 
+# ── Dirichlet: distribution over the probability simplex ──
+
+struct DirichletMeasure <: Measure
+    space::Simplex
+    categories::Finite     # the category labels the probability vectors are about
+    alpha::Vector{Float64} # concentration parameters, length k
+
+    function DirichletMeasure(space::Simplex, categories::Finite, alpha::Vector{Float64})
+        space.k == length(categories.values) == length(alpha) ||
+            error("simplex dimension, categories, and alpha must all have the same length")
+        all(a -> a > 0, alpha) || error("all alpha must be positive")
+        new(space, categories, alpha)
+    end
+end
+
+weights(m::DirichletMeasure) = m.alpha ./ sum(m.alpha)
+mean(m::DirichletMeasure) = weights(m)
+
 # ================================================================
 # TYPE 3: Kernel
 # ================================================================
@@ -157,6 +179,15 @@ function expect(m::GaussianMeasure, f; n::Int=64)
     sum(w[i] * f(grid[i]) for i in eachindex(w))
 end
 
+function expect(m::DirichletMeasure, f; n_samples::Int=1000)
+    total = 0.0
+    for _ in 1:n_samples
+        θ = draw(m)
+        total += f(θ)
+    end
+    total / n_samples
+end
+
 # ================================================================
 # AXIOM-CONSTRAINED FUNCTION: condition
 # ================================================================
@@ -190,6 +221,18 @@ function condition(m::GaussianMeasure, k::Kernel, observation)
     _condition_by_grid(m, k, observation)
 end
 
+function condition(m::DirichletMeasure, k::Kernel, observation)
+    k.source isa Simplex && k.target isa Finite ||
+        error("DirichletMeasure condition requires a Categorical kernel (Simplex → Finite)")
+
+    idx = findfirst(==(observation), m.categories.values)
+    idx !== nothing || error("observation $observation not in categories $(m.categories.values)")
+
+    new_alpha = copy(m.alpha)
+    new_alpha[idx] += 1.0
+    DirichletMeasure(m.space, m.categories, new_alpha)
+end
+
 function _condition_by_grid(m::Measure, k::Kernel, observation; n::Int=64)
     s = m isa BetaMeasure ? m.space : m.space
     grid = collect(range(s.lo + 1e-10, s.hi - 1e-10, length=n))
@@ -205,6 +248,7 @@ end
 
 log_density_at(m::BetaMeasure, x) = (m.alpha - 1) * log(x) + (m.beta - 1) * log(1 - x)
 log_density_at(m::GaussianMeasure, x) = -0.5 * ((x - m.mu) / m.sigma)^2
+log_density_at(m::DirichletMeasure, x) = sum((m.alpha[i] - 1) * log(x[i]) for i in eachindex(m.alpha))
 
 # ================================================================
 # AXIOM-CONSTRAINED FUNCTION: push_measure
@@ -242,6 +286,18 @@ function push_measure(m::CategoricalMeasure, k::Kernel)
     end
 end
 
+function push_measure(m::DirichletMeasure, k::Kernel)
+    # Any kernel Simplex → Finite is a categorical draw: each simplex
+    # point IS a categorical distribution. The pushforward is the
+    # posterior predictive: P(o_j) = E_Dir[θ_j] = alpha_j / sum(alpha).
+    k.source isa Simplex || error("push_measure from DirichletMeasure requires Simplex source kernel")
+    tgt = k.target
+    tgt isa Finite || error("push_measure to non-Finite target not implemented for DirichletMeasure")
+    w = weights(m)
+    logw = [log(max(wi, 1e-300)) for wi in w]
+    CategoricalMeasure(tgt, logw)
+end
+
 # ================================================================
 # HOST OPERATION: draw
 # ================================================================
@@ -273,6 +329,36 @@ end
 
 function draw(m::GaussianMeasure)
     clamp(m.mu + m.sigma * randn(), m.space.lo, m.space.hi)
+end
+
+# ── Gamma sampling (Marsaglia-Tsang) for Dirichlet draw ──
+
+function _draw_gamma(alpha::Float64)
+    if alpha == 1.0
+        return -log(rand())  # Gamma(1,1) = Exponential(1)
+    elseif alpha < 1.0
+        # Ahrens-Dieter: Gamma(α) = Gamma(α+1) · U^(1/α)
+        return _draw_gamma(alpha + 1.0) * rand()^(1.0 / alpha)
+    else
+        # Marsaglia-Tsang for α > 1
+        d = alpha - 1.0/3.0
+        c = 1.0 / sqrt(9.0 * d)
+        while true
+            x = randn()
+            v = (1.0 + c * x)^3
+            v > 0 || continue
+            u = rand()
+            if u < 1.0 - 0.0331 * x^4 || log(u) < 0.5 * x^2 + d * (1.0 - v + log(v))
+                return d * v
+            end
+        end
+    end
+end
+
+function draw(m::DirichletMeasure)
+    g = [_draw_gamma(a) for a in m.alpha]
+    g ./= sum(g)
+    g
 end
 
 # ================================================================

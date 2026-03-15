@@ -1,8 +1,8 @@
 """
-    CredenceV2_2 — Three types. Axiom-constrained functions.
+    Credence — Three types. Axiom-constrained functions.
     Everything else is stdlib.
 """
-module CredenceV2_2
+module Credence
 
 include("parse.jl")
 include("ontology.jl")
@@ -15,8 +15,8 @@ using .Eval
 using .Persistence
 
 export run_dsl, load_dsl, parse_sexpr, parse_all
-export Space, Finite, Interval, ProductSpace, support
-export Measure, CategoricalMeasure, BetaMeasure, GaussianMeasure
+export Space, Finite, Interval, ProductSpace, Simplex, support
+export Measure, CategoricalMeasure, BetaMeasure, GaussianMeasure, DirichletMeasure
 export Kernel, kernel_source, kernel_target
 export condition, expect, push_measure, density, log_density_at
 export draw, optimise, value

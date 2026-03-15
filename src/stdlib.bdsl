@@ -1,5 +1,5 @@
 ; ============================================================
-; stdlib.bdsl — Credence v2.2 standard library
+; stdlib.bdsl — Credence standard library
 ;
 ; Three types: Space, Measure, Kernel
 ; Axiom-constrained functions: condition, expect, push, density

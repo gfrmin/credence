@@ -1,5 +1,5 @@
 """
-    eval.jl — Evaluator for Credence v2.2
+    eval.jl — Evaluator for Credence
 
 The frozen layer: three type constructors.
     (space ...)    → Space
@@ -247,6 +247,10 @@ function _eval_space(args, env)
         factors = [eval_dsl(a, env) for a in @view args[2:end]]
         return ProductSpace(factors)
 
+    elseif tag.value == :simplex
+        k = Int(eval_dsl(args[2], env))
+        return Simplex(k)
+
     else
         error("unknown space type: $(tag.value)")
     end
@@ -290,6 +294,17 @@ function _make_measure(space::Interval, spec::Symbol, args, env)
         end
     else
         error("unknown measure for Interval space: $spec")
+    end
+end
+
+function _make_measure(space::Simplex, spec::Symbol, args, env)
+    if spec == :dirichlet
+        categories = eval_dsl(args[1], env)
+        categories isa Finite || error(":dirichlet requires a Finite space for categories")
+        alphas = [Float64(eval_dsl(a, env)) for a in @view(args[2:end])]
+        return DirichletMeasure(space, categories, alphas)
+    else
+        error("unknown measure for Simplex space: $spec")
     end
 end
 
