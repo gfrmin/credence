@@ -276,18 +276,37 @@ function condition(m::CategoricalMeasure{T}, k::Kernel, observation) where T
 end
 
 function condition(m::BetaMeasure, k::Kernel, observation)
-    # Conjugate path: if target is binary and density is Bernoulli-shaped
-    if observation == 1 || observation == 1.0 || observation == true
-        BetaMeasure(m.space, m.alpha + 1.0, m.beta)
-    elseif observation == 0 || observation == 0.0 || observation == false
-        BetaMeasure(m.space, m.alpha, m.beta + 1.0)
+    # Conjugate path: Beta-Bernoulli requires Interval → Finite with exactly 2 outcomes
+    if k.source isa Interval && k.target isa Finite && length(k.target.values) == 2
+        if observation == 1 || observation == 1.0 || observation == true
+            BetaMeasure(m.space, m.alpha + 1.0, m.beta)
+        elseif observation == 0 || observation == 0.0 || observation == false
+            BetaMeasure(m.space, m.alpha, m.beta + 1.0)
+        else
+            _condition_by_grid(m, k, observation)
+        end
     else
-        # Non-conjugate: fall back to grid
         _condition_by_grid(m, k, observation)
     end
 end
 
 function condition(m::GaussianMeasure, k::Kernel, observation)
+    # Conjugate path: Normal-Normal requires Euclidean → Euclidean
+    if k.source isa Euclidean && k.target isa Euclidean
+        # Extract observation noise σ_obs from kernel density shape
+        ll_at_peak = density(k, 0.0, 0.0)
+        ll_at_one = density(k, 0.0, 1.0)
+        diff = ll_at_peak - ll_at_one
+        if diff > 0 && isfinite(diff)
+            sigma_obs = sqrt(0.5 / diff)
+            tau_prior = 1.0 / m.sigma^2
+            tau_obs = 1.0 / sigma_obs^2
+            tau_post = tau_prior + tau_obs
+            mu_post = (tau_prior * m.mu + tau_obs * observation) / tau_post
+            sigma_post = 1.0 / sqrt(tau_post)
+            return GaussianMeasure(m.space, mu_post, sigma_post)
+        end
+    end
     _condition_by_grid(m, k, observation)
 end
 

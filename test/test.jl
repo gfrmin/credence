@@ -589,5 +589,125 @@ end
 println()
 
 println("=" ^ 60)
+println("TEST 25: BetaMeasure + non-Bernoulli kernel → grid fallback")
+println("=" ^ 60)
+
+let
+    prior = BetaMeasure(2.0, 2.0)
+    # 3-outcome kernel: NOT conjugate (not binary)
+    obs_space = Finite([:low, :mid, :high])
+    k = Kernel(Interval(0.0, 1.0), obs_space,
+        θ -> (o -> begin
+            if o == :low;  log(1.0 - θ)
+            elseif o == :mid; log(0.5)
+            else; log(θ)
+            end
+        end),
+        (θ, o) -> begin
+            if o == :low;  log(1.0 - θ)
+            elseif o == :mid; log(0.5)
+            else; log(θ)
+            end
+        end)
+    post = condition(prior, k, :mid)
+    @assert post isa CategoricalMeasure "Expected CategoricalMeasure fallback, got $(typeof(post))"
+    println("PASSED: BetaMeasure + 3-outcome kernel → CategoricalMeasure (grid fallback)")
+end
+println()
+
+println("=" ^ 60)
+println("TEST 26: BetaMeasure + Bernoulli kernel → conjugate (unchanged)")
+println("=" ^ 60)
+
+let
+    prior = BetaMeasure(1.0, 1.0)
+    obs_space = Finite([0.0, 1.0])
+    k = Kernel(Interval(0.0, 1.0), obs_space,
+        θ -> (o -> o == 1.0 ? log(θ) : log(1.0 - θ)),
+        (θ, o) -> o == 1.0 ? log(θ) : log(1.0 - θ))
+    post = condition(prior, k, 1.0)
+    @assert post isa BetaMeasure "Expected BetaMeasure, got $(typeof(post))"
+    @assert post.alpha ≈ 2.0 "Expected alpha=2.0, got $(post.alpha)"
+    @assert post.beta ≈ 1.0 "Expected beta=1.0, got $(post.beta)"
+    println("PASSED: BetaMeasure + Bernoulli kernel → conjugate update (α=$(post.alpha), β=$(post.beta))")
+end
+println()
+
+println("=" ^ 60)
+println("TEST 27: GaussianMeasure + Normal kernel → conjugate")
+println("=" ^ 60)
+
+let
+    prior = GaussianMeasure(Euclidean(1), 0.0, 1.0)
+    # Normal-Normal kernel: σ_obs = 1.0
+    sigma_obs = 1.0
+    k = Kernel(Euclidean(1), Euclidean(1),
+        h -> (o -> -0.5 * ((o - h) / sigma_obs)^2),
+        (h, o) -> -0.5 * ((o - h) / sigma_obs)^2)
+    post = condition(prior, k, 2.0)
+    @assert post isa GaussianMeasure "Expected GaussianMeasure, got $(typeof(post))"
+    @assert abs(post.mu - 1.0) < 1e-10 "Expected μ_post=1.0, got $(post.mu)"
+    expected_sigma = 1.0 / sqrt(2.0)
+    @assert abs(post.sigma - expected_sigma) < 1e-10 "Expected σ_post=$(expected_sigma), got $(post.sigma)"
+    println("PASSED: N(0,1) + observe 2.0 through σ_obs=1 → N($(post.mu), $(round(post.sigma, digits=4)))")
+end
+println()
+
+println("=" ^ 60)
+println("TEST 28: Gaussian precision-weighted mean (strong prior dominates)")
+println("=" ^ 60)
+
+let
+    prior = GaussianMeasure(Euclidean(1), 10.0, 0.5)  # tight prior at 10
+    sigma_obs = 2.0
+    k = Kernel(Euclidean(1), Euclidean(1),
+        h -> (o -> -0.5 * ((o - h) / sigma_obs)^2),
+        (h, o) -> -0.5 * ((o - h) / sigma_obs)^2)
+    post = condition(prior, k, 0.0)
+    @assert post isa GaussianMeasure "Expected GaussianMeasure, got $(typeof(post))"
+    # τ_prior = 4.0, τ_obs = 0.25, μ_post = (4*10 + 0.25*0) / 4.25 ≈ 9.412
+    @assert post.mu > 9.0 "Strong prior should dominate: μ_post=$(post.mu)"
+    @assert post.sigma < 0.5 "Posterior should be tighter than prior: σ_post=$(post.sigma)"
+    println("PASSED: Strong prior N(10,0.5) + weak obs x=0 → μ_post=$(round(post.mu, digits=4)) (prior dominates)")
+end
+println()
+
+println("=" ^ 60)
+println("TEST 29: Gaussian variance always shrinks")
+println("=" ^ 60)
+
+let
+    configs = [(0.0, 1.0, 1.0, 0.0), (5.0, 2.0, 0.5, 3.0), (-1.0, 0.1, 10.0, 100.0)]
+    for (mu0, sig0, sig_obs, x) in configs
+        prior = GaussianMeasure(Euclidean(1), mu0, sig0)
+        k = Kernel(Euclidean(1), Euclidean(1),
+            h -> (o -> -0.5 * ((o - h) / sig_obs)^2),
+            (h, o) -> -0.5 * ((o - h) / sig_obs)^2)
+        post = condition(prior, k, x)
+        @assert post isa GaussianMeasure "Expected GaussianMeasure"
+        @assert post.sigma < sig0 "Variance must shrink: σ_post=$(post.sigma) ≥ σ_prior=$(sig0)"
+    end
+    println("PASSED: Posterior σ < prior σ for all 3 configs")
+end
+println()
+
+println("=" ^ 60)
+println("TEST 30: GaussianMeasure + non-Gaussian kernel → grid fallback")
+println("=" ^ 60)
+
+let
+    prior = GaussianMeasure(Euclidean(1), 0.0, 1.0)
+    # Kernel to Finite target: NOT Normal-Normal
+    obs_space = Finite([:a, :b])
+    k = Kernel(Euclidean(1), obs_space,
+        h -> (o -> o == :a ? log(0.5 + 0.3 * tanh(h)) : log(0.5 - 0.3 * tanh(h))),
+        (h, o) -> o == :a ? log(0.5 + 0.3 * tanh(h)) : log(0.5 - 0.3 * tanh(h)))
+    post = condition(prior, k, :a)
+    @assert post isa CategoricalMeasure "Expected CategoricalMeasure fallback, got $(typeof(post))"
+    println("PASSED: GaussianMeasure + Finite-target kernel → CategoricalMeasure (grid fallback)")
+end
+println()
+
+println("=" ^ 60)
 println("ALL TESTS PASSED")
 println("=" ^ 60)
