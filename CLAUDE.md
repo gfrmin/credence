@@ -282,6 +282,20 @@ the DSL specifies the choice among them.
     Staton (2017)             — measure-theoretic PPL semantics
     McCarthy (1960)           — why S-expressions
 
+## Performance problems
+
+If a test run is too slow, if the agent hangs, or if exact inference
+is computationally expensive: STOP. Do not replace exact inference
+with an approximation to fix a performance problem. Instead:
+
+1. Report the performance problem and where it occurs.
+2. Propose the approximation explicitly, explaining what
+   exactness is lost.
+3. Wait for approval before implementing.
+
+Approximations are sometimes necessary. Undocumented approximations
+are always bugs. The distinction is consent, not capability.
+
 ## One-line summary
 
 Three types, axiom-constrained functions, everything else is stdlib.

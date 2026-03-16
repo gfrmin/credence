@@ -13,8 +13,9 @@ All decision-theoretic computation goes through the ontology module.
 push!(LOAD_PATH, joinpath(@__DIR__, "..", "src"))
 using Credence
 using Credence: expect, condition, draw, optimise, value, weights, mean
-using Credence: CategoricalMeasure, BetaMeasure, MixtureMeasure, Finite, Interval, Kernel, Measure
-using Credence: density, log_density_at, save_state, load_state
+using Credence: CategoricalMeasure, BetaMeasure, MixtureMeasure, ProductMeasure
+using Credence: Finite, Interval, ProductSpace, Kernel, FactorSelector, Measure
+using Credence: density, log_density_at, save_state, load_state, prune
 
 # ─── State file ───
 
@@ -59,12 +60,25 @@ function thompson_action(posterior::Measure, actions::Finite, pref)
     optimise(point, actions, pref)
 end
 
-"""Construct exact MixtureMeasure from per-category Betas weighted by category posterior."""
-function effective_reliability(rel_beliefs_t::Vector{BetaMeasure},
-                                cat_w::Vector{Float64})
-    MixtureMeasure(Interval(0.0, 1.0),
-        Measure[rel_beliefs_t[c] for c in eachindex(rel_beliefs_t)],
-        [log(max(cat_w[c], 1e-300)) for c in eachindex(cat_w)])
+"""Initial per-tool reliability state: single ProductMeasure of K Beta(1,1) priors."""
+function initial_rel_state(n_categories::Int)
+    factors = Measure[BetaMeasure() for _ in 1:n_categories]
+    prod = ProductMeasure(factors)
+    MixtureMeasure(prod.space, Measure[prod], [0.0])
+end
+
+"""Marginalize over components × categories to get effective reliability as MixtureMeasure of Betas."""
+function effective_reliability(rel_state::MixtureMeasure, cat_w::Vector{Float64})
+    components = Measure[]
+    log_wts = Float64[]
+    for (i, comp) in enumerate(rel_state.components)
+        prod = comp::ProductMeasure
+        for (c, w_c) in enumerate(cat_w)
+            push!(components, prod.factors[c])
+            push!(log_wts, rel_state.log_weights[i] + log(max(w_c, 1e-300)))
+        end
+    end
+    prune(MixtureMeasure(Interval(0.0, 1.0), components, log_wts))
 end
 
 """Coverage kernel: dispatches on AbstractTool, uses trait methods."""
@@ -79,38 +93,59 @@ function coverage_kernel(tool::AbstractTool, cat_space::Finite)
 end
 
 """
-Update per-category reliability beliefs via MixtureMeasure condition.
+Update per-tool reliability state via structured ProductMeasure condition.
 
-Conditions MixtureMeasure(per_cat_betas, cat_weights) on Bernoulli(was_correct).
-Extracts updated per-category Betas into rel_beliefs_t (mutates in place).
-Returns new cat_belief from posterior weights — mandatory, encodes category evidence.
+Prepends categorical belief to per-tool state, conditions the joint on
+the Bernoulli observation using FactorSelector (only the active category's
+Beta is updated per branch), then strips the categorical back out.
+Pure function — no mutation.
 """
-function update_reliability!(rel_beliefs_t::Vector{BetaMeasure},
-                              cat_belief::CategoricalMeasure,
-                              was_correct::Float64)
-    cat_w = weights(cat_belief)
+function update_tool_reliability(rel_state::MixtureMeasure,
+                                  cat_belief::CategoricalMeasure, obs)
+    n_cat = length(cat_belief.space.values)
 
-    # Construct mixture from current beliefs
-    rel_mix = effective_reliability(rel_beliefs_t, cat_w)
-
-    # Bernoulli kernel on reliability
-    bern = Kernel(Interval(0.0, 1.0), Finite([0.0, 1.0]),
-        r -> (o -> o == 1.0 ? log(r) : log(1.0 - r)),
-        (r, o) -> o == 1.0 ? log(r) : log(1.0 - r))
-
-    # Condition preserves MixtureMeasure structure
-    posterior = condition(rel_mix, bern, was_correct)
-
-    # Extract updated per-category Betas (mutates rel_beliefs_t)
-    for c in eachindex(rel_beliefs_t)
-        rel_beliefs_t[c] = posterior.components[c]
+    # 1. Prepend categorical to each component → MixtureMeasure of bigger ProductMeasures
+    joint_components = Measure[]
+    for comp in rel_state.components
+        prod = comp::ProductMeasure
+        push!(joint_components, ProductMeasure(Measure[cat_belief, prod.factors...]))
     end
+    joint_space = joint_components[1].space
+    joint = MixtureMeasure(joint_space, joint_components, copy(rel_state.log_weights))
 
-    # Return updated category belief from posterior weights.
-    # The posterior component weights encode evidence about category
-    # membership from this reliability observation — discarding them
-    # loses information the agent has already paid for.
-    CategoricalMeasure(cat_belief.space, copy(posterior.log_weights))
+    # 2. Build kernel with FactorSelector and condition — ONE LINE of inference
+    binary = Finite([0.0, 1.0])
+    k = Kernel(joint_space, binary,
+        _ -> error("generate not used"),
+        (h, o) -> let r = h[Int(h[1]) + 2]; o == 1.0 ? log(r) : log(1.0 - r) end,
+        FactorSelector(1, c -> [Int(c) + 2]))
+    posterior = condition(joint, k, obs)
+
+    # 3. Extract category posteriors (sum weights by categorical value)
+    cat_log_post = fill(-Inf, n_cat)
+    for (i, comp) in enumerate(posterior.components)
+        prod = comp::ProductMeasure
+        c_val = prod.factors[1]::CategoricalMeasure  # point mass
+        ci = findfirst(==(c_val.space.values[1]), cat_belief.space.values)
+        lw = posterior.log_weights[i]
+        if cat_log_post[ci] == -Inf
+            cat_log_post[ci] = lw
+        else
+            mx = max(cat_log_post[ci], lw)
+            cat_log_post[ci] = mx + log(exp(cat_log_post[ci] - mx) + exp(lw - mx))
+        end
+    end
+    new_cat_belief = CategoricalMeasure(cat_belief.space, cat_log_post)
+
+    # 4. Strip categorical from each component → per-tool state
+    stripped = Measure[ProductMeasure(Measure[comp.factors[2:end]...])
+                       for comp in posterior.components]
+    new_rel_state = MixtureMeasure(stripped[1].space, stripped, copy(posterior.log_weights))
+
+    # 5. Prune and truncate
+    new_rel_state = Credence.truncate(prune(new_rel_state); max_components=20)
+
+    (new_rel_state, new_cat_belief)
 end
 
 # ─── Main loop ───
@@ -141,18 +176,27 @@ function run_agent(; n_questions=50)
     abstain_value = reward_abstain
 
     # ─── Persistent state (load if available) ───
-    rel_beliefs = [[BetaMeasure() for _ in 1:n_categories] for _ in 1:n_tools]
+    rel_states = [initial_rel_state(n_categories) for _ in 1:n_tools]
     cat_belief = CategoricalMeasure(Finite(Float64.(collect(0:n_categories-1))))
     total_score = 0.0
     total_cost = 0.0
 
     if isfile(STATE_FILE)
-        state = load_state(STATE_FILE)
-        rel_beliefs = state[:rel_beliefs]
-        cat_belief = state[:cat_belief]
-        total_score = state[:total_score]
-        total_cost = state[:total_cost]
-        println("Loaded state from $STATE_FILE")
+        try
+            state = load_state(STATE_FILE)
+            loaded_rel = state[:rel_beliefs]
+            if loaded_rel isa Vector && !isempty(loaded_rel) && first(loaded_rel) isa MixtureMeasure
+                rel_states = loaded_rel
+                cat_belief = state[:cat_belief]
+                total_score = state[:total_score]
+                total_cost = state[:total_cost]
+                println("Loaded state from $STATE_FILE")
+            else
+                @warn "State format changed, starting fresh"
+            end
+        catch e
+            @warn "Could not load state, starting fresh" exception=e
+        end
     end
 
     # ─── Main loop ───
@@ -172,7 +216,7 @@ function run_agent(; n_questions=50)
             cat_w = weights(cat_belief)
 
             # Build per-tool reliability measures (exact MixtureMeasure)
-            rel_measures = [effective_reliability(rel_beliefs[t], cat_w) for t in available]
+            rel_measures = [effective_reliability(rel_states[t], cat_w) for t in available]
 
             # Call DSL agent-step
             decision = agent_step_fn(
@@ -223,7 +267,7 @@ function run_agent(; n_questions=50)
                 for (t, resp) in tool_responses
                     resp === nothing && continue
                     correct = Float64(resp == true_answer)
-                    cat_belief = update_reliability!(rel_beliefs[t], cat_belief, correct)
+                    (rel_states[t], cat_belief) = update_tool_reliability(rel_states[t], cat_belief, correct)
                 end
 
                 println("Q$q: submit=$submitted correct=$was_correct score=$score " *
@@ -262,7 +306,7 @@ function run_agent(; n_questions=50)
 
     # ─── Save state ───
     save_state(STATE_FILE;
-               rel_beliefs=rel_beliefs, cat_belief=cat_belief,
+               rel_beliefs=rel_states, cat_belief=cat_belief,
                total_score=total_score, total_cost=total_cost)
 
     println("\nTotal score: $total_score")

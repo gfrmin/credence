@@ -16,7 +16,7 @@ module Ontology
 
 export Space, Finite, Interval, ProductSpace, Simplex, Euclidean, PositiveReals, support
 export Measure, CategoricalMeasure, BetaMeasure, GaussianMeasure, DirichletMeasure, ProductMeasure, MixtureMeasure
-export Kernel, kernel_source, kernel_target, kernel_generate
+export Kernel, FactorSelector, kernel_source, kernel_target, kernel_generate
 export condition, expect, push_measure, density
 export draw, optimise, value
 export weights, mean, variance, log_density_at, prune, truncate
@@ -178,12 +178,21 @@ end
 # TYPE 3: Kernel
 # ================================================================
 
+struct FactorSelector
+    discrete_index::Int       # which factor is the discrete selector
+    active::Function          # selector_value → Vector{Int} of factors to condition
+end
+
 struct Kernel
     source::Space       # H
     target::Space       # O
     generate::Function  # h → distribution spec (for push)
     log_density::Function  # (h, o) → log p(o|h) (for condition)
+    factor_selector::Union{Nothing, FactorSelector}
 end
+
+Kernel(source::Space, target::Space, gen::Function, ld::Function) =
+    Kernel(source, target, gen, ld, nothing)
 
 kernel_source(k::Kernel) = k.source
 kernel_target(k::Kernel) = k.target
@@ -371,6 +380,59 @@ function condition(m::MixtureMeasure, k::Kernel, obs)
         end
     end
     MixtureMeasure(m.space, new_components, new_log_wts)
+end
+
+# ── ProductMeasure condition: structured factored update ──
+
+function condition(m::ProductMeasure, k::Kernel, obs; kwargs...)
+    fs = k.factor_selector
+    fs === nothing && return _condition_product_fallback(m, k, obs; kwargs...)
+
+    d = fs.discrete_index
+    cat = m.factors[d]::CategoricalMeasure
+    cat_w = weights(cat)
+
+    new_components = Measure[]
+    new_log_wts = Float64[]
+
+    for (ci, c) in enumerate(cat.space.values)
+        active_indices = fs.active(c)
+        length(active_indices) == 1 || error("multiple active factors not yet supported")
+        ai = active_indices[1]
+        factor_ai = m.factors[ai]
+
+        # Restricted kernel: fix discrete at c, project onto active factor
+        restricted_ld = (h_i, o) -> begin
+            full_h = Any[0.0 for _ in m.factors]
+            full_h[d] = c
+            full_h[ai] = h_i
+            k.log_density(full_h, o)
+        end
+        restricted_k = Kernel(factor_ai.space, k.target,
+            _ -> error("generate not used in condition"), restricted_ld)
+
+        # Condition — hits conjugate fast-paths (e.g. Beta + Bernoulli)
+        conditioned = condition(factor_ai, restricted_k, obs)
+
+        # Predictive likelihood for weighting
+        pred_ll = _predictive_ll(factor_ai, restricted_k, obs)
+
+        # New ProductMeasure: discrete → point mass, active → conditioned, rest unchanged
+        new_factors = Measure[f for f in m.factors]
+        new_factors[d] = CategoricalMeasure(Finite([c]))
+        new_factors[ai] = conditioned
+
+        push!(new_components, ProductMeasure(new_factors))
+        push!(new_log_wts, log(max(cat_w[ci], 1e-300)) + pred_ll)
+    end
+
+    MixtureMeasure(m.space, new_components, new_log_wts)
+end
+
+function _condition_product_fallback(m::ProductMeasure, k::Kernel, obs; n_particles::Int=1000)
+    samples = [draw(m) for _ in 1:n_particles]
+    log_weights = Float64[k.log_density(s, obs) for s in samples]
+    CategoricalMeasure(Finite(samples), log_weights)
 end
 
 # ── General condition fallback: importance sampling ──
