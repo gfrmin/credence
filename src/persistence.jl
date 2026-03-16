@@ -14,9 +14,11 @@ export save_state, load_state
 
 """Save agent state to a file."""
 function save_state(filepath::String;
-                    rel_beliefs, cat_belief, total_score::Float64, total_cost::Float64)
+                    rel_beliefs, cov_beliefs, cat_belief,
+                    total_score::Float64, total_cost::Float64)
     state = Dict(
         :rel_beliefs => rel_beliefs,
+        :cov_beliefs => cov_beliefs,
         :cat_belief  => cat_belief,
         :total_score => total_score,
         :total_cost  => total_cost

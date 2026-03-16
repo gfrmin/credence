@@ -16,7 +16,7 @@ module Ontology
 
 export Space, Finite, Interval, ProductSpace, Simplex, Euclidean, PositiveReals, support
 export Measure, CategoricalMeasure, BetaMeasure, GaussianMeasure, DirichletMeasure, ProductMeasure, MixtureMeasure
-export Kernel, FactorSelector, kernel_source, kernel_target, kernel_generate
+export Kernel, FactorSelector, kernel_source, kernel_target, kernel_params
 export condition, expect, push_measure, density
 export draw, optimise, value
 export weights, mean, variance, log_density_at, prune, truncate
@@ -189,13 +189,19 @@ struct Kernel
     generate::Function  # h → distribution spec (for push)
     log_density::Function  # (h, o) → log p(o|h) (for condition)
     factor_selector::Union{Nothing, FactorSelector}
+    params::Union{Nothing, Dict{Symbol,Any}}
 end
 
+Kernel(source::Space, target::Space, gen::Function, ld::Function,
+       fs::Union{Nothing, FactorSelector}) =
+    Kernel(source, target, gen, ld, fs, nothing)
+
 Kernel(source::Space, target::Space, gen::Function, ld::Function) =
-    Kernel(source, target, gen, ld, nothing)
+    Kernel(source, target, gen, ld, nothing, nothing)
 
 kernel_source(k::Kernel) = k.source
 kernel_target(k::Kernel) = k.target
+kernel_params(k::Kernel) = k.params
 
 # ================================================================
 # AXIOM-CONSTRAINED FUNCTION: density
@@ -291,21 +297,16 @@ function condition(m::BetaMeasure, k::Kernel, observation)
 end
 
 function condition(m::GaussianMeasure, k::Kernel, observation)
-    # Conjugate path: Normal-Normal requires Euclidean → Euclidean
-    if k.source isa Euclidean && k.target isa Euclidean
-        # Extract observation noise σ_obs from kernel density shape
-        ll_at_peak = density(k, 0.0, 0.0)
-        ll_at_one = density(k, 0.0, 1.0)
-        diff = ll_at_peak - ll_at_one
-        if diff > 0 && isfinite(diff)
-            sigma_obs = sqrt(0.5 / diff)
-            tau_prior = 1.0 / m.sigma^2
-            tau_obs = 1.0 / sigma_obs^2
-            tau_post = tau_prior + tau_obs
-            mu_post = (tau_prior * m.mu + tau_obs * observation) / tau_post
-            sigma_post = 1.0 / sqrt(tau_post)
-            return GaussianMeasure(m.space, mu_post, sigma_post)
-        end
+    # Conjugate path: Normal-Normal requires Euclidean → Euclidean with declared σ_obs
+    if k.source isa Euclidean && k.target isa Euclidean &&
+       k.params !== nothing && haskey(k.params, :sigma_obs)
+        sigma_obs = k.params[:sigma_obs]::Float64
+        tau_prior = 1.0 / m.sigma^2
+        tau_obs = 1.0 / sigma_obs^2
+        tau_post = tau_prior + tau_obs
+        mu_post = (tau_prior * m.mu + tau_obs * observation) / tau_post
+        sigma_post = 1.0 / sqrt(tau_post)
+        return GaussianMeasure(m.space, mu_post, sigma_post)
     end
     _condition_by_grid(m, k, observation)
 end

@@ -643,7 +643,8 @@ let
     sigma_obs = 1.0
     k = Kernel(Euclidean(1), Euclidean(1),
         h -> (o -> -0.5 * ((o - h) / sigma_obs)^2),
-        (h, o) -> -0.5 * ((o - h) / sigma_obs)^2)
+        (h, o) -> -0.5 * ((o - h) / sigma_obs)^2,
+        nothing, Dict(:sigma_obs => sigma_obs))
     post = condition(prior, k, 2.0)
     @assert post isa GaussianMeasure "Expected GaussianMeasure, got $(typeof(post))"
     @assert abs(post.mu - 1.0) < 1e-10 "Expected μ_post=1.0, got $(post.mu)"
@@ -662,7 +663,8 @@ let
     sigma_obs = 2.0
     k = Kernel(Euclidean(1), Euclidean(1),
         h -> (o -> -0.5 * ((o - h) / sigma_obs)^2),
-        (h, o) -> -0.5 * ((o - h) / sigma_obs)^2)
+        (h, o) -> -0.5 * ((o - h) / sigma_obs)^2,
+        nothing, Dict(:sigma_obs => sigma_obs))
     post = condition(prior, k, 0.0)
     @assert post isa GaussianMeasure "Expected GaussianMeasure, got $(typeof(post))"
     # τ_prior = 4.0, τ_obs = 0.25, μ_post = (4*10 + 0.25*0) / 4.25 ≈ 9.412
@@ -682,7 +684,8 @@ let
         prior = GaussianMeasure(Euclidean(1), mu0, sig0)
         k = Kernel(Euclidean(1), Euclidean(1),
             h -> (o -> -0.5 * ((o - h) / sig_obs)^2),
-            (h, o) -> -0.5 * ((o - h) / sig_obs)^2)
+            (h, o) -> -0.5 * ((o - h) / sig_obs)^2,
+            nothing, Dict(:sigma_obs => sig_obs))
         post = condition(prior, k, x)
         @assert post isa GaussianMeasure "Expected GaussianMeasure"
         @assert post.sigma < sig0 "Variance must shrink: σ_post=$(post.sigma) ≥ σ_prior=$(sig0)"
@@ -705,6 +708,22 @@ let
     post = condition(prior, k, :a)
     @assert post isa CategoricalMeasure "Expected CategoricalMeasure fallback, got $(typeof(post))"
     println("PASSED: GaussianMeasure + Finite-target kernel → CategoricalMeasure (grid fallback)")
+end
+println()
+
+println("=" ^ 60)
+println("TEST 31: Gaussian kernel without params → grid fallback")
+println("=" ^ 60)
+
+let
+    # Euclidean → Euclidean but no params → must fall through to grid
+    prior = GaussianMeasure(Euclidean(1), 0.0, 1.0)
+    k = Kernel(Euclidean(1), Euclidean(1),
+        h -> (o -> -0.5 * ((o - h) / 1.0)^2),
+        (h, o) -> -0.5 * ((o - h) / 1.0)^2)
+    post = condition(prior, k, 1.0)
+    @assert post isa CategoricalMeasure "Expected CategoricalMeasure (grid fallback), got $(typeof(post))"
+    println("PASSED: Euclidean→Euclidean kernel without :sigma_obs param → grid fallback")
 end
 println()
 

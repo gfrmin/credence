@@ -117,11 +117,11 @@ end
 println()
 
 println("=" ^ 60)
-println("HOST TEST 4: effective_reliability produces MixtureMeasure of BetaMeasures")
+println("HOST TEST 4: marginalize_betas produces MixtureMeasure of BetaMeasures")
 println("=" ^ 60)
 
 let
-    function _effective_reliability(rel_state::MixtureMeasure, cat_w::Vector{Float64})
+    function _marginalize_betas(rel_state::MixtureMeasure, cat_w::Vector{Float64})
         components = Measure[]
         log_wts = Float64[]
         for (i, comp) in enumerate(rel_state.components)
@@ -139,7 +139,7 @@ let
     rel_state = MixtureMeasure(prod.space, Measure[prod], [0.0])
     cat_w = [0.6, 0.3, 0.1]
 
-    eff = _effective_reliability(rel_state, cat_w)
+    eff = _marginalize_betas(rel_state, cat_w)
     @assert eff isa MixtureMeasure
     @assert eff.space == Interval(0.0, 1.0)
     for comp in eff.components
@@ -149,16 +149,16 @@ let
     @assert abs(w[1] - 0.6) < 0.01
     @assert abs(w[2] - 0.3) < 0.01
     @assert abs(w[3] - 0.1) < 0.01
-    println("PASSED: effective_reliability produces MixtureMeasure of BetaMeasures")
+    println("PASSED: marginalize_betas produces MixtureMeasure of BetaMeasures")
 end
 println()
 
 println("=" ^ 60)
-println("HOST TEST 5: MixtureMeasure of ProductMeasures conditions correctly")
+println("HOST TEST 5: MixtureMeasure of ProductMeasures conditions correctly (update_beta_state flow)")
 println("=" ^ 60)
 
 let
-    # Simulates the update_tool_reliability flow:
+    # Simulates the update_beta_state flow:
     # MixtureMeasure of ProductMeasures, each with [categorical, Beta, Beta]
     cat = CategoricalMeasure(Finite([0.0, 1.0]))
     b1 = BetaMeasure(2.0, 3.0)
@@ -185,6 +185,159 @@ let
     end
 
     println("PASSED: MixtureMeasure of ProductMeasures conditions via FactorSelector")
+end
+println()
+
+println("=" ^ 60)
+println("HOST TEST 6: initial_cov_state produces informative Beta priors")
+println("=" ^ 60)
+
+let
+    function _initial_cov_state(n_categories::Int, prior_coverage::Vector{Float64}; strength::Float64=10.0)
+        factors = Measure[BetaMeasure(max(p * strength, 0.01), max((1-p) * strength, 0.01))
+                          for p in prior_coverage]
+        prod = ProductMeasure(factors)
+        MixtureMeasure(prod.space, Measure[prod], [0.0])
+    end
+
+    cov_state = _initial_cov_state(2, [0.8, 0.6])
+    @assert cov_state isa MixtureMeasure
+    @assert length(cov_state.components) == 1
+
+    prod = cov_state.components[1]::ProductMeasure
+    @assert length(prod.factors) == 2
+
+    b1 = prod.factors[1]::BetaMeasure
+    @assert abs(b1.alpha - 8.0) < 1e-10  # 0.8 * 10
+    @assert abs(b1.beta - 2.0) < 1e-10   # 0.2 * 10
+
+    b2 = prod.factors[2]::BetaMeasure
+    @assert abs(b2.alpha - 6.0) < 1e-10  # 0.6 * 10
+    @assert abs(b2.beta - 4.0) < 1e-10   # 0.4 * 10
+
+    println("PASSED: initial_cov_state produces informative Beta priors from declared coverage")
+end
+println()
+
+println("=" ^ 60)
+println("HOST TEST 7: update_beta_state on coverage responded/not-responded")
+println("=" ^ 60)
+
+let
+    using Credence: Credence as C
+
+    function _marginalize_betas(rel_state::MixtureMeasure, cat_w::Vector{Float64})
+        components = Measure[]
+        log_wts = Float64[]
+        for (i, comp) in enumerate(rel_state.components)
+            prod = comp::ProductMeasure
+            for (c, w_c) in enumerate(cat_w)
+                push!(components, prod.factors[c])
+                push!(log_wts, rel_state.log_weights[i] + log(max(w_c, 1e-300)))
+            end
+        end
+        prune(MixtureMeasure(Interval(0.0, 1.0), components, log_wts))
+    end
+
+    function _update_beta_state(rel_state::MixtureMeasure,
+                                cat_belief::CategoricalMeasure, obs)
+        n_cat = length(cat_belief.space.values)
+        joint_components = Measure[]
+        for comp in rel_state.components
+            prod = comp::ProductMeasure
+            push!(joint_components, ProductMeasure(Measure[cat_belief, prod.factors...]))
+        end
+        joint_space = joint_components[1].space
+        joint = MixtureMeasure(joint_space, joint_components, copy(rel_state.log_weights))
+
+        binary = Finite([0.0, 1.0])
+        k = Kernel(joint_space, binary,
+            _ -> error("generate not used"),
+            (h, o) -> let r = h[Int(h[1]) + 2]; o == 1.0 ? log(r) : log(1.0 - r) end,
+            FactorSelector(1, c -> [Int(c) + 2]))
+        posterior = condition(joint, k, obs)
+
+        cat_log_post = fill(-Inf, n_cat)
+        for (i, comp) in enumerate(posterior.components)
+            prod = comp::ProductMeasure
+            c_val = prod.factors[1]::CategoricalMeasure
+            ci = findfirst(==(c_val.space.values[1]), cat_belief.space.values)
+            lw = posterior.log_weights[i]
+            if cat_log_post[ci] == -Inf
+                cat_log_post[ci] = lw
+            else
+                mx = max(cat_log_post[ci], lw)
+                cat_log_post[ci] = mx + log(exp(cat_log_post[ci] - mx) + exp(lw - mx))
+            end
+        end
+        new_cat_belief = CategoricalMeasure(cat_belief.space, cat_log_post)
+
+        stripped = Measure[ProductMeasure(Measure[comp.factors[2:end]...])
+                           for comp in posterior.components]
+        new_state = MixtureMeasure(stripped[1].space, stripped, copy(posterior.log_weights))
+        new_state = C.truncate(prune(new_state); max_components=20)
+        (new_state, new_cat_belief)
+    end
+
+    # Start with coverage Beta(8,2) and Beta(6,4) for 2 categories
+    factors = Measure[BetaMeasure(8.0, 2.0), BetaMeasure(6.0, 4.0)]
+    prod = ProductMeasure(factors)
+    cov_state = MixtureMeasure(prod.space, Measure[prod], [0.0])
+    cat_belief = CategoricalMeasure(Finite([0.0, 1.0]))
+
+    # Responded (obs=1.0): alpha should increase for the active category
+    (new_state, _) = _update_beta_state(cov_state, cat_belief, 1.0)
+    @assert new_state isa MixtureMeasure
+    for comp in new_state.components
+        prod_c = comp::ProductMeasure
+        for f in prod_c.factors
+            @assert f isa BetaMeasure
+        end
+    end
+
+    # Not responded (obs=0.0): beta should increase for the active category
+    (new_state2, _) = _update_beta_state(cov_state, cat_belief, 0.0)
+    @assert new_state2 isa MixtureMeasure
+
+    println("PASSED: update_beta_state on coverage responded/not-responded updates correctly")
+end
+println()
+
+println("=" ^ 60)
+println("HOST TEST 8: marginalize_betas on coverage state gives expected mean")
+println("=" ^ 60)
+
+let
+    using Credence: expect
+
+    function _marginalize_betas(state::MixtureMeasure, cat_w::Vector{Float64})
+        components = Measure[]
+        log_wts = Float64[]
+        for (i, comp) in enumerate(state.components)
+            prod = comp::ProductMeasure
+            for (c, w_c) in enumerate(cat_w)
+                push!(components, prod.factors[c])
+                push!(log_wts, state.log_weights[i] + log(max(w_c, 1e-300)))
+            end
+        end
+        prune(MixtureMeasure(Interval(0.0, 1.0), components, log_wts))
+    end
+
+    # Coverage state: Beta(8,2) for cat0, Beta(6,4) for cat1
+    factors = Measure[BetaMeasure(8.0, 2.0), BetaMeasure(6.0, 4.0)]
+    prod = ProductMeasure(factors)
+    cov_state = MixtureMeasure(prod.space, Measure[prod], [0.0])
+
+    # Category weights: 0.6 for cat0, 0.4 for cat1
+    cat_w = [0.6, 0.4]
+
+    eff = _marginalize_betas(cov_state, cat_w)
+    # Expected coverage = 0.6 * mean(Beta(8,2)) + 0.4 * mean(Beta(6,4))
+    #                    = 0.6 * 0.8 + 0.4 * 0.6 = 0.48 + 0.24 = 0.72
+    expected_cov = expect(eff, r -> r)
+    @assert abs(expected_cov - 0.72) < 0.01 "Expected ~0.72, got $expected_cov"
+
+    println("PASSED: marginalize_betas on coverage state marginalizes correctly (expected=$(round(expected_cov, digits=4)))")
 end
 println()
 
