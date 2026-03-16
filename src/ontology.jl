@@ -340,6 +340,11 @@ function _predictive_ll(m::CategoricalMeasure, k::Kernel, obs)
     log(max(total, 1e-300))
 end
 
+function _predictive_ll(m::BetaMeasure, k::Kernel, obs)
+    val = expect(m, h -> exp(k.log_density(h, obs)))
+    log(max(val, 1e-300))
+end
+
 function _predictive_ll(m::Measure, k::Kernel, obs; n_samples::Int=200)
     total = 0.0
     for _ in 1:n_samples
@@ -444,13 +449,10 @@ function draw(m::CategoricalMeasure)
 end
 
 function draw(m::BetaMeasure)
-    # Rejection sampling from Beta(α, β)
-    while true
-        x = rand()
-        u = rand()
-        f = x^(m.alpha - 1) * (1 - x)^(m.beta - 1)
-        if u <= f; return x; end
-    end
+    # Beta via Gamma ratio: X/(X+Y) where X ~ Gamma(α), Y ~ Gamma(β)
+    x = _draw_gamma(m.alpha)
+    y = _draw_gamma(m.beta)
+    x / (x + y)
 end
 
 function draw(m::GaussianMeasure)

@@ -6,19 +6,49 @@ Loads the DSL agent specification, drives the question loop,
 maintains per-tool per-category reliability beliefs across questions,
 and simulates tool responses.
 
-Uses ontology types: CategoricalMeasure, BetaMeasure, Kernel.
+Uses ontology types: CategoricalMeasure, BetaMeasure, MixtureMeasure, Kernel.
 All decision-theoretic computation goes through the ontology module.
 """
 
 push!(LOAD_PATH, joinpath(@__DIR__, "..", "src"))
 using Credence
 using Credence: expect, condition, draw, optimise, value, weights, mean
-using Credence: CategoricalMeasure, BetaMeasure, Finite, Interval, Kernel, Measure
+using Credence: CategoricalMeasure, BetaMeasure, MixtureMeasure, Finite, Interval, Kernel, Measure
 using Credence: density, log_density_at, save_state, load_state
 
 # ─── State file ───
 
 const STATE_FILE = joinpath(@__DIR__, ".credence_state.bin")
+
+# ─── Tool trait boundary ───
+
+abstract type AbstractTool end
+
+tool_name(t::AbstractTool)::String = error("not implemented")
+tool_cost(t::AbstractTool)::Float64 = error("not implemented")
+tool_coverage(t::AbstractTool)::Vector{Float64} = error("not implemented")
+query_tool(t::AbstractTool, true_cat::Int, true_answer::Int, n_answers::Int)::Union{Int, Nothing} =
+    error("not implemented")
+
+struct SimulatedTool <: AbstractTool
+    name::String
+    cost::Float64
+    coverage::Vector{Float64}     # P(answers | category), length n_categories
+    reliability::Vector{Float64}  # true reliability per category (simulation only)
+end
+
+tool_name(t::SimulatedTool) = t.name
+tool_cost(t::SimulatedTool) = t.cost
+tool_coverage(t::SimulatedTool) = t.coverage
+
+function query_tool(t::SimulatedTool, true_cat::Int, true_answer::Int, n_answers::Int)
+    rand() < t.coverage[true_cat + 1] || return nothing
+    if rand() < t.reliability[true_cat + 1]
+        true_answer
+    else
+        rand(setdiff(0:n_answers-1, [true_answer]))
+    end
+end
 
 # ─── Host-level helpers ───
 
@@ -29,109 +59,61 @@ function thompson_action(posterior::Measure, actions::Finite, pref)
     optimise(point, actions, pref)
 end
 
-"""Mix per-category reliability beliefs weighted by category posterior.
-Returns a BetaMeasure that approximates the mixture via moment-matching."""
-function mix_reliability(cat_weights::Vector{Float64}, per_cat_rels::Vector{BetaMeasure})
-    # Moment-match: compute mixture mean and variance, fit Beta
-    mixed_mean = sum(cat_weights[c] * mean(per_cat_rels[c]) for c in eachindex(cat_weights))
-    mixed_var = sum(cat_weights[c] * (variance(per_cat_rels[c]) + mean(per_cat_rels[c])^2)
-                    for c in eachindex(cat_weights)) - mixed_mean^2
-    # Fit Beta(α, β) from mean and variance
-    if mixed_var < 1e-12 || mixed_mean < 1e-10 || mixed_mean > 1.0 - 1e-10
-        return BetaMeasure(mixed_mean * 100, (1.0 - mixed_mean) * 100)
-    end
-    ν = mixed_mean * (1 - mixed_mean) / mixed_var - 1
-    ν = max(ν, 2.0)  # ensure α, β > 0
-    α = mixed_mean * ν
-    β = (1 - mixed_mean) * ν
-    BetaMeasure(α, β)
+"""Construct exact MixtureMeasure from per-category Betas weighted by category posterior."""
+function effective_reliability(rel_beliefs_t::Vector{BetaMeasure},
+                                cat_w::Vector{Float64})
+    MixtureMeasure(Interval(0.0, 1.0),
+        Measure[rel_beliefs_t[c] for c in eachindex(rel_beliefs_t)],
+        [log(max(cat_w[c], 1e-300)) for c in eachindex(cat_w)])
 end
 
-"""Build joint belief from answer weights × reliability weights.
-Returns a CategoricalMeasure over (answer, reliability) pairs."""
-function make_joint_belief(answer_w::Vector{Float64}, rel_m::BetaMeasure,
-                           answers::Vector{Float64}, rel_grid::Vector{Float64})
-    # Discretise the BetaMeasure onto the grid
-    rel_logw = [log_density_at(rel_m, r) for r in rel_grid]
-    max_lw = maximum(rel_logw)
-    rel_w = exp.(rel_logw .- max_lw)
-    rel_w ./= sum(rel_w)
-
-    hyps = Vector{Float64}[]
-    logw = Float64[]
-    for (ai, aw) in enumerate(answer_w)
-        for (ri, rw) in enumerate(rel_w)
-            push!(hyps, [answers[ai], rel_grid[ri]])
-            push!(logw, log(max(aw, 1e-300)) + log(max(rw, 1e-300)))
-        end
-    end
-    CategoricalMeasure{Vector{Float64}}(Finite{Vector{Float64}}(hyps), logw)
-end
-
-"""Extract answer marginal from a joint (answer, reliability) measure."""
-function answer_marginal(joint::CategoricalMeasure, n_answers::Int)
-    w = weights(joint)
-    marginal = zeros(n_answers)
-    for (i, h) in enumerate(joint.space.values)
-        marginal[Int(h[1]) + 1] += w[i]
-    end
-    marginal
+"""Coverage kernel: dispatches on AbstractTool, uses trait methods."""
+function coverage_kernel(tool::AbstractTool, cat_space::Finite)
+    cov = tool_coverage(tool)
+    binary = Finite([0.0, 1.0])
+    Kernel(cat_space, binary,
+        c -> (o -> let p = cov[Int(c) + 1];
+              o == 1.0 ? log(p) : log(1.0 - p) end),
+        (c, o) -> let p = cov[Int(c) + 1];
+                  o == 1.0 ? log(p) : log(1.0 - p) end)
 end
 
 """
-Update per-category reliability beliefs using joint (category, reliability) belief.
-Construct joint over (category, reliability), condition with a Kernel, decompose.
+Update per-category reliability beliefs via MixtureMeasure condition.
+
+Conditions MixtureMeasure(per_cat_betas, cat_weights) on Bernoulli(was_correct).
+Extracts updated per-category Betas into rel_beliefs_t (mutates in place).
+Returns new cat_belief from posterior weights — mandatory, encodes category evidence.
 """
-function update_reliability_joint!(rel_beliefs_t::Vector{BetaMeasure},
-                                   cat_w::Vector{Float64},
-                                   rel_grid::Vector{Float64},
-                                   was_correct::Float64)
-    n_cat = length(rel_beliefs_t)
+function update_reliability!(rel_beliefs_t::Vector{BetaMeasure},
+                              cat_belief::CategoricalMeasure,
+                              was_correct::Float64)
+    cat_w = weights(cat_belief)
 
-    # Build joint measure over (category, reliability)
-    hyps = Vector{Float64}[]
-    logw = Float64[]
-    for c in 1:n_cat
-        # Discretise BetaMeasure onto grid
-        bm = rel_beliefs_t[c]
-        for (ri, r) in enumerate(rel_grid)
-            push!(hyps, [Float64(c - 1), r])
-            lp_cat = log(max(cat_w[c], 1e-300))
-            lp_rel = log_density_at(bm, r)
-            push!(logw, lp_cat + lp_rel)
-        end
+    # Construct mixture from current beliefs
+    rel_mix = effective_reliability(rel_beliefs_t, cat_w)
+
+    # Bernoulli kernel on reliability
+    bern = Kernel(Interval(0.0, 1.0), Finite([0.0, 1.0]),
+        r -> (o -> o == 1.0 ? log(r) : log(1.0 - r)),
+        (r, o) -> o == 1.0 ? log(r) : log(1.0 - r))
+
+    # Condition preserves MixtureMeasure structure
+    posterior = condition(rel_mix, bern, was_correct)
+
+    # Extract updated per-category Betas (mutates rel_beliefs_t)
+    for c in eachindex(rel_beliefs_t)
+        rel_beliefs_t[c] = posterior.components[c]
     end
-    joint_space = Finite{Vector{Float64}}(hyps)
-    joint = CategoricalMeasure{Vector{Float64}}(joint_space, logw)
 
-    # Bernoulli kernel on the reliability component
-    binary_space = Finite([0.0, 1.0])
-    bern_kernel = Kernel(
-        joint_space, binary_space,
-        h -> o -> o == 1.0 ? log(h[2]) : log(1.0 - h[2]),
-        (h, o) -> o == 1.0 ? log(h[2]) : log(1.0 - h[2])
-    )
-    updated = condition(joint, bern_kernel, was_correct)
-
-    # Decompose: extract per-category reliability posteriors
-    # Fit Beta from posterior moments per category
-    uw = weights(updated)
-    n_rel = length(rel_grid)
-    for c in 1:n_cat
-        offset = (c - 1) * n_rel
-        cat_mass = sum(uw[offset + ri] for ri in 1:n_rel)
-        if cat_mass < 1e-15; continue; end
-        # Compute mean and variance of reliability for this category
-        m = sum(uw[offset + ri] * rel_grid[ri] for ri in 1:n_rel) / cat_mass
-        v = sum(uw[offset + ri] * rel_grid[ri]^2 for ri in 1:n_rel) / cat_mass - m^2
-        # Fit Beta from moments
-        m = clamp(m, 1e-6, 1 - 1e-6)
-        v = max(v, 1e-12)
-        ν = m * (1 - m) / v - 1
-        ν = max(ν, 2.0)
-        rel_beliefs_t[c] = BetaMeasure(m * ν, (1 - m) * ν)
-    end
+    # Return updated category belief from posterior weights.
+    # The posterior component weights encode evidence about category
+    # membership from this reliability observation — discarding them
+    # loses information the agent has already paid for.
+    CategoricalMeasure(cat_belief.space, copy(posterior.log_weights))
 end
+
+# ─── Main loop ───
 
 """Run the credence agent for n_questions, returning (total_score, total_cost)."""
 function run_agent(; n_questions=50)
@@ -143,18 +125,16 @@ function run_agent(; n_questions=50)
 
     # ─── Configuration ───
     n_answers = 4
-    n_tools = 3
     n_categories = 5
-    rel_grid = [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9]
     answers = Float64[0, 1, 2, 3]
-    tool_costs = [2.0, 0.5, 1.0]
-    tool_true_rel = [[0.85, 0.70, 0.80, 0.60, 0.70],
-                      [0.60, 0.80, 0.50, 0.90, 0.60],
-                      [0.75, 0.75, 0.75, 0.75, 0.75]]
-    tool_coverage_table = [[0.9, 0.7, 0.8, 0.6, 0.7],
-                            [0.6, 0.8, 0.5, 0.9, 0.6],
-                            [0.8, 0.8, 0.8, 0.8, 0.8]]
     reward_correct, penalty_wrong, reward_abstain = 10.0, -5.0, 0.0
+
+    tools = [
+        SimulatedTool("expert",     2.0, [0.9, 0.7, 0.8, 0.6, 0.7], [0.85, 0.70, 0.80, 0.60, 0.70]),
+        SimulatedTool("crowd",      0.5, [0.6, 0.8, 0.5, 0.9, 0.6], [0.60, 0.80, 0.50, 0.90, 0.60]),
+        SimulatedTool("generalist", 1.0, [0.8, 0.8, 0.8, 0.8, 0.8], [0.75, 0.75, 0.75, 0.75, 0.75]),
+    ]
+    n_tools = length(tools)
 
     answer_space = Finite(answers)
     submit_value = reward_correct
@@ -191,14 +171,14 @@ function run_agent(; n_questions=50)
         while !done && !isempty(available)
             cat_w = weights(cat_belief)
 
-            # Build per-tool reliability measures (mix across categories)
-            rel_measures = [mix_reliability(cat_w, rel_beliefs[t]) for t in available]
+            # Build per-tool reliability measures (exact MixtureMeasure)
+            rel_measures = [effective_reliability(rel_beliefs[t], cat_w) for t in available]
 
             # Call DSL agent-step
             decision = agent_step_fn(
                 answer_measure,
                 [rel_measures[i] for i in eachindex(available)],
-                [tool_costs[t] for t in available],
+                [tool_cost(tools[t]) for t in available],
                 submit_value, abstain_value
             )
             action_type = Int(decision[1])
@@ -206,26 +186,16 @@ function run_agent(; n_questions=50)
             if action_type == 2  # query tool
                 tool_local_idx = Int(decision[2]) + 1
                 tool_idx = available[tool_local_idx]
-                question_cost += tool_costs[tool_idx]
+                tool = tools[tool_idx]
+                question_cost += tool_cost(tool)
 
-                # Coverage kernel (shared by both branches)
-                cat_kernel_space = cat_belief.space
-                binary = Finite([0.0, 1.0])
-                cov_kernel = Kernel(
-                    cat_kernel_space, binary,
-                    c -> (let p = tool_coverage_table[tool_idx][Int(c) + 1];
-                          o -> o == 1.0 ? log(p) : log(1.0 - p) end),
-                    (c, o) -> (let p = tool_coverage_table[tool_idx][Int(c) + 1];
-                               o == 1.0 ? log(p) : log(1.0 - p) end)
-                )
+                # Coverage kernel
+                cov_kernel = coverage_kernel(tool, cat_belief.space)
 
-                # Simulate tool response
-                if rand() < tool_coverage_table[tool_idx][true_cat + 1]
-                    response = if rand() < tool_true_rel[tool_idx][true_cat + 1]
-                        true_answer
-                    else
-                        rand(setdiff(0:n_answers-1, [true_answer]))
-                    end
+                # Query tool via universal interface
+                response = query_tool(tool, true_cat, true_answer, n_answers)
+
+                if response !== nothing
                     tool_responses[tool_idx] = response
 
                     # Update answer belief via DSL
@@ -250,20 +220,21 @@ function run_agent(; n_questions=50)
                 total_cost += question_cost
 
                 # Update reliability beliefs with ground truth
-                cat_w = weights(cat_belief)
                 for (t, resp) in tool_responses
                     resp === nothing && continue
                     correct = Float64(resp == true_answer)
-                    update_reliability_joint!(rel_beliefs[t], cat_w, rel_grid, correct)
+                    cat_belief = update_reliability!(rel_beliefs[t], cat_belief, correct)
                 end
 
                 println("Q$q: submit=$submitted correct=$was_correct score=$score " *
                         "tools=$(length(tool_responses)) cost=$question_cost")
+                flush(stdout)
                 done = true
 
             else  # abstain
                 total_cost += question_cost
                 println("Q$q: abstain tools=$(length(tool_responses)) cost=$question_cost")
+                flush(stdout)
                 done = true
             end
         end
@@ -280,9 +251,11 @@ function run_agent(; n_questions=50)
                 total_score += score
                 total_cost += question_cost
                 println("Q$q: submit=$submitted (forced) correct=$was_correct")
+                flush(stdout)
             else
                 total_cost += question_cost
                 println("Q$q: abstain (forced)")
+                flush(stdout)
             end
         end
     end
