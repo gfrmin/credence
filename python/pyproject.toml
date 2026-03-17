@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "credence"
+version = "0.1.0"
+description = "Python bindings for the Credence Bayesian decision-making DSL"
+requires-python = ">=3.11"
+dependencies = [
+    "juliacall>=0.9",
+    "numpy>=1.24",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.4",
+    "ruff",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
