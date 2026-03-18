@@ -15,9 +15,9 @@ Axiom-constrained functions (behaviour frozen, interface negotiable):
 module Ontology
 
 export Space, Finite, Interval, ProductSpace, Simplex, Euclidean, PositiveReals, support
-export Measure, CategoricalMeasure, BetaMeasure, GaussianMeasure, DirichletMeasure, ProductMeasure, MixtureMeasure
+export Measure, CategoricalMeasure, BetaMeasure, GaussianMeasure, DirichletMeasure, NormalGammaMeasure, ProductMeasure, MixtureMeasure
 export Kernel, FactorSelector, kernel_source, kernel_target, kernel_params
-export condition, expect, push_measure, density
+export condition, expect, push_measure, density, log_predictive
 export draw, optimise, value
 export weights, mean, variance, log_density_at, prune, truncate
 
@@ -133,6 +133,28 @@ end
 
 weights(m::DirichletMeasure) = m.alpha ./ sum(m.alpha)
 mean(m::DirichletMeasure) = weights(m)
+
+# ── Normal-Gamma: conjugate prior for Normal with unknown mean and variance ──
+
+struct NormalGammaMeasure <: Measure
+    space::ProductSpace          # Euclidean(1) × PositiveReals
+    κ::Float64                   # pseudo-observation count (mean precision)
+    μ::Float64                   # posterior mean location
+    α::Float64                   # shape (half-observations for variance)
+    β::Float64                   # rate (scaled sum of squared deviations)
+
+    function NormalGammaMeasure(space::ProductSpace, κ::Float64, μ::Float64, α::Float64, β::Float64)
+        κ > 0 || error("κ must be positive")
+        α > 0 || error("α must be positive")
+        β > 0 || error("β must be positive")
+        new(space, κ, μ, α, β)
+    end
+end
+
+NormalGammaMeasure(κ::Float64, μ::Float64, α::Float64, β::Float64) =
+    NormalGammaMeasure(ProductSpace(Space[Euclidean(1), PositiveReals()]), κ, μ, α, β)
+
+mean(m::NormalGammaMeasure) = m.μ
 
 # ── Product: independent joint ──
 
@@ -251,6 +273,14 @@ function expect(m::DirichletMeasure, f; n_samples::Int=1000)
     total / n_samples
 end
 
+function expect(m::NormalGammaMeasure, f; n_samples::Int=1000)
+    total = 0.0
+    for _ in 1:n_samples
+        total += f(draw(m))
+    end
+    total / n_samples
+end
+
 function expect(m::ProductMeasure, f; n_samples::Int=1000)
     total = 0.0
     for _ in 1:n_samples
@@ -323,6 +353,20 @@ function condition(m::DirichletMeasure, k::Kernel, observation)
     DirichletMeasure(m.space, m.categories, new_alpha)
 end
 
+function condition(m::NormalGammaMeasure, k::Kernel, observation)
+    # Conjugate fast-path: Normal likelihood with Normal-Gamma prior
+    if k.params !== nothing && haskey(k.params, :normal_gamma)
+        r = Float64(observation)
+        κₙ = m.κ + 1.0
+        μₙ = (m.κ * m.μ + r) / κₙ
+        αₙ = m.α + 0.5
+        βₙ = m.β + m.κ * (r - m.μ)^2 / (2.0 * κₙ)
+        return NormalGammaMeasure(m.space, κₙ, μₙ, αₙ, βₙ)
+    end
+    # Non-conjugate: importance sampling fallback
+    condition(m::Measure, k, observation)
+end
+
 function _condition_by_grid(m::BetaMeasure, k::Kernel, observation; n::Int=64)
     grid = collect(range(m.space.lo + 1e-10, m.space.hi - 1e-10, length=n))
     logw = Float64[]
@@ -352,6 +396,37 @@ end
 log_density_at(m::BetaMeasure, x) = (m.alpha - 1) * log(x) + (m.beta - 1) * log(1 - x)
 log_density_at(m::GaussianMeasure, x) = -0.5 * ((x - m.mu) / m.sigma)^2
 log_density_at(m::DirichletMeasure, x) = sum((m.alpha[i] - 1) * log(x[i]) for i in eachindex(m.alpha))
+
+function log_density_at(m::NormalGammaMeasure, x)
+    # x = (μ_val, σ²_val) — joint density of Normal-Gamma
+    μ_val, σ² = x[1], x[2]
+    σ² > 0 || return -Inf
+    # InvGamma(α, β) density for σ²
+    log_ig = m.α * log(m.β) - _log_gamma(m.α) - (m.α + 1.0) * log(σ²) - m.β / σ²
+    # Normal(μ, σ²/κ) density for μ_val
+    log_n = -0.5 * log(2π * σ² / m.κ) - m.κ * (μ_val - m.μ)^2 / (2.0 * σ²)
+    log_ig + log_n
+end
+
+# Log-Gamma via Stirling approximation (stdlib only, no SpecialFunctions)
+function _log_gamma(x::Float64)
+    # Lanczos approximation for log(Γ(x))
+    if x < 0.5
+        return log(π / sin(π * x)) - _log_gamma(1.0 - x)
+    end
+    x -= 1.0
+    g = 7.0
+    coeffs = [0.99999999999980993, 676.5203681218851, -1259.1392167224028,
+              771.32342877765313, -176.61502916214059, 12.507343278686905,
+              -0.13857109526572012, 9.9843695780195716e-6, 1.5056327351493116e-7]
+    t = x + g + 0.5
+    s = coeffs[1]
+    for i in 2:length(coeffs)
+        s += coeffs[i] / (x + Float64(i - 1))
+    end
+    0.5 * log(2π) + (x + 0.5) * log(t) - t + log(s)
+end
+
 log_density_at(m::ProductMeasure, x) =
     sum(log_density_at(m.factors[i], x[i]) for i in eachindex(m.factors))
 
@@ -380,6 +455,24 @@ function _predictive_ll(m::Measure, k::Kernel, obs; n_samples::Int=200)
         total += exp(k.log_density(draw(m), obs))
     end
     log(max(total / n_samples, 1e-300))
+end
+
+# ── log_predictive: log P(obs | beliefs) — single observation ──
+
+function log_predictive(m::Measure, k::Kernel, obs)
+    pred = expect(m, h -> exp(density(k, h, obs)))
+    log(max(pred, 1e-300))
+end
+
+function log_predictive(m::DirichletMeasure, k::Kernel, obs)
+    # Conjugate fast-path: posterior predictive = α_obs / Σα
+    idx = findfirst(==(obs), m.categories.values)
+    idx !== nothing || error("observation $obs not in categories")
+    log(m.alpha[idx] / sum(m.alpha))
+end
+
+function log_predictive(m::CategoricalMeasure, k::Kernel, obs)
+    _predictive_ll(m, k, obs)
 end
 
 function condition(m::MixtureMeasure, k::Kernel, obs)
@@ -569,6 +662,16 @@ function draw(m::DirichletMeasure)
     g = [_draw_gamma(a) for a in m.alpha]
     g ./= sum(g)
     g
+end
+
+function draw(m::NormalGammaMeasure)
+    # Sample σ² ~ InvGamma(α, β) = 1/Gamma(α, 1/β) * β  →  β / Gamma(α)
+    # InvGamma: if X ~ Gamma(α, 1), then β/X ~ InvGamma(α, β)
+    g = _draw_gamma(m.α)
+    σ² = m.β / g
+    # Sample μ ~ Normal(μ, σ²/κ)
+    μ_s = m.μ + sqrt(σ² / m.κ) * randn()
+    (μ_s, σ²)
 end
 
 draw(m::ProductMeasure) = Any[draw(f) for f in m.factors]

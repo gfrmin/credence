@@ -728,5 +728,188 @@ end
 println()
 
 println("=" ^ 60)
+println("TEST 32: NormalGammaMeasure — constructor and mean")
+println("=" ^ 60)
+
+let
+    m = NormalGammaMeasure(1.0, 0.0, 1.0, 1.0)
+    @assert m.κ == 1.0
+    @assert m.μ == 0.0
+    @assert m.α == 1.0
+    @assert m.β == 1.0
+    @assert mean(m) == 0.0
+    @assert m.space isa ProductSpace
+    println("PASSED: NormalGammaMeasure(1,0,1,1) constructed, mean = ", mean(m))
+end
+println()
+
+println("=" ^ 60)
+println("TEST 33: NormalGammaMeasure — conjugate update")
+println("=" ^ 60)
+
+let
+    m = NormalGammaMeasure(1.0, 0.0, 1.0, 1.0)
+    # Build a Normal-Gamma kernel
+    k = Kernel(
+        ProductSpace(Space[Euclidean(1), PositiveReals()]),
+        Euclidean(1),
+        h -> error("generate not used"),
+        (h, o) -> -0.5 * log(2π * h[2]) - (o - h[1])^2 / (2.0 * h[2]),
+        nothing,
+        Dict(:normal_gamma => true))
+
+    # Observe r = 2.0
+    m2 = condition(m, k, 2.0)
+    @assert m2 isa NormalGammaMeasure
+    @assert m2.κ ≈ 2.0  # κₙ = 1 + 1
+    @assert m2.μ ≈ 1.0  # (1*0 + 2) / 2
+    @assert m2.α ≈ 1.5  # 1 + 0.5
+    expected_β = 1.0 + 1.0 * (2.0 - 0.0)^2 / (2.0 * 2.0)  # 1 + 4/4 = 2
+    @assert abs(m2.β - expected_β) < 1e-10
+    println("PASSED: conjugate update κ=", m2.κ, " μ=", m2.μ, " α=", m2.α, " β=", m2.β)
+end
+println()
+
+println("=" ^ 60)
+println("TEST 34: NormalGammaMeasure — draw returns (μ, σ²) tuple")
+println("=" ^ 60)
+
+let
+    Random.seed!(42)
+    m = NormalGammaMeasure(10.0, 5.0, 5.0, 2.0)
+    for _ in 1:100
+        s = draw(m)
+        @assert s isa Tuple{Float64, Float64}
+        @assert s[2] > 0 "σ² must be positive, got $(s[2])"
+    end
+    println("PASSED: 100 draws all return (μ, σ²) with σ² > 0")
+end
+println()
+
+println("=" ^ 60)
+println("TEST 35: NormalGammaMeasure — multiple observations shrink variance")
+println("=" ^ 60)
+
+let
+    m = NormalGammaMeasure(1.0, 0.0, 1.0, 1.0)
+    k = Kernel(
+        ProductSpace(Space[Euclidean(1), PositiveReals()]),
+        Euclidean(1),
+        h -> error("generate not used"),
+        (h, o) -> -0.5 * log(2π * h[2]) - (o - h[1])^2 / (2.0 * h[2]),
+        nothing,
+        Dict(:normal_gamma => true))
+
+    # Observe several values near 3.0
+    current = m
+    for r in [3.0, 3.1, 2.9, 3.0, 3.05]
+        current = condition(current, k, r)
+    end
+    @assert current.α > m.α  "α should grow with observations"
+    @assert current.κ > m.κ  "κ should grow with observations"
+    @assert abs(current.μ - 3.0) < 0.5  "μ should be near 3.0"
+    println("PASSED: 5 observations → α=", current.α, " κ=", current.κ, " μ=", round(current.μ, digits=3))
+end
+println()
+
+println("=" ^ 60)
+println("TEST 36: NormalGammaMeasure — strong prior dominates weak observation")
+println("=" ^ 60)
+
+let
+    # Strong prior: κ=100, μ=10
+    m = NormalGammaMeasure(100.0, 10.0, 50.0, 10.0)
+    k = Kernel(
+        ProductSpace(Space[Euclidean(1), PositiveReals()]),
+        Euclidean(1),
+        h -> error("generate not used"),
+        (h, o) -> -0.5 * log(2π * h[2]) - (o - h[1])^2 / (2.0 * h[2]),
+        nothing,
+        Dict(:normal_gamma => true))
+
+    m2 = condition(m, k, 0.0)
+    # With κ=100, one observation at 0 barely shifts μ from 10
+    @assert m2.μ > 9.0  "Strong prior should dominate: μ_post=$(m2.μ)"
+    println("PASSED: κ=100, μ=10 prior + obs 0.0 → μ_post=", round(m2.μ, digits=4))
+end
+println()
+
+println("=" ^ 60)
+println("TEST 37: log_predictive — DirichletMeasure fast-path")
+println("=" ^ 60)
+
+let
+    cats = Finite([10, 20, 30])
+    d = DirichletMeasure(Simplex(3), cats, [2.0, 3.0, 5.0])
+    k = Kernel(Simplex(3), cats,
+        θ -> (o -> begin; idx = findfirst(==(o), cats.values); log(θ[idx]); end),
+        (θ, o) -> begin; idx = findfirst(==(o), cats.values); log(θ[idx]); end)
+
+    # log P(obs=10 | Dir(2,3,5)) = log(2/10) = log(0.2)
+    lp = log_predictive(d, k, 10)
+    @assert abs(lp - log(0.2)) < 1e-10
+    # log P(obs=30 | Dir(2,3,5)) = log(5/10) = log(0.5)
+    lp2 = log_predictive(d, k, 30)
+    @assert abs(lp2 - log(0.5)) < 1e-10
+    println("PASSED: log_predictive(Dir(2,3,5), 10) = ", round(lp, digits=4),
+            ", log_predictive(Dir(2,3,5), 30) = ", round(lp2, digits=4))
+end
+println()
+
+println("=" ^ 60)
+println("TEST 38: log_predictive — CategoricalMeasure default path")
+println("=" ^ 60)
+
+let
+    Random.seed!(42)
+    H = Finite([0.3, 0.7])
+    m = CategoricalMeasure(H)  # uniform
+    obs_space = Finite([0, 1])
+    k = Kernel(H, obs_space,
+        θ -> (o -> o == 1 ? log(θ) : log(1.0 - θ)),
+        (θ, o) -> o == 1 ? log(θ) : log(1.0 - θ))
+
+    # P(obs=1 | uniform{0.3, 0.7}) = 0.5*0.3 + 0.5*0.7 = 0.5
+    lp = log_predictive(m, k, 1)
+    @assert abs(lp - log(0.5)) < 0.05
+    println("PASSED: log_predictive(CategoricalMeasure, obs=1) = ", round(lp, digits=4),
+            " (expected ≈ ", round(log(0.5), digits=4), ")")
+end
+println()
+
+println("=" ^ 60)
+println("TEST 39: Sequential log_predictive + condition matches analytic formula")
+println("=" ^ 60)
+
+let
+    cats = Finite([:a, :b, :c])
+    d = DirichletMeasure(Simplex(3), cats, [1.0, 1.0, 1.0])
+    k = Kernel(Simplex(3), cats,
+        θ -> (o -> begin; idx = findfirst(==(o), cats.values); log(θ[idx]); end),
+        (θ, o) -> begin; idx = findfirst(==(o), cats.values); log(θ[idx]); end)
+
+    # Observe :a, :a, :b — compute sequential log marginal
+    data = [:a, :a, :b]
+    log_ml = 0.0
+    current = d
+    for obs in data
+        log_ml += log_predictive(current, k, obs)
+        current = condition(current, k, obs)
+    end
+
+    # Analytic Dirichlet-Multinomial: log B(α+n) / B(α)
+    # α = [1,1,1], n = [2,1,0]
+    # = log(Γ(3)/Γ(6)) + log(Γ(3)/Γ(1)) + log(Γ(2)/Γ(1)) + log(Γ(1)/Γ(1))
+    # = (log(2!) - log(5!)) + (log(2!) - log(0!)) + (log(1!) - log(0!)) + 0
+    # = (log(2) - log(120)) + log(2) + 0 + 0
+    # Sequential: log(1/3) + log(2/4) + log(1/5) = log(1/3 * 1/2 * 1/5) = log(1/30)
+    expected = log(1/3) + log(2/4) + log(1/5)
+    @assert abs(log_ml - expected) < 1e-10  "Sequential log_ml=$(log_ml), expected=$(expected)"
+    println("PASSED: Sequential log marginal = ", round(log_ml, digits=6),
+            " (expected ", round(expected, digits=6), ")")
+end
+println()
+
+println("=" ^ 60)
 println("ALL TESTS PASSED")
 println("=" ^ 60)
