@@ -911,5 +911,64 @@ end
 println()
 
 println("=" ^ 60)
+println("TEST 40: log_marginal — Dir(1,1,1) + counts [2,1,0] matches log(1/30)")
+println("=" ^ 60)
+
+let
+    cats = Finite([:a, :b, :c])
+    d = DirichletMeasure(Simplex(3), cats, [1.0, 1.0, 1.0])
+    lm = log_marginal(d, [2, 1, 0])
+    expected = log(1/30)  # ≈ -3.4011973817
+    @assert abs(lm - expected) < 1e-8  "log_marginal=$(lm), expected=$(expected)"
+    println("PASSED: log_marginal(Dir(1,1,1), [2,1,0]) = ", round(lm, digits=6),
+            " (expected ", round(expected, digits=6), ")")
+end
+println()
+
+println("=" ^ 60)
+println("TEST 41: log_marginal — Dir(0.1,0.1) + counts [10,5] cross-checked")
+println("=" ^ 60)
+
+let
+    cats = Finite([:x, :y])
+    d = DirichletMeasure(Simplex(2), cats, [0.1, 0.1])
+    k = Kernel(Simplex(2), cats,
+        θ -> (o -> begin; idx = findfirst(==(o), cats.values); log(θ[idx]); end),
+        (θ, o) -> begin; idx = findfirst(==(o), cats.values); log(θ[idx]); end)
+
+    # Oracle 1: closed-form log_marginal
+    lm = log_marginal(d, [10, 5])
+    expected = -12.3515335627
+    @assert abs(lm - expected) < 1e-4  "log_marginal=$(lm), expected=$(expected)"
+
+    # Oracle 2: sequential log_predictive + condition
+    data = vcat(fill(:x, 10), fill(:y, 5))
+    log_ml_seq = 0.0
+    current = d
+    for obs in data
+        log_ml_seq += log_predictive(current, k, obs)
+        current = condition(current, k, obs)
+    end
+    @assert abs(lm - log_ml_seq) < 1e-8  "closed-form=$(lm) vs sequential=$(log_ml_seq)"
+
+    println("PASSED: log_marginal(Dir(0.1,0.1), [10,5]) = ", round(lm, digits=6),
+            ", sequential = ", round(log_ml_seq, digits=6))
+end
+println()
+
+println("=" ^ 60)
+println("TEST 42: log_marginal — zero counts returns 0.0")
+println("=" ^ 60)
+
+let
+    cats = Finite([1, 2, 3])
+    d = DirichletMeasure(Simplex(3), cats, [2.0, 3.0, 5.0])
+    lm = log_marginal(d, [0, 0, 0])
+    @assert abs(lm) < 1e-10  "log_marginal with zero counts should be 0.0, got $(lm)"
+    println("PASSED: log_marginal(Dir(2,3,5), [0,0,0]) = ", lm)
+end
+println()
+
+println("=" ^ 60)
 println("ALL TESTS PASSED")
 println("=" ^ 60)

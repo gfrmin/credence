@@ -17,7 +17,7 @@ module Ontology
 export Space, Finite, Interval, ProductSpace, Simplex, Euclidean, PositiveReals, support
 export Measure, CategoricalMeasure, BetaMeasure, GaussianMeasure, DirichletMeasure, NormalGammaMeasure, ProductMeasure, MixtureMeasure
 export Kernel, FactorSelector, kernel_source, kernel_target, kernel_params
-export condition, expect, push_measure, density, log_predictive
+export condition, expect, push_measure, density, log_predictive, log_marginal
 export draw, optimise, value
 export weights, mean, variance, log_density_at, prune, truncate
 
@@ -728,6 +728,25 @@ function value(m::Measure, actions::Finite, pref)
         if eu > best_eu; best_eu = eu; end
     end
     best_eu
+end
+
+# ================================================================
+# log_marginal — Dirichlet-Multinomial marginal likelihood
+# ================================================================
+# log P(data | Dir(α)) = log B(α + n) / B(α)
+# O(K) from sufficient statistics — important for structure learning
+# which evaluates many candidate structures.
+
+function log_marginal(m::DirichletMeasure, counts::Vector{Int})
+    α = m.alpha
+    length(α) == length(counts) || error("alpha and counts must have same length")
+    α_sum = sum(α)
+    n_sum = sum(counts)
+    score = _log_gamma(α_sum) - _log_gamma(α_sum + n_sum)
+    for i in eachindex(α)
+        score += _log_gamma(α[i] + counts[i]) - _log_gamma(α[i])
+    end
+    score
 end
 
 end # module Ontology
