@@ -124,6 +124,21 @@ The S-expression grammar: expr = atom | '(' expr* ')'
 
 These are mathematical errors, not style preferences.
 
+### No AST interpretation at conditioning time
+Programs are compiled into closures at enumeration time via `compile_kernel`.
+The `CompiledKernel` struct has no AST field — enforced by the type system.
+Kernel evaluation calls a closure, never walks a tree. If you need to
+analyse program structure (for grammar perturbation), use the `Program`
+struct which retains the AST. The two representations serve different
+purposes and must not be conflated.
+
+### No random mutation in place of subprogram extraction
+Nonterminal proposals must be grounded in posterior analysis.
+`propose_nonterminal` requires a `SubprogramFrequencyTable`, which can
+only be constructed by `analyse_posterior_subtrees`. There is no shortcut:
+the type system enforces the dependency. Random AST generation or mutation
+without posterior analysis violates the principled compression pipeline.
+
 ### No second learning mechanism
 Only condition modifies beliefs. Any function that produces a
 measure with altered weights without conditioning on an

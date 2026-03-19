@@ -169,6 +169,15 @@ function eval_dsl(expr::SList, env::Env)
             return acc
         end
 
+        if sym == Symbol("fold-init")
+            f = eval_dsl(args[1], env)
+            init = eval_dsl(args[2], env)
+            lst = eval_dsl(args[3], env)
+            acc = init
+            for x in lst; acc = f(acc, x); end
+            return acc
+        end
+
         if sym == :first;  return first(eval_dsl(args[1], env)); end
         if sym == :second; return eval_dsl(args[1], env)[2]; end
         if sym == :nth

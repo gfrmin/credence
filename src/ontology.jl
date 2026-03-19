@@ -15,7 +15,7 @@ Axiom-constrained functions (behaviour frozen, interface negotiable):
 module Ontology
 
 export Space, Finite, Interval, ProductSpace, Simplex, Euclidean, PositiveReals, support
-export Measure, CategoricalMeasure, BetaMeasure, GaussianMeasure, DirichletMeasure, NormalGammaMeasure, ProductMeasure, MixtureMeasure
+export Measure, CategoricalMeasure, BetaMeasure, TaggedBetaMeasure, GaussianMeasure, DirichletMeasure, NormalGammaMeasure, ProductMeasure, MixtureMeasure
 export Kernel, FactorSelector, kernel_source, kernel_target, kernel_params
 export condition, expect, push_measure, density, log_predictive, log_marginal
 export draw, optimise, value
@@ -102,8 +102,18 @@ end
 BetaMeasure(α::Float64, β::Float64) = BetaMeasure(Interval(0.0, 1.0), α, β)
 BetaMeasure() = BetaMeasure(1.0, 1.0)
 
+# ── TaggedBeta: program-indexed Beta for per-component kernel dispatch ──
+
+struct TaggedBetaMeasure <: Measure
+    space::Interval           # always [0,1]
+    tag::Int                  # program/component index — immutable identity
+    beta::BetaMeasure         # the actual Beta distribution
+end
+
 mean(m::BetaMeasure) = m.alpha / (m.alpha + m.beta)
 variance(m::BetaMeasure) = m.alpha * m.beta / ((m.alpha + m.beta)^2 * (m.alpha + m.beta + 1))
+mean(m::TaggedBetaMeasure) = mean(m.beta)
+variance(m::TaggedBetaMeasure) = variance(m.beta)
 
 # ── Gaussian: continuous on interval ──
 
@@ -253,6 +263,8 @@ function expect(m::BetaMeasure, f; n::Int=64)
     sum(w[i] * f(grid[i]) for i in eachindex(w))
 end
 
+expect(m::TaggedBetaMeasure, f; kwargs...) = expect(m.beta, f; kwargs...)
+
 function expect(m::GaussianMeasure, f; n::Int=64)
     lo = m.mu - 4 * m.sigma
     hi = m.mu + 4 * m.sigma
@@ -326,6 +338,19 @@ function condition(m::BetaMeasure, k::Kernel, observation)
     end
 end
 
+function condition(m::TaggedBetaMeasure, k::Kernel, observation)
+    ll = k.log_density(m, observation)
+    if ll == 0.0
+        return m  # predicate didn't fire — no update
+    end
+    # Predicate fired — conjugate Beta-Bernoulli update
+    if observation == 1 || observation == 1.0 || observation == true
+        TaggedBetaMeasure(m.space, m.tag, BetaMeasure(m.beta.space, m.beta.alpha + 1.0, m.beta.beta))
+    else
+        TaggedBetaMeasure(m.space, m.tag, BetaMeasure(m.beta.space, m.beta.alpha, m.beta.beta + 1.0))
+    end
+end
+
 function condition(m::GaussianMeasure, k::Kernel, observation)
     # Conjugate path: Normal-Normal requires Euclidean → Euclidean with declared σ_obs
     if k.source isa Euclidean && k.target isa Euclidean &&
@@ -394,6 +419,7 @@ function _condition_by_grid(m::GaussianMeasure, k::Kernel, observation; n::Int=6
 end
 
 log_density_at(m::BetaMeasure, x) = (m.alpha - 1) * log(x) + (m.beta - 1) * log(1 - x)
+log_density_at(m::TaggedBetaMeasure, x) = log_density_at(m.beta, x)
 log_density_at(m::GaussianMeasure, x) = -0.5 * ((x - m.mu) / m.sigma)^2
 log_density_at(m::DirichletMeasure, x) = sum((m.alpha[i] - 1) * log(x[i]) for i in eachindex(m.alpha))
 
@@ -447,6 +473,19 @@ end
 function _predictive_ll(m::BetaMeasure, k::Kernel, obs)
     val = expect(m, h -> exp(k.log_density(h, obs)))
     log(max(val, 1e-300))
+end
+
+function _predictive_ll(m::TaggedBetaMeasure, k::Kernel, obs)
+    ll = k.log_density(m, obs)
+    # 0.0 sentinel means predicate didn't fire → uninformative base rate for weight update.
+    # Unambiguous: Beta-Bernoulli with proper priors never produces log-density exactly 0.0.
+    ll == 0.0 ? log(0.5) : ll
+end
+
+function _predictive_ll(m::MixtureMeasure, k::Kernel, obs)
+    w = weights(m)
+    total = sum(w[i] * exp(_predictive_ll(m.components[i], k, obs)) for i in eachindex(w))
+    log(max(total, 1e-300))
 end
 
 function _predictive_ll(m::Measure, k::Kernel, obs; n_samples::Int=200)
@@ -629,6 +668,8 @@ function draw(m::BetaMeasure)
     y = _draw_gamma(m.beta)
     x / (x + y)
 end
+
+draw(m::TaggedBetaMeasure) = draw(m.beta)
 
 function draw(m::GaussianMeasure)
     m.mu + m.sigma * randn()
