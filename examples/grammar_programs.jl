@@ -198,7 +198,8 @@ Depth-1: single predicates and nonterminal refs.
 Depth-2: compositions with AND/OR/NOT.
 """
 function enumerate_programs(g::Grammar, max_depth::Int;
-                            include_temporal::Bool=false)::Vector{Program}
+                            include_temporal::Bool=false,
+                            min_log_prior::Float64=-20.0)::Vector{Program}
     n_ch = n_channels(g.sensor_config)
 
     # Depth 1: atomic predicates + nonterminal references
@@ -253,7 +254,9 @@ function enumerate_programs(g::Grammar, max_depth::Int;
 
     programs = Program[]
     for (i, expr) in enumerate(all_exprs)
-        push!(programs, Program(expr, expr_complexity(expr), g.id))
+        c = expr_complexity(expr)
+        -(g.complexity + c) >= min_log_prior || continue
+        push!(programs, Program(expr, c, g.id))
     end
     programs
 end
@@ -623,10 +626,19 @@ function perturb_grammar(g::Grammar, freq_table::SubprogramFrequencyTable)::Gram
         return Grammar(g.sensor_config, new_rules, next_grammar_id())
 
     elseif op == :modify_threshold
-        # Pick a random threshold in a random rule's body and shift it
         isempty(g.rules) && return Grammar(g.sensor_config, g.rules, next_grammar_id())
-        # Just return unchanged for now — threshold modification is a refinement
-        return Grammar(g.sensor_config, g.rules, next_grammar_id())
+        rule_idx = rand(1:length(g.rules))
+        rule = g.rules[rule_idx]
+        nodes = collect_threshold_nodes(rule.body)
+        isempty(nodes) && return Grammar(g.sensor_config, g.rules, next_grammar_id())
+        node = rand(nodes)
+        other_thresholds = filter(t -> t != node.threshold, THRESHOLDS)
+        isempty(other_thresholds) && return Grammar(g.sensor_config, g.rules, next_grammar_id())
+        new_t = rand(other_thresholds)
+        new_body = replace_threshold(rule.body, node, new_t)
+        new_rules = [i == rule_idx ? ProductionRule(rule.name, new_body) : g.rules[i]
+                     for i in eachindex(g.rules)]
+        return Grammar(g.sensor_config, new_rules, next_grammar_id())
     end
 
     Grammar(g.sensor_config, g.rules, next_grammar_id())
@@ -654,4 +666,67 @@ end
 function expr_equal(a::NonterminalRef, b::NonterminalRef)
     a.name == b.name
 end
+function expr_equal(a::PersistsExpr, b::PersistsExpr)
+    a.n == b.n && expr_equal(a.child, b.child)
+end
+function expr_equal(a::ChangedExpr, b::ChangedExpr)
+    expr_equal(a.child, b.child)
+end
+function expr_equal(a::SinceExpr, b::SinceExpr)
+    expr_equal(a.p, b.p) && expr_equal(a.q, b.q)
+end
 function expr_equal(::ProgramExpr, ::ProgramExpr) false end
+
+# ═══════════════════════════════════════
+# Threshold node collection and replacement
+# ═══════════════════════════════════════
+
+function collect_threshold_nodes(e::GTExpr) ProgramExpr[e] end
+function collect_threshold_nodes(e::LTExpr) ProgramExpr[e] end
+function collect_threshold_nodes(e::AndExpr)
+    vcat(collect_threshold_nodes(e.left), collect_threshold_nodes(e.right))
+end
+function collect_threshold_nodes(e::OrExpr)
+    vcat(collect_threshold_nodes(e.left), collect_threshold_nodes(e.right))
+end
+function collect_threshold_nodes(e::NotExpr)
+    collect_threshold_nodes(e.child)
+end
+function collect_threshold_nodes(e::NonterminalRef) ProgramExpr[] end
+function collect_threshold_nodes(e::PersistsExpr)
+    collect_threshold_nodes(e.child)
+end
+function collect_threshold_nodes(e::ChangedExpr)
+    collect_threshold_nodes(e.child)
+end
+function collect_threshold_nodes(e::SinceExpr)
+    vcat(collect_threshold_nodes(e.p), collect_threshold_nodes(e.q))
+end
+
+function replace_threshold(e::GTExpr, old::ProgramExpr, new_t::Float64)
+    expr_equal(e, old) ? GTExpr(e.channel, new_t) : e
+end
+function replace_threshold(e::LTExpr, old::ProgramExpr, new_t::Float64)
+    expr_equal(e, old) ? LTExpr(e.channel, new_t) : e
+end
+function replace_threshold(e::AndExpr, old::ProgramExpr, new_t::Float64)
+    AndExpr(replace_threshold(e.left, old, new_t), replace_threshold(e.right, old, new_t))
+end
+function replace_threshold(e::OrExpr, old::ProgramExpr, new_t::Float64)
+    OrExpr(replace_threshold(e.left, old, new_t), replace_threshold(e.right, old, new_t))
+end
+function replace_threshold(e::NotExpr, old::ProgramExpr, new_t::Float64)
+    NotExpr(replace_threshold(e.child, old, new_t))
+end
+function replace_threshold(e::NonterminalRef, _old::ProgramExpr, _new_t::Float64)
+    e
+end
+function replace_threshold(e::PersistsExpr, old::ProgramExpr, new_t::Float64)
+    PersistsExpr(replace_threshold(e.child, old, new_t), e.n)
+end
+function replace_threshold(e::ChangedExpr, old::ProgramExpr, new_t::Float64)
+    ChangedExpr(replace_threshold(e.child, old, new_t))
+end
+function replace_threshold(e::SinceExpr, old::ProgramExpr, new_t::Float64)
+    SinceExpr(replace_threshold(e.p, old, new_t), replace_threshold(e.q, old, new_t))
+end

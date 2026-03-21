@@ -22,19 +22,28 @@ The agent's entire belief about the world is a single flat MixtureMeasure:
 
 ```
 belief : MixtureMeasure
-  components: [ BetaMeasure_j for j in 1..M ]       # one per (grammar, program) pair
+  components: [ TaggedBetaMeasure(tag=j, beta=Beta_j) for j in 1..M ]
   weights:    [ w_j ∝ 2^(-|G_j|) × 2^(-|P_j|) × likelihood_j ]
-  metadata:   [ (grammar_id_j, program_id_j) for j ] # host-maintained index
 ```
 
-Each component is a BetaMeasure tracking P(enemy | this program's predicate matches). The grammar × program structure is metadata maintained by the host, not nesting in the measure. This is a deliberate design choice: the existing `condition(MixtureMeasure, kernel, obs)` dispatch in ontology.jl (lines 478-496) flattens nested mixtures as a side effect. Rather than fighting this, the architecture embraces it — the mixture is flat by design, with grammar structure recovered by aggregation over `grammar_id` whenever the host needs grammar-level statistics.
+Each component is a `TaggedBetaMeasure` — a BetaMeasure tracking P(enemy | this program's predicate matches), tagged with the component's index. The tag is immutable: conditioning updates the Beta parameters but never changes which program a component represents. The tag is what allows a single kernel to dispatch per-component: it extracts the tag, looks up the corresponding compiled predicate, and computes the appropriate likelihood.
 
-Each component's prior weight is the product of its grammar's prior (`2^(-|G|)`) and its program's prior within that grammar (`2^(-|P|)`). This is mathematically equivalent to a nested mixture but avoids fragile nesting invariants.
-
-Grammar-level inference is recovered by the host as needed:
+The mixture is flat by design. The existing `condition(MixtureMeasure, kernel, obs)` dispatch in ontology.jl flattens nested mixtures as a side effect. Rather than fighting this, the architecture embraces it — grammar × program structure is maintained by the host in parallel arrays bundled with the belief in an `AgentState` struct:
 
 ```
-weight(Grammar_i) = Σ_j w_j  where grammar_id_j == i
+AgentState:
+  belief           : MixtureMeasure of TaggedBetaMeasures
+  metadata         : Vector{Tuple{Int,Int}}    # (grammar_id, program_id) per component
+  compiled_kernels : Vector{CompiledKernel}     # precompiled closures for conditioning
+  all_programs     : Vector{Program}            # ASTs retained for subtree extraction
+```
+
+The four arrays are always the same length and aligned by index. `sync_prune!` and `sync_truncate!` maintain this invariant by pruning/truncating all arrays together and reindexing tags so that `belief.components[i].tag == i` for all `i`. Since kernels are rebuilt each step, stale tag references from previous steps cannot persist.
+
+Each component's prior weight is the product of its grammar's prior (`2^(-|G|)`) and its program's prior within that grammar (`2^(-|P|)`). Grammar-level inference is recovered by the host as needed:
+
+```
+weight(Grammar_i) = Σ_j w_j  where metadata[j].grammar_id == i
 ```
 
 This gives exact grammar-level posteriors without maintaining nested structure.
@@ -263,9 +272,25 @@ The split between DSL and host follows one rule: the DSL handles inference (cond
 
 ### 5.2 DSL types and ontology.jl changes
 
-**No new Measure types are needed.** The belief is a standard flat MixtureMeasure of BetaMeasures. Grammar × program structure is host-side metadata, not type-system structure. The DSL sees a MixtureMeasure and conditions it — it never inspects grammar or program identity.
+**`TaggedBetaMeasure`** (~30 lines in ontology.jl). The program index is genuinely part of the hypothesis — each component isn't just "P(enemy) is Beta(α, β)" but "program #47 is the correct world model, and under #47, P(enemy | predicate matches) is Beta(α, β)." This requires a measure type that carries the hypothesis identity alongside the belief parameters:
 
-**Add `_predictive_ll(MixtureMeasure, k, obs)` dispatch** (~5 lines). The existing fallback uses Monte Carlo (200 samples). Add an exact dispatch that computes the weighted sum of component likelihoods:
+```julia
+struct TaggedBetaMeasure <: Measure
+    space::Interval           # always [0,1]
+    tag::Int                  # program/component index — immutable, never updated
+    beta::BetaMeasure         # P(enemy | predicate matches) — updated by conditioning
+end
+```
+
+The tag is immutable: conditioning never changes which program a component represents, only its belief parameters. Dispatches:
+
+- `_predictive_ll(m::TaggedBetaMeasure, k, obs)` — passes the tagged measure to the kernel's `log_density`, which extracts `m.tag` to dispatch to the right compiled predicate. If the predicate fires, returns Beta-Bernoulli log-likelihood. If not, returns `log(0.5)` — the program is implicitly predicting the base rate ("I don't know about this entity"), and that prediction is scored against the observation. This ensures non-firing programs lose weight relative to firing-and-correct programs (informed and right > uninformed > informed and wrong). The predicate result is cached in a side-channel `Dict{Int, Bool}` captured by the kernel closure, avoiding double evaluation during the subsequent `condition` call.
+- `condition(m::TaggedBetaMeasure, k, obs)` — reads the predicate cache. If the predicate didn't fire, returns `m` unchanged (no update — the program made no prediction about this entity). If the predicate fired, performs a standard Beta-Bernoulli conjugate update on `m.beta`, wraps the result in a new `TaggedBetaMeasure` preserving the tag.
+- `expect`, `draw`, `mean`, `variance`, `log_density_at` — delegate to `m.beta`.
+
+The predicate cache is a `Dict{Int, Bool}` captured by the kernel closure at construction time. Since kernels are rebuilt each step, the cache is always fresh — stale entries from previous observations cannot persist.
+
+**`_predictive_ll(MixtureMeasure, k, obs)` exact dispatch** (~5 lines). The existing fallback uses Monte Carlo (200 samples). Add an exact dispatch that computes the weighted sum of component likelihoods:
 
 ```julia
 function _predictive_ll(m::MixtureMeasure, k::Kernel, obs)
@@ -275,9 +300,27 @@ function _predictive_ll(m::MixtureMeasure, k::Kernel, obs)
 end
 ```
 
-This delegates to each component's specialised `_predictive_ll` — exact for BetaMeasure components.
+This delegates to each component's specialised `_predictive_ll` — exact for TaggedBetaMeasure components.
 
-**Per-component kernel dispatch.** The kernel's `log_density` function encodes program identity: it looks up the program for component `j`, evaluates its predicate against the sensor reading (through the grammar's sensor config), and computes the Beta-Bernoulli likelihood. A single kernel works for all components because the program identity is part of the hypothesis space. The kernel closes over the current temporal state (sliding window of past sensor readings), rebuilt each timestep by the host.
+**Per-component kernel dispatch.** The kernel's `log_density` function is a closure that captures `compiled_kernels`, `grammar_sensor_vectors` (per-grammar projections of the current entity's state), `temporal_window`, and the predicate cache. When called with a `TaggedBetaMeasure`:
+
+```julia
+(tagged_beta, obs) -> begin
+    ck = compiled_kernels[tagged_beta.tag]
+    sv = grammar_sensor_vectors[ck.grammar_id]
+    fires = ck.evaluate(sv, temporal_window)
+    predicate_cache[tagged_beta.tag] = fires  # cache for condition dispatch
+    
+    if fires
+        p = mean(tagged_beta.beta)
+        obs == 1.0 ? log(p) : log(1 - p)
+    else
+        log(0.5)  # base rate — program predicts 50/50, scored against observation
+    end
+end
+```
+
+The existing `condition(MixtureMeasure, kernel, obs)` dispatch works unmodified. It iterates over components, calls `_predictive_ll` on each `TaggedBetaMeasure`, gets back per-component log-likelihoods, reweights, then calls `condition` on each component to update beliefs. The `TaggedBetaMeasure` dispatches handle all per-component logic. No bypass, no manual posterior construction.
 
 ### 5.3 `fold-init` in eval.jl
 
@@ -326,15 +369,25 @@ struct Grammar
 end
 ```
 
-**Program enumeration.** Given a grammar, enumerate all programs (PREDICT expressions) up to a maximum derivation depth. Each program is an AST whose leaves are terminals (sensor predicates) or grammar nonterminals, composed with AND/OR/NOT/temporal operators. The enumeration is bounded by derivation depth, not by the total program count — deep programs are exponentially unlikely under the complexity prior anyway.
+**Program enumeration.** Given a grammar, enumerate programs up to a maximum derivation depth, pruning any program whose prior weight falls below a floor. The enumeration is bounded by two constraints: derivation depth (structural limit) and minimum log-prior (weight limit). The depth bound limits the combinatorial space; the weight floor ensures that programs the prior already judges as implausible are never materialised.
 
 ```julia
-function enumerate_programs(grammar::Grammar, max_depth::Int)::Vector{Program}
+function enumerate_programs(
+    grammar::Grammar, max_depth::Int;
+    min_log_prior::Float64 = -20.0    # skip programs with log2(prior) below this
+)::Vector{Program}
     # Bottom-up enumeration: depth-1 programs are single predicates/nonterminals,
     # depth-2 programs compose depth-1 with connectives, etc.
+    # At each depth, skip any candidate whose -complexity < min_log_prior.
     # Returns programs with precomputed complexity scores.
 end
 ```
+
+The weight floor is not an arbitrary cap — it is Occam's Razor applied at enumeration time. A program with complexity 20 has prior weight `2^(-20) ≈ 1e-6`; it would need overwhelming likelihood to overcome this penalty, and in a 200-step game it almost certainly won't. Enumerating it wastes memory without affecting the posterior.
+
+Critically, the weight floor creates the correct incentive for grammar evolution. Under the empty grammar, a depth-3 conjunction of raw sensor predicates might have complexity 12 and prior weight `2^(-12) ≈ 2.4e-4` — enumerated. Under a grammar with a `RED` nonterminal, the same logical predicate has complexity 5 and prior weight `2^(-5) ≈ 0.03` — much higher. More complex programs *become reachable* as the grammar improves, because abstractions lower their complexity below the floor. The enumeration space grows not by increasing depth but by adding nonterminals. This is the mechanism by which grammar evolution expands the agent's effective hypothesis space.
+
+**Practical scale.** With 80 terminal predicates (2 comparisons × 8 channels × 5 thresholds), depth 2 produces ~20K programs per grammar before the weight floor. The floor prunes this to a few thousand. Depth 3 under the empty grammar would produce millions, but the floor prunes aggressively — only short compositions survive. Depth 3 under a grammar with good nonterminals produces many more viable programs, because nonterminal references cost 1 regardless of their expansion's complexity. Default: `max_depth=2, min_log_prior=-20.0`.
 
 **Grammar enumeration.** The space of grammars is large but structured. For the initial implementation, use a curated seed population plus perturbation:
 
@@ -642,26 +695,64 @@ Track per-step:
   - Prediction accuracy (does the agent correctly classify entities?)
   - Cumulative energy (is the agent accumulating reward?)
   - VOI of observe action (does it decrease as beliefs sharpen?)
-  - Surprise (negative log-likelihood of observations under the posterior — spikes indicate regime changes)
+  - Surprise (negative log-likelihood of observations under the posterior)
+  - `time_to_convergence(start_step, end_step; accuracy_threshold, window)` — steps from `start_step` until rolling-window accuracy hits threshold. Pure measurement.
 
-**File:** `test/test_program_agent.jl` (~200 lines)
+**File:** `test/test_program_agent.jl` (~250 lines)
 
-Test cases:
-  - **Single regime, colour-typed world.** After N interactions, the posterior concentrates on programs that reference colour channels. Grammars without colour sensors lose mass.
-  - **Single regime, motion-typed world.** Posterior concentrates on speed-channel programs. Colour-sensor grammars are penalised for unnecessary sensor cost.
-  - **Single regime, mixed-rule world.** Programs with conjunction (colour AND movement) outperform single-feature programs. Grammars with both channels and a conjunction nonterminal dominate.
-  - **Regime change (colour-typed → motion-typed).** After the change, surprise spikes, programs with temporal structure (`CHANGED`) rise, and the agent re-learns under the new rule. Grammars that cover both colour and speed channels (hedging) outperform specialists.
-  - **Multiple regime changes.** Time-to-convergence decreases across regimes (meta-learning signature). Grammars that have accumulated good nonterminals from previous regimes learn faster.
-  - **Occam's Razor.** In the all-food world, the simplest possible program (empty predicate → food) dominates. Rich grammars are penalised for unused complexity. The agent correctly learns that the world is trivial.
-  - **Baseline comparison.** The program-space agent outperforms: (a) random action, (b) greedy (interact with everything), (c) fixed-model agent (hardcoded Naive Bayes over parsed features — the Phase 1 agent from the original plan). It approaches (d) oracle (knows the true rule).
+### Testing philosophy
 
-**Enforcement tests** (verify that type-level and performance constraints hold):
+Tests fall into three categories with different epistemic standards.
 
-  - **Kernel precompilation speed.** Time 10,000 calls to `compiled_kernel.evaluate(sensor_vector, temporal_state)` for a depth-4 program. Assert < 1ms total. This catches AST interpretation at conditioning time, which would be 10-50× slower due to tree walks, allocation, and dispatch overhead. The test doesn't check *how* the kernel is implemented — it checks the observable consequence of doing it wrong.
-  - **CompiledKernel has no AST field.** Assert that `fieldnames(CompiledKernel)` does not contain any field of type `ProgramExpr` or any `AbstractArray{ProgramExpr}`. This is a structural test: if someone adds an AST field to "help with debugging," the test catches it before it becomes a temptation.
-  - **SubprogramFrequencyTable required for nonterminal proposal.** Verify that `propose_nonterminal` has no method accepting anything other than `SubprogramFrequencyTable`. Verify that `perturb_grammar` requires a `SubprogramFrequencyTable` argument. These are method-signature tests: if someone adds a convenience method that bypasses the analysis, the test catches it.
-  - **Proposed nonterminals are actual posterior subtrees.** After running the agent for N steps in a colour-typed world, call `analyse_posterior_subtrees` and `propose_nonterminal`. Verify that the proposed nonterminal's body is a subtree that actually appears in at least 2 of the top-10 posterior programs. This catches random AST generation masquerading as subprogram extraction.
-  - **Compression payoff is real.** After proposing a nonterminal, enumerate programs under the new grammar and verify that at least one program referencing the nonterminal has strictly lower complexity than its expansion under the old grammar. If the nonterminal doesn't compress anything, the extraction is broken.
+**Mechanism tests** verify that the mathematical machinery does what the theory says. These are deterministic, involve no agent or simulation, and are falsifiable by construction. A mechanism test failure means the code is wrong.
+
+**Emergent-behaviour tests** verify that the whole system produces expected qualitative patterns. These are statistical and must be framed carefully to avoid attributing emergent outcomes to specific mechanisms when confounds exist. An emergent-behaviour test failure might mean the code is wrong, or it might mean the test's causal attribution is wrong. Emergent tests should assert *directional* properties (X increases, Y is higher than Z) rather than threshold-dependent properties (X > 0.7).
+
+**Enforcement tests** verify that type-level and performance constraints hold. These are structural — they test the shape of the code, not its behaviour. An enforcement test failure means someone bypassed a design invariant.
+
+### Mechanism tests
+
+  - **Single regime, colour-typed world.** After N interactions, the posterior concentrates on programs that reference colour channels. Grammars without colour sensors lose mass. (Mechanism: conditioning reweights by likelihood; programs whose predicates match the true rule predict better.)
+
+  - **Single regime, motion-typed world.** Posterior concentrates on speed-channel programs. Colour-sensor grammars are penalised for unnecessary sensor cost. (Mechanism: Occam's Razor — simpler grammars that predict equally well have higher prior weight.)
+
+  - **Single regime, mixed-rule world.** Programs with conjunction (colour AND movement) outperform single-feature programs. (Mechanism: single-feature programs misclassify entities where the conjunction matters.)
+
+  - **Occam's Razor.** In the all-food world, the simplest possible program (empty predicate → food) dominates. Rich grammars are penalised for unused complexity. (Mechanism: complexity prior penalises unnecessary structure; the simplest program that predicts the data dominates.)
+
+  - **Temporal programs represent regime changes.** Hand-construct two programs: `PREDICT(RED)` (stable) and a temporal program that switches from colour to movement prediction. Feed both an observation sequence where colour predicts danger for 50 steps, then movement predicts danger. Compute cumulative log-likelihood of each program on the full sequence. Assert the temporal program has higher total likelihood after the switch. (Mechanism: temporal operators allow programs to represent non-stationary structure. No agent, no simulation — pure likelihood computation on hand-crafted data.)
+
+  - **Compression pipeline produces real compression.** Run agent on colour-typed world for N steps. Extract posterior. Call `analyse_posterior_subtrees` and `propose_nonterminal`. Verify the proposed nonterminal's body references colour channels. Enumerate programs under the new grammar. Verify that the best colour-typed program has strictly lower complexity than its expansion under the old grammar. (Mechanism: the DreamCoder compression step extracts useful abstractions. No convergence-speed measurement — just structural verification of the compression.)
+
+  - **Per-grammar sensor projection.** Two grammars with different sensor configs produce different sensor vectors for the same entity. Programs from each grammar evaluate against their own grammar's projection, not a global one. (Mechanism: different grammars see different things.)
+
+  - **Complexity scoring reflects nonterminals.** Same logical predicate has different complexity under different grammars: `AND(GT(0,0.9), GT(5,0.5))` costs 3 under the empty grammar, 2 under a grammar with `RED := GT(0,0.9)`. (Mechanism: nonterminal references cost 1 regardless of expansion complexity. This is what makes grammar evolution pay off.)
+
+### Emergent-behaviour tests
+
+These test qualitative patterns of the whole system. Assertions are directional, not threshold-dependent. Confounds are controlled where possible.
+
+  - **Regime change: posterior shifts toward correct feature set.** Run agent across colour→motion change at step 50. Assert: mean posterior weight of programs referencing the speed channel is higher in steps 60–80 than in steps 30–50. (This tests the right thing — the posterior is moving toward the correct features — without assuming surprise spikes, which are an indirect indicator that may or may not appear depending on how confident the agent was pre-change.)
+
+  - **Regime change: re-learning occurs.** Additionally assert: mean surprise in steps 70–80 is lower than mean surprise in steps 51–60. (This tests that the agent recovers from the disruption, not just that it's disrupted. The comparison is within the post-change period, avoiding confounds from pre-change confidence levels.)
+
+  - **Meta-learning: controlled comparison.** Run two agents on the same 3-regime sequence (colour→motion→colour, changes at steps 75 and 150): one with grammar perturbation enabled, one without. Both start with identical seed grammars and face identical observation sequences (fix the random seed). Assert: the perturbation agent's accuracy in regime 3 (steps 150–225) exceeds the no-perturbation agent's accuracy in regime 3. This controls for all confounds — both agents have the same initial pool, same observations, same pruning. The only difference is whether the grammar evolves. If the perturbation agent converges faster, it's because its grammar improved, not because of pool size or residual weights. (If this test fails, investigate perturbation quality first — `find_frequent_subprogram` may not be producing useful nonterminals — before questioning the meta-learning mechanism.)
+
+  - **Meta-learning: grammar pool evolution is real.** After the perturbation agent's multi-regime run, verify that perturbed grammars with nonterminals exist in the pool and that at least one has non-trivial posterior weight (above median). This is observational — it reports that the perturbation pipeline produced grammars the inference found useful, without attributing convergence speed to them.
+
+  - **Baseline comparison.** The program-space agent accumulates more energy than: (a) random action, (b) greedy (interact with everything). It approaches (c) oracle (knows the true rule). (Emergent, not mechanism: the full system outperforms naive strategies, but the specific margin depends on many factors.)
+
+### Enforcement tests
+
+  - **Kernel precompilation speed.** Time 10,000 calls to `compiled_kernel.evaluate(sensor_vector, temporal_state)` for a depth-4 program. Assert < 1ms total. Catches AST interpretation at conditioning time (10-50× slower due to tree walks, allocation, and dispatch overhead). The test checks the observable consequence, not the implementation.
+
+  - **CompiledKernel has no AST field.** Assert that `fieldnames(CompiledKernel)` does not contain any field of type `ProgramExpr` or any `AbstractArray{ProgramExpr}`. Structural test: catches AST fields added for "debugging convenience."
+
+  - **SubprogramFrequencyTable required for nonterminal proposal.** Verify that `propose_nonterminal` has no method accepting anything other than `SubprogramFrequencyTable`. Verify that `perturb_grammar` requires a `SubprogramFrequencyTable` argument. Method-signature tests: catches convenience overloads that bypass posterior analysis.
+
+  - **Proposed nonterminals are actual posterior subtrees.** After running the agent for N steps in a colour-typed world, call `analyse_posterior_subtrees` and `propose_nonterminal`. Verify that the proposed nonterminal's body is a subtree that actually appears in at least 2 of the top-10 posterior programs. Catches random AST generation masquerading as subprogram extraction.
+
+  - **AgentState stays synced after prune/truncate.** After `sync_prune!` and `sync_truncate!`, verify `length(state.belief.components) == length(state.metadata) == length(state.compiled_kernels) == length(state.all_programs)` and `state.belief.components[i].tag == i` for all `i`. Catches index desynchronisation.
 
 ---
 
@@ -754,10 +845,19 @@ Phase 0 (verify conditioning) → Phase 1 (grammars — HARDEST) ─┐
 
 **Tractability of grammar enumeration.** The space of grammars is combinatorially large. The seed-plus-perturbation approach avoids full enumeration, but the quality of the grammar pool depends on the perturbation operators finding good candidates. If this proves insufficient, consider MCMC over grammar space (propose-accept/reject) instead of maintaining an explicit mixture.
 
-**Kernel compilation complexity.** Compiling a program AST into a per-component `log_density` function involves bridging the grammar's sensor config with the DSL's measure types. The compilation step is pure Julia and can be arbitrarily complex, but it must produce a single kernel whose dispatch-by-component-index is fast. The interface between the metadata table (mapping component index → grammar + program) and the kernel's inner loop needs careful design. Consider precompiling predicate evaluation into closures at grammar-enumeration time rather than interpreting the AST at each conditioning step.
-
-**Scale.** With ~20 grammars × ~100 programs each = ~2,000 mixture components initially. Grammar perturbation may grow this to ~5,000. Conditioning a 5,000-component flat mixture on each observation is O(5000) likelihood evaluations per step. For a 200-step game, that's ~1M evaluations. Each evaluation is cheap (evaluate a predicate against a sensor vector, compute one Beta-Bernoulli log-likelihood), so this should be tractable. But verify empirically and monitor pool growth via metrics.
-
 **The compression-exploration tradeoff.** Promoting a subprogram to a nonterminal creates a new grammar in the pool — the original grammar remains. If the promoted nonterminal turns out to be unhelpful in a new regime, the new grammar is penalised by its higher complexity cost without compensating predictive benefit, and it loses posterior mass while the original (or another better-fitting grammar) rises. This self-corrects naturally, but grammar perturbation should still be conservative about promotion. Require strong posterior evidence before promoting.
 
-**Grammar pruning and revival.** The pruning threshold (aggregate grammar weight < 1e-10) permanently removes grammars from the pool. If a pruned grammar's structure would have been useful after a future regime change, it's gone. One mitigation: maintain a "graveyard" of pruned grammars and periodically resurrect the most recently pruned ones at low prior weight, giving them a second chance if the world has changed. Whether this is necessary depends on how often regime changes invalidate the current grammar pool — verify empirically.
+**Grammar pruning and revival.** The pruning threshold permanently removes grammars from the pool. If a pruned grammar's structure would have been useful after a future regime change, it's gone. One mitigation: maintain a "graveyard" of pruned grammars and periodically resurrect the most recently pruned ones at low prior weight, giving them a second chance if the world has changed. Whether this is necessary depends on how often regime changes invalidate the current grammar pool — verify empirically.
+
+**Dynamic depth.** At depth 2, programs are too short (complexity 1–3) for meaningful subtree sharing — the DreamCoder compression step rarely finds subtrees with `min_complexity ≥ 2`. Grammar evolution via nonterminal promotion becomes meaningful at depth 3+, where longer programs share more structure. But depth 3 under the empty grammar is intractable (~34K programs per grammar). The resolution is dynamic depth: the host periodically checks whether the top grammar's nonterminals would enable substantially more depth-3 programs to pass the `min_log_prior` floor, and if so, re-enumerates at depth 3 for that grammar. Grammar evolution *creates the conditions* for deeper search — the system starts shallow, learns nonterminals, then deepens when the grammar can support it. This is a natural extension of the prior-weighted enumeration design: nonterminals lower program complexity, which pushes more depth-3 programs above the floor, which expands the hypothesis space, which enables richer learning. Defer until the depth-2 system is stable; implement as a host-side parameter adjustment, not a DSL change.
+
+**Perturbation interaction with P(enemy).** Grammar perturbation adds new programs with Beta(1,1) priors (mean 0.5). In a mature mixture where established programs have learned low P(enemy) (~0.07), fresh components shift the global expectation toward 0.5, reducing the agent's willingness to interact. This is transient — new components either fire and learn (converging away from 0.5) or don't fire and receive the base-rate penalty. But it can temporarily disrupt learned behaviour. Consider initialising new components' Betas from the posterior mean of existing components in the same grammar, rather than from the uninformative Beta(1,1). This preserves the prior-weight penalty (the program is still new and complexity-penalised) while avoiding the P(enemy) shock.
+
+### Resolved
+
+- ~~Kernel compilation complexity~~ — resolved by `CompiledKernel` type constraint and precompilation into closures at enumeration time. Per-component dispatch via `TaggedBetaMeasure.tag`.
+- ~~Temporal operator implementation~~ — resolved by kernel closures capturing temporal window, rebuilt each step.
+- ~~Precompile predicate evaluation~~ — hard requirement, enforced by `CompiledKernel` having no AST field.
+- ~~Program enumeration tractability~~ — resolved by prior-weighted enumeration with `min_log_prior` floor. Depth bounds + weight floor replace arbitrary count caps.
+- ~~Scale~~ — empirically validated. 12 seed grammars at depth 2 produce ~46K components, pruned to ~2K. Conditioning is O(2K) per step — fast. The `min_log_prior` floor prunes Grammar 12 entirely (complexity 20, all ~13,600 programs eliminated). Depth 3 is tractable only for grammars with good nonterminals.
+- ~~Base-rate sentinel for non-firing predicates~~ — **resolved: use `log(0.5)`, not `0.0`.** Empirical finding: with `ll = 0.0` for non-firing predicates, established programs that stop being relevant after a regime change coast indefinitely — they never fire, never get penalised, never lose weight. Meanwhile, newly relevant programs that *do* fire take learning penalties from Beta(1,1) priors. This inverts the intended dynamic: the posterior becomes sticky rather than adaptive. The correct semantics: a non-firing program is implicitly predicting the base rate ("I don't know about this entity, so I predict 50/50"). That prediction should be scored against the observation. The ranking becomes: informed and right > uninformed > informed and wrong. With `0.0`, the ranking is uninformed ≥ informed and right, which is perverse. The predicate cache (`Dict{Int, Bool}`) already resolves the sentinel-collision concern in `condition` — it reads the cache directly rather than using the return value. **Change the non-firing return from `0.0` to `log(0.5)` in the kernel closure and in `_predictive_ll(TaggedBetaMeasure, ...)`.**

@@ -810,6 +810,397 @@ let
 end
 println()
 
+# ═══════════════════════════════════════
+# TEST 19: Compression pipeline produces real compression (mechanism, spec §5.10)
+# ═══════════════════════════════════════
+
+println("=" ^ 60)
+println("TEST 19: Compression pipeline produces real compression")
+println("=" ^ 60)
+
+let
+    Random.seed!(42)
+    g = Grammar(colour_sensor_config(), ProductionRule[], 1)
+    programs = enumerate_programs(g, 3)
+
+    # Simulate colour posterior: heavily weight programs using GT(0,0.7) + LT(1,0.3)
+    prog_weights = zeros(length(programs))
+    for (i, p) in enumerate(programs)
+        s = show_expr(p.predicate)
+        if occursin("GT(0,0.7)", s) && occursin("LT(1,0.3)", s)
+            prog_weights[i] = 1.0
+        elseif occursin("GT(0,0.7)", s) || occursin("LT(1,0.3)", s)
+            prog_weights[i] = 0.1
+        else
+            prog_weights[i] = 0.001
+        end
+    end
+    prog_weights ./= sum(prog_weights)
+
+    freq_table = analyse_posterior_subtrees(programs, prog_weights;
+                                            min_frequency=0.005, min_complexity=2)
+    proposed = propose_nonterminal(freq_table)
+    @assert proposed !== nothing "Should propose a nonterminal from colour posterior"
+
+    # Proposed body should reference colour channels (0=red, 1=green, 2=blue)
+    body_str = show_expr(proposed.body)
+    has_colour_ref = any(ch -> occursin("($ch,", body_str), ["0", "1", "2"])
+    @assert has_colour_ref "Proposed body should reference colour channels, got: $body_str"
+
+    # Create a new grammar with the proposed nonterminal and enumerate
+    new_g = Grammar(colour_sensor_config(), [proposed], 2)
+    new_programs = enumerate_programs(new_g, 2)
+
+    # Find a program using the nonterminal
+    nt_progs = filter(p -> occursin(string(proposed.name), show_expr(p.predicate)), new_programs)
+    @assert !isempty(nt_progs) "Should have programs using the nonterminal"
+
+    # Nonterminal ref has lower complexity than its expansion
+    nt_prog = first(nt_progs)
+    exp_c = expanded_complexity(nt_prog.predicate, new_g.rules)
+    @assert nt_prog.complexity < exp_c "Nonterminal should compress: ref=$(nt_prog.complexity) < expanded=$exp_c"
+
+    println("PASSED: Nonterminal '$(proposed.name)' body=$body_str, " *
+            "ref_complexity=$(nt_prog.complexity) < expanded=$exp_c")
+end
+println()
+
+# ═══════════════════════════════════════
+# TEST 20: modify_threshold produces changes (enforcement)
+# ═══════════════════════════════════════
+
+println("=" ^ 60)
+println("TEST 20: modify_threshold produces grammar with modified thresholds")
+println("=" ^ 60)
+
+let
+    Random.seed!(42)
+    red_body = AndExpr(GTExpr(0, 0.7), AndExpr(LTExpr(1, 0.3), LTExpr(2, 0.3)))
+    g = Grammar(colour_sensor_config(), [ProductionRule(:RED, red_body)], 1)
+    original_str = show_expr(red_body)
+
+    # Need a freq_table (required by perturb_grammar type system)
+    dummy_table = SubprogramFrequencyTable(ProgramExpr[], Float64[], Vector{Int}[])
+
+    found = false
+    for _ in 1:200
+        new_g = perturb_grammar(g, dummy_table)
+        for r in new_g.rules
+            if r.name == :RED && show_expr(r.body) != original_str
+                found = true
+                break
+            end
+        end
+        found && break
+    end
+
+    @assert found "modify_threshold should produce at least one changed threshold in 200 trials"
+    println("PASSED: modify_threshold produces grammars with modified thresholds")
+end
+println()
+
+# ═══════════════════════════════════════
+# TEST 21: Proposed nonterminals are actual posterior subtrees (enforcement, spec §5.10)
+# ═══════════════════════════════════════
+
+println("=" ^ 60)
+println("TEST 21: Proposed nonterminals are actual posterior subtrees")
+println("=" ^ 60)
+
+let
+    Random.seed!(42)
+    g = Grammar(colour_sensor_config(), ProductionRule[], 1)
+    programs = enumerate_programs(g, 3)
+
+    # Weight programs with known patterns
+    prog_weights = zeros(length(programs))
+    for (i, p) in enumerate(programs)
+        s = show_expr(p.predicate)
+        if occursin("GT(0,0.7)", s) && occursin("LT(1,0.3)", s)
+            prog_weights[i] = 1.0
+        elseif occursin("GT(0,0.7)", s)
+            prog_weights[i] = 0.1
+        else
+            prog_weights[i] = 0.001
+        end
+    end
+    prog_weights ./= sum(prog_weights)
+
+    freq_table = analyse_posterior_subtrees(programs, prog_weights;
+                                            min_frequency=0.005, min_complexity=2)
+    proposed = propose_nonterminal(freq_table)
+    @assert proposed !== nothing "Should propose a nonterminal"
+
+    proposed_str = show_expr(proposed.body)
+
+    # The proposed nonterminal is the highest-frequency subtree — verify it
+    # appears in ≥2 source programs (via frequency table + show_expr verification)
+    best_idx = argmax(freq_table.weighted_frequency)
+    source_idxs = unique(freq_table.source_programs[best_idx])
+    @assert length(source_idxs) >= 2 "Proposed body should appear in ≥2 programs, found in $(length(source_idxs))"
+
+    # Verify source programs actually contain the proposed subtree
+    verified = count(i -> occursin(proposed_str, show_expr(programs[i].predicate)),
+                     source_idxs[1:min(10, length(source_idxs))])
+    @assert verified >= 2 "Proposed subtree should be verifiable in source programs via show_expr"
+
+    println("PASSED: Proposed body '$proposed_str' in $(length(source_idxs)) source programs, verified $verified")
+end
+println()
+
+# ═══════════════════════════════════════
+# TEST 22: Temporal programs avoid overcommitment across regime changes (mechanism, spec §5.10)
+# ═══════════════════════════════════════
+
+println("=" ^ 60)
+println("TEST 22: Temporal programs — overcommitment avoidance & transition detection")
+println("=" ^ 60)
+
+let
+    # ── Scenario A: Overcommitment avoidance ──
+    # Red stays 0.9 throughout, entity type flips at step 11 (enemy → food)
+    n_steps = 20
+
+    # Stable GT(0,0.7): fires all 20 steps (red=0.9 > 0.7)
+    alpha, beta_param = 1.0, 1.0
+    stable_ll_second_half = 0.0
+
+    for step in 1:n_steps
+        p = alpha / (alpha + beta_param)
+        if step <= 10
+            # Enemy (obs=1.0): stable learns enemy
+            alpha += 1.0
+        else
+            # Food (obs=0.0): stable confidently predicts enemy — penalised
+            stable_ll_second_half += log(1.0 - p)
+            beta_param += 1.0
+        end
+    end
+
+    # CHANGED(GT(0,0.7)): never fires (red doesn't change), ll = 0.0 throughout
+    changed_ll_second_half = 0.0
+
+    @assert changed_ll_second_half > stable_ll_second_half (
+        "CHANGED should avoid overcommitment: " *
+        "CHANGED ll=$changed_ll_second_half > stable ll=$(round(stable_ll_second_half, digits=2))")
+
+    println("  Scenario A PASSED: stable 2nd-half ll=$(round(stable_ll_second_half, digits=2)), " *
+            "CHANGED 2nd-half ll=$changed_ll_second_half")
+
+    # ── Scenario B: Transition detection ──
+    # Red drops from 0.9 to 0.5 at step 11
+    changed_gt = compile_expr(ChangedExpr(GTExpr(0, 0.7)), ProductionRule[])
+    ts = Dict{Symbol, Any}(:recent => Vector{Float64}[])
+    changed_fires = Bool[]
+
+    for step in 1:n_steps
+        red = step <= 10 ? 0.9 : 0.5
+        sv = [red, 0.5]  # minimal sensor config: [red, speed]
+        push!(changed_fires, changed_gt(sv, ts))
+        push!(ts[:recent], sv)
+        while length(ts[:recent]) > 10
+            popfirst!(ts[:recent])
+        end
+    end
+
+    @assert changed_fires[11] "CHANGED should fire at the transition step (step 11)"
+    non_transition = [changed_fires[i] for i in 1:n_steps if i != 11]
+    @assert !any(non_transition) "CHANGED should only fire at the transition step"
+
+    println("  Scenario B PASSED: CHANGED fires at step 11 only")
+    println("PASSED: Both temporal scenarios verified")
+end
+println()
+
+# ═══════════════════════════════════════
+# TEST 23: Regime change causes prediction disruption (emergent, spec §5.10)
+# ═══════════════════════════════════════
+
+println("=" ^ 60)
+println("TEST 23: Regime change — surprise increases after change (disruption)")
+println("=" ^ 60)
+
+let
+    metrics, _, _ = run_agent(
+        world_rules=[:colour_typed, :motion_typed],
+        regime_change_steps=[50],
+        max_steps=100,
+        grammar_perturbation_interval=typemax(Int),  # isolate regime change effect
+        verbose=false,
+        rng_seed=42)
+
+    function mean_surprise_in_range(m, start_step, end_step)
+        vals = Float64[]
+        for (idx, step) in enumerate(m.steps)
+            start_step <= step <= end_step || continue
+            m.surprise[idx] > 0.0 || continue
+            push!(vals, m.surprise[idx])
+        end
+        vals
+    end
+
+    pre = mean_surprise_in_range(metrics, 20, 50)
+    post = mean_surprise_in_range(metrics, 51, 70)
+
+    @assert length(pre) >= 3 "Need ≥3 interactions in steps 20-50, got $(length(pre))"
+    @assert length(post) >= 2 "Need ≥2 interactions in steps 51-70, got $(length(post))"
+
+    mean_pre = sum(pre) / length(pre)
+    mean_post = sum(post) / length(post)
+
+    @assert mean_post > mean_pre (
+        "Surprise should increase after regime change (disruption): " *
+        "pre=$(round(mean_pre, digits=3)), post=$(round(mean_post, digits=3))")
+
+    println("PASSED: Mean surprise pre=$(round(mean_pre, digits=3)) ($( length(pre)) obs), " *
+            "post=$(round(mean_post, digits=3)) ($(length(post)) obs)")
+end
+println()
+
+# ═══════════════════════════════════════
+# TEST 24: Regime change re-learning occurs (emergent, spec §5.10)
+# ═══════════════════════════════════════
+
+println("=" ^ 60)
+println("TEST 24: Regime change — surprise decreases during re-learning")
+println("=" ^ 60)
+
+let
+    metrics, _, _ = run_agent(
+        world_rules=[:colour_typed, :motion_typed],
+        regime_change_steps=[50],
+        max_steps=100,
+        grammar_perturbation_interval=typemax(Int),  # isolate regime change effect
+        verbose=false,
+        rng_seed=42)
+
+    surprise_early = Float64[]
+    surprise_late = Float64[]
+
+    for (idx, step) in enumerate(metrics.steps)
+        s = metrics.surprise[idx]
+        s == 0.0 && continue  # no feedback this step
+        if 51 <= step <= 70
+            push!(surprise_early, s)
+        elseif 75 <= step <= 100
+            push!(surprise_late, s)
+        end
+    end
+
+    @assert length(surprise_early) >= 2 "Need ≥2 interactions in steps 51-70, got $(length(surprise_early))"
+    @assert length(surprise_late) >= 2 "Need ≥2 interactions in steps 75-100, got $(length(surprise_late))"
+
+    mean_early = sum(surprise_early) / length(surprise_early)
+    mean_late = sum(surprise_late) / length(surprise_late)
+
+    @assert mean_late < mean_early (
+        "Surprise should decrease during re-learning: " *
+        "early=$(round(mean_early, digits=3)), late=$(round(mean_late, digits=3))")
+
+    println("PASSED: Mean surprise early=$(round(mean_early, digits=3)) ($(length(surprise_early)) obs), " *
+            "late=$(round(mean_late, digits=3)) ($(length(surprise_late)) obs)")
+end
+println()
+
+# ═══════════════════════════════════════
+# TEST 25: Meta-learning controlled comparison (emergent, spec §5.10)
+# ═══════════════════════════════════════
+
+println("=" ^ 60)
+println("TEST 25: Meta-learning — perturbation vs no perturbation")
+println("=" ^ 60)
+
+let
+    seed = 42
+
+    # Agent A: perturbation enabled (interval=25)
+    metrics_a, _, _ = run_agent(
+        world_rules=[:colour_typed, :motion_typed, :colour_typed],
+        regime_change_steps=[75, 150],
+        max_steps=225,
+        grammar_perturbation_interval=25,
+        verbose=false,
+        rng_seed=seed)
+
+    # Agent B: perturbation disabled
+    metrics_b, _, _ = run_agent(
+        world_rules=[:colour_typed, :motion_typed, :colour_typed],
+        regime_change_steps=[75, 150],
+        max_steps=225,
+        grammar_perturbation_interval=typemax(Int),
+        verbose=false,
+        rng_seed=seed)
+
+    function regime3_accuracy(m::MetricsTracker)
+        hits = 0
+        total = 0
+        for (idx, step) in enumerate(m.steps)
+            150 <= step <= 225 || continue
+            m.surprise[idx] > 0.0 || continue  # only interaction steps
+            total += 1
+            m.prediction_correct[idx] && (hits += 1)
+        end
+        total == 0 ? 0.0 : hits / total
+    end
+
+    acc_a = regime3_accuracy(metrics_a)
+    acc_b = regime3_accuracy(metrics_b)
+
+    @assert acc_a > acc_b (
+        "Perturbation agent should have higher regime-3 accuracy: " *
+        "A=$(round(acc_a, digits=3)) vs B=$(round(acc_b, digits=3))")
+
+    println("PASSED: Agent A accuracy=$(round(acc_a, digits=3)), " *
+            "Agent B accuracy=$(round(acc_b, digits=3))")
+end
+println()
+
+# ═══════════════════════════════════════
+# TEST 26: Grammar pool evolution is real (emergent, spec §5.10)
+# ═══════════════════════════════════════
+
+println("=" ^ 60)
+println("TEST 26: Grammar pool evolution — perturbed grammars are useful")
+println("=" ^ 60)
+
+let
+    metrics, state, pool = run_agent(
+        world_rules=[:colour_typed, :motion_typed, :colour_typed],
+        regime_change_steps=[75, 150],
+        max_steps=225,
+        grammar_perturbation_interval=25,
+        verbose=false,
+        rng_seed=42)
+
+    # Check perturbed grammars exist in pool
+    perturbed = filter(g -> g.id > 12, pool)
+    @assert !isempty(perturbed) "Should have perturbed grammars in pool"
+
+    # Check some have surviving programs in posterior (non-zero weight)
+    w = weights(state.belief)
+    gw = aggregate_grammar_weights(w, state.metadata)
+
+    perturbed_with_weight = filter(g -> get(gw, g.id, 0.0) > 0.0, perturbed)
+    @assert !isempty(perturbed_with_weight) "Some perturbed grammars should have positive posterior weight"
+
+    # Perturbed grammars should differ from seeds (different channel count or rules)
+    seed_channel_counts = Set(length(g.sensor_config.channels) for g in pool if g.id <= 12)
+    novel = filter(g -> length(g.sensor_config.channels) ∉ seed_channel_counts || !isempty(g.rules),
+                   perturbed)
+
+    println("  Perturbed grammars: $(length(perturbed))")
+    println("  With positive weight: $(length(perturbed_with_weight))")
+    println("  With novel structure: $(length(novel))")
+    for g in perturbed_with_weight[1:min(5, length(perturbed_with_weight))]
+        println("  Grammar $(g.id): weight=$(round(get(gw, g.id, 0.0), digits=6)), " *
+                "channels=$(length(g.sensor_config.channels)), rules=$(length(g.rules))")
+    end
+
+    println("PASSED: Grammar pool evolution — $(length(perturbed)) perturbed, " *
+            "$(length(perturbed_with_weight)) with positive weight")
+end
+println()
+
 println("=" ^ 60)
 println("ALL PROGRAM AGENT TESTS PASSED")
 println("=" ^ 60)

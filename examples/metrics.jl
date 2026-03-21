@@ -92,3 +92,25 @@ function top_k_programs(component_weights::Vector{Float64},
     end
     result
 end
+
+"""
+    time_to_convergence(metrics; start_step, end_step, accuracy_threshold, window) → Int
+
+Count steps from start_step until rolling-window accuracy reaches threshold.
+Returns end_step - start_step if never reached.
+"""
+function time_to_convergence(m::MetricsTracker;
+    start_step::Int, end_step::Int,
+    accuracy_threshold::Float64=0.7, window::Int=10)::Int
+    for (idx, step) in enumerate(m.steps)
+        step >= start_step || continue
+        step <= end_step || break
+        window_start = max(1, idx - window + 1)
+        n = idx - window_start + 1
+        correct = sum(m.prediction_correct[window_start:idx])
+        if correct / n >= accuracy_threshold
+            return step - start_step
+        end
+    end
+    end_step - start_step
+end

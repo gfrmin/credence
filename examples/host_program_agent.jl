@@ -163,9 +163,9 @@ function compute_eu_interact(belief::MixtureMeasure)
 end
 
 function select_action(eu_interact::Float64, nearest_dist::Float64)
-    if nearest_dist <= 1 && eu_interact > 0
+    if nearest_dist <= 1 && eu_interact >= 0
         return INTERACT
-    elseif nearest_dist <= 1 && eu_interact <= 0
+    elseif nearest_dist <= 1 && eu_interact < 0
         return rand([MOVE_N, MOVE_S, MOVE_E, MOVE_W])
     else
         return rand([MOVE_N, MOVE_S, MOVE_E, MOVE_W])
@@ -180,8 +180,9 @@ function run_agent(;
     world_rules::Vector{Symbol}=[:colour_typed],
     max_steps::Int=200,
     regime_change_steps::Vector{Int}=Int[],
-    program_max_depth::Int=3,
+    program_max_depth::Int=2,
     grammar_perturbation_interval::Int=50,
+    include_temporal::Bool=false,
     verbose::Bool=true,
     rng_seed::Int=42
 )
@@ -204,7 +205,7 @@ function run_agent(;
 
     idx = 0
     for g in grammar_pool
-        programs = enumerate_programs(g, program_max_depth)
+        programs = enumerate_programs(g, program_max_depth; include_temporal)
         for (pi, p) in enumerate(programs)
             idx += 1
             push!(components, TaggedBetaMeasure(Interval(0.0, 1.0), idx, BetaMeasure(1.0, 1.0)))
@@ -373,7 +374,7 @@ function run_agent(;
                 new_g = perturb_grammar(grammar_pool[g_idx], freq_table)
                 push!(grammar_pool, new_g)
 
-                new_programs = enumerate_programs(new_g, program_max_depth)
+                new_programs = enumerate_programs(new_g, program_max_depth; include_temporal)
                 for (pi, p) in enumerate(new_programs)
                     base_idx += 1
                     push!(new_components, TaggedBetaMeasure(Interval(0.0, 1.0), base_idx, BetaMeasure(1.0, 1.0)))
