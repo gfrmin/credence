@@ -1,85 +1,36 @@
 #!/usr/bin/env julia
 """
-    host_program_agent.jl — Host driver for the program-space Bayesian agent
+    host.jl — Host driver for the grid-world program-space agent
 
 Orchestrates: grammar pool → program enumeration → kernel compilation →
 flat MixtureMeasure of TaggedBetaMeasures → DSL inference → action selection →
 world step → repeat.
 
-AgentState bundles the belief with its parallel arrays (metadata,
-compiled_kernels, all_programs). sync_prune!/sync_truncate! keep them
-in lock-step and reindex TaggedBetaMeasure tags.
-
-Kernels are rebuilt each step (closing over the current compiled_kernels
-array), so stale tag references from previous-step kernel closures never
-survive to the next conditioning call.
+Tier 3: grid-world-specific. Uses Tier 1 (Credence DSL) and Tier 2
+(ProgramSpace) for domain-independent inference machinery.
 """
 
-push!(LOAD_PATH, joinpath(@__DIR__, "..", "src"))
+push!(LOAD_PATH, joinpath(@__DIR__, "..", "..", "src"))
 using Credence
 using Credence: expect, condition, draw, optimise, value, weights, mean
 using Credence: CategoricalMeasure, BetaMeasure, TaggedBetaMeasure, MixtureMeasure
 using Credence: Finite, Interval, Kernel, Measure
 using Credence: density, log_density_at, prune, truncate
+using Credence: AgentState, sync_prune!, sync_truncate!
+using Credence: Grammar, Program, CompiledKernel, ProductionRule
+using Credence: SensorConfig, SensorChannel
+using Credence: enumerate_programs, compile_kernel
+using Credence: analyse_posterior_subtrees, perturb_grammar
+using Credence: aggregate_grammar_weights
+using Credence: next_grammar_id, reset_grammar_counter!
+using Credence: show_expr, GTExpr, LTExpr, AndExpr, OrExpr, NotExpr, NonterminalRef
+using Credence: SubprogramFrequencyTable
 
-include("grid_world.jl")
-include("grammar_programs.jl")
+include("simulation.jl")
+include("terminals.jl")
 include("metrics.jl")
 
 using Random
-
-# ═══════════════════════════════════════
-# AgentState — bundles belief with parallel arrays
-# ═══════════════════════════════════════
-
-mutable struct AgentState
-    belief::MixtureMeasure
-    metadata::Vector{Tuple{Int, Int}}       # (grammar_id, program_id)
-    compiled_kernels::Vector{CompiledKernel}
-    all_programs::Vector{Program}
-end
-
-"""
-    sync_prune!(state; threshold) → state
-
-Prune negligible components AND the parallel arrays together.
-Reindex TaggedBetaMeasure tags so that tag == array position.
-"""
-function sync_prune!(state::AgentState; threshold::Float64=-30.0)
-    max_lw = maximum(state.belief.log_weights)
-    keep = [i for i in eachindex(state.belief.log_weights)
-            if state.belief.log_weights[i] - max_lw > threshold]
-    length(keep) == length(state.belief.components) && return state
-    new_comps = Measure[TaggedBetaMeasure(state.belief.components[k].space, j,
-                                          state.belief.components[k].beta)
-                        for (j, k) in enumerate(keep)]
-    state.belief = MixtureMeasure(state.belief.space, new_comps,
-                                   state.belief.log_weights[keep])
-    state.metadata = state.metadata[keep]
-    state.compiled_kernels = state.compiled_kernels[keep]
-    state.all_programs = state.all_programs[keep]
-    state
-end
-
-"""
-    sync_truncate!(state; max_components) → state
-
-Keep only the top-weighted components. Reindex tags.
-"""
-function sync_truncate!(state::AgentState; max_components::Int=2000)
-    length(state.belief.components) <= max_components && return state
-    perm = sortperm(state.belief.log_weights, rev=true)
-    keep = perm[1:min(max_components, length(perm))]
-    new_comps = Measure[TaggedBetaMeasure(state.belief.components[k].space, j,
-                                          state.belief.components[k].beta)
-                        for (j, k) in enumerate(keep)]
-    state.belief = MixtureMeasure(state.belief.space, new_comps,
-                                   state.belief.log_weights[keep])
-    state.metadata = state.metadata[keep]
-    state.compiled_kernels = state.compiled_kernels[keep]
-    state.all_programs = state.all_programs[keep]
-    state
-end
 
 # ═══════════════════════════════════════
 # Per-grammar sensor projection

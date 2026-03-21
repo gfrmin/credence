@@ -798,14 +798,16 @@ let
     # Red-firing program (tag 1) should have updated beta: Beta(6, 1)
     @assert c1.beta.alpha ≈ 6.0 "Red-firing program should have α=6 after 5 enemy obs, got $(c1.beta.alpha)"
 
-    # Blue-firing program (tag 2) on red entity should NOT fire, beta unchanged
-    @assert c2.beta.alpha ≈ 1.0 "Blue-firing program should have α = 1 (didn't fire on red entity)"
-    @assert c2.beta.beta ≈ 1.0 "Blue-firing program should have β = 1"
+    # Blue-firing program (tag 2) on red entity doesn't fire — but non-firing programs
+    # now predict base rate (50/50) and get conjugate updates too: Beta(6,1) after 5 enemy obs
+    @assert c2.beta.alpha ≈ 6.0 "Non-firing program should also get conjugate update, got α=$(c2.beta.alpha)"
+    @assert c2.beta.beta ≈ 1.0 "Non-firing program β should be 1, got $(c2.beta.beta)"
 
+    # Firing program gains weight because its ll is better than log(0.5) base rate
     w = weights(posterior)
     @assert w[1] > w[2] "Firing program should gain weight over non-firing after multiple obs"
 
-    println("PASSED: Red-fires α=$(c1.beta.alpha), Blue-doesn't α=$(c2.beta.alpha), " *
+    println("PASSED: Red-fires α=$(c1.beta.alpha), Blue-non-firing α=$(c2.beta.alpha), " *
             "weights=[$(round(w[1], digits=4)), $(round(w[2], digits=4))]")
 end
 println()

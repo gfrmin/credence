@@ -161,6 +161,20 @@ enables the compiler to select computational backends and detect
 conjugate structure. (lambda (h o) ...) as a likelihood is a
 v1 pattern that should not appear.
 
+### Indifference implies exploration
+When EU of interacting equals EU of waiting (both 0), interact.
+Indifference means VOI from the interaction outcome is positive.
+The select_action threshold is >= 0, not > 0. Do not "fix" this
+back to strict inequality.
+
+### Non-firing predicates predict the base rate
+Programs whose predicates don't fire return log(0.5), not 0.0.
+A non-firing program is implicitly predicting "I don't know, so
+50/50." That prediction is scored against the observation. The
+ranking: informed-and-right > uninformed > informed-and-wrong.
+Returning 0.0 makes non-firing programs unbeatable (no information
+= no penalty), creating weight rigidity after regime changes.
+
 ### Heuristics are EU maximisation, not approximations
 When computational cost enters the utility function, a faster
 approximate strategy may have higher EU than the exact Bayesian
@@ -210,10 +224,17 @@ the posterior; its job is done.
 ## Development commands
 
 Run tests:
-    julia test/test.jl
+    julia test/test_core.jl             # Core DSL tests
+    julia test/test_flat_mixture.jl     # Flat mixture tests
+    julia test/test_host.jl             # Host helper tests
+    julia test/test_program_space.jl    # Tier 2 tests
+    julia test/test_grid_world.jl       # Tier 3 grid-world tests
 
 Run an example:
     julia -e 'push!(LOAD_PATH, "src"); using Credence; run_dsl(read("examples/coin.bdsl", String))'
+
+Run the grid-world agent:
+    julia domains/grid_world/host.jl
 
 Run the credence agent (host-driven):
     julia examples/host_credence_agent.jl
@@ -226,24 +247,50 @@ Load DSL and get callable closures (host-driver pattern):
     env = load_dsl(read("examples/credence_agent.bdsl", String))
     agent_step = env[Symbol("agent-step")]
 
-No external dependencies — Julia stdlib only. No Project.toml yet.
+No external dependencies — Julia stdlib only.
 
 ## Project structure
 
-    src/
-      parse.jl            S-expression parser (the entire front-end)
-      ontology.jl         Three types + axiom-constrained functions + draw/optimise/value
-      eval.jl             Evaluator / compiler (DSL → Julia calls)
-      stdlib.bdsl         Standard library (optimise, value, voi, etc.)
-      persistence.jl      Save/load agent state across sessions
-      Credence.jl         Module entry point
-    examples/
-      coin.bdsl                 Biased coin learning
-      credence_agent.bdsl       Agent DSL (pure functions, host-driven)
-      grid_agent.bdsl           Bayesian grid-world navigation
-      host_credence_agent.jl    Julia host driver for credence agent
+    src/                          Tier 1: DSL core
+      Credence.jl                 Module entry point
+      parse.jl                    S-expression parser
+      ontology.jl                 Three types + axiom-constrained functions
+      eval.jl                     Evaluator / compiler (DSL → Julia calls)
+      stdlib.bdsl                 Standard library (optimise, value, voi, etc.)
+      persistence.jl              Save/load agent state across sessions
+      host_helpers.jl             Host-level reliability/coverage helpers
+      program_space/              Tier 2: program-space inference
+        ProgramSpace.jl           Module entry point
+        types.jl                  AST types, Grammar, Program, CompiledKernel
+        enumeration.jl            Bottom-up enumeration, complexity scoring
+        compilation.jl            AST → closure compilation
+        perturbation.jl           Posterior subtree analysis, grammar perturbation
+        agent_state.jl            AgentState, sync_prune!, sync_truncate!
+    domains/                      Tier 3: domain applications
+      grid_world/                 Grid-world domain
+        simulation.jl             World simulation, entities, regime changes
+        sensors.jl                Sensor configuration and projection
+        terminals.jl              Seed grammars and terminal alphabet
+        host.jl                   Host driver (agent loop)
+        metrics.jl                Performance tracking
+        agent.bdsl                Agent DSL program
+      email_agent/                Email domain (stubs)
+        features.jl               Email feature extraction (stub)
+        terminals.jl              Seed grammars (stub)
+        preferences.jl            Outcome classification (stub)
+        host.jl                   Host driver (stub)
+        metrics.jl                Metrics (stub)
+        agent.bdsl                Agent DSL program
+    examples/                     Legacy examples (still functional)
+      coin.bdsl                   Biased coin learning
+      credence_agent.bdsl         Agent DSL (pure functions, host-driven)
+      host_credence_agent.jl      Julia host driver for credence agent
     test/
-      test.jl                   End-to-end validation
+      test_core.jl                Core DSL tests (42 tests)
+      test_flat_mixture.jl        Flat mixture conditioning tests
+      test_host.jl                Host helper tests
+      test_program_space.jl       Tier 2 tests (enumeration, compilation, perturbation)
+      test_grid_world.jl          Tier 3 tests (full agent, regime change, meta-learning)
 
 DSL source files use the `.bdsl` extension.
 
@@ -257,6 +304,12 @@ Constructors: `CategoricalMeasure(Finite(vals))` for uniform prior,
 
 ## Architecture
 
+Three-tier architecture. See credence-spec.md for details.
+
+- Tier 1 (src/): DSL core — condition, expect, optimise, voi, TaggedBetaMeasure
+- Tier 2 (src/program_space/): program-space inference — grammars, enumeration, compilation, perturbation
+- Tier 3 (domains/): domain applications — each provides features, terminals, host driver
+
     ┌─────────────────────────────┐
     │  Three types                │  FROZEN
     │  Space, Measure, Kernel     │
@@ -267,6 +320,13 @@ Constructors: `CategoricalMeasure(Finite(vals))` for uniform prior,
     │  Standard library           │  MUTABLE
     │  optimise, voi, model, etc  │
     ├─────────────────────────────┤
+    │  Program-space inference    │  Tier 2, MUTABLE
+    │  Grammars, enumeration,     │
+    │  compilation, perturbation  │
+    ├─────────────────────────────┤
+    │  Domain applications        │  Tier 3, MUTABLE
+    │  Grid world, email agent    │
+    ├─────────────────────────────┤
     │  Julia execution layer      │  MUTABLE
     │  Conjugate, quadrature,     │
     │  particle, heuristic        │
@@ -274,6 +334,10 @@ Constructors: `CategoricalMeasure(Finite(vals))` for uniform prior,
 
     Host (Julia): provides observations, executes actions,
     drives loops, manages persistent state. The DSL is pure.
+
+## Authoritative spec
+
+credence-spec.md (in repo root)
 
 ## On metareasoning
 
