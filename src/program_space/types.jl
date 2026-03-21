@@ -136,6 +136,7 @@ end
 
 struct Program
     predicate::ProgramExpr   # AST retained for analysis and display
+    action::Symbol           # :classify for grid world, domain-specific for others
     complexity::Int          # derivation length
     grammar_id::Int
 end
@@ -148,6 +149,7 @@ struct CompiledKernel
     # NO AST FIELD. Predicate compiled into closure.
     # This is a type-level constraint: if the AST isn't here, it can't be interpreted.
     evaluate::Function       # (sensor_vector, temporal_state) → Bool
+    action::Symbol           # mirrors Program.action
     complexity::Int
     grammar_id::Int
     program_id::Int

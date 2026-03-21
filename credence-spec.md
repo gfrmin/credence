@@ -1,476 +1,428 @@
-# Credence: A Program-Space Bayesian Agent Architecture
+# Credence: A Bayesian Agent Architecture
 
 ## Research Spec
 
 ---
 
-## 1. Thesis
+## 1. Axioms
 
-An agent that maintains a complexity-weighted MixtureMeasure over programs, and conditions it on observations via Bayes' rule, will exhibit feature discovery, model selection, change-point detection, meta-learning, grammar evolution, and preference adaptation — all as emergent behaviour of a single mechanism. No dedicated subsystem is needed for any of these capabilities.
+The architecture rests on five axioms — the true bottom of the system, from which everything else is derived or learned. Each is grounded in a foundational result establishing its necessity.
 
-The mechanism is: `condition` over a flat MixtureMeasure of `TaggedBetaMeasure` components (grammars × programs), weighted by description length (Solomonoff prior / Bayesian Occam's Razor). The five invariant components are `condition`, `expect`, `optimise`, the program space with complexity prior, and the observation stream. Everything else is learned.
+### 1.1 Bayes' rule (`condition`)
 
-The architecture is domain-independent. The DSL core handles inference. A reusable program-space layer handles grammar evolution and hypothesis management. Each domain provides only its terminal alphabet (what features exist), its observation source (where data comes from), and its host driver (how the loop runs). This spec describes the shared architecture and two domains: a grid world (validated testbed) and an email agent (first real application).
+Beliefs are updated by conditioning on observations:
 
----
+$$b_{t+1}(\theta) \propto P(o_t \mid \theta, a_t) \cdot b_t(\theta)$$
 
-## 2. The Unified Mechanism
+This is the unique update rule satisfying diachronic coherence (Lewis 1999 — no sequence of bets can extract guaranteed money from an agent that updates this way). Amarante (2022) proved a stronger result: Bayes' rule is the unique rule for which updating and computing the predictive commute. Any other update rule either loses information or introduces inconsistency.
 
-### 2.1 The belief state
+The DSL primitive `condition(belief, kernel, observation)` implements this. The kernel encodes P(o | θ, a) — the observation model.
 
-The agent's entire belief is a single flat MixtureMeasure:
+### 1.2 Expected utility maximisation (`optimise`)
 
-```
-belief : MixtureMeasure
-  components: [ TaggedBetaMeasure(tag=j, beta=Beta_j) for j in 1..M ]
-  weights:    [ w_j ∝ 2^(-|G_j|) × 2^(-|P_j|) × likelihood_j ]
-```
+Actions are selected to maximise expected utility under the current belief:
 
-Each component is a `TaggedBetaMeasure` — a BetaMeasure tracking P(positive_outcome | this program's predicate matches), tagged with the component's index. The tag is immutable: conditioning updates the Beta parameters but never changes which program a component represents. The tag allows a single kernel to dispatch per-component: it extracts the tag, looks up the corresponding compiled predicate, and computes the appropriate likelihood.
+$$a^* = \arg\max_{a \in A} \mathbb{E}_{\theta \sim b}[u_\theta(s, a)]$$
 
-The mixture is flat by design. Grammar × program structure is maintained by the host in parallel arrays bundled with the belief in an `AgentState` struct:
+Savage's representation theorem (1954) establishes that if an agent's preferences over acts satisfy six axioms — completeness, the sure-thing principle, state-independence, comparative probability, non-triviality, and continuity — then there exists a unique probability measure P and a utility function u (unique up to positive affine transformation) such that the agent acts as if maximising E_P[u]. Six axioms suffice (Abdellaoui and Wakker 2020 showed P3 is redundant).
 
-```
-AgentState:
-  belief           : MixtureMeasure of TaggedBetaMeasures
-  metadata         : Vector{Tuple{Int,Int}}    # (grammar_id, program_id) per component
-  compiled_kernels : Vector{CompiledKernel}     # precompiled closures for conditioning
-  all_programs     : Vector{Program}            # ASTs retained for subtree extraction
-```
+This grounds the entire enterprise: utility functions exist because preferences satisfying basic rationality constraints imply their existence. The agent doesn't need to be told what utility is — it's a consequence of coherent preference.
 
-The four arrays are always the same length and aligned by index. `sync_prune!` and `sync_truncate!` maintain this invariant by pruning/truncating all arrays together and reindexing tags so that `belief.components[i].tag == i` for all `i`. Since kernels are rebuilt each step, stale tag references cannot persist.
+The DSL primitive `optimise(belief, action_space, utility)` implements this.
 
-Grammar-level inference is recovered by aggregation:
+### 1.3 The complexity prior
 
-```
-weight(Grammar_i) = Σ_j w_j  where metadata[j].grammar_id == i
-```
+The prior over programs is weighted by description length:
 
-### 2.2 Conditioning (the only learning rule)
+$$P(\text{program}) = 2^{-|\text{program}|}$$
 
-When the agent observes an outcome:
+This is Solomonoff's universal prior (1964) — the maximum-entropy coding over the terminal alphabet. Each symbol costs 1 bit regardless of what it does. It is the unique prior that dominates all computable priors up to a constant factor, implementing Occam's Razor: simpler hypotheses are favoured unless the data overwhelms the prior.
 
-The host constructs a single kernel whose `log_density(component_j, obs)` encodes program-specific logic: it looks up the program for component `j` via the tag, evaluates that program's predicate against the current feature vector (projected through the program's grammar's feature config), and computes the likelihood. One kernel, applied uniformly across the flat mixture, producing different likelihoods per component because the program identity is encoded in the hypothesis.
+### 1.4 The alignment commitment
 
-When a program's predicate fires and the outcome matches: high likelihood, weight increases. When it fires and the outcome doesn't match: low likelihood, weight decreases. When the predicate doesn't fire: `log(0.5)` — the program is implicitly predicting the base rate, and that prediction is scored. The ranking is: informed and right > uninformed > informed and wrong.
+The agent's utility function IS the user's utility function. The agent does not know what the user's utility function is. This is formalised as a Cooperative Inverse Reinforcement Learning (CIRL) game (Hadfield-Menell, Russell, Abbeel, Dragan 2016):
 
-The predicate result is cached in a `Dict{Int, Bool}` captured by the kernel closure, so the subsequent `condition` dispatch can read it without re-evaluating.
+$$M = \langle S, \{A_H, A_R\}, T, \{\Theta, R(\cdot;\theta)\}, P_0, \gamma \rangle$$
 
-The kernel is rebuilt each step, closing over the current temporal state (a sliding window of recent observations maintained by the host). The DSL never needs to know about temporal state — it just calls `condition` with a kernel that has the history baked in.
+Both players receive the same reward R(s, a_H, a_R; θ), parameterised by θ which only the human knows. The agent maintains a belief b(θ) and maximises:
 
-### 2.3 Why every capability emerges
+$$EU(a_R \mid s, b) = \mathbb{E}_{\theta \sim b}\left[R(s, a_H, a_R; \theta) + \gamma \cdot V^*(s', b')\right]$$
 
-**Feature discovery.** A grammar with a nonterminal that names a frequent feature pattern lets programs reference it at cost 1 instead of the full expansion cost. If the pattern is predictive, those programs are short and accurate, so the grammar accumulates posterior mass. The agent discovers useful abstractions by shifting mass toward grammars that define them.
+The alignment commitment is structural — it defines the objective, not the solution. It cannot be manipulated by the agent because the ground truth (user behaviour) comes from outside.
 
-**Model selection.** Programs within a grammar compete. Conditioning on data selects the one that predicts better. Standard Bayesian model comparison; no special mechanism.
+Russell's three principles (Human Compatible, 2019) articulate this:
+1. The machine's only objective is to maximise the realisation of human preferences.
+2. The machine is initially uncertain about what those preferences are.
+3. The ultimate source of information about human preferences is human behaviour.
 
-**Change-point detection.** Programs with temporal operators compete with stable programs. If the world changes, stable programs predict poorly while temporal programs that encode regime-shift structure rise. The agent detects the change because programs encoding temporal structure become more credible.
+Shah et al. (2020) generalised CIRL into assistance games and proved that the optimal strategy in any assistance game reduces to solving a POMDP where b(θ) is a sufficient statistic — preserving tractability.
 
-**Meta-learning.** Across regime changes, grammars whose nonterminals capture recurrent abstractions maintain high marginal likelihood. The agent's effective prior at the start of each new regime is shaped by all previous regimes — it learns faster because its grammar has been refined by experience.
+### 1.5 Prediction and integration (`expect`)
 
-**Feature adaptation.** A grammar's feature config determines what the agent can perceive. Grammars with informative features enable short, predictive programs; grammars with irrelevant features waste complexity. The agent's perceptual vocabulary adapts to the domain through the same inference.
+Predictions are computed by integrating over the belief:
 
-**Strategy.** `optimise` over the action space, with `voi` determining the value of information-gathering, gives the agent a decision policy. Explore/exploit emerges from VOI. No epsilon-greedy, no exploration bonus.
+$$\mathbb{E}_b[f(\theta)] = \int f(\theta) \, b(\theta) \, d\theta$$
 
-**Preference alignment.** When the agent's goal is to satisfy a user, the user's preferences are just another hypothesis space. Preference-programs predict user reactions. Conditioning on observed reactions (approval, correction, override) selects preference-programs that model this user well. VOI tells the agent when to ask rather than guess.
+This bridges beliefs and decisions: expected utility is `expect(belief, λθ. u_θ(action))`. The DSL primitive `expect(belief, function)` implements this.
+
+### 1.6 Why these axioms are necessary (not merely sufficient)
+
+Wald's complete class theorem (1950) establishes that under mild regularity conditions, any admissible decision procedure — any procedure not dominated by another across all possible states of nature — must be a Bayes rule with respect to some prior and utility function. This means our architecture is not one principled approach among many. It is the only admissible approach, up to choice of prior and hypothesis space.
+
+Harsanyi's aggregation theorem (1955) provides additional confirmation: if the agent's preferences satisfy expected utility axioms and respect Pareto indifference over possible θ values, the agent's utility must be a weighted sum of the u_θ — exactly E_{θ~b}[u_θ], with weights given by the belief.
 
 ---
 
-## 3. The Five-Layer Stack
+## 2. The Agent's Utility Function
 
-Concepts emerge from raw observations through five layers, each arising from inference under a complexity prior at a different timescale. The layers are not designed — they are descriptions of what the inference does, viewed from outside.
+### 2.1 Definition
 
-**Layer 0 (given): Raw features and minimal logic.** The agent receives real-valued feature vectors. It can form threshold predicates and compose them with `AND`/`OR`/`NOT`/temporal operators. This is the terminal alphabet, provided by the domain.
+The agent's utility for taking action a in state s given belief b is:
 
-**Layer 1 (emerges): Feature abstraction.** The agent discovers that certain feature predicates recur usefully. Grammar perturbation promotes them to named nonterminals, extending the grammar. Concepts like "urgent" or "red" are born — not as given categories but as compressions of feature patterns. The grammar grows.
+$$U(a, s, b) = \mathbb{E}_{\theta \sim b}[u_\theta(s, a)]$$
 
-**Layer 2 (emerges): Model structure.** The agent discovers that certain combinations of its learned features recur. Models like "urgent AND from-manager → user responds immediately" are programs in the current grammar, weighted by complexity. Conditioning selects the best models.
+This is the expected user utility under the agent's current beliefs about what the user wants. The agent doesn't know u_θ directly — it knows only its belief b(θ), the posterior over programs representing hypotheses about the user's preferences.
 
-**Layer 3 (emerges): Meta-regularities.** Across regime changes (or across users, for a multi-user agent), the agent notices that certain grammar extensions keep being useful. These abstractions are retained even after regime changes. The grammar evolves a stable core alongside a mutable periphery.
+### 2.2 Why this produces aligned behaviour
 
-**Layer 4 (emerges): Inductive bias.** The stable core of the grammar IS the agent's inductive bias — the set of concepts it has learned are generally useful. New situations start with a prior concentrated on programs built from proven abstractions. The agent learns faster because its grammar has been shaped by experience.
+**Deference under uncertainty.** When b(θ) has high entropy, E_{θ~b}[u_θ(a)] is washed out — averaging over diverse preference hypotheses yields low expected utility for any specific action. The off-switch theorem (Hadfield-Menell, Dragan, Abbeel, Russell 2017) makes this precise: in a game where the agent can act, defer, or shut down, the incentive to defer is:
 
-Each layer uses the same mechanism: `condition` over a complexity-weighted mixture, with grammar perturbation extracting recurring structure. The output of each layer becomes the vocabulary for the layer above.
+$$\Delta = \mathbb{E}[\pi_H(U_a) \cdot U_a] - \max\{\mathbb{E}[U_a], 0\}$$
 
----
+When the agent has non-zero belief mass on both positive and negative utility actions, Δ > 0 — deference is strictly preferred. This is the theorem of non-negative expected value of information: an agent certain of its objectives has no reason to defer; an agent uncertain about them naturally seeks human guidance.
 
-## 4. Formal Definitions
+**Autonomy under confidence.** When b(θ) is concentrated around the true θ*, E_{θ~b}[u_θ(a)] closely approximates u_{θ*}(a). No query would significantly improve decisions. The agent acts autonomously.
 
-### 4.1 Feature configuration (domain-provided)
+**Re-engagement after preference change.** If the user's preferences change, the agent's predictions fail, surprise increases (low marginal likelihood), b(θ) disperses, and the agent becomes consultative again. This requires no explicit change-point detection — it's a consequence of the posterior dynamics. Programs with temporal structure that model non-stationarity will outperform stable programs when preferences genuinely shift.
 
-Each domain defines a feature configuration — the set of observable channels available to the agent.
+### 2.3 Revealed preference and Savage's connection
 
-```
-FeatureConfig = Vector{FeatureChannel}
+Savage's framework provides the normative foundation for why u_θ exists at all. Each observed user choice (preferring action f over action g in situation s) yields a constraint:
 
-FeatureChannel:
-  source_index :: Int           # which dimension of the raw observation
-  transform    :: Symbol        # :identity, :threshold, :delta, :windowed_mean
-  noise_σ      :: Float64       # observation noise
-  cost         :: Float64       # contributes to grammar complexity
-```
+$$\mathbb{E}_P[u_\theta(f, s)] > \mathbb{E}_P[u_\theta(g, s)]$$
 
-For the grid world, channels are sensor readings (RGB, position, speed, wall distance). For the email agent, channels are extracted features (sender frequency, topic classification, urgency score, etc.).
+These constraints progressively narrow the feasible set of utility functions consistent with observed behaviour. The agent's posterior b(θ) concentrates on utility functions that satisfy all observed constraints — this is Bayesian IRL, which we discuss in §3.
 
-The feature config is part of the grammar. Different grammars can have different configs, and the complexity prior penalises richer configs. The agent's perceptual vocabulary adapts to the domain through grammar-level inference.
-
-### 4.2 Terminal alphabet (domain-provided)
-
-Each domain provides a terminal alphabet: the set of atomic predicates programs can reference. Terminals are typically threshold comparisons over feature channels:
-
-```
-GT(i, t)  →  feature_i > t       cost: 1
-LT(i, t)  →  feature_i < t       cost: 1
-```
-
-The threshold set and number of channels are domain-specific. Domains may also define domain-specific terminals beyond threshold comparisons (e.g., `SENDER_IS(category)` for email).
-
-**Connectives** (shared across all domains):
-```
-AND(p, q)         cost: 1
-OR(p, q)          cost: 1
-NOT(p)            cost: 1
-```
-
-**Temporal operators** (shared):
-```
-PERSISTS(p, n)    cost: 1     # p true for last n steps
-CHANGED(p)        cost: 1     # p flipped since last step
-SINCE(p, q)       cost: 1     # p has been true since q was last true
-```
-
-### 4.3 Grammar
-
-```
-Grammar:
-  feature_config   :: FeatureConfig
-  rules            :: Vector{ProductionRule}
-
-ProductionRule:
-  name  :: Symbol
-  body  :: ProgramExpr
-```
-
-Grammar complexity: `|G| = Σ(channel.cost for channel in feature_config) + Σ(1 + |body_i| for rule_i in rules)`
-
-Grammar prior weight: `2^(-|G|)`.
-
-### 4.4 Program and CompiledKernel
-
-```
-Program:
-  predicate   :: ProgramExpr      # AST retained for analysis
-  complexity  :: Int              # derivation length under this grammar
-  grammar_id  :: Int
-
-CompiledKernel:
-  # NO AST FIELD. Predicate compiled into closure.
-  evaluate    :: Function         # (feature_vector, temporal_state) → Bool
-  complexity  :: Int
-  grammar_id  :: Int
-  program_id  :: Int
-```
-
-`Program → CompiledKernel` is a one-way transformation. The AST is compiled away. The type system enforces this: `CompiledKernel` has no `ProgramExpr` field.
-
-Program prior weight within grammar: `2^(-complexity)`. Joint prior: `2^(-|G|) × 2^(-complexity)`.
-
-### 4.5 TaggedBetaMeasure
-
-```julia
-struct TaggedBetaMeasure <: Measure
-    space::Interval           # [0,1]
-    tag::Int                  # component index — immutable
-    beta::BetaMeasure         # P(positive_outcome | predicate matches)
-end
-```
-
-Dispatches:
-- `_predictive_ll`: passes tagged measure to kernel. Predicate fires → Beta-Bernoulli ll. Doesn't fire → `log(0.5)`. Caches predicate result.
-- `condition`: reads cache. Fired → conjugate update, preserve tag. Not fired → return unchanged.
-- `expect`, `draw`, `mean`, `variance`, `log_density_at`: delegate to inner beta.
-
-### 4.6 Program enumeration
-
-```julia
-function enumerate_programs(
-    grammar::Grammar, max_depth::Int;
-    min_log_prior::Float64 = -20.0
-)::Vector{Program}
-```
-
-Bottom-up enumeration, bounded by depth AND prior weight floor. Programs whose `-(grammar_complexity + program_complexity)` falls below `min_log_prior` are never materialised.
-
-The weight floor creates the correct incentive for grammar evolution: nonterminals lower program complexity, pushing more programs above the floor. The enumeration space grows by adding abstractions, not by increasing depth.
-
-Default: `max_depth=2, min_log_prior=-20.0`.
-
-### 4.7 Grammar perturbation (type-enforced)
-
-```julia
-struct SubprogramFrequencyTable
-    # Only constructed by analyse_posterior_subtrees. No public constructor.
-    subtrees::Vector{ProgramExpr}
-    weighted_frequency::Vector{Float64}
-    source_programs::Vector{Vector{Int}}
-end
-
-function analyse_posterior_subtrees(programs, weights; min_frequency, min_complexity)::SubprogramFrequencyTable
-function propose_nonterminal(table::SubprogramFrequencyTable)::Union{ProductionRule, Nothing}
-function perturb_grammar(g::Grammar, freq_table::SubprogramFrequencyTable)::Grammar
-```
-
-`perturb_grammar` requires `SubprogramFrequencyTable` — type system enforces posterior analysis before nonterminal proposal.
+The Ellsberg paradox and prospect theory demonstrate that real humans violate Savage's axioms. This raises the preference laundering problem (§8): should the agent learn the user's revealed preferences (what they actually do, including biases) or their idealised preferences (what they would do if fully rational)? Our framework learns revealed preferences by default. Whether to "launder" them is a design choice at the observation model level.
 
 ---
 
-## 5. Three-Tier Architecture
+## 3. Preference Inference: How the Agent Learns θ
 
-### 5.1 Tier 1: DSL core (`src/`)
+The agent infers the user's preference parameter θ from observed behaviour. Eight frameworks formalise different aspects of this inference, and they converge on the same mathematical structure.
 
-The Credence DSL. Measures, kernels, `condition`, `expect`, `optimise`, `voi`, `TaggedBetaMeasure`, the evaluator, the stdlib. Domain-independent.
+### 3.1 Inverse reinforcement learning
 
-```
-src/
-├── ontology.jl          # measures, kernels, condition dispatches, TaggedBetaMeasure
-├── eval.jl              # DSL evaluator (includes fold-init)
-├── stdlib.bdsl          # DSL standard library (optimise, value, voi)
-├── host_helpers.jl      # host-side utilities
-└── Credence.jl          # module definition + exports
-```
+Classical IRL (Ng & Russell 2000) recovers a reward function from an observed optimal policy π*. The fundamental insight: the observed policy contains information about the reward function being optimised. The reward is constrained so that π* is optimal under it, with ℓ₁ regularisation resolving the degeneracy that R = 0 explains any policy.
 
-### 5.2 Tier 2: Program-space inference (`src/program_space/`)
+**Bayesian IRL** (Ramachandran & Amir 2007) replaces the LP with posterior inference:
 
-Reusable machinery for inference over complexity-weighted program mixtures. Depends on Tier 1. Domain-independent.
+$$P(R \mid \text{demonstrations}) \propto \exp\left(\alpha \sum_i Q^*(s_i, a_i; R)\right) \cdot P(R)$$
 
-```
-src/program_space/
-├── types.jl             # ProgramExpr AST, Grammar, ProductionRule, Program, CompiledKernel
-├── enumeration.jl       # enumerate_programs, complexity scoring, prior-weighted floor
-├── compilation.jl       # compile_kernel (AST → closure, one-way)
-├── perturbation.jl      # SubprogramFrequencyTable, analyse/propose/perturb
-└── agent_state.jl       # AgentState, sync_prune!, sync_truncate!
-```
+The parameter α controls assumed expert optimality. The posterior mean E[R | data] is the optimal reward estimator under squared loss, and the optimal apprenticeship policy is optimal for the MDP with this mean reward. This directly maps to our architecture: the prior P(R) is the complexity-weighted mixture, the demonstrations are observed user actions, and the posterior is what `condition` produces.
 
-### 5.3 Tier 3: Domain applications (`domains/`)
+**Maximum Entropy IRL** (Ziebart et al. 2008) assigns trajectory probabilities proportional to exponentiated reward:
 
-Each domain provides its feature config, terminal alphabet, observation source, outcome definition, action space, and host driver.
+$$P(\zeta \mid \theta) = \frac{1}{Z(\theta)} \exp(\theta^\top f_\zeta)$$
 
-```
-domains/
-├── grid_world/
-│   ├── simulation.jl       # grid, entities, world rules, world_step!
-│   ├── sensors.jl          # SensorConfig, project()
-│   ├── terminals.jl        # grid-world terminal alphabet
-│   ├── agent.bdsl          # DSL agent
-│   ├── host.jl             # host driver loop
-│   └── metrics.jl          # tracking
-│
-└── email_agent/
-    ├── features.jl         # email feature extraction
-    ├── terminals.jl        # email terminal alphabet
-    ├── preferences.jl      # preference-program types, user reaction model
-    ├── agent.bdsl          # DSL agent
-    ├── host.jl             # host driver loop
-    └── metrics.jl          # tracking
-```
+This is the maximum-entropy distribution matching empirical feature expectations. The resulting log-likelihood is convex, guaranteeing a unique optimum. MaxEnt IRL avoids the "label bias" problem of purely local models by providing globally normalised distributions. In our context, the Boltzmann-rational human model in CIRL is essentially MaxEnt IRL applied to single actions rather than trajectories.
 
-### 5.4 Domain interface
+### 3.2 Why passive observation is suboptimal
 
-A domain module exports:
+Shah et al. (2020) proved that separating reward inference from action selection is strictly suboptimal. In CIRL, the agent's actions affect what the human does (the human responds pedagogically — acting suboptimally to convey more information about θ). This is the key insight that distinguishes CIRL from classical IRL:
 
-```julia
-struct DomainConfig
-    seed_grammars::Vector{Grammar}
-    max_depth::Int
-    min_log_prior::Float64
-    action_space::Vector{Symbol}
-end
+The human may choose to accept less reward on a particular action in order to convey more information to the agent. The demonstration-by-expert assumption (that the human acts optimally in isolation) is provably suboptimal in the cooperative setting. Merged estimation and control enables plans conditional on future feedback and relevance-aware active learning.
 
-project(obs, grammar::Grammar)::Vector{Float64}
-classify_outcome(event)::Float64     # 1.0 = positive, 0.0 = negative
-compute_action_eu(belief, action, domain_state)::Float64
-```
+Our architecture handles this naturally. The user's response to ASK_USER is a cooperative signal — the user reveals their preference precisely because doing so helps the agent help them. Classical IRL treats the human as a passive demonstrator; our framework treats them as a cooperative partner.
+
+### 3.3 Reward modelling and comparison-based learning
+
+The RLHF framework (Christiano et al. 2017) learns reward functions from pairwise human comparisons using the Bradley-Terry preference model:
+
+$$P(\sigma^1 \succ \sigma^2) = \sigma\left(\sum_t r(o^1_t, a^1_t) - \sum_t r(o^2_t, a^2_t)\right)$$
+
+This is relevant because our agent may receive comparison feedback ("this was better than what you did last time") in addition to binary approval. The Bradley-Terry model provides the likelihood function for comparison observations. In our framework, this would be a program in the mixture that predicts user comparisons — it competes with simpler models under the complexity prior.
+
+RLHF as practiced is not Bayesian — it produces a point estimate, not a posterior. It has no formal prior, no principled uncertainty quantification, and no VOI mechanism. Our framework provides all of these, with the Bradley-Terry likelihood as one possible observation model among many.
+
+### 3.4 Multi-attribute utility and structural constraints
+
+Keeney and Raiffa's (1976) Multi-Attribute Utility Theory provides structural constraints that make preference learning tractable. Under mutual preferential independence, utility decomposes additively:
+
+$$U(x) = \sum_{i=1}^n w_i \cdot u_i(x_i)$$
+
+This reduces the learning problem from an arbitrary function over the full outcome space to n weight parameters plus n single-attribute utility functions. In our framework, an MAUT decomposition is a program hypothesis — a program that predicts user behaviour by evaluating independent attribute dimensions and combining them linearly. Whether the user's actual preferences decompose this way is an empirical question that the mixture resolves: if MAUT programs predict well, they gain weight; if the user's preferences are non-decomposable, richer programs dominate.
+
+The Bayesian formulation places a Dirichlet prior over the weight simplex and updates via observed choices. This is directly implementable in our DSL using DirichletMeasure with condition.
 
 ---
 
-## 6. Domain: Grid World (Validated Testbed)
+## 4. The Observation Model
 
-### 6.1 Environment
+### 4.1 Theoretical framework
 
-5×5 grid. Terrain: ground, wall, mud. Entities have hidden types (FOOD, ENEMY, NEUTRAL) and observable properties (RGB, position, speed, wall distance). The agent sees noisy projections through its grammar's feature config.
+The user's true satisfaction is a hidden state θ. The agent observes user behaviour — overrides, acceptances, timing, ratings, silence, subsequent actions — which are noisy signals about θ. The observation model P(o | θ, a) is a kernel from (preference hypothesis, action taken) to observations.
 
-### 6.2 World rules
+Different feedback channels contribute to the posterior through their likelihood functions:
 
-| Rule | Classification logic | Key features |
-|------|---------------------|--------------|
-| all-food | Everything is food | None needed |
-| colour-typed | Red=enemy, blue=food, green=neutral | Colour channels |
-| motion-typed | Moving=enemy, stationary=food | Speed channel |
-| territorial | Near-wall=enemy, centre=food | Wall-distance channel |
-| mixed | Red AND moving=enemy, else food | Colour + speed |
+$$b_{t+1}(\theta) \propto P(o^{explicit}_t \mid \theta, a_t) \cdot P(o^{implicit}_t \mid \theta, a_t) \cdot b_t(\theta)$$
 
-The world may change its active rule mid-run without notification.
+In a correctly specified model, each channel's contribution to the posterior is automatically calibrated by its Fisher information:
 
-### 6.3 Empirical results (Phases 0-6 complete)
+$$I_k(\theta) = -\mathbb{E}\left[\frac{\partial^2 \log P(o_k \mid \theta)}{\partial \theta^2}\right]$$
 
-72 tests passing (42 core + 6 flat mixture + 24 program agent). Key findings:
+Signals with higher Fisher information shift the posterior more. Explicit feedback (ratings, overrides) has sharply peaked likelihood functions and high Fisher information. Implicit feedback (dwell time, silence) has broad, confounded likelihood functions and low Fisher information. No manual weighting is needed — the mathematics of conditioning handles calibration.
 
-- **Single regime:** posterior concentrates on correct programs/grammars within ~30 interactions.
-- **Occam's Razor:** in the all-food world, simplest program dominates; rich grammars penalised.
-- **Regime change:** posterior shifts toward correct feature set. Surprise increases then decreases.
-- **Meta-learning (controlled comparison):** perturbation-enabled agent outperforms no-perturbation agent in regime 3 accuracy (0.700 vs 0.667).
-- **Grammar evolution:** perturbation produces 23 grammars, 4 with positive posterior weight.
-- **Scale:** 12 seed grammars at depth 2 → ~46K initial components → ~2K after truncation.
+However — and this is the critical subtlety — this guarantee holds only for correctly specified likelihood models. The challenge is not the weighting but the specification. Real implicit signals are confounded: dwell time depends on task difficulty, attention, and interruptions, not just satisfaction. Marginalising over confounders:
 
----
+$$P(o^{implicit} \mid \theta) = \int P(o^{implicit} \mid \theta, c) \, P(c) \, dc$$
 
-## 7. Domain: Email Agent (First Real Application)
+When likelihood models are misspecified (inevitable in practice), three remedies exist within the Bayesian framework: tempered likelihoods (P(o|θ)^α with α < 1 to downweight unreliable channels), hierarchical models (priors on noise parameters, learning calibration from data), and robust Bayesian methods (sets of priors and likelihoods rather than point specifications).
 
-### 7.1 Alignment as preference inference
+### 4.2 The observation model is learned
 
-The agent's utility function is fixed and known: maximise user satisfaction. What's unknown is the mapping from actions to user reactions — the user's preference model. This is a hypothesis in the program space, inferred from observed behaviour.
+In principle, the observation model should itself be learned — "user override means disapproval" is a hypothesis, a program in the mixture, competing under the complexity prior. The agent should discover which signals are informative through the same inference that discovers everything else.
 
-```
-U_agent(action) = E_preference [ preference(action) ]
-```
+There is a bootstrapping issue: to `condition` on an observation, you need a kernel; to learn a kernel, you need to condition on observations. The resolution is that the initial observation model is part of the prior — the simplest hypothesis about what feedback means. "Override = bad, accept = good" is a very short program with high prior weight. It is almost certainly correct. Richer models ("silence for 5 minutes then override = strong disapproval," "quick accept without reading = weak approval") are longer programs with lower prior weight that earn their complexity cost if they predict feedback patterns better.
 
-VOI tells the agent when to ask. When the preference posterior is broad (early, or after preference change), VOI for "ask the user" is high. As preferences sharpen, VOI drops and the agent acts autonomously. If preferences change (regime change), surprise rises and the agent becomes consultative again.
+The theoretical landscape from §3 describes what the agent is learning toward: Bayesian IRL models that infer reward from behaviour patterns, Bradley-Terry models that learn from comparisons, MAUT decompositions that identify independent utility dimensions. These are all programs in the hypothesis space, each representing a different observation model. The complexity prior governs which are worth maintaining. The agent begins with simple models and discovers richer ones as data accumulates.
 
-### 7.2 Feature configuration
+### 4.3 Practical bootstrapping
 
-| Index | Feature | Range | Extraction |
-|-------|---------|-------|------------|
-| 0 | sender_frequency | [0, 1] | normalised email count from sender |
-| 1 | sender_is_manager | {0, 1} | binary |
-| 2 | sender_is_direct_report | {0, 1} | binary |
-| 3 | sender_is_external | {0, 1} | binary |
-| 4 | urgency_score | [0, 1] | LLM-extracted or keyword-based |
-| 5 | topic_finance | [0, 1] | topic classifier confidence |
-| 6 | topic_scheduling | [0, 1] | topic classifier confidence |
-| 7 | topic_marketing | [0, 1] | topic classifier confidence |
-| 8 | requires_action | [0, 1] | LLM-extracted |
-| 9 | email_length | [0, 1] | normalised word count |
-| 10 | has_attachment | {0, 1} | binary |
-| 11 | time_of_day | [0, 1] | normalised hour |
-| 12 | thread_depth | [0, 1] | normalised reply count |
+For the initial implementation, explicit binary feedback (user approves or overrides) provides the cleanest bootstrapping signal. Its interpretation is nearly unambiguous — minimal observation model learning required. The Beta-Bernoulli conjugate (`TaggedBetaMeasure`) tracks P(approve | θ, action) directly.
 
-Feature extraction may use LLMs as noisy sensors. The `noise_σ` reflects extraction reliability.
+Richer signal types — timing, override specifics (which action the user chose instead), subsequent actions, comparative feedback — enter as additional programs encoding those observation models. Each new signal type is a program that predicts user behaviour from θ; when it predicts well, it gains posterior weight and begins influencing decisions.
 
-### 7.3 Terminal alphabet
+The information-theoretic connection: the most informative query maximises expected information gain:
 
-Threshold predicates over 13 channels, plus domain-specific terminals:
+$$\text{EIG}(a) = \mathbb{E}_o\left[D_{KL}\left[P(\theta \mid o, a) \;\|\; P(\theta)\right]\right] = I(\theta; o \mid a)$$
 
-```
-SENDER_IS(category)     cost: 1     # manager, direct_report, external, frequent, rare
-TOPIC_IS(topic)         cost: 1     # finance, scheduling, marketing, personal, technical
-IS_REPLY                cost: 1
-HAS_ATTACHMENT          cost: 1
-```
-
-Domain-specific terminals are syntactic sugar for common threshold predicates — they reduce program complexity by 1, giving the agent a head start in forming useful abstractions.
-
-### 7.4 Outcome definition
-
-The agent recommends an action. The user accepts (1.0) or overrides (0.0). The observation: (email features, recommended action, user reaction).
-
-### 7.5 Action space
-
-```
-ARCHIVE, FLAG_URGENT, SCHEDULE_LATER, DRAFT_RESPONSE,
-DELEGATE, SUMMARISE, ASK_USER
-```
-
-`ASK_USER` is the information-gathering action. Its EU includes VOI.
-
-### 7.6 Two program spaces
-
-**World-model programs:** predict email properties from other properties. "Emails from this sender are usually about finance." Conditioned on the email stream.
-
-**Preference-model programs:** predict user reactions from email properties + recommended action. "For urgent emails from the manager, the user wants FLAG_URGENT." Conditioned on user reactions.
-
-Both live in the same flat MixtureMeasure. Both evolve their grammars.
-
-### 7.7 Multi-user meta-learning
-
-**Population level.** The grammar vocabulary. Evolved across all users from anonymised behavioural patterns. Abstractions like "urgency-sensitive," "delegation-heavy." Shared infrastructure.
-
-**User level.** The preference-program posterior for this user. Built from the population grammar, conditioned on this user's reactions.
-
-**Interaction level.** Each email, each recommendation, each reaction.
-
-The population grammar evolves slowly across users. Each user's posterior updates quickly. New users benefit from the evolved grammar (faster convergence). This is the decreasing time-to-convergence validated in the grid world, applied to users.
+This is the mutual information between θ and the observation given the action. It equals the VOI of the action as an information-gathering operation. Explicit feedback (asking the user directly) has high EIG because the response is highly correlated with θ. Implicit observation (watching what the user does unprompted) has lower EIG but zero user-attention cost.
 
 ---
 
-## 8. Design Invariant Enforcement
+## 5. Active Preference Elicitation: When to Ask vs Act
 
-**Type-level constraints (primary).** `CompiledKernel` has no AST field. `propose_nonterminal` requires `SubprogramFrequencyTable`. Shortcuts fail at compile time.
+### 5.1 The POMDP formulation
 
-**Observable-consequence tests (secondary).** 10K kernel evaluations < 1ms. Proposed nonterminals appear in top-10 posterior programs. Compression payoff is measurable.
+Boutilier (2002) and Chajewska, Koller and Parr (2000) established the formal framework for active preference learning. The agent maintains a prior P(u) over utility functions. Expected utility under uncertainty is:
 
-**CLAUDE.md forbidden patterns (tertiary).** Documents the why behind the type constraints and tests.
+$$EU(d, P) = \mathbf{p}_d \cdot \mathbb{E}_P[\mathbf{u}]$$
 
----
+which depends only on the mean of the posterior — a consequence of EU's linearity in utilities. The Expected Value of Information of a query q is:
 
-## 9. Testing Philosophy
+$$\text{EVOI}(q) = \sum_{r \in R_q} P(r \mid q) \cdot \text{MEU}(P_r) - \text{MEU}(P)$$
 
-**Mechanism tests:** deterministic, agent-free where possible. A failure means the code is wrong.
+where P_r is the posterior after observing response r, and MEU(P) = max_d EU(d, P). The agent asks when EVOI(q) exceeds the cost of querying; otherwise, it acts.
 
-**Emergent-behaviour tests:** statistical, directional assertions, controlled confounds. A failure might mean the code is wrong or the test's causal attribution is wrong.
+Boutilier embeds this in a full POMDP where the hidden state is the user's utility function, actions include both queries and terminal decisions, and the Bellman equation balances information gathering against action:
 
-**Enforcement tests:** structural. A failure means a design invariant was bypassed.
+$$V^*(P) = \max_{a \in Q \cup D} Q^*_a(P)$$
 
----
+The myopic EVOI approximation can underestimate value when no single question changes the optimal decision but a sequence would. The full POMDP handles this correctly but is computationally harder.
 
-## 10. Implementation Sequence
+### 5.2 Connection to our architecture
 
-### Completed: Grid world (Phases 0-6)
+Our architecture implements this framework directly:
 
-72 tests passing. Core machinery validated.
+- P(u) is the MixtureMeasure over programs (each program is a utility hypothesis).
+- The decision between asking and acting is made by `optimise` over an action space that includes ASK_USER alongside all domain actions. There is no separate VOI computation — ASK_USER is just another action whose EU is computed uniformly. Its EU happens to be high when the belief is uncertain (because asking guarantees correct handling) and low when the belief is concentrated (because the agent can act correctly without asking). The ask-vs-act transition emerges from EU comparison, not from a VOI side-channel.
+- The posterior update after receiving the user's response is `condition(belief, response_kernel, response)`.
 
-### Next: Refactor to three-tier architecture
+When the agent asks, the user reveals their preferred action. This is maximally informative: every firing program whose predicted action matches gets positive evidence, every other firing program gets negative evidence. Many programs updated simultaneously, which is why EU for asking is high early on — asking guarantees correct handling at a known cost (user attention), while acting risks incorrect handling.
 
-Extract Tier 2 from `examples/grammar_programs.jl` → `src/program_space/`. Move grid world → `domains/grid_world/`. Split tests. No logic changes.
-
-### Next: Email agent
-
-**Phase E1:** Feature extraction from email data.
-**Phase E2:** Terminal alphabet and seed grammars.
-**Phase E3:** Host driver and preference learning loop.
-**Phase E4:** Multi-user meta-learning.
-
-### Future: Dynamic depth
-
-Start depth 2. Escalate to depth 3 when grammar nonterminals enable it.
-
-### Future: LLM integration
-
-LLMs as noisy sensors for feature extraction, and as proposal distributions for generating hypothesis candidates. Calibrate `noise_σ` from observed extraction reliability. Maintain Beta over LLM accuracy per feature type, conditioned on user corrections.
+Chajewska et al.'s key practical insight: when utility variables are independent, the optimal query targets the "intersection points" where two decision strategies achieve equal expected utility. Population-level data (utility functions from similar users) can initialise the prior, enabling useful behaviour before any individual-specific queries. This maps directly to our multi-user meta-learning: the population grammar provides a structured prior that concentrates on preference hypotheses that have worked for other users.
 
 ---
 
-## 11. Open Questions
+## 6. Programs as DSL Expressions
 
-**Grammar enumeration tractability.** Email domain has 13 features (vs grid world's 8). Verify the prior floor handles the larger terminal set.
+The credence DSL is a Lisp. The agent's hypothesis space is the space of programs in this language, weighted by description length.
 
-**Dynamic depth.** Nonterminal promotion needs depth 3+. Implement depth escalation when grammar evolution creates the conditions.
+### 6.1 The terminal alphabet
 
-**LLM noise calibration.** Feature extraction reliability varies by feature type. Consider per-feature Beta over LLM accuracy.
+The terminal alphabet includes the inference primitives themselves:
 
-**Perturbation Beta initialisation.** Fresh Beta(1,1) components disrupt mature mixtures. Consider initialising from posterior mean of existing components.
+```scheme
+;; Axioms (the bedrock)
+(condition belief kernel observation)     cost: 1
+(expect belief function)                  cost: 1
+(optimise belief action-space utility)    cost: 1
 
-**Grammar pruning and revival.** Consider a graveyard with periodic resurrection.
+;; Derived (in stdlib, not primitive)
+(voi belief kernel actions utility obs)   cost: 1   ;; EU(observe-then-act) - EU(act-now)
 
-**Privacy in multi-user grammar evolution.** Population grammar from structural patterns only, not content.
+;; Domain actions (the agent's body — given, effects learned)
+(archive)                                 cost: 1
+(flag-urgent)                             cost: 1
+(ask-user question)                       cost: 1
+(ask-llm prompt)                          cost: 1
 
-### Resolved
+;; Control flow
+(if predicate then else)                  cost: 1
+(begin expr ...)                          cost: 1
+(let ((var expr)) body)                   cost: 1
 
-- ~~Kernel compilation~~ — `CompiledKernel` type constraint, precompiled closures.
+;; Predicates (domain-provided)
+(gt channel threshold)                    cost: 1
+(lt channel threshold)                    cost: 1
+(and p q)  (or p q)  (not p)             cost: 1 each
+
+;; Temporal operators
+(changed p)  (persists p n)               cost: 1 each
+```
+
+Every symbol costs 1 in description length — the universal prior is uniform over the alphabet. Execution cost (time, tokens, user attention) is separate and learned from observed outcomes.
+
+### 6.2 Programs encode preference hypotheses
+
+Each program in the mixture is a hypothesis about what the user wants. A simple program: `(if (gt urgency 0.7) flag-urgent archive)` — "the user flags urgent emails and archives the rest." A complex program might invoke the LLM, condition on its analysis, and decide based on multiple factors. The complexity prior governs the tradeoff: simple hypotheses are favoured unless the data demands complexity.
+
+### 6.3 There are no "stages"
+
+A depth-1 program is reactive. A depth-3 program is conditional. A deeper program might do deliberative reasoning — querying the LLM, conditioning on the response, computing expected utility. The agent explores program depth via VOI ("is it worth exploring deeper programs?"). The complexity prior and the learned observation model determine what depth is useful. The designer does not choose.
+
+### 6.4 Grammar evolution
+
+Nonterminals compress frequently useful subexpressions. Grammar perturbation extracts recurring subtrees from high-posterior programs and promotes them to named primitives. Programs using the nonterminal are shorter and favoured by the prior. The grammar evolves the agent's vocabulary of concepts — its language of thought.
+
+---
+
+## 7. The Five-Layer Stack
+
+Concepts emerge from raw observations through five layers, each from inference under the complexity prior at a different timescale:
+
+**Layer 0 (given): Raw features and minimal logic.** Feature vectors, threshold predicates, connectives, temporal operators. The terminal alphabet.
+
+**Layer 1 (emerges): Feature abstraction.** Frequent predicate patterns promoted to grammar nonterminals. "Urgent" and "from-manager" are compressions of feature predicates.
+
+**Layer 2 (emerges): Preference models.** Combinations of abstractions into conditional programs. Programs that predict user behaviour accurately gain posterior weight.
+
+**Layer 3 (emerges): Meta-regularities.** Across preference changes or users, certain abstractions persist. The grammar evolves a stable core.
+
+**Layer 4 (emerges): Inductive bias.** The stable core IS the agent's inductive bias. New situations start with a prior concentrated on proven abstractions.
+
+---
+
+## 8. What Is Given vs What Is Learned
+
+**Given (the agent's embodiment):**
+
+- The inference primitives: `condition`, `expect`, `optimise`. These are axiomatic. (`voi` — value of information — is a derived computation in the stdlib, useful but not primitive: it is the EU of "observe then act optimally" minus the EU of "act optimally now.")
+- The complexity prior: `2^(-|program|)`.
+- The alignment commitment: the agent's utility equals the user's utility, inferred from behaviour.
+- A set of primitive actions the agent can attempt (its body — it discovers what they do through use).
+- An observation channel through which outcomes arrive (it learns what observations mean).
+
+**Learned (everything else):**
+
+- What the user wants (θ).
+- What each action does and what it costs.
+- Which features are informative.
+- What abstractions are useful (grammar evolution).
+- When to think vs act (metareasoning via VOI).
+- When to ask vs act autonomously (VOI — asking is an action).
+- When preferences have changed (temporal programs).
+- How to interpret feedback signals (observation models are programs in the mixture).
+- What its own capabilities are.
+- The structure of the user's preferences (MAUT decomposition, if it exists, discovered not assumed).
+
+---
+
+## 9. Open Problems
+
+### 9.1 Preference dynamics
+
+All major frameworks assume static θ. Real preferences change. Our architecture handles this partially through temporal programs, but this is limited by enumeration depth. Time-Varying CIRL (Mayer 2024) extends the framework by letting θ evolve stochastically, but the computational implications are largely unexplored.
+
+### 9.2 Human irrationality
+
+CIRL assumes Boltzmann-rational users. Real users exhibit systematic biases — prospect theory, framing effects, loss aversion. The preference laundering problem: should the agent learn revealed preferences (what the user actually does, including biases) or idealised preferences (what they would do if fully rational)? Laundered preferences are the normative ideal but impossible to observe directly. Our framework learns revealed preferences by default. Whether and how to "launder" them is philosophically unresolved and practically consequential.
+
+### 9.3 Convergence and safety
+
+After convergence to confident beliefs, the uncertainty that drives safe behaviour disappears. If the agent has converged on wrong preferences, it acts confidently on wrong beliefs. The off-switch theorem's protection is proportional to belief variance — it vanishes at convergence. Ongoing monitoring and periodic re-elicitation may be necessary. This is an open problem in the CIRL literature.
+
+### 9.4 Observation model bootstrapping
+
+The initial observation model (explicit feedback interpreted as approval/disapproval) is the simplest viable prior. But early learning is entirely dependent on the quality of this bootstrap. If the initial model is wrong (e.g., the user approves by default and only overrides when strongly displeased), the agent may learn incorrect preferences before it has enough data to discover better observation models. Robust bootstrapping strategies — starting with high ASK_USER frequency, using multiple signal types from the beginning — may be necessary.
+
+### 9.5 Dynamic depth and metareasoning
+
+Nonterminal promotion becomes meaningful at depth 3+, but depth 3 is intractable under sparse grammars. The agent should decide when to deepen search based on VOI over the expanded hypothesis space. The principled version has the agent itself decide how much computation is worth doing, based on its learned model of what the user tolerates. Currently approximated by fixed truncation schedules.
+
+### 9.6 LLMs as actions
+
+Querying an LLM is an action evaluated by EU like any other. The prompt is part of the program — longer prompts cost more in description length. Both the complexity prior and learned execution costs push toward concise, targeted prompts. The agent discovers when LLM calls are worth their cost through the same conditioning as everything else. Not yet implemented.
+
+---
+
+## 10. Architecture
+
+### 10.1 Three tiers
+
+**Tier 1 (`src/`):** DSL core. Measures, kernels, `condition`, `expect`, `optimise`, `TaggedBetaMeasure`, evaluator, stdlib (which includes `voi` as a derived computation). Domain-independent.
+
+**Tier 2 (`src/program_space/`):** Program-space inference. Grammars, enumeration, compilation, perturbation, `AgentState`. Domain-independent.
+
+**Tier 3 (`domains/`):** Applications. Each domain provides features, terminals, actions, feedback, host driver.
+
+### 10.2 One agent per user
+
+Domains are event sources, not agents. A single `AgentState` per user. Every observation from every domain conditions the same belief.
+
+### 10.3 Design invariant enforcement
+
+**Type-level (primary):** `CompiledKernel` has no AST field. `propose_nonterminal` requires `SubprogramFrequencyTable`.
+
+**Tests (secondary):** Observable consequences of correct implementation. 10K kernel evals < 1ms. Nonterminals are real posterior subtrees. Compression payoff is measurable.
+
+**CLAUDE.md (tertiary):** Documents the reasoning behind the constraints.
+
+### 10.4 Testing philosophy
+
+**Mechanism tests:** deterministic, agent-free where possible. Failure = code is wrong.
+
+**Emergent-behaviour tests:** statistical, directional, controlled confounds. Failure = code or causal attribution may be wrong.
+
+**Enforcement tests:** structural. Failure = design invariant bypassed.
+
+---
+
+## 11. Domain: Grid World (Complete)
+
+72 tests passing. Validated: convergence, Occam's Razor, regime-change adaptation, meta-learning (controlled comparison: perturbation agent 0.700 vs no-perturbation 0.667 in regime 3), grammar evolution (23 perturbed grammars, 4 with positive weight), scale (46K → 2K at depth 2).
+
+---
+
+## 12. Domain: Email Agent
+
+### 12.1 Preference inference via action prediction
+
+Each program is a hypothesis about what the user prefers: "for emails matching this predicate, the user chooses this action." The Beta tracks P(approve | predicate fires, action taken). The agent recommends whichever action has highest expected approval.
+
+### 12.2 Features, actions, user profiles
+
+13 feature channels (sender, urgency, topic, etc.). 7 actions including ASK_USER. 4 hidden test profiles (urgency_responsive, delegator, hands_on, selective). See implementation instructions for details.
+
+### 12.3 Multi-user meta-learning
+
+Grammar pool from one user initialises the next. Population-level structural regularities transfer; individual details don't. Chajewska et al.'s result directly applies: population data initialises the prior, enabling useful behaviour before individual-specific queries.
+
+---
+
+## 13. Resolved Questions
+
+- ~~Kernel compilation~~ — `CompiledKernel` type, precompiled closures.
 - ~~Temporal operators~~ — kernel closures capture temporal window.
-- ~~Precompile predicates~~ — enforced by `CompiledKernel` having no AST field.
+- ~~Precompile predicates~~ — enforced by no AST field.
 - ~~Program enumeration~~ — prior-weighted floor (`min_log_prior`).
-- ~~Scale~~ — validated at depth 2 (46K → 2K components).
+- ~~Scale~~ — validated at depth 2 (46K → 2K).
 - ~~Base-rate sentinel~~ — `log(0.5)` for non-firing predicates.
-- ~~Flat vs nested mixture~~ — flat by design.
+- ~~Flat vs nested~~ — flat by design.
 - ~~Per-component dispatch~~ — `TaggedBetaMeasure.tag`.
+- ~~One vs many agents~~ — one agent per user, domains are event sources.
+- ~~Action-predicate explosion~~ — the complexity prior handles it.
+- ~~Setting the utility function~~ — CIRL: agent utility = expected user utility under preference uncertainty. Grounded by Savage (utility exists), complete class theorem (Bayesian EU is the only admissible procedure), Harsanyi (linear aggregation).
+- ~~Feedback weighting~~ — Bayesian updating calibrates automatically once observation models are learned. Fisher information governs signal contribution. The observation models themselves are programs in the mixture, learned through the same inference.
+- ~~Computational cost~~ — only matters insofar as it affects user satisfaction. The user's reactions encode their tolerance for cost. No separate cost model.

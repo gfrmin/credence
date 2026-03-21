@@ -18,7 +18,7 @@ The returned CompiledKernel has no reference to the original AST.
 """
 function compile_kernel(program::Program, grammar::Grammar, program_id::Int)::CompiledKernel
     closure = compile_expr(program.predicate, grammar.rules)
-    CompiledKernel(closure, program.complexity, grammar.id, program_id)
+    CompiledKernel(closure, program.action, program.complexity, grammar.id, program_id)
 end
 
 """Compile an expression into a closure: (sensor_vector, temporal_state) → Bool."""

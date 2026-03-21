@@ -50,7 +50,8 @@ Depth-2: compositions with AND/OR/NOT.
 """
 function enumerate_programs(g::Grammar, max_depth::Int;
                             include_temporal::Bool=false,
-                            min_log_prior::Float64=-20.0)::Vector{Program}
+                            min_log_prior::Float64=-20.0,
+                            actions::Vector{Symbol}=Symbol[:classify])::Vector{Program}
     n_ch = n_channels(g.sensor_config)
 
     # Depth 1: atomic predicates + nonterminal references
@@ -104,10 +105,12 @@ function enumerate_programs(g::Grammar, max_depth::Int;
     all_exprs = vcat(by_depth...)
 
     programs = Program[]
-    for (i, expr) in enumerate(all_exprs)
+    for expr in all_exprs
         c = expr_complexity(expr)
         -(g.complexity + c) >= min_log_prior || continue
-        push!(programs, Program(expr, c, g.id))
+        for action in actions
+            push!(programs, Program(expr, action, c, g.id))
+        end
     end
     programs
 end

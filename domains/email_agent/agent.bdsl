@@ -1,13 +1,10 @@
 ; ============================================================
-; program_agent.bdsl — DSL agent for program-space inference
+; agent.bdsl — DSL agent for email preference inference
 ;
 ; The agent receives a flat MixtureMeasure (belief over programs),
-; kernels (compiled by the host, closing over temporal state),
-; and observations (energy deltas). It does inference.
-;
-; The host manages grammars, programs, sensors, and the world.
-; The agent knows nothing about these — it receives a belief
-; and computes posteriors and decisions.
+; kernels (compiled by the host), and user feedback observations.
+; It does inference. The host manages grammars, programs, sensors,
+; and the email domain.
 ; ============================================================
 
 ; ── Core inference: condition belief on observation ──
@@ -23,31 +20,20 @@
       belief
       observations)))
 
-; ── Expected value of interacting ──
-; Given belief over programs and a preference function,
-; compute the expected utility of the interact action
-(define eu-interact
-  (lambda (belief pref)
-    (expect belief (lambda (h) (pref h)))))
+; ── Expected utility for a given action ──
+; The host provides an eval function that extracts the relevant
+; approval probability for a specific action from each program
+(define eu-action
+  (lambda (belief action-eval-fn)
+    (expect belief (lambda (h) (action-eval-fn h)))))
 
-; ── Agent decision: submit, abstain, or observe ──
-; Returns (action-type, action-value) where:
-;   0 = interact (expected positive)
-;   1 = observe (gather more info)
-;   2 = move toward nearest entity
-;   3 = wait
+; ── Agent decision: act or ask ──
+; Returns (action-type, value) where:
+;   :ask_user if VOI exceeds best domain action EU
+;   domain-action otherwise
 (define agent-step
-  (lambda (belief eu-interact-val voi-observe-val move-eu)
-    (let best-eu (max eu-interact-val move-eu)
-      (if (> voi-observe-val best-eu)
-        (list 1 0.0)
-        (if (> eu-interact-val move-eu)
-          (list 0 eu-interact-val)
-          (list 2 move-eu))))))
-
-; ── Prediction: expected probability of enemy ──
-; The host passes a function that evaluates the current observation
-; against each program's Beta
-(define predict-enemy
-  (lambda (belief eval-fn)
-    (expect belief eval-fn)))
+  (lambda (belief best-domain-eu voi-ask ask-cost)
+    (let ask-eu (- voi-ask ask-cost)
+      (if (>= ask-eu best-domain-eu)
+        (list :ask_user ask-eu)
+        (list :act best-domain-eu)))))

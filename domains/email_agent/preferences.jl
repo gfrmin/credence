@@ -1,11 +1,11 @@
 """
-    preferences.jl — Email preference types and outcome classification
+    preferences.jl — Email action space and outcome classification
 
-Maps user reactions to emails (read, archived, replied, deleted, etc.)
-to utility values that the agent learns to predict.
+Defines the action vocabulary for the email domain.
 """
 
-"""Classify a user reaction into a utility value in [-1, 1]."""
-function classify_outcome(user_reaction::Symbol)::Float64
-    error("not implemented")
-end
+const EMAIL_ACTIONS = [:archive, :flag_urgent, :schedule_later,
+                       :draft_response, :delegate, :summarise, :ask_user]
+
+const DOMAIN_ACTIONS = [:archive, :flag_urgent, :schedule_later,
+                        :draft_response, :delegate, :summarise]

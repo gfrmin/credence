@@ -344,7 +344,7 @@ let
     changed_expr = ChangedExpr(GTExpr(0, 0.5))
     ck = CompiledKernel(
         compile_expr(changed_expr, ProductionRule[]),
-        2, 1, 1)
+        :classify, 2, 1, 1)
 
     ts_empty = Dict{Symbol, Any}(:recent => Vector{Float64}[])
     @assert !ck.evaluate([0.8, 0.3], ts_empty) "CHANGED should be false with no history"
@@ -360,7 +360,7 @@ let
     persists_expr = PersistsExpr(GTExpr(0, 0.5), 2)
     ck2 = CompiledKernel(
         compile_expr(persists_expr, ProductionRule[]),
-        2, 1, 2)
+        :classify, 2, 1, 2)
 
     ts_persists = Dict{Symbol, Any}(:recent => [[0.8, 0.3], [0.9, 0.4]])
     @assert ck2.evaluate([0.85, 0.3], ts_persists) "PERSISTS(2) should be true"
