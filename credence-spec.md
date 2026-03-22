@@ -278,9 +278,9 @@ This is "cheap design" — the body does some of the brain's work for free. Phys
 
 ### 6.6 Learning the body
 
-A baby doesn't know what its hands can do. It learns through motor babbling — trying random actions and observing effects. Our agent does the same. The action vocabulary is given (like muscles), but what each action achieves (the affordance) is learned through conditioning on outcomes. The agent's programs are hypotheses about affordances: "when I send `:flag_urgent` in the context of an urgent-from-manager email, the effect is user approval."
+A baby doesn't know what its hands can do. It learns through motor babbling — trying random actions and observing effects. Our agent does the same. The action vocabulary is given (like muscles), but what each action achieves (the affordance) is learned through conditioning on outcomes. The agent's programs are hypotheses about affordances: "when I send `:add_label_urgent` in the context of an urgent-from-manager email, the effect is user approval."
 
-If the primitives are low-level enough, higher-level actions emerge as compositions through grammar evolution — the same mechanism that discovers predicate abstractions. `:archive` could be a nonterminal compressing `(begin (move-to-folder "archive") (mark-read))`. The principled position: primitives should be as low-level as computationally feasible. The lower the primitives, the more the agent discovers through composition, and the less we smuggle in through design.
+Higher-level skills emerge not as memorised action sequences but as closed-loop policies — programs that branch on processing state and select the appropriate primitive at each step. "Triage urgent email" is a conditional policy that labels, moves, and notifies based on what's already been done, adapting to interruptions. This follows Sutton et al.'s options framework (1999): options are closed-loop policies, not open-loop sequences. Grammar evolution discovers these policies and compresses them to nonterminals, creating reusable skills. See §7.4.
 
 ---
 
@@ -306,13 +306,13 @@ The terminal alphabet includes the inference primitives, control flow, predicate
 (flag-urgent)                             cost: 1
 (ask-user question)                       cost: 1
 (ask-llm prompt)                          cost: 1
+(done)                                    cost: 1
 
 ;; Control flow
 (if predicate then else)                  cost: 1
-(begin expr ...)                          cost: 1
 (let ((var expr)) body)                   cost: 1
 
-;; Predicates (sensors — domain-provided)
+;; Predicates (sensors — domain-provided, including processing state)
 (gt channel threshold)                    cost: 1
 (lt channel threshold)                    cost: 1
 (and p q)  (or p q)  (not p)             cost: 1 each
@@ -321,7 +321,9 @@ The terminal alphabet includes the inference primitives, control flow, predicate
 (changed p)  (persists p n)               cost: 1 each
 ```
 
-Every symbol costs 1 in description length — the universal prior is uniform over the alphabet. The body's action primitives are at whatever level the body exposes. If the body exposes low-level operations (`move-to-folder`, `add-label`, `set-flag`), the agent composes higher-level actions through grammar evolution. If the body exposes high-level operations (`archive`, `flag-urgent`), the agent selects among them but can't compose new ones. The level of the primitives is a design choice about where to draw the body boundary.
+Every symbol costs 1 in description length — the universal prior is uniform over the alphabet. The body's action primitives are at whatever level the body exposes.
+
+Note the absence of `(begin ...)`. Action sequences are not part of the language. See §7.5.
 
 ### 7.2 Programs encode preference hypotheses
 
@@ -331,26 +333,67 @@ Each program in the mixture is a hypothesis about what the user wants. A simple 
 
 A depth-1 program is reactive. A depth-3 program is conditional. A deeper program might do deliberative reasoning — querying the LLM, conditioning on the response, computing expected utility. The agent explores program depth as part of its normal operation. The complexity prior and the learned observation model determine what depth is useful. The designer does not choose.
 
-### 7.4 Grammar evolution and action composition
+### 7.4 Programs are options (closed-loop policies)
 
-Nonterminals compress frequently useful subexpressions. Grammar perturbation extracts recurring subtrees from high-posterior programs and promotes them to named primitives. This applies uniformly to predicates and actions:
+Sutton, Precup, and Singh (1999) introduced the options framework for temporal abstraction in reinforcement learning. An option is a closed-loop policy for taking action over a period of time — a triple ⟨I, π, β⟩ where I is an initiation set (when the option can start), π is an internal policy (state → action mapping), and β is a termination condition (when the option completes).
+
+Options are not action sequences. They are conditional policies that observe the world at each step and respond. "Grasp" is not "close finger 1, close finger 2, close finger 3." It is: "if finger 1 not touching object, close it; if finger 2 not touching, close it; if sufficient pressure, hold." The policy responds to proprioceptive feedback. If you drop the object mid-grasp, the policy detects the change and adjusts.
+
+This matters because Sutton et al. proved that the polling execution mode — re-evaluating which option to follow at every step — yields higher expected value than committing to a plan (hierarchical execution). Open-loop sequences commit without feedback. Closed-loop policies adapt.
+
+**Our programs ARE options.** An IfExpr that maps states to actions is a closed-loop policy. When applied repeatedly to an evolving state (the same email with processing-state features updating as actions are executed), it produces multi-step behaviour:
+
+```scheme
+;; A "triage" option — applied at each step, reads current state
+(if (and (gt urgency 0.7) (not (gt has_label_urgent 0.5)))
+    (add-label-urgent)
+    (if (and (gt has_label_urgent 0.5) (not (gt in_priority 0.5)))
+        (move-to-priority)
+        (if (and (gt in_priority 0.5) (not (gt user_notified 0.5)))
+            (notify-user)
+            (done))))
+```
+
+This program, evaluated across multiple time steps against the same email with evolving processing-state features, produces the sequence: label → move → notify → done. But it's not encoding a sequence — it's a conditional policy that checks what's been done and decides what to do next. If interrupted mid-way ("actually, just archive this"), it re-evaluates against the new state.
+
+The host loop for multi-step processing:
+
+```
+while action ≠ :done
+    features = extract_features(email, processing_state)
+    action = best_program.evaluate(features)
+    execute(action)
+    update(processing_state, action)
+```
+
+### 7.5 Why `(begin ...)` is absent
+
+An open-loop sequence `(begin (add-label-urgent) (move-to-priority) (notify-user))` commits to three actions without observing the outcome of any. This is:
+
+- **Theoretically inferior.** Sutton et al. (1999) proved that closed-loop policies dominate open-loop sequences. Polling execution (re-evaluating at each step) achieves higher expected value than plan commitment.
+- **Not how brains work.** Motor chunking research shows that learned motor skills are hierarchical closed-loop policies, not rigid sequences. Chunks respond to proprioceptive feedback. They can be interrupted and recombined.
+- **Unnecessary.** The same multi-step behaviour emerges from closed-loop programs applied to evolving state (§7.4). Nothing is lost by omitting `begin`.
+
+### 7.6 Grammar evolution discovers skills
+
+Grammar perturbation extracts recurring program subtrees and promotes them to nonterminals. This applies to the full conditional policy, not just predicate fragments:
 
 - Predicate compression: `(and (gt urgency 0.7) (gt sender_is_manager 0.5))` → `URGENT-FROM-BOSS`
-- Action composition: `(begin (move-to-folder "priority") (add-label "urgent") (notify-user))` → `TRIAGE-URGENT`
+- Skill compression: the multi-branch triage program from §7.4 → `TRIAGE-URGENT`
 
-The grammar evolves the agent's vocabulary of both concepts and skills — its language of thought and action.
+A compressed skill is a reusable closed-loop policy. The neuroscience literature on motor chunking confirms this: acquired chunks can be flexibly recombined in novel sequences. The grammar evolves the agent's vocabulary of both concepts and skills — its language of thought and action.
 
 ---
 
 ## 8. The Five-Layer Stack
 
-Concepts emerge from raw observations through five layers, each from inference under the complexity prior at a different timescale. The stack applies uniformly to perceptual abstractions and action compositions:
+Concepts emerge from raw observations through five layers, each from inference under the complexity prior at a different timescale. The stack applies uniformly to perceptual abstractions and motor skills:
 
-**Layer 0 (given): Raw primitives.** Feature predicates (`gt`, `lt`) and body actions (`move-to-folder`, `add-label` or higher-level equivalents). The terminal alphabet.
+**Layer 0 (given): Raw primitives.** Feature predicates (`gt`, `lt`) and body actions (`add-label-urgent`, `move-to-priority`, or higher-level equivalents). Processing-state predicates (`has_label_urgent`, `is_in_archive`). The terminal alphabet.
 
-**Layer 1 (emerges): Abstractions.** Frequent patterns promoted to grammar nonterminals. "Urgent" compresses a predicate pattern. "Archive" (if low-level primitives are used) compresses an action sequence. Perceptual and motor abstractions emerge through the same mechanism.
+**Layer 1 (emerges): Abstractions.** Frequent patterns promoted to grammar nonterminals. "Urgent" compresses a predicate pattern. "Triage-urgent" compresses a multi-branch closed-loop policy. Perceptual and motor abstractions emerge through the same mechanism.
 
-**Layer 2 (emerges): Preference models.** Combinations of abstractions into conditional programs that predict user behaviour. Programs that predict accurately gain posterior weight.
+**Layer 2 (emerges): Preference models.** Combinations of abstractions into conditional programs that predict user behaviour. Programs (options) that produce user-approved outcomes gain posterior weight.
 
 **Layer 3 (emerges): Meta-regularities.** Across preference changes or users, certain abstractions persist. The grammar evolves a stable core alongside a mutable periphery.
 
@@ -502,6 +545,6 @@ Grammar pool from one user initialises the next. Population-level structural reg
 - ~~Computational cost~~ — only matters insofar as it affects user satisfaction. The user's reactions encode their tolerance for cost. No separate cost model.
 - ~~Brain/body boundary~~ — the brain (Bayesian core) receives features and sends action symbols. The body (host) preprocesses raw data and executes actions. The brain doesn't know how the body works; it learns what the body can do through conditioning on outcomes. Formalised by Ay (2015).
 - ~~Meta-actions~~ — computational operations (enumerate, perturb, deepen) are actions in the action space, evaluated by the same EU as domain actions. The strange loop (agent modifying its own hypothesis space) is principled — the Bayesian machinery is immutable; what changes is the set of hypotheses it operates over.
-- ~~Action composition~~ — higher-level actions emerge through grammar evolution, the same mechanism as predicate abstractions. The grammar evolves skills alongside concepts. Primitives should be as low-level as computationally feasible.
+- ~~Action composition~~ — not through open-loop sequences (BeginExpr) but through closed-loop policies (IfExpr programs that branch on processing state). Sutton et al. (1999) proved that closed-loop policies (options) dominate open-loop sequences. Motor chunking research confirms: learned skills are hierarchical closed-loop policies, not rigid sequences. Multi-step behaviour emerges from applying the same program to evolving state, not from encoding sequences. Grammar evolution discovers and compresses these policies into reusable nonterminals (skills).
 - ~~LLM role~~ — the LLM is a prosthetic (glasses, not a brain implant). Part of the body's sensor/effector system. The brain decides when to use it via EU.
 - ~~Non-firing programs~~ — eliminated. Programs are expression trees that always produce a recommendation. Every program is scored. No `log(0.5)` sentinel needed.
