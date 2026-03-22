@@ -48,7 +48,8 @@ export analyse_posterior_subtrees, extract_subtrees
 export propose_nonterminal, perturb_grammar
 export expr_equal, collect_threshold_nodes, replace_threshold
 export AgentState, sync_prune!, sync_truncate!
-export aggregate_grammar_weights
+export aggregate_grammar_weights, top_k_grammar_ids
+export add_programs_to_state!
 export next_grammar_id, reset_grammar_counter!
 
 end

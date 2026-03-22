@@ -3,8 +3,12 @@
     host.jl — Host driver for the email program-space agent
 
 Orchestrates: grammar pool → program enumeration → kernel compilation →
-flat MixtureMeasure of TaggedBetaMeasures → action EU → conditioning →
-grammar perturbation → repeat.
+flat MixtureMeasure of TaggedBetaMeasures → action EU (domain + meta) →
+conditioning → repeat.
+
+Meta-actions (enumerate_more, perturb_grammar, deepen) are evaluated by
+the same EU machinery as domain actions. The agent decides whether to act
+on the current email or invest in improving its hypothesis space.
 
 Tier 3: email-domain-specific. Uses Tier 1 (Credence DSL) and Tier 2
 (ProgramSpace) for domain-independent inference machinery.
@@ -21,7 +25,7 @@ using Credence: Grammar, Program, CompiledKernel, ProductionRule
 using Credence: SensorConfig, SensorChannel
 using Credence: enumerate_programs, compile_kernel
 using Credence: analyse_posterior_subtrees, perturb_grammar
-using Credence: aggregate_grammar_weights
+using Credence: aggregate_grammar_weights, top_k_grammar_ids, add_programs_to_state!
 using Credence: next_grammar_id, reset_grammar_counter!
 using Credence: show_expr, GTExpr
 
@@ -61,56 +65,125 @@ end
 # ═══════════════════════════════════════
 
 """
-    evaluate_predicates!(cache, compiled_kernels, grammar_sensor_vectors, temporal_state)
+    evaluate_programs!(cache, compiled_kernels, grammar_sensor_vectors, temporal_state)
 
-Evaluate all predicates and cache results. Returns the cache.
+Evaluate all programs and cache their recommended actions. Returns the cache.
 """
-function evaluate_predicates!(
-    cache::Dict{Int, Bool},
+function evaluate_programs!(
+    cache::Dict{Int, Symbol},
     compiled_kernels::Vector{CompiledKernel},
     grammar_sensor_vectors::Dict{Int, Vector{Float64}},
     temporal_state::Dict{Symbol, Any}
 )
     for (tag, ck) in enumerate(compiled_kernels)
         haskey(cache, tag) && continue
-        sv = get(grammar_sensor_vectors, ck.grammar_id, Float64[])
-        cache[tag] = !isempty(sv) && ck.evaluate(sv, temporal_state)
+        haskey(grammar_sensor_vectors, ck.grammar_id) || continue
+        sv = grammar_sensor_vectors[ck.grammar_id]
+        cache[tag] = ck.evaluate(sv, temporal_state)
     end
     cache
 end
 
 """
-    compute_eu(state, action, pred_cache, component_weights; ask_cost) → Float64
+    compute_action_entropy(state, rec_cache, component_weights) → Float64
 
-Expected approval for any action, including :ask_user.
+Shannon entropy of the action distribution. High entropy means the agent
+is uncertain which action to take — meta-actions have positive VOI.
+"""
+function compute_action_entropy(
+    state::AgentState,
+    rec_cache::Dict{Int, Symbol},
+    component_weights::Vector{Float64}
+)::Float64
+    action_weights = Dict{Symbol, Float64}()
+    for (j, _) in enumerate(state.metadata)
+        haskey(rec_cache, j) || continue
+        a = rec_cache[j]
+        action_weights[a] = get(action_weights, a, 0.0) + component_weights[j]
+    end
+    total = sum(values(action_weights))
+    total < 1e-300 && return 0.0
+    H = 0.0
+    for (_, w) in action_weights
+        p = w / total
+        p > 1e-300 && (H -= p * log(p))
+    end
+    H
+end
 
-For domain actions — the weighted-average approval rate among programs
-that fire and recommend this action:
-    EU(a) = Σ_{j: fires∧action_j==a} w_j × mean(beta_j)
-            / Σ_{j: fires∧action_j==a} w_j
+"""
+    mean_observation_count(state) → Float64
 
-Returns 0.5 (base rate) if no matching programs fire.
+Average number of observations across components: mean(α + β - 2).
+"""
+function mean_observation_count(state::AgentState)::Float64
+    isempty(state.belief.components) && return 0.0
+    total = 0.0
+    for comp in state.belief.components
+        tbm = comp::TaggedBetaMeasure
+        total += tbm.beta.alpha + tbm.beta.beta - 2.0
+    end
+    total / length(state.belief.components)
+end
 
-For :ask_user:
-    EU = 1.0 - ask_cost  (always correct, costs user attention)
+"""
+    compute_meta_eu(state, action, rec_cache, component_weights; meta_cost_this_turn) → Float64
 
-Dynamics: uniform priors give EU ≈ 0.5 < 1-ask_cost → agent asks.
-As posteriors concentrate, correct action's EU rises → agent acts.
+EU for meta-actions. The entropy of the action distribution proxies for
+the value of information from improving the hypothesis space.
+"""
+function compute_meta_eu(
+    state::AgentState,
+    action::Symbol,
+    rec_cache::Dict{Int, Symbol},
+    component_weights::Vector{Float64};
+    meta_cost_this_turn::Float64=0.0
+)::Float64
+    action == :do_nothing && return -Inf
+
+    H = compute_action_entropy(state, rec_cache, component_weights)
+    n_obs = mean_observation_count(state)
+    entropy_benefit = H / (1.0 + 0.1 * n_obs)
+
+    if action == :enumerate_more
+        return entropy_benefit * 0.5 - ENUMERATE_COST - meta_cost_this_turn
+    elseif action == :perturb_grammar
+        base = n_obs > 5.0 ? entropy_benefit * 0.6 : 0.0
+        return base - PERTURB_COST - meta_cost_this_turn
+    elseif action == :deepen
+        return entropy_benefit * 0.4 - DEEPEN_COST - meta_cost_this_turn
+    end
+    -Inf
+end
+
+"""
+    compute_eu(state, action, rec_cache, component_weights; ask_cost, meta_cost_this_turn) → Float64
+
+Expected utility for any action: domain, :ask_user, or meta-action.
+Single argmax over the combined action space.
 """
 function compute_eu(
     state::AgentState,
     action::Symbol,
-    pred_cache::Dict{Int, Bool},
+    rec_cache::Dict{Int, Symbol},
     component_weights::Vector{Float64};
-    ask_cost::Float64=0.1
+    ask_cost::Float64=0.1,
+    meta_cost_this_turn::Float64=0.0
 )::Float64
+    # Meta-actions
+    action in META_ACTIONS && return compute_meta_eu(
+        state, action, rec_cache, component_weights;
+        meta_cost_this_turn=meta_cost_this_turn)
+
+    # :ask_user — always correct, costs user attention
     action == :ask_user && return 1.0 - ask_cost
 
+    # Domain actions — weighted-average approval rate
     weighted_approval = 0.0
     matching_weight = 0.0
     for (j, comp) in enumerate(state.belief.components)
-        pred_cache[j] || continue
-        state.compiled_kernels[j].action == action || continue
+        haskey(rec_cache, j) || continue
+        rec_cache[j] == action || continue
         tbm = comp::TaggedBetaMeasure
         w = component_weights[j]
         weighted_approval += w * mean(tbm.beta)
@@ -121,6 +194,67 @@ function compute_eu(
 end
 
 # ═══════════════════════════════════════
+# Meta-action execution
+# ═══════════════════════════════════════
+
+"""
+    execute_meta_action!(state, action; ...) → Int
+
+Execute a meta-action that modifies the hypothesis space.
+Returns the number of programs added.
+"""
+function execute_meta_action!(
+    state::AgentState,
+    action::Symbol;
+    action_space::Vector{Symbol}=DOMAIN_ACTIONS,
+    min_log_prior::Float64=-20.0,
+    verbose::Bool=false
+)::Int
+    if action == :enumerate_more
+        top_gids = top_k_grammar_ids(state, 3)
+        n_added = 0
+        for gid in top_gids
+            haskey(state.grammars, gid) || continue
+            n_added += add_programs_to_state!(state, state.grammars[gid],
+                state.current_max_depth;
+                action_space=action_space, min_log_prior=min_log_prior)
+        end
+        verbose && println("  [Meta: enumerate_more → +$n_added components]")
+        return n_added
+
+    elseif action == :perturb_grammar
+        w = weights(state.belief)
+        freq_table = analyse_posterior_subtrees(state.all_programs, w;
+                                                min_frequency=0.01, min_complexity=2)
+        top_gids = top_k_grammar_ids(state, 3)
+        n_added = 0
+        for gid in top_gids
+            haskey(state.grammars, gid) || continue
+            new_g = perturb_grammar(state.grammars[gid], freq_table)
+            state.grammars[new_g.id] = new_g
+            n_added += add_programs_to_state!(state, new_g, state.current_max_depth;
+                action_space=action_space, min_log_prior=min_log_prior)
+        end
+        verbose && println("  [Meta: perturb_grammar → +$n_added components]")
+        return n_added
+
+    elseif action == :deepen
+        state.current_max_depth += 1
+        top_gids = top_k_grammar_ids(state, 3)
+        n_added = 0
+        for gid in top_gids
+            haskey(state.grammars, gid) || continue
+            n_added += add_programs_to_state!(state, state.grammars[gid],
+                state.current_max_depth;
+                action_space=action_space, min_log_prior=min_log_prior)
+        end
+        verbose && println("  [Meta: deepen → depth=$(state.current_max_depth), +$n_added components]")
+        return n_added
+    end
+    0
+end
+
+# ═══════════════════════════════════════
 # Observation kernel
 # ═══════════════════════════════════════
 
@@ -128,11 +262,12 @@ end
     build_email_observation_kernel(compiled_kernels, grammar_sensor_vectors,
                                    temporal_state, user_action) → Kernel
 
-Build a kernel for conditioning. The user chose `user_action`:
-- Firing program with matching action → log(p) (positive)
-- Firing program with non-matching action → log(1-p) (negative)
-- Non-firing program → log(0.5) (base rate)
+Build a kernel for conditioning. Each program evaluates features →
+recommends an action. Compared to user_action:
+- Matching recommendation → log(p) (correct prediction)
+- Non-matching recommendation → log(1-p) (incorrect prediction)
 
+Populates correct_cache in kernel params for per-component Beta update.
 Always condition with obs=1.0.
 """
 function build_email_observation_kernel(
@@ -141,7 +276,8 @@ function build_email_observation_kernel(
     temporal_state::Dict{Symbol, Any},
     user_action::Symbol
 )
-    pred_cache = Dict{Int, Bool}()
+    recommendation_cache = Dict{Int, Symbol}()
+    correct_cache = Dict{Int, Bool}()
     obs_space = Finite([0.0, 1.0])
 
     Kernel(Interval(0.0, 1.0), obs_space,
@@ -149,27 +285,21 @@ function build_email_observation_kernel(
         (m_or_θ, obs) -> begin
             if m_or_θ isa TaggedBetaMeasure
                 tag = m_or_θ.tag
-                fired = get!(pred_cache, tag) do
+                recommended = get!(recommendation_cache, tag) do
                     ck = compiled_kernels[tag]
-                    sv = get(grammar_sensor_vectors, ck.grammar_id, Float64[])
-                    isempty(sv) && return false
+                    sv = grammar_sensor_vectors[ck.grammar_id]
                     ck.evaluate(sv, temporal_state)
                 end
-                if !fired
-                    log(0.5)
-                else
-                    ck = compiled_kernels[tag]
-                    p = mean(m_or_θ.beta)
-                    if ck.action == user_action
-                        obs == 1.0 ? log(max(p, 1e-300)) : log(max(1.0 - p, 1e-300))
-                    else
-                        obs == 1.0 ? log(max(1.0 - p, 1e-300)) : log(max(p, 1e-300))
-                    end
-                end
+                correct = recommended == user_action
+                correct_cache[tag] = correct
+                p = mean(m_or_θ.beta)
+                correct ? log(max(p, 1e-300)) : log(max(1.0 - p, 1e-300))
             else
                 obs == 1.0 ? log(max(m_or_θ, 1e-300)) : log(max(1.0 - m_or_θ, 1e-300))
             end
-        end)
+        end,
+        nothing,
+        Dict{Symbol, Any}(:correct_cache => correct_cache))
 end
 
 # ═══════════════════════════════════════
@@ -177,17 +307,21 @@ end
 # ═══════════════════════════════════════
 
 """
-    run_agent(; corpus, user_pref, ...) → (metrics, state, grammar_pool)
+    run_agent(; corpus, user_pref, ...) → (metrics, state, evolved_grammars)
 
 Main email agent loop. Processes emails sequentially, learning the user's
 preference profile through approve/override feedback.
+
+Meta-actions (enumerate_more, perturb_grammar, deepen) are evaluated by
+the same EU machinery as domain actions. The agent decides whether to act
+or invest in improving its hypothesis space at each step.
 """
 function run_agent(;
     corpus::Vector{Email},
     user_pref::UserPreference,
-    program_max_depth::Int = 2,
+    program_max_depth::Int = 3,
     min_log_prior::Float64 = -20.0,
-    perturbation_interval::Int = 25,
+    max_meta_per_step::Int = 3,
     ask_cost::Float64 = 0.1,
     population_grammar::Union{Nothing, Vector{Grammar}} = nothing,
     rng_seed::Int = 42,
@@ -216,7 +350,7 @@ function run_agent(;
     idx = 0
     for g in grammar_pool
         programs = enumerate_programs(g, program_max_depth;
-                                       actions=DOMAIN_ACTIONS,
+                                       action_space=DOMAIN_ACTIONS,
                                        min_log_prior=min_log_prior)
         for (pi, p) in enumerate(programs)
             idx += 1
@@ -235,7 +369,9 @@ function run_agent(;
     end
 
     belief = MixtureMeasure(Interval(0.0, 1.0), components, log_prior_weights)
-    state = AgentState(belief, metadata, compiled_kernels, all_programs)
+    grammar_dict = Dict{Int, Grammar}(g.id => g for g in grammar_pool)
+    state = AgentState(belief, metadata, compiled_kernels, all_programs,
+                       grammar_dict, program_max_depth)
 
     temporal_state = Dict{Symbol, Any}(:recent => Vector{Float64}[])
     metrics = EmailMetricsTracker()
@@ -243,22 +379,64 @@ function run_agent(;
     # 2. MAIN LOOP
     for (step, email) in enumerate(corpus)
         # Per-grammar sensor projection
-        grammar_sensor_vectors = project_email_per_grammar(email, grammar_pool)
+        grammar_sensor_vectors = project_email_per_grammar(
+            email, collect(values(state.grammars)))
 
-        # Evaluate all predicates (cached)
-        pred_cache = Dict{Int, Bool}()
-        evaluate_predicates!(pred_cache, state.compiled_kernels,
-                             grammar_sensor_vectors, temporal_state)
+        # Inner loop: agent may take meta-actions before committing to a domain action
+        meta_cost_this_turn = 0.0
+        meta_actions_taken = 0
+        chosen_action = :do_nothing
 
-        # Compute EU for all actions uniformly (including :ask_user)
-        w = weights(state.belief)
-        action_eus = Dict{Symbol, Float64}()
-        for a in EMAIL_ACTIONS
-            action_eus[a] = compute_eu(state, a, pred_cache, w; ask_cost)
+        while true
+            # Evaluate all programs (fresh cache each iteration — new programs may exist)
+            rec_cache = Dict{Int, Symbol}()
+            evaluate_programs!(rec_cache, state.compiled_kernels,
+                               grammar_sensor_vectors, temporal_state)
+
+            w = weights(state.belief)
+
+            # Compute EU for all actions
+            action_eus = Dict{Symbol, Float64}()
+            for a in ALL_ACTIONS
+                action_eus[a] = compute_eu(state, a, rec_cache, w;
+                    ask_cost=ask_cost, meta_cost_this_turn=meta_cost_this_turn)
+            end
+
+            chosen_action = argmax(action_eus)
+
+            if chosen_action in META_ACTIONS && chosen_action != :do_nothing &&
+               meta_actions_taken < max_meta_per_step
+                execute_meta_action!(state, chosen_action;
+                    action_space=DOMAIN_ACTIONS, min_log_prior=min_log_prior,
+                    verbose=verbose)
+                meta_actions_taken += 1
+                meta_cost_this_turn += (chosen_action == :deepen ? DEEPEN_COST :
+                                        chosen_action == :perturb_grammar ? PERTURB_COST :
+                                        ENUMERATE_COST)
+                # Re-project for any new grammars
+                grammar_sensor_vectors = project_email_per_grammar(
+                    email, collect(values(state.grammars)))
+                sync_prune!(state; threshold=-30.0)
+                sync_truncate!(state; max_components=2000)
+                continue
+            end
+
+            break
         end
 
-        # Select action (indifference → ask, per CLAUDE.md)
-        chosen_action = argmax(action_eus)
+        # If meta cap reached and chosen_action is still meta, fall back to domain EU
+        if chosen_action in META_ACTIONS
+            rec_cache = Dict{Int, Symbol}()
+            evaluate_programs!(rec_cache, state.compiled_kernels,
+                               grammar_sensor_vectors, temporal_state)
+            w = weights(state.belief)
+            action_eus = Dict{Symbol, Float64}()
+            for a in EMAIL_ACTIONS
+                action_eus[a] = compute_eu(state, a, rec_cache, w; ask_cost=ask_cost)
+            end
+            chosen_action = argmax(action_eus)
+        end
+
         asked = chosen_action == :ask_user
 
         # Get the user's true preferred action
@@ -268,7 +446,11 @@ function run_agent(;
         action_correct_for_metrics = !asked && (chosen_action == correct_action)
 
         # Surprise: how unexpected was the correct action?
-        eu_correct = compute_eu(state, correct_action, pred_cache, w; ask_cost)
+        rec_cache = Dict{Int, Symbol}()
+        evaluate_programs!(rec_cache, state.compiled_kernels,
+                           grammar_sensor_vectors, temporal_state)
+        w = weights(state.belief)
+        eu_correct = compute_eu(state, correct_action, rec_cache, w; ask_cost=ask_cost)
         surprise = -log(max(eu_correct, 1e-300))
 
         # Condition belief on user's true preferred action
@@ -282,11 +464,12 @@ function run_agent(;
         sync_truncate!(state; max_components=2000)
 
         if verbose
+            meta_str = meta_actions_taken > 0 ? ", meta=$meta_actions_taken" : ""
             println("Step $step: $(asked ? "ASK→$correct_action" : string(chosen_action)) " *
                     "(correct=$correct_action, " *
                     "$(action_correct_for_metrics ? "✓" : asked ? "?" : "✗"), " *
                     "surprise=$(round(surprise, digits=2)), " *
-                    "components=$(length(state.belief.components)))")
+                    "components=$(length(state.belief.components))$meta_str)")
         end
 
         # Record metrics
@@ -300,70 +483,15 @@ function run_agent(;
                       asked=asked,
                       grammar_weights=gw,
                       n_components=length(state.belief.components),
-                      surprise=surprise)
-
-        # Periodic grammar perturbation
-        if step % perturbation_interval == 0 && step < length(corpus)
-            w_pert = weights(state.belief)
-            gw_pert = aggregate_grammar_weights(w_pert, state.metadata)
-
-            freq_table = analyse_posterior_subtrees(
-                state.all_programs, w_pert;
-                min_frequency=0.01, min_complexity=2)
-
-            top_gids = sort(collect(keys(gw_pert)), by=gi -> -get(gw_pert, gi, 0.0))[1:min(3, length(gw_pert))]
-
-            new_components = Measure[]
-            new_lw = Float64[]
-            new_meta = Tuple{Int, Int}[]
-            new_ck = CompiledKernel[]
-            new_progs = Program[]
-
-            base_idx = length(state.compiled_kernels)
-            for gid in top_gids
-                g_idx = findfirst(g -> g.id == gid, grammar_pool)
-                g_idx === nothing && continue
-
-                new_g = perturb_grammar(grammar_pool[g_idx], freq_table)
-                push!(grammar_pool, new_g)
-
-                new_programs = enumerate_programs(new_g, program_max_depth;
-                                                   actions=DOMAIN_ACTIONS,
-                                                   min_log_prior=min_log_prior)
-                for (pi, p) in enumerate(new_programs)
-                    base_idx += 1
-                    push!(new_components, TaggedBetaMeasure(Interval(0.0, 1.0), base_idx, BetaMeasure(1.0, 1.0)))
-                    lw = -new_g.complexity * log(2) - p.complexity * log(2)
-                    push!(new_lw, lw)
-                    push!(new_meta, (new_g.id, pi))
-                    push!(new_ck, compile_kernel(p, new_g, pi))
-                    push!(new_progs, p)
-                end
-            end
-
-            if !isempty(new_components)
-                all_comps = Measure[state.belief.components..., new_components...]
-                all_lw = Float64[state.belief.log_weights..., new_lw...]
-                state.belief = MixtureMeasure(Interval(0.0, 1.0), all_comps, all_lw)
-                append!(state.metadata, new_meta)
-                append!(state.compiled_kernels, new_ck)
-                append!(state.all_programs, new_progs)
-                sync_prune!(state; threshold=-30.0)
-                sync_truncate!(state; max_components=2000)
-
-                if verbose
-                    println("  [Perturbation at step $step: +$(length(new_components)) components, " *
-                            "total=$(length(state.belief.components))]")
-                end
-            end
-        end
+                      surprise=surprise,
+                      n_meta_actions=meta_actions_taken)
     end
 
     if verbose
         print_email_summary(metrics; last_n=20)
     end
 
-    (metrics=metrics, state=state, evolved_grammars=grammar_pool)
+    (metrics=metrics, state=state, evolved_grammars=collect(values(state.grammars)))
 end
 
 # ═══════════════════════════════════════

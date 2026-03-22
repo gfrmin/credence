@@ -2,7 +2,7 @@
     metrics.jl — Email agent performance tracking
 
 Tracks action accuracy, ASK_USER frequency, grammar weights,
-and surprise across the email sequence.
+surprise, and meta-action counts across the email sequence.
 """
 
 mutable struct EmailMetricsTracker
@@ -15,10 +15,11 @@ mutable struct EmailMetricsTracker
     n_components::Vector{Int}
     surprise::Vector{Float64}
     cumulative_ask_count::Vector{Int}
+    meta_actions_per_step::Vector{Int}
 
     EmailMetricsTracker() = new(
         Int[], Symbol[], Symbol[], Bool[], Bool[],
-        Dict{Int,Float64}[], Int[], Float64[], Int[])
+        Dict{Int,Float64}[], Int[], Float64[], Int[], Int[])
 end
 
 function record_email!(m::EmailMetricsTracker;
@@ -29,7 +30,8 @@ function record_email!(m::EmailMetricsTracker;
                        asked::Bool,
                        grammar_weights::Dict{Int, Float64},
                        n_components::Int,
-                       surprise::Float64)
+                       surprise::Float64,
+                       n_meta_actions::Int=0)
     push!(m.steps, step)
     push!(m.actions_taken, action_taken)
     push!(m.correct_actions, correct_action)
@@ -40,6 +42,7 @@ function record_email!(m::EmailMetricsTracker;
     push!(m.surprise, surprise)
     prev_asks = isempty(m.cumulative_ask_count) ? 0 : last(m.cumulative_ask_count)
     push!(m.cumulative_ask_count, prev_asks + (asked ? 1 : 0))
+    push!(m.meta_actions_per_step, n_meta_actions)
 end
 
 function print_email_summary(m::EmailMetricsTracker; last_n::Int=20)
@@ -53,6 +56,7 @@ function print_email_summary(m::EmailMetricsTracker; last_n::Int=20)
     recent_total = n - start + 1
     println("Recent accuracy: $recent_correct / $recent_total ($(round(100 * recent_correct / recent_total, digits=1))%)")
     println("Total asks: $(last(m.cumulative_ask_count))")
+    println("Total meta-actions: $(sum(m.meta_actions_per_step))")
     println("Components: $(last(m.n_components))")
 
     gw = last(m.grammar_weights)

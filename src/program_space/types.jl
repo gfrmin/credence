@@ -74,6 +74,17 @@ struct SinceExpr <: ProgramExpr
     q::ProgramExpr
 end
 
+# Action expressions — programs evaluate to action symbols
+struct ActionExpr <: ProgramExpr
+    action::Symbol
+end
+
+struct IfExpr <: ProgramExpr
+    predicate::ProgramExpr     # Boolean-valued (gt, lt, and, or, not, changed, persists, nonterminal)
+    then_branch::ProgramExpr   # action-valued (ActionExpr or nested IfExpr)
+    else_branch::ProgramExpr   # action-valued (ActionExpr or nested IfExpr)
+end
+
 # ── Pretty printing ──
 
 function show_expr(e::GTExpr)
@@ -102,6 +113,12 @@ function show_expr(e::ChangedExpr)
 end
 function show_expr(e::SinceExpr)
     "SINCE($(show_expr(e.p)),$(show_expr(e.q)))"
+end
+function show_expr(e::ActionExpr)
+    string(e.action)
+end
+function show_expr(e::IfExpr)
+    "IF($(show_expr(e.predicate)),$(show_expr(e.then_branch)),$(show_expr(e.else_branch)))"
 end
 
 # ═══════════════════════════════════════
@@ -135,8 +152,7 @@ end
 # ═══════════════════════════════════════
 
 struct Program
-    predicate::ProgramExpr   # AST retained for analysis and display
-    action::Symbol           # :classify for grid world, domain-specific for others
+    expr::ProgramExpr        # full expression tree, evaluates to a Symbol
     complexity::Int          # derivation length
     grammar_id::Int
 end
@@ -146,10 +162,9 @@ end
 # ═══════════════════════════════════════
 
 struct CompiledKernel
-    # NO AST FIELD. Predicate compiled into closure.
+    # NO AST FIELD. Expression compiled into closure.
     # This is a type-level constraint: if the AST isn't here, it can't be interpreted.
-    evaluate::Function       # (sensor_vector, temporal_state) → Bool
-    action::Symbol           # mirrors Program.action
+    evaluate::Function       # (sensor_vector, temporal_state) → Symbol
     complexity::Int
     grammar_id::Int
     program_id::Int

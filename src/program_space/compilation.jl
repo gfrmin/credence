@@ -17,8 +17,8 @@ channel indices, and nonterminal expansions as closed-over constants.
 The returned CompiledKernel has no reference to the original AST.
 """
 function compile_kernel(program::Program, grammar::Grammar, program_id::Int)::CompiledKernel
-    closure = compile_expr(program.predicate, grammar.rules)
-    CompiledKernel(closure, program.action, program.complexity, grammar.id, program_id)
+    closure = compile_expr(program.expr, grammar.rules)
+    CompiledKernel(closure, program.complexity, grammar.id, program_id)
 end
 
 """Compile an expression into a closure: (sensor_vector, temporal_state) → Bool."""
@@ -94,6 +94,22 @@ function compile_expr(e::SinceExpr, rules)
         last_q == 0 && return false
         all(i -> p_fn(recent[i], ts), last_q:length(recent)) && p_fn(sv, ts)
     end
+end
+
+# ═══════════════════════════════════════
+# Action expression compilation: returns Symbol
+# ═══════════════════════════════════════
+
+function compile_expr(e::ActionExpr, _rules)
+    action = e.action
+    (_sv, _ts) -> action
+end
+
+function compile_expr(e::IfExpr, rules)
+    pred_fn = compile_expr(e.predicate, rules)
+    then_fn = compile_expr(e.then_branch, rules)
+    else_fn = compile_expr(e.else_branch, rules)
+    (sv, ts) -> pred_fn(sv, ts) ? then_fn(sv, ts) : else_fn(sv, ts)
 end
 
 # ═══════════════════════════════════════

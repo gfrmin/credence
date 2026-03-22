@@ -339,11 +339,13 @@ function condition(m::BetaMeasure, k::Kernel, observation)
 end
 
 function condition(m::TaggedBetaMeasure, k::Kernel, observation)
-    ll = k.log_density(m, observation)
-    if ll == 0.0
-        return m  # predicate didn't fire — no update
-    end
-    # Predicate fired — conjugate Beta-Bernoulli update
+    k.log_density(m, observation)  # evaluate kernel (populates caches, computes likelihood)
+    # Conjugate Beta-Bernoulli update: observation determines update direction.
+    # Weight differentiation comes from the per-component likelihood (via _predictive_ll),
+    # not from the conjugate update direction. Programs whose recommendations match
+    # the observed action get log(p) likelihood; those that don't get log(1-p).
+    # With obs=1.0 (alpha++), correct programs' p increases → log(p) improves → weight rises.
+    # Incorrect programs' p also increases → log(1-p) worsens → weight crashes.
     if observation == 1 || observation == 1.0 || observation == true
         TaggedBetaMeasure(m.space, m.tag, BetaMeasure(m.beta.space, m.beta.alpha + 1.0, m.beta.beta))
     else
@@ -476,10 +478,7 @@ function _predictive_ll(m::BetaMeasure, k::Kernel, obs)
 end
 
 function _predictive_ll(m::TaggedBetaMeasure, k::Kernel, obs)
-    ll = k.log_density(m, obs)
-    # 0.0 sentinel means predicate didn't fire → uninformative base rate for weight update.
-    # Unambiguous: Beta-Bernoulli with proper priors never produces log-density exactly 0.0.
-    ll == 0.0 ? log(0.5) : ll
+    k.log_density(m, obs)
 end
 
 function _predictive_ll(m::MixtureMeasure, k::Kernel, obs)

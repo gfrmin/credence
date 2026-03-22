@@ -26,7 +26,7 @@ function analyse_posterior_subtrees(
     for (i, prog) in enumerate(programs)
         w = prog_weights[i]
         w > 1e-15 || continue
-        subtrees = extract_subtrees(prog.predicate, min_complexity)
+        subtrees = extract_subtrees(prog.expr, min_complexity)
         for st in subtrees
             key = show_expr(st)
             if haskey(subtree_map, key)
@@ -95,6 +95,14 @@ function _extract!(result, e::SinceExpr, min_c)
     expr_complexity(e) >= min_c && push!(result, e)
     _extract!(result, e.p, min_c)
     _extract!(result, e.q, min_c)
+end
+function _extract!(result, e::ActionExpr, _min_c)
+    # ActionExpr is not a predicate — never extract as a candidate nonterminal
+end
+function _extract!(result, e::IfExpr, min_c)
+    # IfExpr is not a predicate — don't extract it as a candidate nonterminal.
+    # Only extract predicate subtrees (Bool-valued) from the predicate branch.
+    _extract!(result, e.predicate, min_c)
 end
 
 # ═══════════════════════════════════════
@@ -227,6 +235,12 @@ end
 function expr_equal(a::SinceExpr, b::SinceExpr)
     expr_equal(a.p, b.p) && expr_equal(a.q, b.q)
 end
+function expr_equal(a::ActionExpr, b::ActionExpr)
+    a.action == b.action
+end
+function expr_equal(a::IfExpr, b::IfExpr)
+    expr_equal(a.predicate, b.predicate) && expr_equal(a.then_branch, b.then_branch) && expr_equal(a.else_branch, b.else_branch)
+end
 function expr_equal(::ProgramExpr, ::ProgramExpr) false end
 
 # ═══════════════════════════════════════
@@ -253,6 +267,10 @@ function collect_threshold_nodes(e::ChangedExpr)
 end
 function collect_threshold_nodes(e::SinceExpr)
     vcat(collect_threshold_nodes(e.p), collect_threshold_nodes(e.q))
+end
+function collect_threshold_nodes(e::ActionExpr) ProgramExpr[] end
+function collect_threshold_nodes(e::IfExpr)
+    vcat(collect_threshold_nodes(e.predicate), collect_threshold_nodes(e.then_branch), collect_threshold_nodes(e.else_branch))
 end
 
 function replace_threshold(e::GTExpr, old::ProgramExpr, new_t::Float64)
@@ -281,4 +299,10 @@ function replace_threshold(e::ChangedExpr, old::ProgramExpr, new_t::Float64)
 end
 function replace_threshold(e::SinceExpr, old::ProgramExpr, new_t::Float64)
     SinceExpr(replace_threshold(e.p, old, new_t), replace_threshold(e.q, old, new_t))
+end
+function replace_threshold(e::ActionExpr, _old::ProgramExpr, _new_t::Float64)
+    e
+end
+function replace_threshold(e::IfExpr, old::ProgramExpr, new_t::Float64)
+    IfExpr(replace_threshold(e.predicate, old, new_t), replace_threshold(e.then_branch, old, new_t), replace_threshold(e.else_branch, old, new_t))
 end

@@ -6,6 +6,10 @@ Orchestrates: grammar pool → program enumeration → kernel compilation →
 flat MixtureMeasure of TaggedBetaMeasures → DSL inference → action selection →
 world step → repeat.
 
+Meta-actions (enumerate_more, perturb_grammar, deepen) are evaluated before
+each domain decision. The agent decides whether to invest in improving its
+hypothesis space or proceed with the interact/move decision.
+
 Tier 3: grid-world-specific. Uses Tier 1 (Credence DSL) and Tier 2
 (ProgramSpace) for domain-independent inference machinery.
 """
@@ -21,9 +25,9 @@ using Credence: Grammar, Program, CompiledKernel, ProductionRule
 using Credence: SensorConfig, SensorChannel
 using Credence: enumerate_programs, compile_kernel
 using Credence: analyse_posterior_subtrees, perturb_grammar
-using Credence: aggregate_grammar_weights
+using Credence: aggregate_grammar_weights, top_k_grammar_ids, add_programs_to_state!
 using Credence: next_grammar_id, reset_grammar_counter!
-using Credence: show_expr, GTExpr, LTExpr, AndExpr, OrExpr, NotExpr, NonterminalRef
+using Credence: show_expr, GTExpr, LTExpr, AndExpr, OrExpr, NotExpr, NonterminalRef, ActionExpr, IfExpr
 using Credence: SubprogramFrequencyTable
 
 include("simulation.jl")
@@ -31,6 +35,15 @@ include("terminals.jl")
 include("metrics.jl")
 
 using Random
+
+# ═══════════════════════════════════════
+# Meta-action constants
+# ═══════════════════════════════════════
+
+const GW_META_ACTIONS = [:gw_enumerate_more, :gw_perturb_grammar, :gw_deepen, :gw_do_nothing]
+const GW_ENUMERATE_COST = 0.05
+const GW_PERTURB_COST = 0.05
+const GW_DEEPEN_COST = 0.10
 
 # ═══════════════════════════════════════
 # Per-grammar sensor projection
@@ -61,21 +74,23 @@ end
 # ═══════════════════════════════════════
 
 """
-    build_observation_kernel(compiled_kernels, grammar_sensor_vectors, temporal_state)
+    build_observation_kernel(compiled_kernels, grammar_sensor_vectors, temporal_state, true_type)
 
 Build a single Kernel whose log_density dispatches per-component via
-TaggedBetaMeasure tags. Each tag indexes into compiled_kernels; the
-compiled kernel's grammar_id selects the right sensor vector.
+TaggedBetaMeasure tags. Each program evaluates features → recommends an
+action symbol (:food or :enemy). Recommendation is compared to true_type.
 
-Predicate results are cached in a side-channel Dict populated during
-_predictive_ll and read during condition, avoiding double evaluation.
+Populates a correct_cache in kernel params for per-component Beta update
+direction in the condition dispatch.
 """
 function build_observation_kernel(
     compiled_kernels::Vector{CompiledKernel},
     grammar_sensor_vectors::Dict{Int, Vector{Float64}},
-    temporal_state::Dict{Symbol, Any}
+    temporal_state::Dict{Symbol, Any},
+    true_type::Symbol
 )
-    pred_cache = Dict{Int, Bool}()
+    recommendation_cache = Dict{Int, Symbol}()
+    correct_cache = Dict{Int, Bool}()
     obs_space = Finite([0.0, 1.0])
 
     Kernel(Interval(0.0, 1.0), obs_space,
@@ -83,44 +98,169 @@ function build_observation_kernel(
         (m_or_θ, obs) -> begin
             if m_or_θ isa TaggedBetaMeasure
                 tag = m_or_θ.tag
-                fired = get!(pred_cache, tag) do
+                recommended = get!(recommendation_cache, tag) do
                     ck = compiled_kernels[tag]
-                    sv = get(grammar_sensor_vectors, ck.grammar_id, Float64[])
-                    isempty(sv) && return false
+                    sv = grammar_sensor_vectors[ck.grammar_id]
                     ck.evaluate(sv, temporal_state)
                 end
-                if fired
-                    p = mean(m_or_θ.beta)
-                    obs == 1.0 ? log(max(p, 1e-300)) : log(max(1.0 - p, 1e-300))
-                else
-                    log(0.5)  # non-firing → base-rate prediction (50/50)
-                end
+                correct = recommended == true_type
+                correct_cache[tag] = correct
+                p = mean(m_or_θ.beta)
+                correct ? log(max(p, 1e-300)) : log(max(1.0 - p, 1e-300))
             else
-                # Scalar θ fallback
                 obs == 1.0 ? log(max(m_or_θ, 1e-300)) : log(max(1.0 - m_or_θ, 1e-300))
             end
-        end)
+        end,
+        nothing,
+        Dict{Symbol, Any}(:correct_cache => correct_cache))
 end
 
 # ═══════════════════════════════════════
 # Action selection
 # ═══════════════════════════════════════
 
-function compute_eu_interact(belief::MixtureMeasure)
-    p_enemy = expect(belief, θ -> θ)
+"""
+    compute_eu_interact(belief, compiled_kernels, grammar_sensor_vectors, temporal_state)
+
+Estimate P(enemy) from program recommendations weighted by posterior confidence,
+then compute EU of interacting: P(enemy)*(-5) + P(food)*(+5).
+"""
+function compute_eu_interact(
+    belief::MixtureMeasure,
+    compiled_kernels::Vector{CompiledKernel},
+    grammar_sensor_vectors::Dict{Int, Vector{Float64}},
+    temporal_state::Dict{Symbol, Any}
+)
+    w = weights(belief)
+    p_enemy = 0.0
+    for (j, comp) in enumerate(belief.components)
+        ck = compiled_kernels[j]
+        haskey(grammar_sensor_vectors, ck.grammar_id) || continue
+        sv = grammar_sensor_vectors[ck.grammar_id]
+        rec = ck.evaluate(sv, temporal_state)
+        mean_j = mean(comp.beta)
+        # If program recommends :enemy and is correct (mean_j), entity is enemy
+        # If program recommends :food and is correct (mean_j), entity is food → P(enemy) = 1-mean_j
+        p_enemy += w[j] * (rec == :enemy ? mean_j : 1.0 - mean_j)
+    end
     energy_enemy = -5.0
     energy_food = 5.0
     p_enemy * energy_enemy + (1.0 - p_enemy) * energy_food
 end
 
 function select_action(eu_interact::Float64, nearest_dist::Float64)
-    if nearest_dist <= 1 && eu_interact >= 0
+    if nearest_dist <= 1 && eu_interact >= -1e-10  # indifference → explore (robust to float error)
         return INTERACT
-    elseif nearest_dist <= 1 && eu_interact < 0
+    elseif nearest_dist <= 1 && eu_interact < -1e-10
         return rand([MOVE_N, MOVE_S, MOVE_E, MOVE_W])
     else
         return rand([MOVE_N, MOVE_S, MOVE_E, MOVE_W])
     end
+end
+
+# ═══════════════════════════════════════
+# Meta-action EU and execution
+# ═══════════════════════════════════════
+
+"""
+    mean_observation_count_gw(state) → Float64
+
+Average number of observations across components: mean(α + β - 2).
+"""
+function mean_observation_count_gw(state::AgentState)::Float64
+    isempty(state.belief.components) && return 0.0
+    total = 0.0
+    for comp in state.belief.components
+        tbm = comp::TaggedBetaMeasure
+        total += tbm.beta.alpha + tbm.beta.beta - 2.0
+    end
+    total / length(state.belief.components)
+end
+
+"""
+    compute_gw_meta_eu(state, action, eu_interact, n_obs; meta_cost_this_turn) → Float64
+
+EU for grid-world meta-actions. Uses |eu_interact| as confidence proxy:
+low |eu| means the agent is near indifference → meta-actions have high VOI.
+"""
+function compute_gw_meta_eu(
+    state::AgentState,
+    action::Symbol,
+    eu_interact::Float64,
+    n_obs::Float64;
+    meta_cost_this_turn::Float64=0.0
+)::Float64
+    action == :gw_do_nothing && return -Inf
+
+    confidence = abs(eu_interact) / 5.0  # normalize by max reward magnitude
+    uncertainty_benefit = (1.0 - confidence) / (1.0 + 0.1 * n_obs)
+
+    if action == :gw_enumerate_more
+        return uncertainty_benefit * 0.5 - GW_ENUMERATE_COST - meta_cost_this_turn
+    elseif action == :gw_perturb_grammar
+        base = n_obs > 5.0 ? uncertainty_benefit * 0.6 : 0.0
+        return base - GW_PERTURB_COST - meta_cost_this_turn
+    elseif action == :gw_deepen
+        return uncertainty_benefit * 0.4 - GW_DEEPEN_COST - meta_cost_this_turn
+    end
+    -Inf
+end
+
+"""
+    execute_gw_meta_action!(state, action; ...) → Int
+
+Execute a grid-world meta-action. Returns the number of programs added.
+"""
+function execute_gw_meta_action!(
+    state::AgentState,
+    action::Symbol;
+    include_temporal::Bool=false,
+    verbose::Bool=false
+)::Int
+    gw_action_space = Symbol[:food, :enemy]
+
+    if action == :gw_enumerate_more
+        top_gids = top_k_grammar_ids(state, 3)
+        n_added = 0
+        for gid in top_gids
+            haskey(state.grammars, gid) || continue
+            n_added += add_programs_to_state!(state, state.grammars[gid],
+                state.current_max_depth;
+                action_space=gw_action_space, include_temporal=include_temporal)
+        end
+        verbose && println("  [Meta: enumerate_more → +$n_added components]")
+        return n_added
+
+    elseif action == :gw_perturb_grammar
+        w = weights(state.belief)
+        freq_table = analyse_posterior_subtrees(state.all_programs, w;
+                                                min_frequency=0.01, min_complexity=2)
+        top_gids = top_k_grammar_ids(state, 3)
+        n_added = 0
+        for gid in top_gids
+            haskey(state.grammars, gid) || continue
+            new_g = perturb_grammar(state.grammars[gid], freq_table)
+            state.grammars[new_g.id] = new_g
+            n_added += add_programs_to_state!(state, new_g, state.current_max_depth;
+                action_space=gw_action_space, include_temporal=include_temporal)
+        end
+        verbose && println("  [Meta: perturb_grammar → +$n_added components]")
+        return n_added
+
+    elseif action == :gw_deepen
+        state.current_max_depth += 1
+        top_gids = top_k_grammar_ids(state, 3)
+        n_added = 0
+        for gid in top_gids
+            haskey(state.grammars, gid) || continue
+            n_added += add_programs_to_state!(state, state.grammars[gid],
+                state.current_max_depth;
+                action_space=gw_action_space, include_temporal=include_temporal)
+        end
+        verbose && println("  [Meta: deepen → depth=$(state.current_max_depth), +$n_added components]")
+        return n_added
+    end
+    0
 end
 
 # ═══════════════════════════════════════
@@ -131,8 +271,8 @@ function run_agent(;
     world_rules::Vector{Symbol}=[:colour_typed],
     max_steps::Int=200,
     regime_change_steps::Vector{Int}=Int[],
-    program_max_depth::Int=2,
-    grammar_perturbation_interval::Int=50,
+    program_max_depth::Int=3,
+    max_meta_per_step::Int=3,
     include_temporal::Bool=false,
     verbose::Bool=true,
     rng_seed::Int=42
@@ -156,7 +296,7 @@ function run_agent(;
 
     idx = 0
     for g in grammar_pool
-        programs = enumerate_programs(g, program_max_depth; include_temporal)
+        programs = enumerate_programs(g, program_max_depth; include_temporal, action_space=[:food, :enemy])
         for (pi, p) in enumerate(programs)
             idx += 1
             push!(components, TaggedBetaMeasure(Interval(0.0, 1.0), idx, BetaMeasure(1.0, 1.0)))
@@ -174,7 +314,9 @@ function run_agent(;
     end
 
     belief = MixtureMeasure(Interval(0.0, 1.0), components, log_prior_weights)
-    state = AgentState(belief, metadata, compiled_kernels, all_programs)
+    grammar_dict = Dict{Int, Grammar}(g.id => g for g in grammar_pool)
+    state = AgentState(belief, metadata, compiled_kernels, all_programs,
+                       grammar_dict, program_max_depth)
 
     # Temporal state
     temporal_window = TemporalWindow(max_history=10)
@@ -212,6 +354,7 @@ function run_agent(;
 
         # Find nearest entity
         nearest = nearest_entity(world)
+        meta_actions_taken = 0
 
         if nearest !== nothing
             eid, entity = nearest
@@ -220,15 +363,47 @@ function run_agent(;
             # Per-grammar sensor projection for this entity
             true_st = entity_true_state(entity, world.agent_pos, world.config.grid_size)
             grammar_sensor_vectors = project_per_grammar(
-                true_st, grammar_pool;
+                true_st, collect(values(state.grammars));
                 entity_id=eid, temporal_state=temporal_window.history)
 
-            # Build kernel that dispatches per-component via TaggedBetaMeasure tags
-            k = build_observation_kernel(
-                state.compiled_kernels, grammar_sensor_vectors, temporal_state)
+            # Meta-action inner loop: improve hypothesis space before domain decision
+            meta_cost_this_turn = 0.0
+            while meta_actions_taken < max_meta_per_step
+                eu = compute_eu_interact(state.belief, state.compiled_kernels,
+                                          grammar_sensor_vectors, temporal_state)
+                n_obs = mean_observation_count_gw(state)
 
-            # EU of interacting
-            eu = compute_eu_interact(state.belief)
+                best_meta_eu = -Inf
+                best_meta = :gw_do_nothing
+                for ma in GW_META_ACTIONS
+                    meu = compute_gw_meta_eu(state, ma, eu, n_obs;
+                                              meta_cost_this_turn=meta_cost_this_turn)
+                    if meu > best_meta_eu
+                        best_meta_eu = meu
+                        best_meta = ma
+                    end
+                end
+
+                best_meta_eu <= 0.0 && break
+
+                execute_gw_meta_action!(state, best_meta;
+                    include_temporal=include_temporal, verbose=verbose)
+                meta_actions_taken += 1
+                meta_cost_this_turn += (best_meta == :gw_deepen ? GW_DEEPEN_COST :
+                                        best_meta == :gw_perturb_grammar ? GW_PERTURB_COST :
+                                        GW_ENUMERATE_COST)
+
+                # Re-project for new grammars
+                grammar_sensor_vectors = project_per_grammar(
+                    true_st, collect(values(state.grammars));
+                    entity_id=eid, temporal_state=temporal_window.history)
+                sync_prune!(state; threshold=-30.0)
+                sync_truncate!(state; max_components=2000)
+            end
+
+            # Domain decision
+            eu = compute_eu_interact(state.belief, state.compiled_kernels,
+                                      grammar_sensor_vectors, temporal_state)
             action = select_action(eu, Float64(dist))
         else
             action = rand([MOVE_N, MOVE_S, MOVE_E, MOVE_W])
@@ -244,22 +419,36 @@ function run_agent(;
 
         if feedback !== nothing
             is_enemy = feedback < 0
-            obs = is_enemy ? 1.0 : 0.0
+            true_type = is_enemy ? :enemy : :food
 
-            # Compute surprise before conditioning
-            p_enemy = expect(state.belief, θ -> θ)
-            p_obs = is_enemy ? p_enemy : (1.0 - p_enemy)
-            surprise = -log(max(p_obs, 1e-300))
+            # Compute P(enemy) and surprise before conditioning
+            if nearest !== nothing
+                w = weights(state.belief)
+                p_enemy_val = 0.0
+                for (j, comp) in enumerate(state.belief.components)
+                    ck = state.compiled_kernels[j]
+                    haskey(grammar_sensor_vectors, ck.grammar_id) || continue
+                    sv = grammar_sensor_vectors[ck.grammar_id]
+                    rec = ck.evaluate(sv, temporal_state)
+                    mean_j = mean(comp.beta)
+                    p_enemy_val += w[j] * (rec == :enemy ? mean_j : 1.0 - mean_j)
+                end
+                p_obs = is_enemy ? p_enemy_val : (1.0 - p_enemy_val)
+                surprise = -log(max(p_obs, 1e-300))
+            else
+                surprise = 0.0
+                p_enemy_val = 0.5
+            end
 
-            # Build conditioning kernel (need per-grammar projection for entity)
+            # Build conditioning kernel
             if nearest !== nothing
                 eid, entity = nearest
                 true_st = entity_true_state(entity, world.agent_pos, world.config.grid_size)
                 grammar_sensor_vectors = project_per_grammar(
-                    true_st, grammar_pool;
+                    true_st, collect(values(state.grammars));
                     entity_id=eid, temporal_state=temporal_window.history)
                 k = build_observation_kernel(
-                    state.compiled_kernels, grammar_sensor_vectors, temporal_state)
+                    state.compiled_kernels, grammar_sensor_vectors, temporal_state, true_type)
             else
                 # Fallback: uniform kernel
                 k = Kernel(Interval(0.0, 1.0), Finite([0.0, 1.0]),
@@ -267,23 +456,24 @@ function run_agent(;
                     (θ, o) -> o == 1.0 ? log(max(θ, 1e-300)) : log(max(1.0 - θ, 1e-300)))
             end
 
-            # Single condition call — TaggedBetaMeasure dispatches handle per-component logic
-            state.belief = condition(state.belief, k, obs)
+            # Single condition call
+            state.belief = condition(state.belief, k, 1.0)
 
-            # Prune and truncate (synced with parallel arrays)
+            # Prune and truncate
             sync_prune!(state; threshold=-30.0)
             sync_truncate!(state; max_components=2000)
 
             # Was our prediction correct?
-            prediction_correct = (p_enemy > 0.5) == is_enemy
+            prediction_correct = (p_enemy_val > 0.5) == is_enemy
 
             if verbose
+                meta_str = meta_actions_taken > 0 ? ", meta=$meta_actions_taken" : ""
                 println("Step $step: $(action) → $(is_enemy ? "ENEMY" : "FOOD") " *
-                        "(predicted $(p_enemy > 0.5 ? "enemy" : "food"), " *
-                        "P(enemy)=$(round(p_enemy, digits=3)), " *
+                        "(predicted $(p_enemy_val > 0.5 ? "enemy" : "food"), " *
+                        "P(enemy)=$(round(p_enemy_val, digits=3)), " *
                         "surprise=$(round(surprise, digits=2)), " *
                         "energy=$(round(world.agent_energy, digits=1)), " *
-                        "components=$(length(state.belief.components)))")
+                        "components=$(length(state.belief.components))$meta_str)")
             end
         end
 
@@ -299,60 +489,8 @@ function run_agent(;
                 energy=energy_delta,
                 surprise=surprise,
                 n_components=length(state.belief.components),
-                n_grammars=length(unique(gi for (gi, _) in state.metadata)))
-
-        # Periodic grammar perturbation
-        if step % grammar_perturbation_interval == 0 && step < max_steps
-            w = weights(state.belief)
-
-            freq_table = analyse_posterior_subtrees(
-                state.all_programs, w;
-                min_frequency=0.01, min_complexity=2)
-
-            top_gids = sort(collect(keys(gw)), by=gi -> -get(gw, gi, 0.0))[1:min(3, length(gw))]
-
-            new_components = Measure[]
-            new_lw = Float64[]
-            new_meta = Tuple{Int, Int}[]
-            new_ck = CompiledKernel[]
-            new_progs = Program[]
-
-            base_idx = length(state.compiled_kernels)
-            for gid in top_gids
-                g_idx = findfirst(g -> g.id == gid, grammar_pool)
-                g_idx === nothing && continue
-
-                new_g = perturb_grammar(grammar_pool[g_idx], freq_table)
-                push!(grammar_pool, new_g)
-
-                new_programs = enumerate_programs(new_g, program_max_depth; include_temporal)
-                for (pi, p) in enumerate(new_programs)
-                    base_idx += 1
-                    push!(new_components, TaggedBetaMeasure(Interval(0.0, 1.0), base_idx, BetaMeasure(1.0, 1.0)))
-                    lw = -new_g.complexity * log(2) - p.complexity * log(2)
-                    push!(new_lw, lw)
-                    push!(new_meta, (new_g.id, pi))
-                    push!(new_ck, compile_kernel(p, new_g, pi))
-                    push!(new_progs, p)
-                end
-            end
-
-            if !isempty(new_components)
-                all_comps = Measure[state.belief.components..., new_components...]
-                all_lw = Float64[state.belief.log_weights..., new_lw...]
-                state.belief = MixtureMeasure(Interval(0.0, 1.0), all_comps, all_lw)
-                append!(state.metadata, new_meta)
-                append!(state.compiled_kernels, new_ck)
-                append!(state.all_programs, new_progs)
-                sync_prune!(state; threshold=-30.0)
-                sync_truncate!(state; max_components=2000)
-
-                if verbose
-                    println("  [Perturbation at step $step: +$(length(new_components)) components, " *
-                            "total=$(length(state.belief.components))]")
-                end
-            end
-        end
+                n_grammars=length(unique(gi for (gi, _) in state.metadata)),
+                n_meta_actions=meta_actions_taken)
 
         # Respawn entities if all dead
         alive = count(e -> e.alive, world.entities)
@@ -365,7 +503,7 @@ function run_agent(;
         print_summary(metrics; last_n=20)
     end
 
-    (metrics, state, grammar_pool)
+    (metrics, state, collect(values(state.grammars)))
 end
 
 # ═══════════════════════════════════════

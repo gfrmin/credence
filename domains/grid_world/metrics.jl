@@ -14,9 +14,10 @@ mutable struct MetricsTracker
     surprise::Vector{Float64}  # negative log-likelihood
     n_components::Vector{Int}
     n_grammars::Vector{Int}
+    meta_actions_per_step::Vector{Int}
 
     MetricsTracker() = new(Int[], Dict{Int,Float64}[], Vector{Tuple{Int,Int,Float64}}[],
-                           Bool[], Float64[], Float64[], Int[], Int[])
+                           Bool[], Float64[], Float64[], Int[], Int[], Int[])
 end
 
 function record!(m::MetricsTracker;
@@ -27,7 +28,8 @@ function record!(m::MetricsTracker;
                  energy::Float64,
                  surprise::Float64,
                  n_components::Int,
-                 n_grammars::Int)
+                 n_grammars::Int,
+                 n_meta_actions::Int=0)
     push!(m.steps, step)
     push!(m.grammar_weights, grammar_weights)
     push!(m.top_programs, top_programs)
@@ -37,6 +39,7 @@ function record!(m::MetricsTracker;
     push!(m.surprise, surprise)
     push!(m.n_components, n_components)
     push!(m.n_grammars, n_grammars)
+    push!(m.meta_actions_per_step, n_meta_actions)
 end
 
 function print_summary(m::MetricsTracker; last_n::Int=10)

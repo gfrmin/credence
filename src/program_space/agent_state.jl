@@ -17,6 +17,8 @@ mutable struct AgentState
     metadata::Vector{Tuple{Int, Int}}       # (grammar_id, program_id)
     compiled_kernels::Vector{CompiledKernel}
     all_programs::Vector{Program}
+    grammars::Dict{Int, Grammar}            # grammar_id → Grammar
+    current_max_depth::Int                  # current enumeration depth
 end
 
 """
@@ -73,6 +75,82 @@ function aggregate_grammar_weights(component_weights::Vector{Float64},
         gw[gi] = get(gw, gi, 0.0) + component_weights[i]
     end
     gw
+end
+
+"""Return top-k grammar IDs by aggregated posterior weight."""
+function top_k_grammar_ids(state::AgentState, k::Int)::Vector{Int}
+    w = Ontology.weights(state.belief)
+    gw = aggregate_grammar_weights(w, state.metadata)
+    sorted = sort(collect(keys(gw)), by=gi -> -get(gw, gi, 0.0))
+    sorted[1:min(k, length(sorted))]
+end
+
+# ═══════════════════════════════════════
+# Add programs to state (with deduplication)
+# ═══════════════════════════════════════
+
+"""
+    add_programs_to_state!(state, grammar, max_depth; ...) → Int
+
+Enumerate programs from `grammar` at `max_depth`, compile kernels, and
+append to all parallel arrays. Deduplicates: skips programs whose
+(grammar_id, expr) already exists in state.all_programs — injecting
+fresh Beta(1,1) for already-observed hypotheses disrupts the posterior.
+
+Returns count of programs added.
+"""
+function add_programs_to_state!(
+    state::AgentState,
+    grammar::Grammar,
+    max_depth::Int;
+    action_space::Vector{Symbol}=Symbol[:classify],
+    min_log_prior::Float64=-20.0,
+    include_temporal::Bool=false
+)::Int
+    programs = enumerate_programs(grammar, max_depth;
+                                   action_space=action_space,
+                                   min_log_prior=min_log_prior,
+                                   include_temporal=include_temporal)
+
+    # Build set of existing expressions for this grammar (for dedup)
+    existing_exprs = [state.all_programs[i].expr
+                      for i in eachindex(state.all_programs)
+                      if state.metadata[i][1] == grammar.id]
+
+    n_added = 0
+    base_idx = length(state.compiled_kernels)
+    new_components = Ontology.Measure[]
+    new_lw = Float64[]
+    new_meta = Tuple{Int, Int}[]
+    new_ck = CompiledKernel[]
+    new_progs = Program[]
+
+    for (pi, p) in enumerate(programs)
+        # Skip if this expression already exists for this grammar
+        any(e -> expr_equal(e, p.expr), existing_exprs) && continue
+
+        base_idx += 1
+        push!(new_components, Ontology.TaggedBetaMeasure(
+            Ontology.Interval(0.0, 1.0), base_idx,
+            Ontology.BetaMeasure(1.0, 1.0)))
+        lw = -grammar.complexity * log(2) - p.complexity * log(2)
+        push!(new_lw, lw)
+        push!(new_meta, (grammar.id, pi))
+        push!(new_ck, compile_kernel(p, grammar, pi))
+        push!(new_progs, p)
+        n_added += 1
+    end
+
+    if !isempty(new_components)
+        all_comps = Ontology.Measure[state.belief.components..., new_components...]
+        all_lw = Float64[state.belief.log_weights..., new_lw...]
+        state.belief = Ontology.MixtureMeasure(
+            Ontology.Interval(0.0, 1.0), all_comps, all_lw)
+        append!(state.metadata, new_meta)
+        append!(state.compiled_kernels, new_ck)
+        append!(state.all_programs, new_progs)
+    end
+    n_added
 end
 
 # ═══════════════════════════════════════

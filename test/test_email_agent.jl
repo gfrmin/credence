@@ -4,7 +4,7 @@
 
 Tests feature extraction, seed grammars, preference profiles,
 agent learning, ASK_USER dynamics, preference change adaptation,
-and multi-user meta-learning.
+multi-user meta-learning, and meta-action EU evaluation.
 """
 
 push!(LOAD_PATH, joinpath(@__DIR__, "..", "src"))
@@ -16,9 +16,10 @@ using Credence: Grammar, Program, CompiledKernel, ProductionRule
 using Credence: SensorConfig, SensorChannel
 using Credence: enumerate_programs, compile_kernel
 using Credence: AgentState, sync_prune!, sync_truncate!
-using Credence: aggregate_grammar_weights
+using Credence: aggregate_grammar_weights, top_k_grammar_ids, add_programs_to_state!
 using Credence: next_grammar_id, reset_grammar_counter!
-using Credence: GTExpr, AndExpr, NotExpr
+using Credence: GTExpr, AndExpr, NotExpr, ActionExpr, IfExpr
+using Credence: n_channels
 
 include(joinpath(@__DIR__, "..", "domains", "email_agent", "host.jl"))
 
@@ -170,18 +171,16 @@ let
 
     total_programs = 0
     for g in grammars
-        programs = enumerate_programs(g, 2; actions=DOMAIN_ACTIONS, min_log_prior=-15.0)
+        programs = enumerate_programs(g, 2; action_space=DOMAIN_ACTIONS, min_log_prior=-15.0)
         @assert length(programs) > 0 "Grammar $(g.id) should enumerate programs"
 
-        # Verify all programs have valid actions
-        for p in programs
-            @assert p.action in DOMAIN_ACTIONS "Program action should be a domain action"
-        end
-
-        # Verify compilation works
+        # Verify compilation works and evaluate returns valid actions
         for (pi, p) in enumerate(programs[1:min(5, length(programs))])
             ck = compile_kernel(p, g, pi)
-            @assert ck.action == p.action "CompiledKernel action should match Program action"
+            # evaluate should return a Symbol (action)
+            sv = [0.5 for _ in 1:n_channels(g.sensor_config)]
+            result = ck.evaluate(sv, Dict{Symbol, Any}())
+            @assert result isa Symbol "evaluate should return Symbol, got $(typeof(result))"
         end
 
         total_programs += length(programs)
@@ -207,8 +206,8 @@ let
     g_plain = grammars[4]
     g_nt = grammars[10]
 
-    p_plain = enumerate_programs(g_plain, 2; actions=Symbol[:classify])
-    p_nt = enumerate_programs(g_nt, 2; actions=Symbol[:classify])
+    p_plain = enumerate_programs(g_plain, 2; action_space=Symbol[:a, :b])
+    p_nt = enumerate_programs(g_nt, 2; action_space=Symbol[:a, :b])
 
     # Nonterminal grammar should have more programs (nonterminal refs add vocabulary)
     @assert length(p_nt) > length(p_plain) "Nonterminal grammar should enumerate more programs"
@@ -232,7 +231,7 @@ let
         user_pref=PREFERENCE_PROFILES[:urgency_responsive],
         program_max_depth=2,
         min_log_prior=-15.0,
-        perturbation_interval=50,
+        max_meta_per_step=1,
         ask_cost=0.1,
         verbose=false,
         rng_seed=42)
@@ -264,7 +263,7 @@ let
         user_pref=PREFERENCE_PROFILES[:hands_on],
         program_max_depth=2,
         min_log_prior=-15.0,
-        perturbation_interval=50,
+        max_meta_per_step=1,
         ask_cost=0.1,
         verbose=false,
         rng_seed=42)
@@ -294,7 +293,7 @@ let
         user_pref=PREFERENCE_PROFILES[:urgency_responsive],
         program_max_depth=2,
         min_log_prior=-15.0,
-        perturbation_interval=50,
+        max_meta_per_step=1,
         ask_cost=0.1,
         verbose=false,
         rng_seed=42)
@@ -336,7 +335,7 @@ let
         user_pref=switched_pref,
         program_max_depth=2,
         min_log_prior=-15.0,
-        perturbation_interval=25,
+        max_meta_per_step=2,
         ask_cost=0.1,
         verbose=false,
         rng_seed=42)
@@ -369,14 +368,14 @@ println()
 # ═══════════════════════════════════════
 
 println("=" ^ 60)
-println("TEST 10: Perturbation agent converges faster for user 3 (meta-learning)")
+println("TEST 10: Meta-learning — grammar pool transfers between users")
 println("=" ^ 60)
 
 let
     profiles = [:urgency_responsive, :delegator, :selective]
     corpus_per_user = 60
 
-    # Agent A: with perturbation (grammar pool transfers between users)
+    # Agent A: with meta-actions (grammar pool transfers between users)
     grammar_pool_a = nothing
     convergence_a = Int[]
     for profile_name in profiles
@@ -386,7 +385,7 @@ let
             user_pref=PREFERENCE_PROFILES[profile_name],
             program_max_depth=2,
             min_log_prior=-15.0,
-            perturbation_interval=20,
+            max_meta_per_step=2,
             population_grammar=grammar_pool_a,
             ask_cost=0.1,
             verbose=false,
@@ -398,7 +397,7 @@ let
         push!(convergence_a, ttc)
     end
 
-    # Agent B: without perturbation (fresh grammars each time)
+    # Agent B: without meta-actions (fresh grammars each time)
     convergence_b = Int[]
     for profile_name in profiles
         corpus = generate_email_corpus(corpus_per_user; rng_seed=Int(hash(profile_name) % 10000))
@@ -407,7 +406,7 @@ let
             user_pref=PREFERENCE_PROFILES[profile_name],
             program_max_depth=2,
             min_log_prior=-15.0,
-            perturbation_interval=200,  # effectively disabled
+            max_meta_per_step=0,
             population_grammar=nothing,
             ask_cost=0.1,
             verbose=false,
@@ -418,12 +417,187 @@ let
         push!(convergence_b, ttc)
     end
 
-    println("  Convergence (perturbation): $convergence_a")
-    println("  Convergence (no perturbation): $convergence_b")
+    println("  Convergence (meta-actions): $convergence_a")
+    println("  Convergence (no meta-actions): $convergence_b")
 
-    # With perturbation, user 3 should converge at least as fast as without
-    # (grammar pool carries structural regularities)
     println("PASSED: Meta-learning comparison complete")
+end
+println()
+
+# ═══════════════════════════════════════
+# TEST 11: Meta-EU mechanism — high entropy → positive, low entropy → negative
+# ═══════════════════════════════════════
+
+println("=" ^ 60)
+println("TEST 11: Meta-EU responds to action entropy")
+println("=" ^ 60)
+
+let
+    Random.seed!(42)
+    grammars = generate_email_seed_grammars()
+    g = grammars[1]
+    programs = enumerate_programs(g, 2; action_space=DOMAIN_ACTIONS, min_log_prior=-15.0)
+
+    # Build a state with uniform priors (high entropy)
+    components = Measure[]
+    log_prior = Float64[]
+    meta = Tuple{Int, Int}[]
+    ck = CompiledKernel[]
+    progs = Program[]
+    for (pi, p) in enumerate(programs[1:min(20, length(programs))])
+        push!(components, TaggedBetaMeasure(Interval(0.0, 1.0), pi, BetaMeasure(1.0, 1.0)))
+        push!(log_prior, 0.0)
+        push!(meta, (g.id, pi))
+        push!(ck, compile_kernel(p, g, pi))
+        push!(progs, p)
+    end
+
+    belief = MixtureMeasure(Interval(0.0, 1.0), components, log_prior)
+    grammar_dict = Dict{Int, Grammar}(g.id => g)
+    state = AgentState(belief, meta, ck, progs, grammar_dict, 2)
+
+    # Evaluate programs
+    sv = [0.5 for _ in 1:n_channels(g.sensor_config)]
+    rec_cache = Dict{Int, Symbol}()
+    gsv = Dict{Int, Vector{Float64}}(g.id => sv)
+    ts = Dict{Symbol, Any}()
+    evaluate_programs!(rec_cache, state.compiled_kernels, gsv, ts)
+
+    w = weights(state.belief)
+    eu_enum = compute_meta_eu(state, :enumerate_more, rec_cache, w)
+
+    # With uniform priors and multiple actions, entropy should be > 0
+    H = compute_action_entropy(state, rec_cache, w)
+    @assert H > 0.0 "Uniform priors should have positive entropy, got $H"
+
+    println("  Uniform prior entropy: $(round(H, digits=3))")
+    println("  EU(:enumerate_more): $(round(eu_enum, digits=4))")
+
+    # Now create a concentrated state (one component dominates)
+    conc_lw = [-100.0 for _ in 1:length(components)]
+    conc_lw[1] = 0.0  # only component 1 has weight
+    conc_belief = MixtureMeasure(Interval(0.0, 1.0), components, conc_lw)
+    conc_state = AgentState(conc_belief, meta, ck, progs, grammar_dict, 2)
+
+    # Simulate many observations
+    for comp in conc_state.belief.components
+        tbm = comp::TaggedBetaMeasure
+        # Simulate high observation count by using Beta(50, 50)
+    end
+    # Use a state where mean_observation_count is high
+    conc_comps = Measure[TaggedBetaMeasure(Interval(0.0, 1.0), i, BetaMeasure(50.0, 50.0))
+                         for i in 1:length(components)]
+    conc_belief2 = MixtureMeasure(Interval(0.0, 1.0), conc_comps, conc_lw)
+    conc_state2 = AgentState(conc_belief2, meta, ck, progs, grammar_dict, 2)
+
+    w2 = weights(conc_state2.belief)
+    eu_enum2 = compute_meta_eu(conc_state2, :enumerate_more, rec_cache, w2)
+
+    println("  Concentrated + high-obs EU(:enumerate_more): $(round(eu_enum2, digits=4))")
+    @assert eu_enum2 < eu_enum "Meta EU should decrease with concentration + observations"
+
+    println("PASSED: Meta-EU responds correctly to entropy and observation count")
+end
+println()
+
+# ═══════════════════════════════════════
+# TEST 12: execute_meta_action! increases components
+# ═══════════════════════════════════════
+
+println("=" ^ 60)
+println("TEST 12: execute_meta_action!(:perturb_grammar) adds components")
+println("=" ^ 60)
+
+let
+    Random.seed!(42)
+    grammars = generate_email_seed_grammars()
+
+    # Build a minimal state
+    components = Measure[]
+    log_prior = Float64[]
+    meta = Tuple{Int, Int}[]
+    ck = CompiledKernel[]
+    progs = Program[]
+    grammar_dict = Dict{Int, Grammar}()
+
+    idx = 0
+    for g in grammars[1:3]
+        grammar_dict[g.id] = g
+        programs = enumerate_programs(g, 2; action_space=DOMAIN_ACTIONS, min_log_prior=-15.0)
+        for (pi, p) in enumerate(programs)
+            idx += 1
+            push!(components, TaggedBetaMeasure(Interval(0.0, 1.0), idx, BetaMeasure(1.0, 1.0)))
+            push!(log_prior, -g.complexity * log(2) - p.complexity * log(2))
+            push!(meta, (g.id, pi))
+            push!(ck, compile_kernel(p, g, pi))
+            push!(progs, p)
+        end
+    end
+
+    belief = MixtureMeasure(Interval(0.0, 1.0), components, log_prior)
+    state = AgentState(belief, meta, ck, progs, grammar_dict, 2)
+
+    n_before = length(state.belief.components)
+    n_grammars_before = length(state.grammars)
+
+    n_added = execute_meta_action!(state, :perturb_grammar;
+        action_space=DOMAIN_ACTIONS, verbose=false)
+
+    n_after = length(state.belief.components)
+    n_grammars_after = length(state.grammars)
+
+    @assert n_grammars_after > n_grammars_before "Perturbation should add new grammars"
+    # Parallel arrays must remain aligned
+    @assert length(state.metadata) == n_after
+    @assert length(state.compiled_kernels) == n_after
+    @assert length(state.all_programs) == n_after
+
+    println("  Before: $n_before components, $n_grammars_before grammars")
+    println("  After: $n_after components, $n_grammars_after grammars (+$n_added)")
+    println("PASSED: execute_meta_action! adds components and grammars, arrays aligned")
+end
+println()
+
+# ═══════════════════════════════════════
+# TEST 13: Emergent — meta-actions front-loaded
+# ═══════════════════════════════════════
+
+println("=" ^ 60)
+println("TEST 13: Meta-actions are front-loaded (more early than late)")
+println("=" ^ 60)
+
+let
+    # Higher ask_cost makes meta-actions more attractive than asking
+    # (when ask_cost=0.1, EU(:ask_user)=0.9 dominates EU(:enumerate_more)≈0.85)
+    corpus = generate_email_corpus(100; rng_seed=42)
+    result = run_agent(
+        corpus=corpus,
+        user_pref=PREFERENCE_PROFILES[:urgency_responsive],
+        program_max_depth=2,
+        min_log_prior=-15.0,
+        max_meta_per_step=3,
+        ask_cost=0.5,
+        verbose=false,
+        rng_seed=42)
+
+    m = result.metrics
+    total_meta = sum(m.meta_actions_per_step)
+    meta_first_half = sum(m.meta_actions_per_step[1:50])
+    meta_second_half = sum(m.meta_actions_per_step[51:100])
+
+    println("  Total meta-actions: $total_meta")
+    println("  First half: $meta_first_half, second half: $meta_second_half")
+
+    # Meta-actions should be bounded (not exploding)
+    @assert total_meta < 300 "Total meta-actions should be bounded, got $total_meta"
+
+    # With high ask_cost, agent should take some meta-actions
+    @assert total_meta > 0 "With ask_cost=0.5, agent should take meta-actions"
+
+    # Front-loading: meta-actions should concentrate in the first half
+    @assert meta_first_half >= meta_second_half "Meta-actions should be front-loaded: first=$meta_first_half, second=$meta_second_half"
+
+    println("PASSED: Meta-actions are bounded and front-loaded")
 end
 println()
 

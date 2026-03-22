@@ -11,6 +11,7 @@ using Credence
 using Credence: expect, condition, weights, mean
 using Credence: BetaMeasure, TaggedBetaMeasure, MixtureMeasure, Finite, Interval, Kernel, Measure
 using Credence: prune, truncate
+using Credence: ActionExpr, IfExpr
 
 # Grid-world sensor configs and terminals for program enumeration tests
 include(joinpath(@__DIR__, "..", "domains", "grid_world", "sensors.jl"))
@@ -37,7 +38,7 @@ let
     end
     println("PASSED: All grammars have valid config and complexity")
 
-    programs = enumerate_programs(grammars[1], 3)
+    programs = enumerate_programs(grammars[1], 3; action_space=[:a, :b])
     @assert length(programs) > 0 "No programs enumerated for grammar 1"
     println("PASSED: Grammar 1 → $(length(programs)) programs at depth 3")
 
@@ -59,7 +60,7 @@ println("=" ^ 60)
 let
     grammars = generate_seed_grammars()
     g = grammars[2]  # colour grammar: r, g, b
-    programs = enumerate_programs(g, 2)
+    programs = enumerate_programs(g, 3; action_space=[:a, :b])
 
     @assert length(programs) > 0 "No programs for colour grammar"
 
@@ -69,14 +70,18 @@ let
     red_sv = [0.95, 0.1, 0.1]
     ts = Dict{Symbol, Any}()
 
-    any_fires = any(k -> k.evaluate(red_sv, ts), kernels)
-    @assert any_fires "No kernel fires on red sensor vector"
+    # evaluate returns Symbol (action), not Bool
+    results_red = [k.evaluate(red_sv, ts) for k in kernels]
+    @assert all(r -> r isa Symbol, results_red) "evaluate should return Symbol"
 
     blue_sv = [0.1, 0.1, 0.95]
-    any_fires_blue = any(k -> k.evaluate(blue_sv, ts), kernels)
-    @assert any_fires_blue "No kernel fires on blue sensor vector"
+    results_blue = [k.evaluate(blue_sv, ts) for k in kernels]
 
-    println("PASSED: $(length(kernels)) kernels compiled, evaluate correctly on test vectors")
+    # IfExpr programs should return different actions for red vs blue
+    branching = [i for i in eachindex(kernels) if results_red[i] != results_blue[i]]
+    @assert !isempty(branching) "Some kernels should discriminate red vs blue"
+
+    println("PASSED: $(length(kernels)) kernels compiled, $(length(branching)) discriminate red/blue")
 end
 println()
 
@@ -113,7 +118,7 @@ println("=" ^ 60)
 let
     grammars = generate_seed_grammars()
     g = grammars[5]  # colour + speed grammar: 4 channels
-    programs = enumerate_programs(g, 3)
+    programs = enumerate_programs(g, 3; action_space=[:a, :b])
     @assert length(programs) >= 10 "Need ≥ 10 programs for speed test"
 
     complex_progs = filter(p -> p.complexity >= 3, programs)
@@ -210,11 +215,11 @@ println("=" ^ 60)
 let
     Random.seed!(42)
     g = Grammar(colour_sensor_config(), ProductionRule[], 1)
-    programs = enumerate_programs(g, 3)
+    programs = enumerate_programs(g, 3; action_space=[:a, :b])
 
     prog_weights = zeros(length(programs))
     for (i, p) in enumerate(programs)
-        s = show_expr(p.predicate)
+        s = show_expr(p.expr)
         if occursin("GT(0,0.7)", s)
             prog_weights[i] = 0.1
         else
@@ -257,8 +262,8 @@ let
 
     g1 = grammars[2]
     g2 = grammars[3]
-    p1 = enumerate_programs(g1, 2)
-    p2 = enumerate_programs(g2, 2)
+    p1 = enumerate_programs(g1, 3; action_space=[:a, :b])
+    p2 = enumerate_programs(g2, 3; action_space=[:a, :b])
 
     components = BetaMeasure[]
     log_prior = Float64[]
@@ -341,34 +346,33 @@ println("=" ^ 60)
 let
     g = Grammar(minimal_sensor_config(), ProductionRule[], 1)
 
-    changed_expr = ChangedExpr(GTExpr(0, 0.5))
-    ck = CompiledKernel(
-        compile_expr(changed_expr, ProductionRule[]),
-        :classify, 2, 1, 1)
+    # Test temporal predicates via IfExpr programs
+    changed_pred = ChangedExpr(GTExpr(0, 0.5))
+    if_expr = IfExpr(changed_pred, ActionExpr(:a), ActionExpr(:b))
+    ck = compile_kernel(Program(if_expr, expr_complexity(if_expr), 1), g, 1)
 
     ts_empty = Dict{Symbol, Any}(:recent => Vector{Float64}[])
-    @assert !ck.evaluate([0.8, 0.3], ts_empty) "CHANGED should be false with no history"
+    @assert ck.evaluate([0.8, 0.3], ts_empty) == :b "CHANGED false → else branch (:b)"
 
     ts_changed = Dict{Symbol, Any}(:recent => [[0.3, 0.5]])
-    @assert ck.evaluate([0.8, 0.3], ts_changed) "CHANGED should detect transition"
+    @assert ck.evaluate([0.8, 0.3], ts_changed) == :a "CHANGED true → then branch (:a)"
 
     ts_same = Dict{Symbol, Any}(:recent => [[0.8, 0.5]])
-    @assert !ck.evaluate([0.9, 0.3], ts_same) "CHANGED should be false when stable"
+    @assert ck.evaluate([0.9, 0.3], ts_same) == :b "CHANGED false → else branch (:b)"
 
-    println("PASSED: CHANGED operator compiles and evaluates correctly")
+    println("PASSED: CHANGED operator compiles and evaluates correctly in IfExpr")
 
-    persists_expr = PersistsExpr(GTExpr(0, 0.5), 2)
-    ck2 = CompiledKernel(
-        compile_expr(persists_expr, ProductionRule[]),
-        :classify, 2, 1, 2)
+    persists_pred = PersistsExpr(GTExpr(0, 0.5), 2)
+    if_expr2 = IfExpr(persists_pred, ActionExpr(:a), ActionExpr(:b))
+    ck2 = compile_kernel(Program(if_expr2, expr_complexity(if_expr2), 1), g, 2)
 
     ts_persists = Dict{Symbol, Any}(:recent => [[0.8, 0.3], [0.9, 0.4]])
-    @assert ck2.evaluate([0.85, 0.3], ts_persists) "PERSISTS(2) should be true"
+    @assert ck2.evaluate([0.85, 0.3], ts_persists) == :a "PERSISTS(2) true → then branch"
 
     ts_not_persist = Dict{Symbol, Any}(:recent => [[0.3, 0.5]])
-    @assert !ck2.evaluate([0.8, 0.3], ts_not_persist) "PERSISTS(2) needs 2 history entries"
+    @assert ck2.evaluate([0.8, 0.3], ts_not_persist) == :b "PERSISTS(2) false → else branch"
 
-    println("PASSED: PERSISTS operator compiles and evaluates correctly")
+    println("PASSED: PERSISTS operator compiles and evaluates correctly in IfExpr")
 end
 println()
 
@@ -384,11 +388,11 @@ let
     sc = SensorConfig([SensorChannel(0, :identity, 0.05, 1.0)])
     g = Grammar(sc, ProductionRule[], 1)
 
-    programs_no_temporal = enumerate_programs(g, 2; include_temporal=false)
-    programs_with_temporal = enumerate_programs(g, 2; include_temporal=true)
+    programs_no_temporal = enumerate_programs(g, 3; include_temporal=false, action_space=[:a, :b])
+    programs_with_temporal = enumerate_programs(g, 3; include_temporal=true, action_space=[:a, :b])
 
     temporal_count = count(p -> begin
-        s = show_expr(p.predicate)
+        s = show_expr(p.expr)
         occursin("CHANGED", s) || occursin("PERSISTS", s)
     end, programs_with_temporal)
 
@@ -419,7 +423,7 @@ let
     programs_all = Program[]
 
     for g in grammars[1:5]
-        programs = enumerate_programs(g, 2)
+        programs = enumerate_programs(g, 3; action_space=[:a, :b])
         for (pi, p) in enumerate(programs)
             push!(components, BetaMeasure(1.0, 1.0))
             push!(log_prior, -g.complexity * log(2) - p.complexity * log(2))
@@ -463,11 +467,13 @@ println("=" ^ 60)
 let
     Random.seed!(42)
     g = Grammar(colour_sensor_config(), ProductionRule[], 1)
-    programs = enumerate_programs(g, 3)
+    # 3 actions → each predicate generates 6 programs (3×2 ordered pairs),
+    # providing enough n_sources for compression payoff
+    programs = enumerate_programs(g, 3; action_space=[:a, :b, :c])
 
     prog_weights = zeros(length(programs))
     for (i, p) in enumerate(programs)
-        s = show_expr(p.predicate)
+        s = show_expr(p.expr)
         if occursin("GT(0,0.7)", s) && occursin("LT(1,0.3)", s)
             prog_weights[i] = 1.0
         elseif occursin("GT(0,0.7)", s) || occursin("LT(1,0.3)", s)
@@ -488,13 +494,13 @@ let
     @assert has_colour_ref "Proposed body should reference colour channels, got: $body_str"
 
     new_g = Grammar(colour_sensor_config(), [proposed], 2)
-    new_programs = enumerate_programs(new_g, 2)
+    new_programs = enumerate_programs(new_g, 3; action_space=[:a, :b, :c])
 
-    nt_progs = filter(p -> occursin(string(proposed.name), show_expr(p.predicate)), new_programs)
+    nt_progs = filter(p -> occursin(string(proposed.name), show_expr(p.expr)), new_programs)
     @assert !isempty(nt_progs) "Should have programs using the nonterminal"
 
     nt_prog = first(nt_progs)
-    exp_c = expanded_complexity(nt_prog.predicate, new_g.rules)
+    exp_c = expanded_complexity(nt_prog.expr, new_g.rules)
     @assert nt_prog.complexity < exp_c "Nonterminal should compress: ref=$(nt_prog.complexity) < expanded=$exp_c"
 
     println("PASSED: Nonterminal '$(proposed.name)' body=$body_str, " *
@@ -546,11 +552,11 @@ println("=" ^ 60)
 let
     Random.seed!(42)
     g = Grammar(colour_sensor_config(), ProductionRule[], 1)
-    programs = enumerate_programs(g, 3)
+    programs = enumerate_programs(g, 3; action_space=[:a, :b, :c])
 
     prog_weights = zeros(length(programs))
     for (i, p) in enumerate(programs)
-        s = show_expr(p.predicate)
+        s = show_expr(p.expr)
         if occursin("GT(0,0.7)", s) && occursin("LT(1,0.3)", s)
             prog_weights[i] = 1.0
         elseif occursin("GT(0,0.7)", s)
@@ -572,7 +578,7 @@ let
     source_idxs = unique(freq_table.source_programs[best_idx])
     @assert length(source_idxs) >= 2 "Proposed body should appear in ≥2 programs, found in $(length(source_idxs))"
 
-    verified = count(i -> occursin(proposed_str, show_expr(programs[i].predicate)),
+    verified = count(i -> occursin(proposed_str, show_expr(programs[i].expr)),
                      source_idxs[1:min(10, length(source_idxs))])
     @assert verified >= 2 "Proposed subtree should be verifiable in source programs via show_expr"
 
@@ -633,6 +639,124 @@ let
 
     println("  Scenario B PASSED: CHANGED fires at step 11 only")
     println("PASSED: Both temporal scenarios verified")
+end
+println()
+
+# ═══════════════════════════════════════
+# TEST: add_programs_to_state! works correctly
+# ═══════════════════════════════════════
+
+println("=" ^ 60)
+println("TEST: add_programs_to_state! adds programs with deduplication")
+println("=" ^ 60)
+
+let
+    using Credence: AgentState, add_programs_to_state!, Grammar, SensorConfig, SensorChannel
+    using Credence: enumerate_programs, compile_kernel
+    using Credence: expr_equal
+
+    Random.seed!(42)
+
+    grammars = generate_seed_grammars()
+    g = grammars[2]
+
+    # Build initial state with some programs
+    programs = enumerate_programs(g, 2; action_space=[:food, :enemy])
+    components = Measure[]
+    log_prior = Float64[]
+    meta = Tuple{Int, Int}[]
+    ck = CompiledKernel[]
+    progs = Program[]
+
+    for (pi, p) in enumerate(programs)
+        push!(components, TaggedBetaMeasure(Interval(0.0, 1.0), pi, BetaMeasure(1.0, 1.0)))
+        push!(log_prior, -g.complexity * log(2) - p.complexity * log(2))
+        push!(meta, (g.id, pi))
+        push!(ck, compile_kernel(p, g, pi))
+        push!(progs, p)
+    end
+
+    belief = MixtureMeasure(Interval(0.0, 1.0), components, log_prior)
+    grammar_dict = Dict{Int, Grammar}(g.id => g)
+    state = AgentState(belief, meta, ck, progs, grammar_dict, 2)
+
+    n_before = length(state.belief.components)
+
+    # Try to add programs from the same grammar at the same depth — should deduplicate
+    n_added = add_programs_to_state!(state, g, 2;
+        action_space=[:food, :enemy])
+    @assert n_added == 0 "Deduplication should prevent adding same programs, got $n_added"
+    @assert length(state.belief.components) == n_before "Component count should not change"
+
+    # Add programs at a deeper depth — should add new ones
+    n_added_deeper = add_programs_to_state!(state, g, 3;
+        action_space=[:food, :enemy])
+    n_after = length(state.belief.components)
+
+    @assert n_added_deeper > 0 "Deeper enumeration should add new programs, got $n_added_deeper"
+    @assert n_after == n_before + n_added_deeper "Component count mismatch"
+    @assert length(state.metadata) == n_after "metadata length mismatch"
+    @assert length(state.compiled_kernels) == n_after "compiled_kernels length mismatch"
+    @assert length(state.all_programs) == n_after "all_programs length mismatch"
+
+    println("  Before: $n_before, dedup added: $n_added, deeper added: $n_added_deeper, after: $n_after")
+    println("PASSED: add_programs_to_state! deduplicates and maintains parallel arrays")
+end
+println()
+
+# ═══════════════════════════════════════
+# TEST: top_k_grammar_ids returns correct ordering
+# ═══════════════════════════════════════
+
+println("=" ^ 60)
+println("TEST: top_k_grammar_ids returns correct ordering")
+println("=" ^ 60)
+
+let
+    using Credence: AgentState, top_k_grammar_ids, Grammar, SensorConfig, SensorChannel
+    using Credence: enumerate_programs, compile_kernel
+
+    Random.seed!(42)
+
+    grammars = generate_seed_grammars()
+    g1, g2, g3 = grammars[1], grammars[2], grammars[3]
+
+    components = Measure[]
+    log_prior = Float64[]
+    meta = Tuple{Int, Int}[]
+    ck = CompiledKernel[]
+    progs = Program[]
+
+    idx = 0
+    # Give g2 the highest weight, then g1, then g3
+    grammar_weights_target = Dict(g1.id => -1.0, g2.id => 0.0, g3.id => -5.0)
+    for g in [g1, g2, g3]
+        programs = enumerate_programs(g, 2; action_space=[:food, :enemy])
+        for (pi, p) in enumerate(programs[1:min(3, length(programs))])
+            idx += 1
+            push!(components, TaggedBetaMeasure(Interval(0.0, 1.0), idx, BetaMeasure(1.0, 1.0)))
+            push!(log_prior, grammar_weights_target[g.id])
+            push!(meta, (g.id, pi))
+            push!(ck, compile_kernel(p, g, pi))
+            push!(progs, p)
+        end
+    end
+
+    belief = MixtureMeasure(Interval(0.0, 1.0), components, log_prior)
+    grammar_dict = Dict{Int, Grammar}(g.id => g for g in [g1, g2, g3])
+    state = AgentState(belief, meta, ck, progs, grammar_dict, 2)
+
+    top2 = top_k_grammar_ids(state, 2)
+    @assert length(top2) == 2
+    @assert top2[1] == g2.id "Top grammar should be g2 (highest weight), got $(top2[1])"
+    @assert top2[2] == g1.id "Second grammar should be g1, got $(top2[2])"
+
+    top1 = top_k_grammar_ids(state, 1)
+    @assert length(top1) == 1
+    @assert top1[1] == g2.id
+
+    println("  Top 2: $top2 (expected [$(g2.id), $(g1.id)])")
+    println("PASSED: top_k_grammar_ids returns correct ordering")
 end
 println()
 
