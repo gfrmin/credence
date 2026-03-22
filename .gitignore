@@ -7,5 +7,9 @@ Manifest.toml
 # Agent state files
 .credence_state.bin
 
+# Python
+__pycache__/
+*.egg-info/
+
 # Serena cache (config is committed, cache is not)
 .serena/cache/
