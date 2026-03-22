@@ -810,6 +810,45 @@ let
 end
 println()
 
+# ═══════════════════════════════════════
+# TEST 20: Ollama integration (optional, requires running Ollama)
+# ═══════════════════════════════════════
+
+if get(ENV, "TEST_OLLAMA", "false") == "true"
+    println("=" ^ 60)
+    println("TEST 20: Ollama integration (live)")
+    println("=" ^ 60)
+
+    let
+        config = LLMConfig("http://localhost:11434", "llama3.1", 200, true, 10.0)
+
+        # Test raw call
+        response = call_ollama(config, "Say hello in one word")
+        @assert response !== nothing "Ollama should return a response"
+        @assert length(response) > 0 "Response should be non-empty"
+        println("  Raw call response: $(first(response, 50))")
+
+        # Test feature enrichment
+        email = Email(1, "ceo@company.com", 0.8, :manager, "Q3 Budget Review",
+                      0.9, :finance, true, 200, false, 10, 0)
+        base = extract_features(email)
+        enriched = llm_enrich_features(config, email, base)
+        @assert length(enriched) == 13 "Enriched should have 13 features"
+        @assert 0.0 <= enriched[5] <= 1.0 "Urgency should be in [0,1]"
+
+        println("  Enriched urgency: $(enriched[5])")
+        println("  Enriched topic (finance): $(enriched[6])")
+
+        # Test graceful fallback on unreachable host
+        bad_config = LLMConfig("http://localhost:99999", "nonexistent", 200, true, 2.0)
+        fallback = llm_enrich_features(bad_config, email, base)
+        @assert length(fallback) == 13 "Fallback should produce 13 features"
+
+        println("PASSED: Ollama integration works, fallback graceful")
+    end
+    println()
+end
+
 println("=" ^ 60)
 println("ALL EMAIL AGENT TESTS PASSED")
 println("=" ^ 60)

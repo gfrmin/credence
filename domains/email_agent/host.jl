@@ -352,6 +352,7 @@ function run_agent(;
     max_meta_per_step::Int = 3,
     ask_cost::Float64 = 0.1,
     population_grammar::Union{Nothing, Vector{Grammar}} = nothing,
+    llm_config::LLMConfig = default_llm_config(),
     rng_seed::Int = 42,
     verbose::Bool = true
 )
@@ -454,7 +455,7 @@ function run_agent(;
 
             # Handle sensor actions (LLM enrichment)
             if chosen_action == :ask_llm && !already_enriched
-                enriched = simulate_llm_enrichment(email, extract_features(email))
+                enriched = llm_enrich_features(llm_config, email, extract_features(email))
                 grammar_sensor_vectors = project_enriched_per_grammar(
                     enriched, collect(values(state.grammars)))
                 already_enriched = true
