@@ -8,11 +8,16 @@ const EMAIL_ACTIONS = [:archive, :flag_urgent, :schedule_later,
                        :draft_response, :delegate, :summarise, :ask_user]
 
 const DOMAIN_ACTIONS = [:archive, :flag_urgent, :schedule_later,
-                        :draft_response, :delegate, :summarise]
+                        :draft_response, :delegate, :summarise,
+                        :triage_urgent, :silent_archive, :escalate]
 
 # Meta-actions: computational operations evaluated by EU
 const META_ACTIONS = [:enumerate_more, :perturb_grammar, :deepen, :do_nothing]
-const ALL_ACTIONS = vcat(EMAIL_ACTIONS, META_ACTIONS)
+
+# Sensor actions: gather more information before deciding
+const SENSOR_ACTIONS = [:ask_llm]
+
+const ALL_ACTIONS = vcat(EMAIL_ACTIONS, META_ACTIONS, SENSOR_ACTIONS)
 
 # Costs: fraction of approval utility lost by spending a turn computing
 const ENUMERATE_COST = 0.05

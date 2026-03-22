@@ -163,11 +163,25 @@ function selective_decide(email::Email)::Symbol
     :archive
 end
 
+"""Triage-focused profile: uses composite actions for nuanced handling."""
+function triage_decide(email::Email)::Symbol
+    # Urgent external emails get escalated (flag + notify + delegate)
+    email.urgency > 0.7 && email.sender_category == :external && return :triage_urgent
+    # Urgent from managers get escalated
+    email.urgency > 0.7 && email.sender_category == :manager && return :escalate
+    # Marketing gets silently archived (no notification)
+    email.topic == :marketing && return :silent_archive
+    # Everything else gets normal handling
+    email.sender_category == :manager && return :draft_response
+    :schedule_later
+end
+
 const PREFERENCE_PROFILES = Dict{Symbol, UserPreference}(
     :urgency_responsive => UserPreference(:urgency_responsive, urgency_responsive_decide),
     :delegator          => UserPreference(:delegator, delegator_decide),
     :hands_on           => UserPreference(:hands_on, hands_on_decide),
     :selective          => UserPreference(:selective, selective_decide),
+    :triage             => UserPreference(:triage, triage_decide),
 )
 
 """

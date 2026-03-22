@@ -16,10 +16,11 @@ mutable struct EmailMetricsTracker
     surprise::Vector{Float64}
     cumulative_ask_count::Vector{Int}
     meta_actions_per_step::Vector{Int}
+    llm_called::Vector{Bool}
 
     EmailMetricsTracker() = new(
         Int[], Symbol[], Symbol[], Bool[], Bool[],
-        Dict{Int,Float64}[], Int[], Float64[], Int[], Int[])
+        Dict{Int,Float64}[], Int[], Float64[], Int[], Int[], Bool[])
 end
 
 function record_email!(m::EmailMetricsTracker;
@@ -31,7 +32,8 @@ function record_email!(m::EmailMetricsTracker;
                        grammar_weights::Dict{Int, Float64},
                        n_components::Int,
                        surprise::Float64,
-                       n_meta_actions::Int=0)
+                       n_meta_actions::Int=0,
+                       used_llm::Bool=false)
     push!(m.steps, step)
     push!(m.actions_taken, action_taken)
     push!(m.correct_actions, correct_action)
@@ -43,6 +45,7 @@ function record_email!(m::EmailMetricsTracker;
     prev_asks = isempty(m.cumulative_ask_count) ? 0 : last(m.cumulative_ask_count)
     push!(m.cumulative_ask_count, prev_asks + (asked ? 1 : 0))
     push!(m.meta_actions_per_step, n_meta_actions)
+    push!(m.llm_called, used_llm)
 end
 
 function print_email_summary(m::EmailMetricsTracker; last_n::Int=20)
@@ -57,6 +60,7 @@ function print_email_summary(m::EmailMetricsTracker; last_n::Int=20)
     println("Recent accuracy: $recent_correct / $recent_total ($(round(100 * recent_correct / recent_total, digits=1))%)")
     println("Total asks: $(last(m.cumulative_ask_count))")
     println("Total meta-actions: $(sum(m.meta_actions_per_step))")
+    println("Total LLM calls: $(count(m.llm_called))")
     println("Components: $(last(m.n_components))")
 
     gw = last(m.grammar_weights)

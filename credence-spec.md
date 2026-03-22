@@ -235,24 +235,73 @@ Chajewska et al.'s key practical insight: when utility variables are independent
 
 ---
 
-## 6. Programs as DSL Expressions
+## 6. Embodiment: Brain, Body, Environment
+
+### 6.1 The formal boundary
+
+Ay (2015) formalises two ways to draw the agent boundary:
+
+**(a)** Agent = brain + body, interacting with environment as a black box.
+**(b)** Agent = brain, interacting with world (= environment + body) as a black box.
+
+Our Bayesian core is a brain. The host is the body. The email server, the user, and the LLM APIs are the environment. The brain receives sensor signals (feature vectors) and sends effector signals (action symbols). It is causally independent of the world given its sensors, and the world is causally independent of the brain given its effectors. Crucially: the boundary between body and environment is not visible to the brain — it must be discovered through interaction.
+
+### 6.2 What the brain does
+
+The brain (the Bayesian inference core) operates exclusively on:
+
+- **Observations:** feature vectors, preprocessed by the body (like the retina preprocesses light).
+- **Actions:** symbols from a vocabulary (like motor commands — "extend arm", not "contract muscle fibre #4721").
+- **Outcomes:** user reactions (the proprioceptive feedback — did my action achieve what I intended?).
+
+The brain decides *what* to do. It does not know *how* the body executes its decisions. It learns what each action *achieves* (the affordance) through conditioning on outcomes.
+
+### 6.3 What the body does
+
+The body (the host) handles:
+
+- **Preprocessing (sensors):** raw email → feature vector. Like the eye performing edge detection before signals reach the visual cortex. The LLM can be part of this pipeline — extracting urgency, classifying topics — just as the retina does contrast enhancement.
+- **Execution (effectors):** action symbol → world effects. `:draft_response` → LLM generates text → sends email. `:archive` → API call moves email. The brain doesn't know how archiving works; it knows that `:archive` in context X tends to produce user approval.
+- **Feedback routing (proprioception):** user reactions → observation delivered to brain. The body translates world events into the format the brain can process.
+
+The body is not a dumb relay. It does real computational work. But it doesn't make decisions about *what* to do — it makes decisions about *how to do what the brain decided.*
+
+### 6.4 LLMs as prosthetics
+
+An LLM is a prosthetic that extends the agent's sensory or effector capabilities — like glasses, or a calculator. The agent discovers that using the prosthetic (calling the LLM) helps it see better (extract richer features) or act more effectively (generate better drafts) in certain situations. It decides when to use the prosthetic via EU, like any other action. The LLM is part of the body, not the brain.
+
+### 6.5 Embodiment constraints and cheap design
+
+Ay's key result: the extrinsic constraints of the body (what it can and cannot do) reduce the effective dimensionality of the control problem. The agent doesn't need to explore all possible programs — only programs consistent with what its body can actually execute. Failed actions (API errors, user confusion from malformed output) provide negative feedback, and programs that violate body constraints lose posterior weight.
+
+This is "cheap design" — the body does some of the brain's work for free. Physical constraints reduce the hypothesis space, making inference tractable. The email API constrains what action sequences are possible; the agent discovers these constraints through use rather than being told.
+
+### 6.6 Learning the body
+
+A baby doesn't know what its hands can do. It learns through motor babbling — trying random actions and observing effects. Our agent does the same. The action vocabulary is given (like muscles), but what each action achieves (the affordance) is learned through conditioning on outcomes. The agent's programs are hypotheses about affordances: "when I send `:flag_urgent` in the context of an urgent-from-manager email, the effect is user approval."
+
+If the primitives are low-level enough, higher-level actions emerge as compositions through grammar evolution — the same mechanism that discovers predicate abstractions. `:archive` could be a nonterminal compressing `(begin (move-to-folder "archive") (mark-read))`. The principled position: primitives should be as low-level as computationally feasible. The lower the primitives, the more the agent discovers through composition, and the less we smuggle in through design.
+
+---
+
+## 7. Programs as DSL Expressions
 
 The credence DSL is a Lisp. The agent's hypothesis space is the space of programs in this language, weighted by description length.
 
-### 6.1 The terminal alphabet
+### 7.1 The terminal alphabet
 
-The terminal alphabet includes the inference primitives themselves:
+The terminal alphabet includes the inference primitives, control flow, predicates, and the body's action vocabulary:
 
 ```scheme
-;; Axioms (the bedrock)
+;; Axioms (the bedrock — cannot be defined in terms of each other)
 (condition belief kernel observation)     cost: 1
 (expect belief function)                  cost: 1
 (optimise belief action-space utility)    cost: 1
 
-;; Derived (in stdlib, not primitive)
-(voi belief kernel actions utility obs)   cost: 1   ;; EU(observe-then-act) - EU(act-now)
+;; Convenience (derived from axioms, included to keep programs short)
+(voi belief kernel actions utility obs)   cost: 1
 
-;; Domain actions (the agent's body — given, effects learned)
+;; Body actions (effectors — given by the body, effects learned through use)
 (archive)                                 cost: 1
 (flag-urgent)                             cost: 1
 (ask-user question)                       cost: 1
@@ -263,7 +312,7 @@ The terminal alphabet includes the inference primitives themselves:
 (begin expr ...)                          cost: 1
 (let ((var expr)) body)                   cost: 1
 
-;; Predicates (domain-provided)
+;; Predicates (sensors — domain-provided)
 (gt channel threshold)                    cost: 1
 (lt channel threshold)                    cost: 1
 (and p q)  (or p q)  (not p)             cost: 1 each
@@ -272,94 +321,119 @@ The terminal alphabet includes the inference primitives themselves:
 (changed p)  (persists p n)               cost: 1 each
 ```
 
-Every symbol costs 1 in description length — the universal prior is uniform over the alphabet. Execution cost (time, tokens, user attention) is separate and learned from observed outcomes.
+Every symbol costs 1 in description length — the universal prior is uniform over the alphabet. The body's action primitives are at whatever level the body exposes. If the body exposes low-level operations (`move-to-folder`, `add-label`, `set-flag`), the agent composes higher-level actions through grammar evolution. If the body exposes high-level operations (`archive`, `flag-urgent`), the agent selects among them but can't compose new ones. The level of the primitives is a design choice about where to draw the body boundary.
 
-### 6.2 Programs encode preference hypotheses
+### 7.2 Programs encode preference hypotheses
 
 Each program in the mixture is a hypothesis about what the user wants. A simple program: `(if (gt urgency 0.7) flag-urgent archive)` — "the user flags urgent emails and archives the rest." A complex program might invoke the LLM, condition on its analysis, and decide based on multiple factors. The complexity prior governs the tradeoff: simple hypotheses are favoured unless the data demands complexity.
 
-### 6.3 There are no "stages"
+### 7.3 There are no "stages"
 
-A depth-1 program is reactive. A depth-3 program is conditional. A deeper program might do deliberative reasoning — querying the LLM, conditioning on the response, computing expected utility. The agent explores program depth via VOI ("is it worth exploring deeper programs?"). The complexity prior and the learned observation model determine what depth is useful. The designer does not choose.
+A depth-1 program is reactive. A depth-3 program is conditional. A deeper program might do deliberative reasoning — querying the LLM, conditioning on the response, computing expected utility. The agent explores program depth as part of its normal operation. The complexity prior and the learned observation model determine what depth is useful. The designer does not choose.
 
-### 6.4 Grammar evolution
+### 7.4 Grammar evolution and action composition
 
-Nonterminals compress frequently useful subexpressions. Grammar perturbation extracts recurring subtrees from high-posterior programs and promotes them to named primitives. Programs using the nonterminal are shorter and favoured by the prior. The grammar evolves the agent's vocabulary of concepts — its language of thought.
+Nonterminals compress frequently useful subexpressions. Grammar perturbation extracts recurring subtrees from high-posterior programs and promotes them to named primitives. This applies uniformly to predicates and actions:
 
----
+- Predicate compression: `(and (gt urgency 0.7) (gt sender_is_manager 0.5))` → `URGENT-FROM-BOSS`
+- Action composition: `(begin (move-to-folder "priority") (add-label "urgent") (notify-user))` → `TRIAGE-URGENT`
 
-## 7. The Five-Layer Stack
-
-Concepts emerge from raw observations through five layers, each from inference under the complexity prior at a different timescale:
-
-**Layer 0 (given): Raw features and minimal logic.** Feature vectors, threshold predicates, connectives, temporal operators. The terminal alphabet.
-
-**Layer 1 (emerges): Feature abstraction.** Frequent predicate patterns promoted to grammar nonterminals. "Urgent" and "from-manager" are compressions of feature predicates.
-
-**Layer 2 (emerges): Preference models.** Combinations of abstractions into conditional programs. Programs that predict user behaviour accurately gain posterior weight.
-
-**Layer 3 (emerges): Meta-regularities.** Across preference changes or users, certain abstractions persist. The grammar evolves a stable core.
-
-**Layer 4 (emerges): Inductive bias.** The stable core IS the agent's inductive bias. New situations start with a prior concentrated on proven abstractions.
+The grammar evolves the agent's vocabulary of both concepts and skills — its language of thought and action.
 
 ---
 
-## 8. What Is Given vs What Is Learned
+## 8. The Five-Layer Stack
 
-**Given (the agent's embodiment):**
+Concepts emerge from raw observations through five layers, each from inference under the complexity prior at a different timescale. The stack applies uniformly to perceptual abstractions and action compositions:
 
-- The inference primitives: `condition`, `expect`, `optimise`. These are axiomatic. (`voi` — value of information — is a derived computation in the stdlib, useful but not primitive: it is the EU of "observe then act optimally" minus the EU of "act optimally now.")
-- The complexity prior: `2^(-|program|)`.
-- The alignment commitment: the agent's utility equals the user's utility, inferred from behaviour.
-- A set of primitive actions the agent can attempt (its body — it discovers what they do through use).
-- An observation channel through which outcomes arrive (it learns what observations mean).
+**Layer 0 (given): Raw primitives.** Feature predicates (`gt`, `lt`) and body actions (`move-to-folder`, `add-label` or higher-level equivalents). The terminal alphabet.
 
-**Learned (everything else):**
+**Layer 1 (emerges): Abstractions.** Frequent patterns promoted to grammar nonterminals. "Urgent" compresses a predicate pattern. "Archive" (if low-level primitives are used) compresses an action sequence. Perceptual and motor abstractions emerge through the same mechanism.
 
-- What the user wants (θ).
-- What each action does and what it costs.
-- Which features are informative.
-- What abstractions are useful (grammar evolution).
-- When to think vs act (metareasoning via VOI).
-- When to ask vs act autonomously (VOI — asking is an action).
+**Layer 2 (emerges): Preference models.** Combinations of abstractions into conditional programs that predict user behaviour. Programs that predict accurately gain posterior weight.
+
+**Layer 3 (emerges): Meta-regularities.** Across preference changes or users, certain abstractions persist. The grammar evolves a stable core alongside a mutable periphery.
+
+**Layer 4 (emerges): Inductive bias.** The stable core IS the agent's inductive bias. New situations start with a prior concentrated on proven abstractions — both perceptual and motor.
+
+---
+
+## 9. Meta-Actions: The Strange Loop
+
+The agent uses its current beliefs to decide whether to modify its own hypothesis space, and the modified hypothesis space changes its future beliefs. This self-reference — Hofstadter's "strange loop" — is not architecturally confused; it is the principled treatment of computation as action.
+
+Russell and Wefald's metareasoning framework (1991) formalises this: computational operations are actions in a meta-level decision problem, evaluated by expected improvement in decision quality. The meta-level MDP has states (the agent's current belief/computational state), actions (computational operations or "stop and act"), and a reward for stopping equal to the value of the best available action.
+
+In our architecture, the action space includes alongside domain actions:
+
+- `:enumerate_more` — expand the hypothesis space at current depth
+- `:perturb_grammar` — propose grammar modifications from posterior analysis
+- `:deepen` — re-enumerate at greater depth where nonterminals enable it
+
+These are evaluated by the same `compute_eu` as domain actions. The agent decides whether to think more or act now through one `argmax EU` over the combined space. The Bayesian machinery underneath — `condition`, `expect`, `optimise`, the complexity prior — is immutable. What meta-actions modify is the hypothesis space the machinery operates over: the set of programs, grammars, and depth. This is analogous to changing what you're thinking about, not how you think.
+
+Meta-actions terminate naturally: each one reduces posterior entropy (more hypotheses → more weight on the best), which reduces the EU of further meta-actions. Cost accumulation (the user is waiting) provides additional pressure. The agent thinks as long as thinking is more valuable than acting, and stops when it isn't.
+
+---
+
+## 10. What Is Given vs What Is Learned
+
+### 10.1 Given (the agent's embodiment)
+
+- **The inference primitives:** `condition`, `expect`, `optimise`. These are immutable — the laws of thought. (`voi` is derived, in the stdlib.)
+- **The complexity prior:** `2^(-|program|)`. The only inductive bias.
+- **The alignment commitment:** the agent's utility equals the user's utility, inferred from behaviour.
+- **The body's action vocabulary:** a set of primitive effector operations the body exposes. The agent discovers what they do and what they cost through use.
+- **The body's sensor channels:** observation streams preprocessed by the body. The agent discovers which channels are informative.
+- **Embodiment constraints:** what the body can and cannot do. Discovered through failed actions, not specified in advance.
+
+### 10.2 Learned (everything else)
+
+- What the user wants (θ — the preference parameter).
+- What each action achieves (affordances — learned through conditioning on outcomes).
+- What each action costs (learned through user reactions to latency, resource use).
+- Which features are informative (grammar evolution over sensor configurations).
+- What abstractions are useful — both perceptual and motor (grammar evolution).
+- When to think vs act (meta-actions evaluated by EU).
+- When to ask the user vs act autonomously (asking is an action with EU).
 - When preferences have changed (temporal programs).
-- How to interpret feedback signals (observation models are programs in the mixture).
-- What its own capabilities are.
+- How to interpret feedback signals (observation models as programs in the mixture).
+- Action compositions (higher-level skills from lower-level primitives, via grammar evolution).
 - The structure of the user's preferences (MAUT decomposition, if it exists, discovered not assumed).
 
 ---
 
-## 9. Open Problems
+## 11. Open Problems
 
-### 9.1 Preference dynamics
+### 11.1 Preference dynamics
 
 All major frameworks assume static θ. Real preferences change. Our architecture handles this partially through temporal programs, but this is limited by enumeration depth. Time-Varying CIRL (Mayer 2024) extends the framework by letting θ evolve stochastically, but the computational implications are largely unexplored.
 
-### 9.2 Human irrationality
+### 11.2 Human irrationality
 
 CIRL assumes Boltzmann-rational users. Real users exhibit systematic biases — prospect theory, framing effects, loss aversion. The preference laundering problem: should the agent learn revealed preferences (what the user actually does, including biases) or idealised preferences (what they would do if fully rational)? Laundered preferences are the normative ideal but impossible to observe directly. Our framework learns revealed preferences by default. Whether and how to "launder" them is philosophically unresolved and practically consequential.
 
-### 9.3 Convergence and safety
+### 11.3 Convergence and safety
 
 After convergence to confident beliefs, the uncertainty that drives safe behaviour disappears. If the agent has converged on wrong preferences, it acts confidently on wrong beliefs. The off-switch theorem's protection is proportional to belief variance — it vanishes at convergence. Ongoing monitoring and periodic re-elicitation may be necessary. This is an open problem in the CIRL literature.
 
-### 9.4 Observation model bootstrapping
+### 11.4 Observation model bootstrapping
 
 The initial observation model (explicit feedback interpreted as approval/disapproval) is the simplest viable prior. But early learning is entirely dependent on the quality of this bootstrap. If the initial model is wrong (e.g., the user approves by default and only overrides when strongly displeased), the agent may learn incorrect preferences before it has enough data to discover better observation models. Robust bootstrapping strategies — starting with high ASK_USER frequency, using multiple signal types from the beginning — may be necessary.
 
-### 9.5 Dynamic depth and metareasoning
+### 11.5 Dynamic depth and metareasoning
 
-Nonterminal promotion becomes meaningful at depth 3+, but depth 3 is intractable under sparse grammars. The agent should decide when to deepen search based on VOI over the expanded hypothesis space. The principled version has the agent itself decide how much computation is worth doing, based on its learned model of what the user tolerates. Currently approximated by fixed truncation schedules.
+Nonterminal promotion becomes meaningful at depth 3+, but depth 3 is intractable under sparse grammars. The `:deepen` meta-action (§9) provides the principled mechanism: the agent decides when to increase depth based on EU over the expanded hypothesis space. Currently implemented with entropy-based EU approximation. The fully principled version would have the agent learn meta-action value from experience — meta-action EU formulas as programs in the mixture.
 
-### 9.6 LLMs as actions
+### 11.6 LLMs as prosthetics
 
-Querying an LLM is an action evaluated by EU like any other. The prompt is part of the program — longer prompts cost more in description length. Both the complexity prior and learned execution costs push toward concise, targeted prompts. The agent discovers when LLM calls are worth their cost through the same conditioning as everything else. Not yet implemented.
+An LLM extends the agent's sensory and effector capabilities (§6.4). As a sensor prosthetic, it enriches feature extraction (topic classification, urgency detection from raw text). As an effector prosthetic, it generates natural language output (drafts, explanations, questions). The agent decides when to use the prosthetic via EU. The prompt is part of the program — longer prompts cost more in description length. Both the complexity prior and learned user reactions push toward concise, targeted use.
 
 ---
 
-## 10. Architecture
+## 12. Architecture
 
-### 10.1 Three tiers
+### 12.1 Three tiers
 
 **Tier 1 (`src/`):** DSL core. Measures, kernels, `condition`, `expect`, `optimise`, `TaggedBetaMeasure`, evaluator, stdlib (which includes `voi` as a derived computation). Domain-independent.
 
@@ -367,11 +441,11 @@ Querying an LLM is an action evaluated by EU like any other. The prompt is part 
 
 **Tier 3 (`domains/`):** Applications. Each domain provides features, terminals, actions, feedback, host driver.
 
-### 10.2 One agent per user
+### 12.2 One agent per user
 
 Domains are event sources, not agents. A single `AgentState` per user. Every observation from every domain conditions the same belief.
 
-### 10.3 Design invariant enforcement
+### 12.3 Design invariant enforcement
 
 **Type-level (primary):** `CompiledKernel` has no AST field. `propose_nonterminal` requires `SubprogramFrequencyTable`.
 
@@ -379,7 +453,7 @@ Domains are event sources, not agents. A single `AgentState` per user. Every obs
 
 **CLAUDE.md (tertiary):** Documents the reasoning behind the constraints.
 
-### 10.4 Testing philosophy
+### 12.4 Testing philosophy
 
 **Mechanism tests:** deterministic, agent-free where possible. Failure = code is wrong.
 
@@ -389,36 +463,36 @@ Domains are event sources, not agents. A single `AgentState` per user. Every obs
 
 ---
 
-## 11. Domain: Grid World (Complete)
+## 13. Domain: Grid World (Complete)
 
 72 tests passing. Validated: convergence, Occam's Razor, regime-change adaptation, meta-learning (controlled comparison: perturbation agent 0.700 vs no-perturbation 0.667 in regime 3), grammar evolution (23 perturbed grammars, 4 with positive weight), scale (46K → 2K at depth 2).
 
 ---
 
-## 12. Domain: Email Agent
+## 14. Domain: Email Agent
 
-### 12.1 Preference inference via action prediction
+### 14.1 Preference inference via action prediction
 
 Each program is a hypothesis about what the user prefers: "for emails matching this predicate, the user chooses this action." The Beta tracks P(approve | predicate fires, action taken). The agent recommends whichever action has highest expected approval.
 
-### 12.2 Features, actions, user profiles
+### 14.2 Features, actions, user profiles
 
 13 feature channels (sender, urgency, topic, etc.). 7 actions including ASK_USER. 4 hidden test profiles (urgency_responsive, delegator, hands_on, selective). See implementation instructions for details.
 
-### 12.3 Multi-user meta-learning
+### 14.3 Multi-user meta-learning
 
 Grammar pool from one user initialises the next. Population-level structural regularities transfer; individual details don't. Chajewska et al.'s result directly applies: population data initialises the prior, enabling useful behaviour before individual-specific queries.
 
 ---
 
-## 13. Resolved Questions
+## 15. Resolved Questions
 
 - ~~Kernel compilation~~ — `CompiledKernel` type, precompiled closures.
 - ~~Temporal operators~~ — kernel closures capture temporal window.
 - ~~Precompile predicates~~ — enforced by no AST field.
 - ~~Program enumeration~~ — prior-weighted floor (`min_log_prior`).
 - ~~Scale~~ — validated at depth 2 (46K → 2K).
-- ~~Base-rate sentinel~~ — `log(0.5)` for non-firing predicates.
+- ~~Base-rate sentinel~~ — originally `log(0.5)` for non-firing predicates. Now eliminated: expression-tree programs always produce a recommendation, so every program is scored. No non-firing case.
 - ~~Flat vs nested~~ — flat by design.
 - ~~Per-component dispatch~~ — `TaggedBetaMeasure.tag`.
 - ~~One vs many agents~~ — one agent per user, domains are event sources.
@@ -426,3 +500,8 @@ Grammar pool from one user initialises the next. Population-level structural reg
 - ~~Setting the utility function~~ — CIRL: agent utility = expected user utility under preference uncertainty. Grounded by Savage (utility exists), complete class theorem (Bayesian EU is the only admissible procedure), Harsanyi (linear aggregation).
 - ~~Feedback weighting~~ — Bayesian updating calibrates automatically once observation models are learned. Fisher information governs signal contribution. The observation models themselves are programs in the mixture, learned through the same inference.
 - ~~Computational cost~~ — only matters insofar as it affects user satisfaction. The user's reactions encode their tolerance for cost. No separate cost model.
+- ~~Brain/body boundary~~ — the brain (Bayesian core) receives features and sends action symbols. The body (host) preprocesses raw data and executes actions. The brain doesn't know how the body works; it learns what the body can do through conditioning on outcomes. Formalised by Ay (2015).
+- ~~Meta-actions~~ — computational operations (enumerate, perturb, deepen) are actions in the action space, evaluated by the same EU as domain actions. The strange loop (agent modifying its own hypothesis space) is principled — the Bayesian machinery is immutable; what changes is the set of hypotheses it operates over.
+- ~~Action composition~~ — higher-level actions emerge through grammar evolution, the same mechanism as predicate abstractions. The grammar evolves skills alongside concepts. Primitives should be as low-level as computationally feasible.
+- ~~LLM role~~ — the LLM is a prosthetic (glasses, not a brain implant). Part of the body's sensor/effector system. The brain decides when to use it via EU.
+- ~~Non-firing programs~~ — eliminated. Programs are expression trees that always produce a recommendation. Every program is scored. No `log(0.5)` sentinel needed.

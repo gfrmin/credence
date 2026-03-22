@@ -33,6 +33,8 @@ include("features.jl")
 include("terminals.jl")
 include("preferences.jl")
 include("metrics.jl")
+include("llm_prosthetic.jl")
+include("action_composition.jl")
 
 using Random
 
@@ -157,9 +159,29 @@ function compute_meta_eu(
 end
 
 """
-    compute_eu(state, action, rec_cache, component_weights; ask_cost, meta_cost_this_turn) → Float64
+    compute_sensor_eu(state, rec_cache, component_weights; llm_cost, already_enriched) → Float64
 
-Expected utility for any action: domain, :ask_user, or meta-action.
+EU for sensor enrichment via LLM. High when action entropy is high
+(enriched features might resolve ambiguity), returns -Inf if already enriched.
+"""
+function compute_sensor_eu(
+    state::AgentState,
+    rec_cache::Dict{Int, Symbol},
+    component_weights::Vector{Float64};
+    llm_cost::Float64=LLM_COST,
+    already_enriched::Bool=false
+)::Float64
+    already_enriched && return -Inf
+    H = compute_action_entropy(state, rec_cache, component_weights)
+    n_obs = mean_observation_count(state)
+    entropy_benefit = H / (1.0 + 0.1 * n_obs)
+    entropy_benefit * 0.7 - llm_cost
+end
+
+"""
+    compute_eu(state, action, rec_cache, component_weights; ...) → Float64
+
+Expected utility for any action: domain, :ask_user, meta-action, or sensor action.
 Single argmax over the combined action space.
 """
 function compute_eu(
@@ -168,12 +190,18 @@ function compute_eu(
     rec_cache::Dict{Int, Symbol},
     component_weights::Vector{Float64};
     ask_cost::Float64=0.1,
-    meta_cost_this_turn::Float64=0.0
+    meta_cost_this_turn::Float64=0.0,
+    already_enriched::Bool=false
 )::Float64
     # Meta-actions
     action in META_ACTIONS && return compute_meta_eu(
         state, action, rec_cache, component_weights;
         meta_cost_this_turn=meta_cost_this_turn)
+
+    # Sensor actions
+    action == :ask_llm && return compute_sensor_eu(
+        state, rec_cache, component_weights;
+        already_enriched=already_enriched)
 
     # :ask_user — always correct, costs user attention
     action == :ask_user && return 1.0 - ask_cost
@@ -382,9 +410,11 @@ function run_agent(;
         grammar_sensor_vectors = project_email_per_grammar(
             email, collect(values(state.grammars)))
 
-        # Inner loop: agent may take meta-actions before committing to a domain action
+        # Inner loop: agent may take meta/sensor actions before committing
         meta_cost_this_turn = 0.0
         meta_actions_taken = 0
+        already_enriched = false
+        used_llm = false
         chosen_action = :do_nothing
 
         while true
@@ -399,11 +429,13 @@ function run_agent(;
             action_eus = Dict{Symbol, Float64}()
             for a in ALL_ACTIONS
                 action_eus[a] = compute_eu(state, a, rec_cache, w;
-                    ask_cost=ask_cost, meta_cost_this_turn=meta_cost_this_turn)
+                    ask_cost=ask_cost, meta_cost_this_turn=meta_cost_this_turn,
+                    already_enriched=already_enriched)
             end
 
             chosen_action = argmax(action_eus)
 
+            # Handle meta-actions
             if chosen_action in META_ACTIONS && chosen_action != :do_nothing &&
                meta_actions_taken < max_meta_per_step
                 execute_meta_action!(state, chosen_action;
@@ -413,7 +445,6 @@ function run_agent(;
                 meta_cost_this_turn += (chosen_action == :deepen ? DEEPEN_COST :
                                         chosen_action == :perturb_grammar ? PERTURB_COST :
                                         ENUMERATE_COST)
-                # Re-project for any new grammars
                 grammar_sensor_vectors = project_email_per_grammar(
                     email, collect(values(state.grammars)))
                 sync_prune!(state; threshold=-30.0)
@@ -421,11 +452,22 @@ function run_agent(;
                 continue
             end
 
+            # Handle sensor actions (LLM enrichment)
+            if chosen_action == :ask_llm && !already_enriched
+                enriched = simulate_llm_enrichment(email, extract_features(email))
+                grammar_sensor_vectors = project_enriched_per_grammar(
+                    enriched, collect(values(state.grammars)))
+                already_enriched = true
+                used_llm = true
+                verbose && println("  [Sensor: ask_llm at step $step]")
+                continue
+            end
+
             break
         end
 
-        # If meta cap reached and chosen_action is still meta, fall back to domain EU
-        if chosen_action in META_ACTIONS
+        # If chosen_action is still non-domain, fall back to domain EU
+        if chosen_action in META_ACTIONS || chosen_action in SENSOR_ACTIONS
             rec_cache = Dict{Int, Symbol}()
             evaluate_programs!(rec_cache, state.compiled_kernels,
                                grammar_sensor_vectors, temporal_state)
@@ -465,11 +507,12 @@ function run_agent(;
 
         if verbose
             meta_str = meta_actions_taken > 0 ? ", meta=$meta_actions_taken" : ""
+            llm_str = used_llm ? ", llm" : ""
             println("Step $step: $(asked ? "ASK→$correct_action" : string(chosen_action)) " *
                     "(correct=$correct_action, " *
                     "$(action_correct_for_metrics ? "✓" : asked ? "?" : "✗"), " *
                     "surprise=$(round(surprise, digits=2)), " *
-                    "components=$(length(state.belief.components))$meta_str)")
+                    "components=$(length(state.belief.components))$meta_str$llm_str)")
         end
 
         # Record metrics
@@ -484,7 +527,8 @@ function run_agent(;
                       grammar_weights=gw,
                       n_components=length(state.belief.components),
                       surprise=surprise,
-                      n_meta_actions=meta_actions_taken)
+                      n_meta_actions=meta_actions_taken,
+                      used_llm=used_llm)
     end
 
     if verbose
@@ -492,6 +536,55 @@ function run_agent(;
     end
 
     (metrics=metrics, state=state, evolved_grammars=collect(values(state.grammars)))
+end
+
+# ═══════════════════════════════════════
+# Multi-user meta-learning
+# ═══════════════════════════════════════
+
+"""
+    run_multi_user(; user_prefs, ...) → Vector{NamedTuple}
+
+Run the agent sequentially across multiple users, passing evolved grammars
+forward. Later users benefit from grammar pool transfer — structural
+regularities discovered for earlier users accelerate learning.
+"""
+function run_multi_user(;
+    user_prefs::Vector{UserPreference},
+    corpus_per_user::Int = 60,
+    rng_seed::Int = 42,
+    verbose::Bool = true,
+    program_max_depth::Int = 2,
+    min_log_prior::Float64 = -15.0,
+    max_meta_per_step::Int = 3,
+    ask_cost::Float64 = 0.1
+)
+    grammar_pool = nothing
+    results = NamedTuple{(:user, :metrics, :n_grammars), Tuple{Symbol, EmailMetricsTracker, Int}}[]
+
+    for (i, pref) in enumerate(user_prefs)
+        corpus = generate_email_corpus(corpus_per_user; rng_seed=rng_seed + i)
+        result = run_agent(;
+            corpus=corpus,
+            user_pref=pref,
+            program_max_depth=program_max_depth,
+            min_log_prior=min_log_prior,
+            max_meta_per_step=max_meta_per_step,
+            ask_cost=ask_cost,
+            population_grammar=grammar_pool,
+            rng_seed=rng_seed + i,
+            verbose=verbose
+        )
+        grammar_pool = result.evolved_grammars
+
+        if verbose
+            println("  User $i ($(pref.name)): $(length(grammar_pool)) grammars in pool")
+        end
+
+        push!(results, (user=pref.name, metrics=result.metrics, n_grammars=length(grammar_pool)))
+    end
+
+    results
 end
 
 # ═══════════════════════════════════════
