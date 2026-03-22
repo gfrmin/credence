@@ -2,14 +2,14 @@
     grid_world.jl — 5×5 grid world simulation for program-space agent
 
 Entities have hidden types (FOOD, ENEMY, NEUTRAL) and observable properties.
-The environment maintains a true state vector per entity, projected through
-the agent's SensorConfig to produce sensor readings.
+The environment produces a named feature dictionary per entity.
 
 World rules determine classification logic. The active rule can change
 mid-run (regime change) without notification to the agent.
 """
 
-include("sensors.jl")
+push!(LOAD_PATH, joinpath(@__DIR__, "..", "..", "src"))
+using Credence
 
 # ── Enums ──
 
@@ -54,19 +54,19 @@ mutable struct WorldState
     rng_seed::Int
 end
 
-# ── Temporal state for sensor transforms ──
+# ── Temporal state for compiled kernels ──
 
 mutable struct TemporalWindow
-    history::Dict{Int, Vector{Vector{Float64}}}  # entity_id → past true states
+    history::Dict{Int, Vector{Dict{Symbol, Float64}}}  # entity_id → past feature dicts
     max_history::Int
 end
 
 TemporalWindow(; max_history::Int=10) =
-    TemporalWindow(Dict{Int, Vector{Vector{Float64}}}(), max_history)
+    TemporalWindow(Dict{Int, Vector{Dict{Symbol, Float64}}}(), max_history)
 
-function update!(tw::TemporalWindow, entity_states::Vector{Tuple{Int, Vector{Float64}}})
+function update!(tw::TemporalWindow, entity_states::Vector{Tuple{Int, Dict{Symbol, Float64}}})
     for (eid, state) in entity_states
-        hist = get!(tw.history, eid, Vector{Float64}[])
+        hist = get!(tw.history, eid, Dict{Symbol, Float64}[])
         push!(hist, state)
         while length(hist) > tw.max_history
             popfirst!(hist)
@@ -195,23 +195,23 @@ function set_rule!(state::WorldState, rule::Symbol)
     end
 end
 
-# ── Entity true state vector ──
+# ── Entity feature dictionary ──
 
-function entity_true_state(e::Entity, agent_pos::Pos, grid_size::Int)::Vector{Float64}
+function entity_features(e::Entity, agent_pos::Pos, grid_size::Int)::Dict{Symbol, Float64}
     wall_dist = min(e.pos.x - 1, e.pos.y - 1,
                     grid_size - e.pos.x, grid_size - e.pos.y) / (grid_size / 2)
     agent_dist = sqrt((e.pos.x - agent_pos.x)^2 + (e.pos.y - agent_pos.y)^2) /
                  (sqrt(2) * grid_size)
-    Float64[
-        e.rgb[1],           # 0: red
-        e.rgb[2],           # 1: green
-        e.rgb[3],           # 2: blue
-        e.pos.x / grid_size, # 3: x_norm
-        e.pos.y / grid_size, # 4: y_norm
-        e.speed,             # 5: speed
-        clamp(wall_dist, 0.0, 1.0),  # 6: wall_dist
-        clamp(agent_dist, 0.0, 1.0), # 7: agent_dist
-    ]
+    Dict{Symbol, Float64}(
+        :red => e.rgb[1],
+        :green => e.rgb[2],
+        :blue => e.rgb[3],
+        :x_norm => e.pos.x / grid_size,
+        :y_norm => e.pos.y / grid_size,
+        :speed => e.speed,
+        :wall_dist => clamp(wall_dist, 0.0, 1.0),
+        :agent_dist => clamp(agent_dist, 0.0, 1.0),
+    )
 end
 
 # ── Entity movement ──
@@ -310,8 +310,8 @@ function get_visible_entities(state::WorldState)::Vector{Tuple{Int, Entity}}
     [(i, e) for (i, e) in enumerate(state.entities) if e.alive]
 end
 
-function get_entity_states(state::WorldState)::Vector{Tuple{Int, Vector{Float64}}}
-    [(i, entity_true_state(e, state.agent_pos, state.config.grid_size))
+function get_entity_states(state::WorldState)::Vector{Tuple{Int, Dict{Symbol, Float64}}}
+    [(i, entity_features(e, state.agent_pos, state.config.grid_size))
      for (i, e) in enumerate(state.entities) if e.alive]
 end
 

@@ -13,7 +13,7 @@ has no reference to the original AST.
     compile_kernel(program, grammar) → CompiledKernel
 
 Walks the AST once, produces a closure that captures threshold values,
-channel indices, and nonterminal expansions as closed-over constants.
+feature names, and nonterminal expansions as closed-over constants.
 The returned CompiledKernel has no reference to the original AST.
 """
 function compile_kernel(program::Program, grammar::Grammar, program_id::Int)::CompiledKernel
@@ -21,17 +21,17 @@ function compile_kernel(program::Program, grammar::Grammar, program_id::Int)::Co
     CompiledKernel(closure, program.complexity, grammar.id, program_id)
 end
 
-"""Compile an expression into a closure: (sensor_vector, temporal_state) → Bool."""
+"""Compile an expression into a closure: (features::Dict{Symbol,Float64}, temporal_state) → Bool."""
 function compile_expr(e::GTExpr, _rules)
-    ch = e.channel + 1  # Julia 1-based
+    feat = e.feature
     t = e.threshold
-    (sv, _ts) -> sv[ch] > t
+    (features, _ts) -> get(features, feat, 0.0) > t
 end
 
 function compile_expr(e::LTExpr, _rules)
-    ch = e.channel + 1
+    feat = e.feature
     t = e.threshold
-    (sv, _ts) -> sv[ch] < t
+    (features, _ts) -> get(features, feat, 0.0) < t
 end
 
 function compile_expr(e::AndExpr, rules)
@@ -60,8 +60,8 @@ end
 function compile_expr(e::PersistsExpr, rules)
     child = compile_expr(e.child, rules)
     n = e.n
-    (sv, ts) -> begin
-        recent = get(ts, :recent, Vector{Float64}[])
+    (features, ts) -> begin
+        recent = get(ts, :recent, Dict{Symbol,Float64}[])
         length(recent) < n && return false
         all(i -> child(recent[end - i + 1], ts), 1:n)
     end
@@ -69,12 +69,12 @@ end
 
 function compile_expr(e::ChangedExpr, rules)
     child = compile_expr(e.child, rules)
-    (sv, ts) -> begin
-        recent = get(ts, :recent, Vector{Float64}[])
+    (features, ts) -> begin
+        recent = get(ts, :recent, Dict{Symbol,Float64}[])
         isempty(recent) && return false
-        current = child(sv, ts)
-        prev_sv = last(recent)
-        prev = child(prev_sv, ts)
+        current = child(features, ts)
+        prev_features = last(recent)
+        prev = child(prev_features, ts)
         current != prev
     end
 end
@@ -82,8 +82,8 @@ end
 function compile_expr(e::SinceExpr, rules)
     p_fn = compile_expr(e.p, rules)
     q_fn = compile_expr(e.q, rules)
-    (sv, ts) -> begin
-        recent = get(ts, :recent, Vector{Float64}[])
+    (features, ts) -> begin
+        recent = get(ts, :recent, Dict{Symbol,Float64}[])
         last_q = 0
         for i in length(recent):-1:1
             if q_fn(recent[i], ts)
@@ -92,7 +92,7 @@ function compile_expr(e::SinceExpr, rules)
             end
         end
         last_q == 0 && return false
-        all(i -> p_fn(recent[i], ts), last_q:length(recent)) && p_fn(sv, ts)
+        all(i -> p_fn(recent[i], ts), last_q:length(recent)) && p_fn(features, ts)
     end
 end
 
@@ -116,9 +116,9 @@ end
 # Predicate evaluation (used only during testing, not at conditioning time)
 # ═══════════════════════════════════════
 
-function evaluate_predicate(expr::ProgramExpr, sensor_vector::Vector{Float64},
+function evaluate_predicate(expr::ProgramExpr, features::Dict{Symbol, Float64},
                             rules::Vector{ProductionRule};
                             temporal_state::Dict{Symbol, Any}=Dict{Symbol, Any}())
     fn = compile_expr(expr, rules)
-    fn(sensor_vector, temporal_state)
+    fn(features, temporal_state)
 end

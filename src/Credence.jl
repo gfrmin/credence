@@ -34,7 +34,6 @@ export initial_rel_state, initial_cov_state, marginalize_betas, update_beta_stat
 export extract_reliability_means
 
 # Re-export Tier 2 (ProgramSpace)
-export SensorChannel, SensorConfig, sensor_config_complexity, n_channels
 export ProgramExpr, GTExpr, LTExpr, AndExpr, OrExpr, NotExpr, NonterminalRef
 export PersistsExpr, ChangedExpr, SinceExpr
 export show_expr

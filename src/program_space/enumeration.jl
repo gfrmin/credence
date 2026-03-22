@@ -63,17 +63,16 @@ function enumerate_programs(g::Grammar, max_depth::Int;
                             include_temporal::Bool=false,
                             min_log_prior::Float64=-20.0,
                             action_space::Vector{Symbol}=Symbol[:classify])::Vector{Program}
-    n_ch = n_channels(g.sensor_config)
     max_complexity = -min_log_prior - g.complexity  # early pruning threshold
 
     # ── Phase 1: enumerate predicate expressions by depth ──
     # Predicates are Boolean-valued (GT, LT, AND, OR, NOT, temporal, nonterminal)
 
     atoms = ProgramExpr[]
-    for ch_idx in 0:n_ch-1
+    for feat in sort(collect(g.feature_set))  # sorted for deterministic enumeration
         for t in THRESHOLDS
-            push!(atoms, GTExpr(ch_idx, t))
-            push!(atoms, LTExpr(ch_idx, t))
+            push!(atoms, GTExpr(feat, t))
+            push!(atoms, LTExpr(feat, t))
         end
     end
     for r in g.rules

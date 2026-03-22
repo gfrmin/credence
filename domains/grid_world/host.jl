@@ -22,7 +22,6 @@ using Credence: Finite, Interval, Kernel, Measure
 using Credence: density, log_density_at, prune, truncate
 using Credence: AgentState, sync_prune!, sync_truncate!
 using Credence: Grammar, Program, CompiledKernel, ProductionRule
-using Credence: SensorConfig, SensorChannel
 using Credence: enumerate_programs, compile_kernel
 using Credence: analyse_posterior_subtrees, perturb_grammar
 using Credence: aggregate_grammar_weights, top_k_grammar_ids, add_programs_to_state!
@@ -46,35 +45,11 @@ const GW_PERTURB_COST = 0.05
 const GW_DEEPEN_COST = 0.10
 
 # ═══════════════════════════════════════
-# Per-grammar sensor projection
-# ═══════════════════════════════════════
-
-"""
-    project_per_grammar(true_state, grammars; ...) → Dict{Int, Vector{Float64}}
-
-Project an entity's true state through each grammar's sensor config.
-Returns a mapping from grammar_id to the projected sensor vector.
-"""
-function project_per_grammar(
-    true_state::Vector{Float64},
-    grammars::Vector{Grammar};
-    entity_id::Int=0,
-    temporal_state::Dict{Int, Vector{Vector{Float64}}}=Dict{Int, Vector{Vector{Float64}}}()
-)
-    result = Dict{Int, Vector{Float64}}()
-    for g in grammars
-        result[g.id] = project(true_state, g.sensor_config;
-                               entity_id=entity_id, temporal_state=temporal_state)
-    end
-    result
-end
-
-# ═══════════════════════════════════════
 # Build the observation kernel
 # ═══════════════════════════════════════
 
 """
-    build_observation_kernel(compiled_kernels, grammar_sensor_vectors, temporal_state, true_type)
+    build_observation_kernel(compiled_kernels, features, temporal_state, true_type)
 
 Build a single Kernel whose log_density dispatches per-component via
 TaggedBetaMeasure tags. Each program evaluates features → recommends an
@@ -85,7 +60,7 @@ direction in the condition dispatch.
 """
 function build_observation_kernel(
     compiled_kernels::Vector{CompiledKernel},
-    grammar_sensor_vectors::Dict{Int, Vector{Float64}},
+    features::Dict{Symbol, Float64},
     temporal_state::Dict{Symbol, Any},
     true_type::Symbol
 )
@@ -100,8 +75,7 @@ function build_observation_kernel(
                 tag = m_or_θ.tag
                 recommended = get!(recommendation_cache, tag) do
                     ck = compiled_kernels[tag]
-                    sv = grammar_sensor_vectors[ck.grammar_id]
-                    ck.evaluate(sv, temporal_state)
+                    ck.evaluate(features, temporal_state)
                 end
                 correct = recommended == true_type
                 correct_cache[tag] = correct
@@ -120,7 +94,7 @@ end
 # ═══════════════════════════════════════
 
 """
-    compute_eu_interact(belief, compiled_kernels, grammar_sensor_vectors, temporal_state)
+    compute_eu_interact(belief, compiled_kernels, features, temporal_state)
 
 Estimate P(enemy) from program recommendations weighted by posterior confidence,
 then compute EU of interacting: P(enemy)*(-5) + P(food)*(+5).
@@ -128,16 +102,14 @@ then compute EU of interacting: P(enemy)*(-5) + P(food)*(+5).
 function compute_eu_interact(
     belief::MixtureMeasure,
     compiled_kernels::Vector{CompiledKernel},
-    grammar_sensor_vectors::Dict{Int, Vector{Float64}},
+    features::Dict{Symbol, Float64},
     temporal_state::Dict{Symbol, Any}
 )
     w = weights(belief)
     p_enemy = 0.0
     for (j, comp) in enumerate(belief.components)
         ck = compiled_kernels[j]
-        haskey(grammar_sensor_vectors, ck.grammar_id) || continue
-        sv = grammar_sensor_vectors[ck.grammar_id]
-        rec = ck.evaluate(sv, temporal_state)
+        rec = ck.evaluate(features, temporal_state)
         mean_j = mean(comp.beta)
         # If program recommends :enemy and is correct (mean_j), entity is enemy
         # If program recommends :food and is correct (mean_j), entity is food → P(enemy) = 1-mean_j
@@ -239,7 +211,7 @@ function execute_gw_meta_action!(
         n_added = 0
         for gid in top_gids
             haskey(state.grammars, gid) || continue
-            new_g = perturb_grammar(state.grammars[gid], freq_table)
+            new_g = perturb_grammar(state.grammars[gid], freq_table, ALL_GW_FEATURES)
             state.grammars[new_g.id] = new_g
             n_added += add_programs_to_state!(state, new_g, state.current_max_depth;
                 action_space=gw_action_space, include_temporal=include_temporal)
@@ -320,7 +292,7 @@ function run_agent(;
 
     # Temporal state
     temporal_window = TemporalWindow(max_history=10)
-    temporal_state = Dict{Symbol, Any}(:recent => Vector{Float64}[])
+    temporal_state = Dict{Symbol, Any}(:recent => Dict{Symbol, Float64}[])
 
     metrics = MetricsTracker()
 
@@ -342,11 +314,8 @@ function run_agent(;
         update!(temporal_window, entity_states)
 
         # Update temporal state for compiled kernels
-        for (eid, _) in entity_states
-            true_st = last(temporal_window.history[eid])
-            sv = project(true_st, full_sensor_config();
-                         entity_id=eid, temporal_state=temporal_window.history)
-            push!(get!(temporal_state, :recent, Vector{Float64}[]), sv)
+        for (eid, feats) in entity_states
+            push!(get!(temporal_state, :recent, Dict{Symbol, Float64}[]), feats)
             while length(temporal_state[:recent]) > 10
                 popfirst!(temporal_state[:recent])
             end
@@ -360,17 +329,14 @@ function run_agent(;
             eid, entity = nearest
             dist = abs(entity.pos.x - world.agent_pos.x) + abs(entity.pos.y - world.agent_pos.y)
 
-            # Per-grammar sensor projection for this entity
-            true_st = entity_true_state(entity, world.agent_pos, world.config.grid_size)
-            grammar_sensor_vectors = project_per_grammar(
-                true_st, collect(values(state.grammars));
-                entity_id=eid, temporal_state=temporal_window.history)
+            # Feature dict for this entity
+            features = entity_features(entity, world.agent_pos, world.config.grid_size)
 
             # Meta-action inner loop: improve hypothesis space before domain decision
             meta_cost_this_turn = 0.0
             while meta_actions_taken < max_meta_per_step
                 eu = compute_eu_interact(state.belief, state.compiled_kernels,
-                                          grammar_sensor_vectors, temporal_state)
+                                          features, temporal_state)
                 n_obs = mean_observation_count_gw(state)
 
                 best_meta_eu = -Inf
@@ -393,17 +359,13 @@ function run_agent(;
                                         best_meta == :gw_perturb_grammar ? GW_PERTURB_COST :
                                         GW_ENUMERATE_COST)
 
-                # Re-project for new grammars
-                grammar_sensor_vectors = project_per_grammar(
-                    true_st, collect(values(state.grammars));
-                    entity_id=eid, temporal_state=temporal_window.history)
                 sync_prune!(state; threshold=-30.0)
                 sync_truncate!(state; max_components=2000)
             end
 
             # Domain decision
             eu = compute_eu_interact(state.belief, state.compiled_kernels,
-                                      grammar_sensor_vectors, temporal_state)
+                                      features, temporal_state)
             action = select_action(eu, Float64(dist))
         else
             action = rand([MOVE_N, MOVE_S, MOVE_E, MOVE_W])
@@ -423,13 +385,13 @@ function run_agent(;
 
             # Compute P(enemy) and surprise before conditioning
             if nearest !== nothing
+                eid, entity = nearest
+                features = entity_features(entity, world.agent_pos, world.config.grid_size)
                 w = weights(state.belief)
                 p_enemy_val = 0.0
                 for (j, comp) in enumerate(state.belief.components)
                     ck = state.compiled_kernels[j]
-                    haskey(grammar_sensor_vectors, ck.grammar_id) || continue
-                    sv = grammar_sensor_vectors[ck.grammar_id]
-                    rec = ck.evaluate(sv, temporal_state)
+                    rec = ck.evaluate(features, temporal_state)
                     mean_j = mean(comp.beta)
                     p_enemy_val += w[j] * (rec == :enemy ? mean_j : 1.0 - mean_j)
                 end
@@ -442,13 +404,8 @@ function run_agent(;
 
             # Build conditioning kernel
             if nearest !== nothing
-                eid, entity = nearest
-                true_st = entity_true_state(entity, world.agent_pos, world.config.grid_size)
-                grammar_sensor_vectors = project_per_grammar(
-                    true_st, collect(values(state.grammars));
-                    entity_id=eid, temporal_state=temporal_window.history)
                 k = build_observation_kernel(
-                    state.compiled_kernels, grammar_sensor_vectors, temporal_state, true_type)
+                    state.compiled_kernels, features, temporal_state, true_type)
             else
                 # Fallback: uniform kernel
                 k = Kernel(Interval(0.0, 1.0), Finite([0.0, 1.0]),

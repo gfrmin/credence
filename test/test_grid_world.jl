@@ -2,8 +2,8 @@
 """
     test_grid_world.jl — Tier 3 tests: grid-world domain
 
-Tests that need the grid-world simulation: world creation, sensor
-projection, full agent runs, regime change, meta-learning.
+Tests that need the grid-world simulation: world creation, entity features,
+full agent runs, regime change, meta-learning.
 """
 
 push!(LOAD_PATH, joinpath(@__DIR__, "..", "src"))
@@ -64,28 +64,30 @@ end
 println()
 
 # ═══════════════════════════════════════
-# TEST 2: Sensor projection
+# TEST 2: Entity features produce correct Dict
 # ═══════════════════════════════════════
 
 println("=" ^ 60)
-println("TEST 2: Sensor projection produces correct-dimensionality output")
+println("TEST 2: entity_features produces correct Dict with 8 features in [0,1]")
 println("=" ^ 60)
 
 let
     Random.seed!(42)
-    true_state = [0.9, 0.1, 0.1, 0.5, 0.5, 0.8, 0.3, 0.4]
-
-    sv1 = project(true_state, minimal_sensor_config())
-    @assert length(sv1) == 2 "Minimal config should produce 2 readings"
-
-    sv2 = project(true_state, full_sensor_config())
-    @assert length(sv2) == 8 "Full config should produce 8 readings"
-
-    for r in [sv1..., sv2...]
-        @assert 0.0 <= r <= 1.0 "Sensor reading out of [0,1]: $r"
+    world = create_world(:colour_typed)
+    # Find a living entity and extract features
+    for (i, e) in enumerate(world.entities)
+        e.alive || continue
+        features = entity_features(e, world.agent_pos, world.config.grid_size)
+        @assert features isa Dict{Symbol, Float64}
+        @assert length(features) == 8 "Should have 8 features"
+        for (k, v) in features
+            @assert 0.0 <= v <= 1.0 "Feature $k out of [0,1]: $v"
+        end
+        @assert haskey(features, :red) "Should have :red feature"
+        @assert haskey(features, :speed) "Should have :speed feature"
+        break
     end
-
-    println("PASSED: Sensor projection produces correct dimensionality and range")
+    println("PASSED: entity_features produces correct Dict with 8 features in [0,1]")
 end
 println()
 
@@ -204,37 +206,39 @@ end
 println()
 
 # ═══════════════════════════════════════
-# TEST 5: Per-grammar sensor projection produces different vectors
+# TEST 5: Features Dict works with compiled kernels from different grammars
 # ═══════════════════════════════════════
 
 println("=" ^ 60)
-println("TEST 5: Per-grammar sensor projection produces different vectors")
+println("TEST 5: Different grammars evaluate same feature dict correctly")
 println("=" ^ 60)
 
 let
     Random.seed!(42)
-    true_state = [0.9, 0.1, 0.1, 0.5, 0.5, 0.8, 0.3, 0.4]
+    features = Dict{Symbol, Float64}(
+        :red => 0.9, :green => 0.1, :blue => 0.1,
+        :x_norm => 0.5, :y_norm => 0.5,
+        :speed => 0.8, :wall_dist => 0.3, :agent_dist => 0.4
+    )
 
     grammars = generate_seed_grammars()
 
-    gsvs = project_per_grammar(true_state, grammars)
+    # Colour grammar (grammar 2) should see red features
+    g_colour = grammars[2]  # Set([:red, :green, :blue])
+    programs = enumerate_programs(g_colour, 2; action_space=[:food, :enemy])
+    ck = compile_kernel(programs[1], g_colour, 1)
+    ts = Dict{Symbol, Any}()
+    result = ck.evaluate(features, ts)
+    @assert result isa Symbol "Should return a Symbol action"
 
-    @assert length(gsvs) == length(grammars) "Should have one vector per grammar"
+    # Motion grammar (grammar 3) should see speed/wall_dist features
+    g_motion = grammars[3]  # Set([:speed, :wall_dist])
+    programs_m = enumerate_programs(g_motion, 2; action_space=[:food, :enemy])
+    ck_m = compile_kernel(programs_m[1], g_motion, 1)
+    result_m = ck_m.evaluate(features, ts)
+    @assert result_m isa Symbol
 
-    colour_g = grammars[2]
-    motion_g = grammars[3]
-
-    sv_colour = gsvs[colour_g.id]
-    sv_motion = gsvs[motion_g.id]
-
-    @assert length(sv_colour) == 3 "Colour grammar should produce 3-dim vector"
-    @assert length(sv_motion) == 2 "Motion grammar should produce 2-dim vector"
-
-    @assert sv_colour[1] > 0.7 "Colour should see high red (true state r=0.9)"
-    @assert sv_motion[1] > 0.5 "Motion should see high speed (true state speed=0.8)"
-
-    println("PASSED: Colour vector=$(round.(sv_colour, digits=3)), " *
-            "Motion vector=$(round.(sv_motion, digits=3))")
+    println("PASSED: Different grammars evaluate same feature dict correctly")
 end
 println()
 
@@ -253,7 +257,7 @@ let
     g = grammars[2]  # colour grammar: r, g, b
     programs = enumerate_programs(g, 3; action_space=[:food, :enemy])
 
-    red_sv = [0.95, 0.1, 0.1]  # red entity → should be :enemy under colour_typed rule
+    features = Dict{Symbol, Float64}(:red => 0.95, :green => 0.1, :blue => 0.1)
     ts = Dict{Symbol, Any}()
 
     # Find a program that predicts :enemy for red entities (correct)
@@ -262,7 +266,7 @@ let
     incorrect_prog = nothing
     for (i, p) in enumerate(programs)
         ck_test = compile_kernel(p, g, i)
-        rec = ck_test.evaluate(red_sv, ts)
+        rec = ck_test.evaluate(features, ts)
         if correct_prog === nothing && rec == :enemy
             correct_prog = (i, p, ck_test)
         end
@@ -280,11 +284,10 @@ let
     belief = MixtureMeasure(Interval(0.0, 1.0), Measure[comp1, comp2], [0.0, 0.0])
 
     ck_vec = [correct_prog[3], incorrect_prog[3]]
-    grammar_sensor_vectors = Dict{Int, Vector{Float64}}(g.id => red_sv)
 
     posterior = belief
     for _ in 1:5
-        k = build_observation_kernel(ck_vec, grammar_sensor_vectors, ts, :enemy)
+        k = build_observation_kernel(ck_vec, features, ts, :enemy)
         posterior = condition(posterior, k, 1.0)
     end
 
@@ -448,7 +451,7 @@ let
         println("  With positive weight: $(length(perturbed_with_weight))")
         for g in perturbed_with_weight[1:min(5, length(perturbed_with_weight))]
             println("  Grammar $(g.id): weight=$(round(get(gw, g.id, 0.0), digits=6)), " *
-                    "channels=$(length(g.sensor_config.channels)), rules=$(length(g.rules))")
+                    "features=$(length(g.feature_set)), rules=$(length(g.rules))")
         end
     end
 

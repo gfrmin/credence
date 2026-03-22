@@ -6,13 +6,14 @@ Each domain must provide the following to use the program-space inference layer 
 # Required from a domain module:
 
 # 1. Seed grammars — domain-specific terminal alphabet
+#    Each grammar declares which named features it attends to.
 generate_seed_grammars() → Vector{Grammar}
 
-# 2. Sensor projection — map true state to sensor vector
-project(true_state::Vector{Float64}, config::SensorConfig; ...) → Vector{Float64}
+# 2. Feature extraction — produce named features as Dict{Symbol, Float64}
+extract_features(observation) → Dict{Symbol, Float64}
 
-# 3. Available source indices — valid channel indices for perturbation
-available_source_indices() → Vector{Int}
+# 3. Available features — full set of named features for perturbation
+const ALL_DOMAIN_FEATURES = Set{Symbol}(...)
 
 # 4. Outcome classification — map domain events to utility values
 classify_outcome(event) → Float64
@@ -23,4 +24,4 @@ classify_outcome(event) → Float64
 run_agent(; kwargs...) → (metrics, state, grammar_pool)
 ```
 
-See `grid_world/` for a complete implementation and `email_agent/` for stubs.
+See `grid_world/` for a complete implementation and `email_agent/` for the email domain.

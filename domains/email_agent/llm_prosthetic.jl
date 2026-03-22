@@ -2,7 +2,7 @@
     llm_prosthetic.jl — LLM as sensor prosthetic (spec §6.4)
 
 The LLM extends the agent's sensory capabilities. When invoked, it
-enriches the feature vector by reducing noise on key channels (urgency,
+enriches the feature dictionary by reducing noise on key features (urgency,
 topic classification). The agent decides when to use the prosthetic
 via EU, like any other action. The LLM is part of the body, not the brain.
 
@@ -26,7 +26,7 @@ struct LLMConfig
 end
 
 function default_llm_config(; enabled::Bool=false)
-    LLMConfig("http://localhost:11434", "llama3.1", 200, enabled, 10.0)
+    LLMConfig("http://localhost:11434", "llama3.2", 200, enabled, 10.0)
 end
 
 function call_ollama(config::LLMConfig, prompt::String)::Union{String, Nothing}
@@ -52,13 +52,13 @@ function call_ollama(config::LLMConfig, prompt::String)::Union{String, Nothing}
 end
 
 """
-    llm_enrich_features(config, email, base_features) → Vector{Float64}
+    llm_enrich_features(config, email, base_features) → Dict{Symbol, Float64}
 
 Enrich features via Ollama when enabled, otherwise fall back to simulation.
 On any failure (network, parse), falls back to simulation transparently.
 """
 function llm_enrich_features(config::LLMConfig, email::Email,
-                              base_features::Vector{Float64})::Vector{Float64}
+                              base_features::Dict{Symbol, Float64})::Dict{Symbol, Float64}
     if !config.enabled
         return simulate_llm_enrichment(email, base_features)
     end
@@ -84,16 +84,16 @@ Body: [$(email.word_count) words about $(string(email.topic))]"""
         enriched = copy(base_features)
 
         if haskey(parsed, :urgency)
-            enriched[5] = clamp(Float64(parsed.urgency), 0.0, 1.0)
+            enriched[:urgency] = clamp(Float64(parsed.urgency), 0.0, 1.0)
         end
         if haskey(parsed, :topic)
             topic = Symbol(parsed.topic)
-            enriched[6] = topic == :finance ? 1.0 : 0.0
-            enriched[7] = topic == :scheduling ? 1.0 : 0.0
-            enriched[8] = topic == :marketing ? 1.0 : 0.0
+            enriched[:topic_finance] = topic == :finance ? 1.0 : 0.0
+            enriched[:topic_scheduling] = topic == :scheduling ? 1.0 : 0.0
+            enriched[:topic_marketing] = topic == :marketing ? 1.0 : 0.0
         end
         if haskey(parsed, :requires_action)
-            enriched[9] = Bool(parsed.requires_action) ? 1.0 : 0.0
+            enriched[:requires_action] = Bool(parsed.requires_action) ? 1.0 : 0.0
         end
 
         return enriched
@@ -110,38 +110,16 @@ end
 const LLM_COST = 0.15
 
 """
-    simulate_llm_enrichment(email, base_features) → Vector{Float64}
+    simulate_llm_enrichment(email, base_features) → Dict{Symbol, Float64}
 
-Simulate LLM feature enrichment: sharpen urgency and topic channels
-by replacing noisy observations with ground-truth values. In production,
-this would call the Anthropic API and parse structured output.
+Simulate LLM feature enrichment: sharpen urgency and topic features
+by replacing noisy observations with ground-truth values.
 """
-function simulate_llm_enrichment(email::Email, base_features::Vector{Float64})::Vector{Float64}
+function simulate_llm_enrichment(email::Email, base_features::Dict{Symbol, Float64})::Dict{Symbol, Float64}
     enriched = copy(base_features)
-    # Sharpen urgency (channel 4 → index 5)
-    enriched[5] = email.urgency
-    # Sharpen topic channels (channels 5-7 → indices 6-8)
-    enriched[6] = email.topic == :finance ? 1.0 : 0.0
-    enriched[7] = email.topic == :scheduling ? 1.0 : 0.0
-    enriched[8] = email.topic == :marketing ? 1.0 : 0.0
+    enriched[:urgency] = email.urgency
+    enriched[:topic_finance] = email.topic == :finance ? 1.0 : 0.0
+    enriched[:topic_scheduling] = email.topic == :scheduling ? 1.0 : 0.0
+    enriched[:topic_marketing] = email.topic == :marketing ? 1.0 : 0.0
     enriched
-end
-
-"""
-    project_enriched_per_grammar(enriched_features, grammars) → Dict{Int, Vector{Float64}}
-
-Project enriched features through each grammar's sensor config.
-Unlike project_email_per_grammar, no additional noise is added —
-the LLM has already provided calibrated readings.
-"""
-function project_enriched_per_grammar(enriched_features::Vector{Float64}, grammars::Vector{Grammar})
-    result = Dict{Int, Vector{Float64}}()
-    for g in grammars
-        readings = Float64[]
-        for ch in g.sensor_config.channels
-            push!(readings, clamp(enriched_features[ch.source_index + 1], 0.0, 1.0))
-        end
-        result[g.id] = readings
-    end
-    result
 end

@@ -140,68 +140,66 @@ end
 # ═══════════════════════════════════════
 
 """
-    perturb_grammar(g, freq_table, available_source_indices) → Grammar
+    perturb_grammar(g, freq_table, available_features) → Grammar
 
 Perturb a grammar by one operator. The freq_table argument is REQUIRED
 (enforced by the type system) to ensure posterior analysis before
-nonterminal proposal. available_source_indices is the set of valid
-source channel indices for the domain.
+nonterminal proposal. available_features is the full set of named
+features the domain provides.
 """
 function perturb_grammar(g::Grammar, freq_table::SubprogramFrequencyTable,
-                          available_indices::Vector{Int})::Grammar
-    ops = [:add_channel, :remove_channel, :add_rule, :remove_rule, :modify_threshold]
+                          available_features::Set{Symbol})::Grammar
+    ops = [:add_feature, :remove_feature, :add_rule, :remove_rule, :modify_threshold]
     op = rand(ops)
 
-    if op == :add_channel
-        covered = Set(ch.source_index for ch in g.sensor_config.channels)
-        available = setdiff(Set(available_indices), covered)
-        isempty(available) && return Grammar(g.sensor_config, g.rules, next_grammar_id())
-        new_idx = rand(collect(available))
-        new_ch = SensorChannel(new_idx, :identity, 0.05, 1.0)
-        new_sc = SensorConfig([g.sensor_config.channels; new_ch])
-        return Grammar(new_sc, g.rules, next_grammar_id())
+    if op == :add_feature
+        available = setdiff(available_features, g.feature_set)
+        isempty(available) && return Grammar(g.feature_set, g.rules, next_grammar_id())
+        new_feat = rand(collect(available))
+        new_fs = union(g.feature_set, Set([new_feat]))
+        return Grammar(new_fs, g.rules, next_grammar_id())
 
-    elseif op == :remove_channel
-        length(g.sensor_config.channels) <= 1 && return Grammar(g.sensor_config, g.rules, next_grammar_id())
-        idx = rand(1:length(g.sensor_config.channels))
-        new_channels = [g.sensor_config.channels[i] for i in eachindex(g.sensor_config.channels) if i != idx]
-        return Grammar(SensorConfig(new_channels), g.rules, next_grammar_id())
+    elseif op == :remove_feature
+        length(g.feature_set) <= 1 && return Grammar(g.feature_set, g.rules, next_grammar_id())
+        to_remove = rand(collect(g.feature_set))
+        new_fs = setdiff(g.feature_set, Set([to_remove]))
+        return Grammar(new_fs, g.rules, next_grammar_id())
 
     elseif op == :add_rule
         proposed = propose_nonterminal(freq_table)
-        isnothing(proposed) && return Grammar(g.sensor_config, g.rules, next_grammar_id())
+        isnothing(proposed) && return Grammar(g.feature_set, g.rules, next_grammar_id())
         existing_names = Set(r.name for r in g.rules)
-        proposed.name in existing_names && return Grammar(g.sensor_config, g.rules, next_grammar_id())
-        return Grammar(g.sensor_config, [g.rules; proposed], next_grammar_id())
+        proposed.name in existing_names && return Grammar(g.feature_set, g.rules, next_grammar_id())
+        return Grammar(g.feature_set, [g.rules; proposed], next_grammar_id())
 
     elseif op == :remove_rule
-        isempty(g.rules) && return Grammar(g.sensor_config, g.rules, next_grammar_id())
+        isempty(g.rules) && return Grammar(g.feature_set, g.rules, next_grammar_id())
         idx = rand(1:length(g.rules))
         new_rules = [g.rules[i] for i in eachindex(g.rules) if i != idx]
-        return Grammar(g.sensor_config, new_rules, next_grammar_id())
+        return Grammar(g.feature_set, new_rules, next_grammar_id())
 
     elseif op == :modify_threshold
-        isempty(g.rules) && return Grammar(g.sensor_config, g.rules, next_grammar_id())
+        isempty(g.rules) && return Grammar(g.feature_set, g.rules, next_grammar_id())
         rule_idx = rand(1:length(g.rules))
         rule = g.rules[rule_idx]
         nodes = collect_threshold_nodes(rule.body)
-        isempty(nodes) && return Grammar(g.sensor_config, g.rules, next_grammar_id())
+        isempty(nodes) && return Grammar(g.feature_set, g.rules, next_grammar_id())
         node = rand(nodes)
         other_thresholds = filter(t -> t != node.threshold, THRESHOLDS)
-        isempty(other_thresholds) && return Grammar(g.sensor_config, g.rules, next_grammar_id())
+        isempty(other_thresholds) && return Grammar(g.feature_set, g.rules, next_grammar_id())
         new_t = rand(other_thresholds)
         new_body = replace_threshold(rule.body, node, new_t)
         new_rules = [i == rule_idx ? ProductionRule(rule.name, new_body) : g.rules[i]
                      for i in eachindex(g.rules)]
-        return Grammar(g.sensor_config, new_rules, next_grammar_id())
+        return Grammar(g.feature_set, new_rules, next_grammar_id())
     end
 
-    Grammar(g.sensor_config, g.rules, next_grammar_id())
+    Grammar(g.feature_set, g.rules, next_grammar_id())
 end
 
-# Backward-compatible 2-argument form using available_source_indices from domain
+# Backward-compatible 2-argument form using a default feature set
 function perturb_grammar(g::Grammar, freq_table::SubprogramFrequencyTable)::Grammar
-    perturb_grammar(g, freq_table, collect(0:7))
+    perturb_grammar(g, freq_table, g.feature_set)
 end
 
 # ═══════════════════════════════════════
@@ -209,10 +207,10 @@ end
 # ═══════════════════════════════════════
 
 function expr_equal(a::GTExpr, b::GTExpr)
-    a.channel == b.channel && a.threshold == b.threshold
+    a.feature == b.feature && a.threshold == b.threshold
 end
 function expr_equal(a::LTExpr, b::LTExpr)
-    a.channel == b.channel && a.threshold == b.threshold
+    a.feature == b.feature && a.threshold == b.threshold
 end
 function expr_equal(a::AndExpr, b::AndExpr)
     expr_equal(a.left, b.left) && expr_equal(a.right, b.right)
@@ -274,10 +272,10 @@ function collect_threshold_nodes(e::IfExpr)
 end
 
 function replace_threshold(e::GTExpr, old::ProgramExpr, new_t::Float64)
-    expr_equal(e, old) ? GTExpr(e.channel, new_t) : e
+    expr_equal(e, old) ? GTExpr(e.feature, new_t) : e
 end
 function replace_threshold(e::LTExpr, old::ProgramExpr, new_t::Float64)
-    expr_equal(e, old) ? LTExpr(e.channel, new_t) : e
+    expr_equal(e, old) ? LTExpr(e.feature, new_t) : e
 end
 function replace_threshold(e::AndExpr, old::ProgramExpr, new_t::Float64)
     AndExpr(replace_threshold(e.left, old, new_t), replace_threshold(e.right, old, new_t))

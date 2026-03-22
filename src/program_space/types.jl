@@ -7,37 +7,18 @@ inference over grammars shares these types.
 """
 
 # ═══════════════════════════════════════
-# Sensor configuration types
-# ═══════════════════════════════════════
-
-struct SensorChannel
-    source_index::Int       # which dimension of true state
-    transform::Symbol       # :identity, :threshold, :delta, :windowed_mean
-    noise_σ::Float64        # observation noise
-    cost::Float64           # contributes to grammar complexity
-end
-
-struct SensorConfig
-    channels::Vector{SensorChannel}
-end
-
-sensor_config_complexity(sc::SensorConfig) = sum(ch.cost for ch in sc.channels)
-
-n_channels(sc::SensorConfig) = length(sc.channels)
-
-# ═══════════════════════════════════════
 # AST types for program expressions
 # ═══════════════════════════════════════
 
 abstract type ProgramExpr end
 
 struct GTExpr <: ProgramExpr
-    channel::Int       # index into sensor vector (0-based)
+    feature::Symbol
     threshold::Float64
 end
 
 struct LTExpr <: ProgramExpr
-    channel::Int
+    feature::Symbol
     threshold::Float64
 end
 
@@ -88,10 +69,10 @@ end
 # ── Pretty printing ──
 
 function show_expr(e::GTExpr)
-    "GT($(e.channel),$(e.threshold))"
+    "(gt :$(e.feature) $(e.threshold))"
 end
 function show_expr(e::LTExpr)
-    "LT($(e.channel),$(e.threshold))"
+    "(lt :$(e.feature) $(e.threshold))"
 end
 function show_expr(e::AndExpr)
     "AND($(show_expr(e.left)),$(show_expr(e.right)))"
@@ -131,20 +112,20 @@ struct ProductionRule
 end
 
 struct Grammar
-    sensor_config::SensorConfig
+    feature_set::Set{Symbol}
     rules::Vector{ProductionRule}
     complexity::Float64  # precomputed |G|
     id::Int
 end
 
-function compute_grammar_complexity(sc::SensorConfig, rules::Vector{ProductionRule})
-    sc_cost = sensor_config_complexity(sc)
+function compute_grammar_complexity(feature_set::Set{Symbol}, rules::Vector{ProductionRule})
+    feature_cost = Float64(length(feature_set))
     rules_cost = sum(1.0 + expr_complexity(r.body) for r in rules; init=0.0)
-    sc_cost + rules_cost
+    feature_cost + rules_cost
 end
 
-function Grammar(sc::SensorConfig, rules::Vector{ProductionRule}, id::Int)
-    Grammar(sc, rules, compute_grammar_complexity(sc, rules), id)
+function Grammar(feature_set::Set{Symbol}, rules::Vector{ProductionRule}, id::Int)
+    Grammar(feature_set, rules, compute_grammar_complexity(feature_set, rules), id)
 end
 
 # ═══════════════════════════════════════
@@ -164,7 +145,7 @@ end
 struct CompiledKernel
     # NO AST FIELD. Expression compiled into closure.
     # This is a type-level constraint: if the AST isn't here, it can't be interpreted.
-    evaluate::Function       # (sensor_vector, temporal_state) → Symbol
+    evaluate::Function       # (features::Dict{Symbol,Float64}, temporal_state) → Symbol
     complexity::Int
     grammar_id::Int
     program_id::Int

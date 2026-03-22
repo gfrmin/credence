@@ -13,8 +13,8 @@ using Credence: BetaMeasure, TaggedBetaMeasure, MixtureMeasure, Finite, Interval
 using Credence: prune, truncate
 using Credence: ActionExpr, IfExpr
 
-# Grid-world sensor configs and terminals for program enumeration tests
-include(joinpath(@__DIR__, "..", "domains", "grid_world", "sensors.jl"))
+# Grid-world simulation and terminals for program enumeration tests
+include(joinpath(@__DIR__, "..", "domains", "grid_world", "simulation.jl"))
 include(joinpath(@__DIR__, "..", "domains", "grid_world", "terminals.jl"))
 
 using Random
@@ -33,7 +33,7 @@ let
     println("PASSED: $(length(grammars)) seed grammars generated")
 
     for g in grammars
-        @assert length(g.sensor_config.channels) > 0 "Grammar $(g.id) has no sensor channels"
+        @assert !isempty(g.feature_set) "Grammar $(g.id) has no features"
         @assert g.complexity > 0 "Grammar $(g.id) has non-positive complexity"
     end
     println("PASSED: All grammars have valid config and complexity")
@@ -67,15 +67,15 @@ let
     kernels = [compile_kernel(p, g, i) for (i, p) in enumerate(programs)]
     @assert length(kernels) == length(programs)
 
-    red_sv = [0.95, 0.1, 0.1]
+    red_features = Dict(:red => 0.95, :green => 0.1, :blue => 0.1)
     ts = Dict{Symbol, Any}()
 
     # evaluate returns Symbol (action), not Bool
-    results_red = [k.evaluate(red_sv, ts) for k in kernels]
+    results_red = [k.evaluate(red_features, ts) for k in kernels]
     @assert all(r -> r isa Symbol, results_red) "evaluate should return Symbol"
 
-    blue_sv = [0.1, 0.1, 0.95]
-    results_blue = [k.evaluate(blue_sv, ts) for k in kernels]
+    blue_features = Dict(:red => 0.1, :green => 0.1, :blue => 0.95)
+    results_blue = [k.evaluate(blue_features, ts) for k in kernels]
 
     # IfExpr programs should return different actions for red vs blue
     branching = [i for i in eachindex(kernels) if results_red[i] != results_blue[i]]
@@ -117,7 +117,7 @@ println("=" ^ 60)
 
 let
     grammars = generate_seed_grammars()
-    g = grammars[5]  # colour + speed grammar: 4 channels
+    g = grammars[5]  # colour + speed grammar: 4 features
     programs = enumerate_programs(g, 3; action_space=[:a, :b])
     @assert length(programs) >= 10 "Need ≥ 10 programs for speed test"
 
@@ -127,11 +127,11 @@ let
     p = first(complex_progs)
     ck = compile_kernel(p, g, 1)
 
-    sv = [0.9, 0.1, 0.1, 0.8]
+    features = Dict(:red => 0.9, :green => 0.1, :blue => 0.1, :speed => 0.8)
     ts = Dict{Symbol, Any}()
 
     for _ in 1:10_000
-        ck.evaluate(sv, ts)
+        ck.evaluate(features, ts)
     end
 
     n_calls = 10_000
@@ -139,7 +139,7 @@ let
     for _ in 1:3
         t0 = time_ns()
         for _ in 1:n_calls
-            ck.evaluate(sv, ts)
+            ck.evaluate(features, ts)
         end
         elapsed_ms = (time_ns() - t0) / 1_000_000
         best_ms = min(best_ms, elapsed_ms)
@@ -159,10 +159,10 @@ println("TEST 5: Compression payoff — nonterminals reduce complexity")
 println("=" ^ 60)
 
 let
-    g_bare = Grammar(colour_sensor_config(), ProductionRule[], 1)
+    g_bare = Grammar(Set([:red, :green, :blue]), ProductionRule[], 1)
 
-    red_body = AndExpr(GTExpr(0, 0.7), AndExpr(LTExpr(1, 0.3), LTExpr(2, 0.3)))
-    g_red = Grammar(colour_sensor_config(), [ProductionRule(:RED, red_body)], 2)
+    red_body = AndExpr(GTExpr(:red, 0.7), AndExpr(LTExpr(:green, 0.3), LTExpr(:blue, 0.3)))
+    g_red = Grammar(Set([:red, :green, :blue]), [ProductionRule(:RED, red_body)], 2)
 
     bare_complexity = expr_complexity(red_body)
     @assert bare_complexity == 5 "Expected complexity 5 for raw expression, got $bare_complexity"
@@ -214,13 +214,13 @@ println("=" ^ 60)
 
 let
     Random.seed!(42)
-    g = Grammar(colour_sensor_config(), ProductionRule[], 1)
+    g = Grammar(Set([:red, :green, :blue]), ProductionRule[], 1)
     programs = enumerate_programs(g, 3; action_space=[:a, :b])
 
     prog_weights = zeros(length(programs))
     for (i, p) in enumerate(programs)
         s = show_expr(p.expr)
-        if occursin("GT(0,0.7)", s)
+        if occursin("(gt :red 0.7)", s)
             prog_weights[i] = 0.1
         else
             prog_weights[i] = 0.001
@@ -344,33 +344,33 @@ println("TEST 10: Temporal operators in compiled kernels")
 println("=" ^ 60)
 
 let
-    g = Grammar(minimal_sensor_config(), ProductionRule[], 1)
+    g = Grammar(Set([:red, :speed]), ProductionRule[], 1)
 
     # Test temporal predicates via IfExpr programs
-    changed_pred = ChangedExpr(GTExpr(0, 0.5))
+    changed_pred = ChangedExpr(GTExpr(:red, 0.5))
     if_expr = IfExpr(changed_pred, ActionExpr(:a), ActionExpr(:b))
     ck = compile_kernel(Program(if_expr, expr_complexity(if_expr), 1), g, 1)
 
-    ts_empty = Dict{Symbol, Any}(:recent => Vector{Float64}[])
-    @assert ck.evaluate([0.8, 0.3], ts_empty) == :b "CHANGED false → else branch (:b)"
+    ts_empty = Dict{Symbol, Any}(:recent => Dict{Symbol, Float64}[])
+    @assert ck.evaluate(Dict(:red => 0.8, :speed => 0.3), ts_empty) == :b "CHANGED false → else branch (:b)"
 
-    ts_changed = Dict{Symbol, Any}(:recent => [[0.3, 0.5]])
-    @assert ck.evaluate([0.8, 0.3], ts_changed) == :a "CHANGED true → then branch (:a)"
+    ts_changed = Dict{Symbol, Any}(:recent => [Dict(:red => 0.3, :speed => 0.5)])
+    @assert ck.evaluate(Dict(:red => 0.8, :speed => 0.3), ts_changed) == :a "CHANGED true → then branch (:a)"
 
-    ts_same = Dict{Symbol, Any}(:recent => [[0.8, 0.5]])
-    @assert ck.evaluate([0.9, 0.3], ts_same) == :b "CHANGED false → else branch (:b)"
+    ts_same = Dict{Symbol, Any}(:recent => [Dict(:red => 0.8, :speed => 0.5)])
+    @assert ck.evaluate(Dict(:red => 0.9, :speed => 0.3), ts_same) == :b "CHANGED false → else branch (:b)"
 
     println("PASSED: CHANGED operator compiles and evaluates correctly in IfExpr")
 
-    persists_pred = PersistsExpr(GTExpr(0, 0.5), 2)
+    persists_pred = PersistsExpr(GTExpr(:red, 0.5), 2)
     if_expr2 = IfExpr(persists_pred, ActionExpr(:a), ActionExpr(:b))
     ck2 = compile_kernel(Program(if_expr2, expr_complexity(if_expr2), 1), g, 2)
 
-    ts_persists = Dict{Symbol, Any}(:recent => [[0.8, 0.3], [0.9, 0.4]])
-    @assert ck2.evaluate([0.85, 0.3], ts_persists) == :a "PERSISTS(2) true → then branch"
+    ts_persists = Dict{Symbol, Any}(:recent => [Dict(:red => 0.8, :speed => 0.3), Dict(:red => 0.9, :speed => 0.4)])
+    @assert ck2.evaluate(Dict(:red => 0.85, :speed => 0.3), ts_persists) == :a "PERSISTS(2) true → then branch"
 
-    ts_not_persist = Dict{Symbol, Any}(:recent => [[0.3, 0.5]])
-    @assert ck2.evaluate([0.8, 0.3], ts_not_persist) == :b "PERSISTS(2) false → else branch"
+    ts_not_persist = Dict{Symbol, Any}(:recent => [Dict(:red => 0.3, :speed => 0.5)])
+    @assert ck2.evaluate(Dict(:red => 0.8, :speed => 0.3), ts_not_persist) == :b "PERSISTS(2) false → else branch"
 
     println("PASSED: PERSISTS operator compiles and evaluates correctly in IfExpr")
 end
@@ -385,8 +385,7 @@ println("TEST 11: Program enumeration includes temporal operators when enabled")
 println("=" ^ 60)
 
 let
-    sc = SensorConfig([SensorChannel(0, :identity, 0.05, 1.0)])
-    g = Grammar(sc, ProductionRule[], 1)
+    g = Grammar(Set([:red]), ProductionRule[], 1)
 
     programs_no_temporal = enumerate_programs(g, 3; include_temporal=false, action_space=[:a, :b])
     programs_with_temporal = enumerate_programs(g, 3; include_temporal=true, action_space=[:a, :b])
@@ -466,7 +465,7 @@ println("=" ^ 60)
 
 let
     Random.seed!(42)
-    g = Grammar(colour_sensor_config(), ProductionRule[], 1)
+    g = Grammar(Set([:red, :green, :blue]), ProductionRule[], 1)
     # 3 actions → each predicate generates 6 programs (3×2 ordered pairs),
     # providing enough n_sources for compression payoff
     programs = enumerate_programs(g, 3; action_space=[:a, :b, :c])
@@ -474,9 +473,9 @@ let
     prog_weights = zeros(length(programs))
     for (i, p) in enumerate(programs)
         s = show_expr(p.expr)
-        if occursin("GT(0,0.7)", s) && occursin("LT(1,0.3)", s)
+        if occursin("(gt :red 0.7)", s) && occursin("(lt :green 0.3)", s)
             prog_weights[i] = 1.0
-        elseif occursin("GT(0,0.7)", s) || occursin("LT(1,0.3)", s)
+        elseif occursin("(gt :red 0.7)", s) || occursin("(lt :green 0.3)", s)
             prog_weights[i] = 0.1
         else
             prog_weights[i] = 0.001
@@ -490,10 +489,10 @@ let
     @assert proposed !== nothing "Should propose a nonterminal from colour posterior"
 
     body_str = show_expr(proposed.body)
-    has_colour_ref = any(ch -> occursin("($ch,", body_str), ["0", "1", "2"])
-    @assert has_colour_ref "Proposed body should reference colour channels, got: $body_str"
+    has_colour_ref = any(feat -> occursin(":$feat", body_str), [:red, :green, :blue])
+    @assert has_colour_ref "Proposed body should reference colour features, got: $body_str"
 
-    new_g = Grammar(colour_sensor_config(), [proposed], 2)
+    new_g = Grammar(Set([:red, :green, :blue]), [proposed], 2)
     new_programs = enumerate_programs(new_g, 3; action_space=[:a, :b, :c])
 
     nt_progs = filter(p -> occursin(string(proposed.name), show_expr(p.expr)), new_programs)
@@ -518,8 +517,8 @@ println("=" ^ 60)
 
 let
     Random.seed!(42)
-    red_body = AndExpr(GTExpr(0, 0.7), AndExpr(LTExpr(1, 0.3), LTExpr(2, 0.3)))
-    g = Grammar(colour_sensor_config(), [ProductionRule(:RED, red_body)], 1)
+    red_body = AndExpr(GTExpr(:red, 0.7), AndExpr(LTExpr(:green, 0.3), LTExpr(:blue, 0.3)))
+    g = Grammar(Set([:red, :green, :blue]), [ProductionRule(:RED, red_body)], 1)
     original_str = show_expr(red_body)
 
     dummy_table = SubprogramFrequencyTable(ProgramExpr[], Float64[], Vector{Int}[])
@@ -551,15 +550,15 @@ println("=" ^ 60)
 
 let
     Random.seed!(42)
-    g = Grammar(colour_sensor_config(), ProductionRule[], 1)
+    g = Grammar(Set([:red, :green, :blue]), ProductionRule[], 1)
     programs = enumerate_programs(g, 3; action_space=[:a, :b, :c])
 
     prog_weights = zeros(length(programs))
     for (i, p) in enumerate(programs)
         s = show_expr(p.expr)
-        if occursin("GT(0,0.7)", s) && occursin("LT(1,0.3)", s)
+        if occursin("(gt :red 0.7)", s) && occursin("(lt :green 0.3)", s)
             prog_weights[i] = 1.0
-        elseif occursin("GT(0,0.7)", s)
+        elseif occursin("(gt :red 0.7)", s)
             prog_weights[i] = 0.1
         else
             prog_weights[i] = 0.001
@@ -619,15 +618,15 @@ let
     println("  Scenario A PASSED: stable 2nd-half ll=$(round(stable_ll_second_half, digits=2)), " *
             "CHANGED 2nd-half ll=$changed_ll_second_half")
 
-    changed_gt = compile_expr(ChangedExpr(GTExpr(0, 0.7)), ProductionRule[])
-    ts = Dict{Symbol, Any}(:recent => Vector{Float64}[])
+    changed_gt = compile_expr(ChangedExpr(GTExpr(:red, 0.7)), ProductionRule[])
+    ts = Dict{Symbol, Any}(:recent => Dict{Symbol, Float64}[])
     changed_fires = Bool[]
 
     for step in 1:n_steps
         red = step <= 10 ? 0.9 : 0.5
-        sv = [red, 0.5]
-        push!(changed_fires, changed_gt(sv, ts))
-        push!(ts[:recent], sv)
+        features = Dict(:red => red, :speed => 0.5)
+        push!(changed_fires, changed_gt(features, ts))
+        push!(ts[:recent], features)
         while length(ts[:recent]) > 10
             popfirst!(ts[:recent])
         end
@@ -651,7 +650,7 @@ println("TEST: add_programs_to_state! adds programs with deduplication")
 println("=" ^ 60)
 
 let
-    using Credence: AgentState, add_programs_to_state!, Grammar, SensorConfig, SensorChannel
+    using Credence: AgentState, add_programs_to_state!, Grammar
     using Credence: enumerate_programs, compile_kernel
     using Credence: expr_equal
 
@@ -713,7 +712,7 @@ println("TEST: top_k_grammar_ids returns correct ordering")
 println("=" ^ 60)
 
 let
-    using Credence: AgentState, top_k_grammar_ids, Grammar, SensorConfig, SensorChannel
+    using Credence: AgentState, top_k_grammar_ids, Grammar
     using Credence: enumerate_programs, compile_kernel
 
     Random.seed!(42)
@@ -757,6 +756,91 @@ let
 
     println("  Top 2: $top2 (expected [$(g2.id), $(g1.id)])")
     println("PASSED: top_k_grammar_ids returns correct ordering")
+end
+println()
+
+# ═══════════════════════════════════════
+# TEST: Named feature compilation
+# ═══════════════════════════════════════
+
+println("=" ^ 60)
+println("TEST: Named feature compilation")
+println("=" ^ 60)
+
+let
+    gt = GTExpr(:urgency, 0.7)
+    lt = LTExpr(:urgency, 0.3)
+    fn_gt = compile_expr(gt, ProductionRule[])
+    fn_lt = compile_expr(lt, ProductionRule[])
+    ts = Dict{Symbol, Any}()
+
+    @assert fn_gt(Dict(:urgency => 0.9), ts) == true "GT(:urgency, 0.7) with 0.9 → true"
+    @assert fn_gt(Dict(:urgency => 0.3), ts) == false "GT(:urgency, 0.7) with 0.3 → false"
+    @assert fn_lt(Dict(:urgency => 0.1), ts) == true "LT(:urgency, 0.3) with 0.1 → true"
+    @assert fn_lt(Dict(:urgency => 0.5), ts) == false "LT(:urgency, 0.3) with 0.5 → false"
+    println("PASSED: Named feature compilation works correctly")
+end
+println()
+
+# ═══════════════════════════════════════
+# TEST: Missing feature defaults to 0.0
+# ═══════════════════════════════════════
+
+println("=" ^ 60)
+println("TEST: Missing feature defaults to 0.0")
+println("=" ^ 60)
+
+let
+    gt = GTExpr(:nonexistent, 0.5)
+    fn = compile_expr(gt, ProductionRule[])
+    ts = Dict{Symbol, Any}()
+    @assert fn(Dict(:urgency => 0.9), ts) == false "Missing feature defaults to 0.0, so 0.0 > 0.5 is false"
+
+    gt2 = GTExpr(:nonexistent, -0.1)
+    fn2 = compile_expr(gt2, ProductionRule[])
+    @assert fn2(Dict(:urgency => 0.9), ts) == true "0.0 > -0.1 is true"
+    println("PASSED: Missing features default to 0.0")
+end
+println()
+
+# ═══════════════════════════════════════
+# TEST: Grammar works with different dict sizes
+# ═══════════════════════════════════════
+
+println("=" ^ 60)
+println("TEST: Grammar works with different dict sizes")
+println("=" ^ 60)
+
+let
+    g = Grammar(Set([:urgency]), ProductionRule[], 1)
+    programs = enumerate_programs(g, 2; action_space=[:a, :b])
+    @assert length(programs) > 0
+
+    ck = compile_kernel(programs[1], g, 1)
+    ts = Dict{Symbol, Any}()
+    # Small dict
+    r1 = ck.evaluate(Dict(:urgency => 0.5), ts)
+    # Large dict (extra keys ignored)
+    r2 = ck.evaluate(Dict(:urgency => 0.5, :foo => 0.1, :bar => 0.2), ts)
+    @assert r1 == r2 "Same result regardless of extra features"
+    println("PASSED: Grammar works with different dict sizes")
+end
+println()
+
+# ═══════════════════════════════════════
+# TEST: show_expr format for named features
+# ═══════════════════════════════════════
+
+println("=" ^ 60)
+println("TEST: show_expr format for named features")
+println("=" ^ 60)
+
+let
+    @assert show_expr(GTExpr(:urgency, 0.7)) == "(gt :urgency 0.7)" "GTExpr show format"
+    @assert show_expr(LTExpr(:speed, 0.3)) == "(lt :speed 0.3)" "LTExpr show format"
+    @assert show_expr(AndExpr(GTExpr(:red, 0.7), LTExpr(:green, 0.3))) ==
+        "AND((gt :red 0.7),(lt :green 0.3))" "AndExpr with named features"
+    println("PASSED: show_expr produces correct format")
 end
 println()
 

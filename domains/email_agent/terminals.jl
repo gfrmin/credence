@@ -1,33 +1,15 @@
 """
     terminals.jl — Email terminal alphabet and seed grammars
 
-Email-specific seed grammars. GTExpr channel indices are position-relative
-(index into the grammar's sensor vector, 0-based), NOT global source indices.
-compile_expr does ch+1 for Julia 1-based indexing.
-
-Source index mapping (for _email_sensor_config):
-    0 = sender_frequency       7 = topic_marketing
-    1 = sender_is_manager      8 = requires_action
-    2 = sender_is_direct_report 9 = email_length
-    3 = sender_is_external     10 = has_attachment
-    4 = urgency                11 = time_of_day
-    5 = topic_finance          12 = thread_depth
-    6 = topic_scheduling
+Email-specific seed grammars. GTExpr/LTExpr reference named features
+directly (e.g., :urgency, :sender_is_manager).
 """
 
 push!(LOAD_PATH, joinpath(@__DIR__, "..", "..", "src"))
 using Credence
-using Credence: Grammar, ProductionRule, SensorChannel, SensorConfig
+using Credence: Grammar, ProductionRule
 using Credence: GTExpr, LTExpr, AndExpr, OrExpr, NotExpr
 using Credence: next_grammar_id, reset_grammar_counter!
-
-# ═══════════════════════════════════════
-# Sensor config constructor
-# ═══════════════════════════════════════
-
-function _email_sensor_config(source_indices::Vector{Int})
-    SensorConfig([SensorChannel(si, :identity, 0.05, 1.0) for si in source_indices])
-end
 
 # ═══════════════════════════════════════
 # Seed grammars
@@ -36,100 +18,127 @@ end
 """
     generate_email_seed_grammars() → Vector{Grammar}
 
-Generate 14 seed grammars for the email domain. GTExpr channel indices
-are positions in the grammar's sensor vector, not global source indices.
+Generate 14 seed grammars for the email domain.
 """
 function generate_email_seed_grammars()::Vector{Grammar}
     reset_grammar_counter!()
     grammars = Grammar[]
 
-    # 1. Minimal: sender_freq(pos0), is_manager(pos1), urgency(pos2)
+    # 1. Minimal: sender_freq, is_manager, urgency
     push!(grammars, Grammar(
-        _email_sensor_config([0, 1, 4]),
+        Set([:sender_frequency, :sender_is_manager, :urgency]),
         ProductionRule[], next_grammar_id()))
 
-    # 2. Sender-focused: sender_freq(pos0), is_manager(pos1), is_dr(pos2), is_external(pos3)
+    # 2. Sender-focused: sender_freq, is_manager, is_dr, is_external
     push!(grammars, Grammar(
-        _email_sensor_config([0, 1, 2, 3]),
+        Set([:sender_frequency, :sender_is_manager, :sender_is_direct_report, :sender_is_external]),
         ProductionRule[], next_grammar_id()))
 
-    # 3. Topic-focused: topic_finance(pos0), topic_scheduling(pos1), topic_marketing(pos2)
+    # 3. Topic-focused: topic_finance, topic_scheduling, topic_marketing
     push!(grammars, Grammar(
-        _email_sensor_config([5, 6, 7]),
+        Set([:topic_finance, :topic_scheduling, :topic_marketing]),
         ProductionRule[], next_grammar_id()))
 
-    # 4. Action-focused: urgency(pos0), requires_action(pos1)
+    # 4. Action-focused: urgency, requires_action
     push!(grammars, Grammar(
-        _email_sensor_config([4, 8]),
+        Set([:urgency, :requires_action]),
         ProductionRule[], next_grammar_id()))
 
-    # 5. Content: urgency(pos0), email_length(pos1), has_attachment(pos2)
+    # 5. Content: urgency, email_length, has_attachment
     push!(grammars, Grammar(
-        _email_sensor_config([4, 9, 10]),
+        Set([:urgency, :email_length, :has_attachment]),
         ProductionRule[], next_grammar_id()))
 
-    # 6. Metadata: time_of_day(pos0), thread_depth(pos1)
+    # 6. Metadata: time_of_day, thread_depth
     push!(grammars, Grammar(
-        _email_sensor_config([11, 12]),
+        Set([:time_of_day, :thread_depth]),
         ProductionRule[], next_grammar_id()))
 
-    # 7. Sender + urgency: sender_freq(pos0), is_manager(pos1), is_dr(pos2), is_external(pos3), urgency(pos4)
+    # 7. Sender + urgency: sender_freq, is_manager, is_dr, is_external, urgency
     push!(grammars, Grammar(
-        _email_sensor_config([0, 1, 2, 3, 4]),
+        Set([:sender_frequency, :sender_is_manager, :sender_is_direct_report, :sender_is_external, :urgency]),
         ProductionRule[], next_grammar_id()))
 
-    # 8. Full: all 13 channels (pos0..pos12 = source0..source12)
+    # 8. Full: all 13 content features
     push!(grammars, Grammar(
-        _email_sensor_config(collect(0:12)),
+        ALL_EMAIL_FEATURES,
         ProductionRule[], next_grammar_id()))
 
     # 9. Minimal with FROM_BOSS nonterminal
-    #    Channels: sender_freq(pos0), is_manager(pos1), urgency(pos2)
-    #    FROM_BOSS = GT(pos1, 0.5) = is_manager
+    #    FROM_BOSS = GT(:sender_is_manager, 0.5)
     push!(grammars, Grammar(
-        _email_sensor_config([0, 1, 4]),
-        [ProductionRule(:FROM_BOSS, GTExpr(1, 0.5))],
+        Set([:sender_frequency, :sender_is_manager, :urgency]),
+        [ProductionRule(:FROM_BOSS, GTExpr(:sender_is_manager, 0.5))],
         next_grammar_id()))
 
     # 10. Action-focused with NEEDS_ATTENTION nonterminal
-    #     Channels: urgency(pos0), requires_action(pos1)
-    #     NEEDS_ATTENTION = AND(GT(pos1, 0.5), GT(pos0, 0.7))
+    #     NEEDS_ATTENTION = AND(GT(:requires_action, 0.5), GT(:urgency, 0.7))
     push!(grammars, Grammar(
-        _email_sensor_config([4, 8]),
-        [ProductionRule(:NEEDS_ATTENTION, AndExpr(GTExpr(1, 0.5), GTExpr(0, 0.7)))],
+        Set([:urgency, :requires_action]),
+        [ProductionRule(:NEEDS_ATTENTION, AndExpr(GTExpr(:requires_action, 0.5), GTExpr(:urgency, 0.7)))],
         next_grammar_id()))
 
     # 11. Topic + urgency with ROUTINE nonterminal
-    #     Channels: urgency(pos0), topic_marketing(pos1)
-    #     ROUTINE = AND(GT(pos1, 0.5), NOT(GT(pos0, 0.7)))
+    #     ROUTINE = AND(GT(:topic_marketing, 0.5), NOT(GT(:urgency, 0.7)))
     push!(grammars, Grammar(
-        _email_sensor_config([4, 7]),
-        [ProductionRule(:ROUTINE, AndExpr(GTExpr(1, 0.5), NotExpr(GTExpr(0, 0.7))))],
+        Set([:urgency, :topic_marketing]),
+        [ProductionRule(:ROUTINE, AndExpr(GTExpr(:topic_marketing, 0.5), NotExpr(GTExpr(:urgency, 0.7))))],
         next_grammar_id()))
 
     # 12. Sender + urgency with FROM_BOSS + NEEDS_ATTENTION
-    #     Channels: sender_freq(pos0), is_manager(pos1), urgency(pos2), requires_action(pos3)
     push!(grammars, Grammar(
-        _email_sensor_config([0, 1, 4, 8]),
-        [ProductionRule(:FROM_BOSS, GTExpr(1, 0.5)),
-         ProductionRule(:NEEDS_ATTENTION, AndExpr(GTExpr(3, 0.5), GTExpr(2, 0.7)))],
+        Set([:sender_frequency, :sender_is_manager, :urgency, :requires_action]),
+        [ProductionRule(:FROM_BOSS, GTExpr(:sender_is_manager, 0.5)),
+         ProductionRule(:NEEDS_ATTENTION, AndExpr(GTExpr(:requires_action, 0.5), GTExpr(:urgency, 0.7)))],
         next_grammar_id()))
 
     # 13. Sender + topic with ROUTINE + FROM_BOSS
-    #     Channels: sender_freq(pos0), is_manager(pos1), urgency(pos2), topic_marketing(pos3)
     push!(grammars, Grammar(
-        _email_sensor_config([0, 1, 4, 7]),
-        [ProductionRule(:ROUTINE, AndExpr(GTExpr(3, 0.5), NotExpr(GTExpr(2, 0.7)))),
-         ProductionRule(:FROM_BOSS, GTExpr(1, 0.5))],
+        Set([:sender_frequency, :sender_is_manager, :urgency, :topic_marketing]),
+        [ProductionRule(:ROUTINE, AndExpr(GTExpr(:topic_marketing, 0.5), NotExpr(GTExpr(:urgency, 0.7)))),
+         ProductionRule(:FROM_BOSS, GTExpr(:sender_is_manager, 0.5))],
         next_grammar_id()))
 
     # 14. Sender with TRUSTED nonterminal
-    #     Channels: sender_freq(pos0), is_manager(pos1), is_dr(pos2), is_external(pos3)
-    #     TRUSTED = AND(GT(pos0, 0.5), NOT(GT(pos3, 0.5)))
+    #     TRUSTED = AND(GT(:sender_frequency, 0.5), NOT(GT(:sender_is_external, 0.5)))
     push!(grammars, Grammar(
-        _email_sensor_config([0, 1, 2, 3]),
-        [ProductionRule(:TRUSTED, AndExpr(GTExpr(0, 0.5), NotExpr(GTExpr(3, 0.5))))],
+        Set([:sender_frequency, :sender_is_manager, :sender_is_direct_report, :sender_is_external]),
+        [ProductionRule(:TRUSTED, AndExpr(GTExpr(:sender_frequency, 0.5), NotExpr(GTExpr(:sender_is_external, 0.5))))],
         next_grammar_id()))
+
+    grammars
+end
+
+"""
+    generate_email_seed_grammars_extended() → Vector{Grammar}
+
+Generate seed grammars for multi-step episodes. Includes the original 14
+content-only grammars plus 4 processing-state-aware grammars.
+"""
+function generate_email_seed_grammars_extended()::Vector{Grammar}
+    grammars = generate_email_seed_grammars()
+
+    # 15. Triage: urgency, has_label_urgent, is_in_priority, user_notified
+    #     NOT_YET_LABELLED = NOT(GT(:has_label_urgent, 0.5))
+    push!(grammars, Grammar(
+        Set([:urgency, :has_label_urgent, :is_in_priority, :user_notified]),
+        [ProductionRule(:NOT_YET_LABELLED, NotExpr(GTExpr(:has_label_urgent, 0.5)))],
+        next_grammar_id()))
+
+    # 16. Archive: topic_marketing, is_in_archive, is_read
+    push!(grammars, Grammar(
+        Set([:topic_marketing, :is_in_archive, :is_read]),
+        ProductionRule[], next_grammar_id()))
+
+    # 17. Delegate: is_manager, has_label_delegated, is_assigned
+    push!(grammars, Grammar(
+        Set([:sender_is_manager, :has_label_delegated, :is_assigned]),
+        ProductionRule[], next_grammar_id()))
+
+    # 18. Full extended: all 22 features
+    push!(grammars, Grammar(
+        ALL_EMAIL_FEATURES_EXTENDED,
+        ProductionRule[], next_grammar_id()))
 
     grammars
 end

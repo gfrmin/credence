@@ -13,7 +13,6 @@ include("compilation.jl")
 include("perturbation.jl")
 include("agent_state.jl")
 
-export SensorChannel, SensorConfig, sensor_config_complexity, n_channels
 export ProgramExpr, GTExpr, LTExpr, AndExpr, OrExpr, NotExpr, NonterminalRef
 export PersistsExpr, ChangedExpr, SinceExpr
 export ActionExpr, IfExpr

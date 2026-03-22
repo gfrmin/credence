@@ -1,13 +1,13 @@
 """
     features.jl — Email type, feature extraction, user preferences, synthetic corpus
 
-Defines the email observation space (13 feature channels), user preference
-profiles for simulation, and synthetic corpus generation.
+Defines the email observation space as Dict{Symbol, Float64}. Content features
+(13 keys) plus optional processing-state features (9 keys) for multi-step episodes.
 """
 
 push!(LOAD_PATH, joinpath(@__DIR__, "..", "..", "src"))
 using Credence
-using Credence: SensorChannel, SensorConfig, n_channels
+using Credence: Grammar
 
 using Random
 
@@ -31,104 +31,102 @@ struct Email
 end
 
 # ═══════════════════════════════════════
-# Feature extraction — 13 channels
+# Feature names
 # ═══════════════════════════════════════
 
-const N_EMAIL_FEATURES = 13
+const EMAIL_FEATURE_NAMES = Set([
+    :sender_frequency,
+    :sender_is_manager,
+    :sender_is_direct_report,
+    :sender_is_external,
+    :urgency,
+    :topic_finance,
+    :topic_scheduling,
+    :topic_marketing,
+    :requires_action,
+    :email_length,
+    :has_attachment,
+    :time_of_day,
+    :thread_depth,
+])
 
-const EMAIL_FEATURE_NAMES = [
-    :sender_frequency,        # 0: direct
-    :sender_is_manager,       # 1: 1.0 if :manager
-    :sender_is_direct_report, # 2: 1.0 if :direct_report
-    :sender_is_external,      # 3: 1.0 if :external
-    :urgency,                 # 4: direct
-    :topic_finance,           # 5: 1.0 if :finance
-    :topic_scheduling,        # 6: 1.0 if :scheduling
-    :topic_marketing,         # 7: 1.0 if :marketing
-    :requires_action,         # 8: 1.0 if true
-    :email_length,            # 9: clamp(word_count/1000, 0, 1)
-    :has_attachment,          # 10: 1.0 if true
-    :time_of_day,             # 11: hour/24.0
-    :thread_depth,            # 12: clamp(depth/10, 0, 1)
-]
+const EMAIL_STATE_FEATURE_NAMES = Set([
+    :has_label_urgent,
+    :has_label_delegated,
+    :is_in_archive,
+    :is_in_priority,
+    :is_in_later,
+    :is_read,
+    :user_notified,
+    :reply_drafted,
+    :is_assigned,
+])
 
-"""
-    extract_features(email::Email) → Vector{Float64}
-
-Extract a 13-element feature vector from an email. All values normalised to [0, 1].
-"""
-function extract_features(email::Email)::Vector{Float64}
-    Float64[
-        email.sender_frequency,
-        email.sender_category == :manager ? 1.0 : 0.0,
-        email.sender_category == :direct_report ? 1.0 : 0.0,
-        email.sender_category == :external ? 1.0 : 0.0,
-        email.urgency,
-        email.topic == :finance ? 1.0 : 0.0,
-        email.topic == :scheduling ? 1.0 : 0.0,
-        email.topic == :marketing ? 1.0 : 0.0,
-        email.requires_action ? 1.0 : 0.0,
-        clamp(email.word_count / 1000.0, 0.0, 1.0),
-        email.has_attachment ? 1.0 : 0.0,
-        email.hour_received / 24.0,
-        clamp(email.thread_depth / 10.0, 0.0, 1.0),
-    ]
-end
+const ALL_EMAIL_FEATURES = EMAIL_FEATURE_NAMES
+const ALL_EMAIL_FEATURES_EXTENDED = union(EMAIL_FEATURE_NAMES, EMAIL_STATE_FEATURE_NAMES)
 
 # ═══════════════════════════════════════
-# Sensor configs for email
+# Processing state — tracks which primitives have been applied
 # ═══════════════════════════════════════
 
-"""Full 13-channel sensor config."""
-function full_email_sensor_config()
-    SensorConfig([SensorChannel(i, :identity, 0.05, 1.0) for i in 0:N_EMAIL_FEATURES-1])
+mutable struct ProcessingState
+    has_label_urgent::Bool
+    has_label_delegated::Bool
+    is_in_archive::Bool
+    is_in_priority::Bool
+    is_in_later::Bool
+    is_read::Bool
+    user_notified::Bool
+    reply_drafted::Bool
+    is_assigned::Bool
 end
 
-"""Sender-focused: channels 0-3."""
-function sender_sensor_config()
-    SensorConfig([SensorChannel(i, :identity, 0.05, 1.0) for i in 0:3])
-end
-
-"""Topic-focused: channels 5-7."""
-function topic_sensor_config()
-    SensorConfig([SensorChannel(i, :identity, 0.05, 1.0) for i in 5:7])
-end
-
-"""Urgency + action: channels 4, 8."""
-function action_sensor_config()
-    SensorConfig([
-        SensorChannel(4, :identity, 0.05, 1.0),
-        SensorChannel(8, :identity, 0.05, 1.0),
-    ])
-end
-
-"""Minimal: channels 0, 1, 4 (sender_freq, is_manager, urgency)."""
-function minimal_email_sensor_config()
-    SensorConfig([
-        SensorChannel(0, :identity, 0.05, 1.0),
-        SensorChannel(1, :identity, 0.05, 1.0),
-        SensorChannel(4, :identity, 0.05, 1.0),
-    ])
-end
+ProcessingState() = ProcessingState(false, false, false, false, false, false, false, false, false)
 
 # ═══════════════════════════════════════
-# Sensor projection
+# Feature extraction — returns Dict{Symbol, Float64}
 # ═══════════════════════════════════════
 
 """
-    project_email(email::Email, config::SensorConfig) → Vector{Float64}
+    extract_features(email::Email) → Dict{Symbol, Float64}
 
-Extract features from an email and add sensor noise per channel.
+Extract content features from an email. All values normalised to [0, 1].
 """
-function project_email(email::Email, config::SensorConfig)::Vector{Float64}
-    features = extract_features(email)
-    readings = Float64[]
-    for ch in config.channels
-        raw = features[ch.source_index + 1]  # 0-based → 1-based
-        noisy = raw + randn() * ch.noise_σ
-        push!(readings, clamp(noisy, 0.0, 1.0))
-    end
-    readings
+function extract_features(email::Email)::Dict{Symbol, Float64}
+    Dict{Symbol, Float64}(
+        :sender_frequency => email.sender_frequency,
+        :sender_is_manager => email.sender_category == :manager ? 1.0 : 0.0,
+        :sender_is_direct_report => email.sender_category == :direct_report ? 1.0 : 0.0,
+        :sender_is_external => email.sender_category == :external ? 1.0 : 0.0,
+        :urgency => email.urgency,
+        :topic_finance => email.topic == :finance ? 1.0 : 0.0,
+        :topic_scheduling => email.topic == :scheduling ? 1.0 : 0.0,
+        :topic_marketing => email.topic == :marketing ? 1.0 : 0.0,
+        :requires_action => email.requires_action ? 1.0 : 0.0,
+        :email_length => clamp(email.word_count / 1000.0, 0.0, 1.0),
+        :has_attachment => email.has_attachment ? 1.0 : 0.0,
+        :time_of_day => email.hour_received / 24.0,
+        :thread_depth => clamp(email.thread_depth / 10.0, 0.0, 1.0),
+    )
+end
+
+"""
+    extract_features(email::Email, ps::ProcessingState) → Dict{Symbol, Float64}
+
+Extract content + processing-state features.
+"""
+function extract_features(email::Email, ps::ProcessingState)::Dict{Symbol, Float64}
+    d = extract_features(email)
+    d[:has_label_urgent] = ps.has_label_urgent ? 1.0 : 0.0
+    d[:has_label_delegated] = ps.has_label_delegated ? 1.0 : 0.0
+    d[:is_in_archive] = ps.is_in_archive ? 1.0 : 0.0
+    d[:is_in_priority] = ps.is_in_priority ? 1.0 : 0.0
+    d[:is_in_later] = ps.is_in_later ? 1.0 : 0.0
+    d[:is_read] = ps.is_read ? 1.0 : 0.0
+    d[:user_notified] = ps.user_notified ? 1.0 : 0.0
+    d[:reply_drafted] = ps.reply_drafted ? 1.0 : 0.0
+    d[:is_assigned] = ps.is_assigned ? 1.0 : 0.0
+    d
 end
 
 # ═══════════════════════════════════════
@@ -214,15 +212,7 @@ const SUBJECT_TEMPLATES = [
 """
     generate_email_corpus(n; rng_seed) → Vector{Email}
 
-Generate a synthetic email corpus with controlled distributions:
-- ~20% manager, ~30% direct reports, ~20% external, ~30% other
-- urgency uniform [0, 1]
-- topics: 30% scheduling, 25% technical, 20% finance, 15% marketing, 10% personal
-- ~40% require action
-- word count: lognormal, median ~200
-- ~20% attachments
-- hour: bimodal around 10 and 14
-- thread_depth: geometric, mostly 0-2
+Generate a synthetic email corpus with controlled distributions.
 """
 function generate_email_corpus(n::Int; rng_seed::Int=42)::Vector{Email}
     rng = MersenneTwister(rng_seed)
