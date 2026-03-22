@@ -41,7 +41,7 @@ function call_ollama(config::LLMConfig, prompt::String)::Union{String, Nothing}
             "$(config.host)/api/generate",
             ["Content-Type" => "application/json"],
             body;
-            readtimeout=config.timeout
+            readtimeout=round(Int, config.timeout)
         )
         result = JSON3.read(resp.body)
         return String(result.response)
