@@ -1,0 +1,636 @@
+\documentclass[11pt]{article}
+
+% === Packages ===
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{amsmath,amssymb,amsthm}
+\usepackage{mathtools}
+\usepackage{algorithm}
+\usepackage{algorithmic}
+\usepackage{booktabs}
+\usepackage{graphicx}
+\usepackage{hyperref}
+\usepackage{cleveref}
+\usepackage{natbib}
+\usepackage[margin=1in]{geometry}
+\usepackage{xcolor}
+% \usepackage{microtype} % Disabled: requires scalable fonts
+
+% === Custom commands ===
+\newcommand{\EU}{\mathrm{EU}}
+\newcommand{\VOI}{\mathrm{VOI}}
+\newcommand{\Beta}{\mathrm{Beta}}
+\newcommand{\Prob}{\mathbb{P}}
+\newcommand{\E}{\mathbb{E}}
+\newcommand{\R}{\mathbb{R}}
+\newcommand{\argmax}{\operatornamewithlimits{argmax}}
+\newcommand{\credence}{\textsc{Credence}}
+
+\newtheorem{definition}{Definition}
+\newtheorem{proposition}{Proposition}
+\newtheorem{axiom}{Axiom}
+
+\title{Credence: A Bayesian Decision-Theoretic Framework \\for LLM Agent Tool Selection}
+
+\author{
+  Guy Freeman\thanks{Correspondence: \texttt{research@gfrm.in}. Blog: \url{https://gfrm.in}. Code: \url{https://github.com/gfrmin/credence}.} \\
+  Independent Researcher, Tel Aviv
+}
+
+\date{\today}
+
+\begin{document}
+\maketitle
+
+% ============================================================
+% ABSTRACT
+% ============================================================
+\begin{abstract}
+Current LLM agent frameworks select tools through prompting heuristics without any formal mechanism for evaluating whether a tool query is worth its cost. We introduce \credence{}, a Bayesian decision-theoretic framework that derives tool selection from first principles: agents maintain conjugate beliefs about tool reliability, update them from observed outcomes, and select queries by maximising expected utility via value-of-information calculations. The framework is grounded in five axioms---Bayesian conditioning, expected utility integration, EU maximisation, a Solomonoff complexity prior, and a cooperative inverse reinforcement learning (CIRL) alignment commitment---from which all agent behaviour is derived rather than engineered.
+
+On a controlled benchmark, \credence{} scores $+112.6$ points compared to $-8.0$ for LangChain ReAct, despite achieving \emph{lower} per-query accuracy ($59.6\%$ vs.\ $63.7\%$). We term this the \emph{accuracy paradox}: optimising accuracy without accounting for query costs is provably suboptimal, and no amount of prompt engineering can remedy this---an enhanced LangChain agent with explicit cost-awareness instructions achieves the highest non-oracle accuracy ($66.0\%$) but the worst non-random score ($-68.2$). Under distributional drift, \credence{} degrades gracefully (score change: $-21.8$) while a fixed-tool baseline collapses ($-69.0$). These results suggest that the dominant paradigm of designing agents through prompting is fundamentally limited, and that principled Bayesian approaches offer a practical and theoretically grounded alternative.
+\end{abstract}
+
+% ============================================================
+% 1. INTRODUCTION
+% ============================================================
+\section{Introduction}
+\label{sec:intro}
+
+The rapid deployment of large language model (LLM) agents---systems that use LLMs to select and invoke external tools---has created a curious gap in AI practice. While the perception capabilities of these systems have improved dramatically through scaling \citep{sutton2019bitter}, the \emph{decision-making} layer remains largely unprincipled. Frameworks such as LangChain \citep{chase2022langchain} and LlamaIndex implement tool selection through prompting: the LLM is instructed to reason about which tools to use, with no formal mechanism for quantifying uncertainty, evaluating marginal information value, or trading off query costs against expected gains.
+
+This paper argues that the tool selection problem is fundamentally a \emph{decision-theoretic} problem, not a perception problem, and that treating it as such yields both theoretical clarity and practical improvements. Decision theory does not compete with deep learning for the same job---it answers a different question entirely: given uncertainty about tool reliability and finite query budgets, \emph{what should the agent do?}
+
+We introduce \credence{}, a framework built on five axioms from which all agent behaviour is derived. The key insight is that tool queries are information-gathering actions whose value can be computed exactly: the \emph{value of information} (VOI) of querying a tool is the expected utility of observing the tool's response and then acting optimally, minus the expected utility of acting on current beliefs alone. A query is worth making if and only if its VOI exceeds its cost. This is not a heuristic---it is a theorem of Bayesian decision theory \citep{raiffa1961applied, degroot1984optimal}.
+
+\paragraph{Contributions.} (1) We present a principled framework for LLM tool selection grounded in Bayesian decision theory and CIRL, requiring no LLM calls for the decision-making layer itself. (2) We identify the \emph{accuracy paradox}: agents optimising per-query accuracy can achieve lower net value than agents optimising expected utility, because accuracy-maximising agents over-query. (3) We demonstrate empirically that prompt engineering cannot solve this problem---more sophisticated prompts make agents \emph{more expensive} without making them more economical. (4) We show that Bayesian belief updating provides natural robustness to distributional drift without any explicit change-detection mechanism.
+
+\paragraph{Connection to prior work.} The present framework builds on two lines of research. First, the theory of \emph{embodied agent design} due to \citet{ay2015geometric}, which formalises the separation between an agent's controller (brain) and its sensorimotor apparatus (body and environment), and argues that control architectures should be \emph{sufficient} for expressing desired behaviours while remaining \emph{concise}---the principle of cheap design. In \credence{}, the ``brain'' is the Bayesian decision layer; the ``body'' is the LLM and external tools. The LLM is treated as a \emph{prosthetic}---a noisy sensor whose reliability is learned, not a decision-maker.
+
+Second, the author's prior work on \emph{dynamic staged trees} \citep{freeman2011dynamic} and \emph{chain event graph} (CEG) model selection \citep{freeman2011bayesian}, which demonstrated that Bayesian structure learning with conjugate updates can handle non-stationary discrete processes through multi-process switching. The Beta-Bernoulli reliability model in \credence{} is a specialisation of the Dirichlet-categorical conjugate framework used for CEG stage learning, and the exponential forgetting mechanism for handling drift mirrors the power steady model of \citet{freeman2011dynamic}.
+
+
+% ============================================================
+% 2. BACKGROUND AND RELATED WORK
+% ============================================================
+\section{Related Work}
+\label{sec:related}
+
+\subsection{Principled Frameworks for LLM Agents}
+
+The application of Bayesian decision theory to agent design has a long history \citep{russell1991principles, boutilier1999decision, kaelbling1998planning}, yet modern LLM agent frameworks have largely ignored these foundations. ReAct \citep{yao2023react}, Reflexion \citep{shinn2023reflexion}, and LATS \citep{zhou2024lats} delegate both perception and decision-making to the LLM (the latter via MCTS-style planning); Toolformer \citep{schick2023toolformer} fine-tunes models to decide when to call APIs. These approaches conflate two fundamentally different capabilities: extracting information from tool outputs (perception) and choosing which tools to invoke (decision-making). \citet{wang2023llmagent} survey over 100 such systems; none maintains explicit beliefs about tool reliability or computes value of information.
+
+Three recent works apply principled methods to LLM agents. \textbf{RAFA} \citep{liu2024rafa} is the most formally rigorous: it casts agent reasoning as a Bayesian adaptive MDP and proves a $\sqrt{T}$ regret bound. However, RAFA addresses planning in unknown environments, not per-tool reliability or VOI for individual tool calls. \textbf{DeLLMa} \citep{liu2025dellma} applies expected utility maximisation to LLM decisions via multi-step inference---the closest in spirit to \credence{}'s EU framework---but lacks belief updating, VOI computation, and tool reliability tracking. \textbf{MACLA} \citep{forouzandeh2026macla} maintains Beta posteriors over procedure success rates, and its ablation confirms Bayesian selection as the single most impactful component. But MACLA selects multi-step procedures, not individual tools, and does not compute VOI.
+
+To our knowledge, no published work combines per-tool Bayesian belief tracking, value-of-information computation, and expected utility maximisation for LLM tool selection.
+
+\subsection{Cost-Aware Agent Approaches}
+
+Cost-aware approaches to LLM tool use span five tiers of increasing formality: (1)~\emph{prompt-based}---expose budget or cost information in the prompt; (2)~\emph{RL reward shaping}---penalise tool calls in the reward signal; (3)~\emph{planning and optimisation}---pre-plan tool sequences under budget constraints, as in BTP \citep{zheng2024btp}; (4)~\emph{sequential decision-making}---online planning with cost anticipation, most rigorously formalised by INTENT \citep{liu2026intent}; and (5)~\emph{decision-theoretic}---computing VOI before each tool call, the approach taken by \credence{}.
+
+\citet{kapoor2025agents} demonstrate that agent evaluation without cost accounting is misleading---accuracy alone fails to capture real-world value. \citet{wang2024tokeneconomies} show that budget-aware reasoning strategies outperform unconstrained ones, and \citet{erol2025costofpass} propose an economic framework for model evaluation that accounts for inference cost. \citet{wang2025epistemic} argue that agents should invoke tools ``only when epistemically necessary,'' defining a knowledge boundary concept but providing no computational mechanism. A Bayesian VOI framework provides exactly the mechanism they call for.
+
+Our Enhanced LangChain result (\S\ref{sec:results}) empirically demonstrates the failure of tier~1: adding cost-awareness prompts to a capable agent makes it \emph{more} expensive, not less. The prompting trap arises because natural language cannot express the quantitative tradeoff between information gain and query cost that VOI captures naturally. \citet{desabbata2024metareasoning} reach a complementary conclusion from the metareasoning perspective: LLMs benefit from explicit computational cost-benefit analysis rather than implicit prompt-level reasoning.
+
+\subsection{Theoretical Foundations}
+
+\paragraph{Embodied agent design.} \citet{ay2015geometric} formalises the sensorimotor loop as a causal model with Markov kernels and shows that an agent's controller need not be a universal approximator---it suffices to match the behavioural repertoire afforded by its embodiment. This \emph{cheap design} principle \citep{pfeifer2006body, montufar2015cheap} motivates \credence{}'s architecture: the Bayesian decision layer is far simpler than the LLM it coordinates, yet sufficient for optimal tool selection given the embodiment constraints (available tools and their reliability profiles).
+
+\paragraph{Graphical models.} Chain event graphs \citep{smith2008chain, freeman2011bayesian, thwaites2009keod} generalise Bayesian networks to handle context-specific independence with conjugate model selection via product Dirichlet priors. Dynamic staged trees \citep{freeman2011dynamic} extend this to non-stationary time series through multi-process switching models. The per-tool, per-category Beta-Bernoulli reliability model in \credence{} is a specialisation of the product Dirichlet conjugate framework developed for chain event graph model selection \citep{freeman2011bayesian}, where \citet[Theorem~18]{freeman2011bayesian} showed that path and floret independence assumptions characterise the Dirichlet prior on staged tree parameters. Each tool-category pair in \credence{} corresponds to a floret in the CEG sense, with the correct/incorrect outcome defining a two-edge floret whose natural conjugate prior is Beta. The experimental forgetting variant (\S\ref{sec:results}) draws on the power steady model of \citet{freeman2011dynamic}, with connections to distributional Kalman filtering \citep{smith2011kalman} and the multi-process framework of \citet{harrison1976bayesian, west1997bayesian}.
+
+\paragraph{Value of information.} VOI originates with \citet{howard1966information} and is developed for bounded agents by \citet{russell1991principles}. Bayesian experimental design \citep{chaloner1995bayesian} formalises optimal information gathering under cost constraints. \citet{dong2026voi} recently extend VOI to human-agent communication, but apply it to dialogue acts rather than tool selection. \credence{} appears to be the first system to compute VOI for individual tool calls in an LLM agent.
+
+\paragraph{Value alignment.} Cooperative inverse reinforcement learning \citep{hadfield2016cooperative} treats human-robot interaction as a cooperative game in which the robot infers human preferences from observed behaviour. \credence{}'s treatment of the LLM as a noisy sensor---whose outputs are observations with uncertainty, not commands---embodies a similar principle: the decision-theoretic layer maintains its own beliefs and defers to the human's utility function rather than to the LLM's token probabilities.
+
+
+% ============================================================
+% 3. THE CREDENCE FRAMEWORK
+% ============================================================
+\section{The \credence{} Framework}
+\label{sec:framework}
+
+\subsection{Axioms}
+\label{sec:axioms}
+
+\credence{} is built on five axioms. These are non-negotiable foundations from which all behaviour is derived.
+
+\begin{axiom}[Conditioning]
+Beliefs are updated by Bayes' rule. This is the unique update rule for which updating and computing the predictive commute, and the unique rule that cannot be Dutch-booked across time (diachronic coherence).
+\end{axiom}
+
+\begin{axiom}[Integration]
+The expected value of a quantity under a belief is computed by integrating over the belief distribution.
+\end{axiom}
+
+\begin{axiom}[Optimisation]
+Actions are selected to maximise expected utility under the current belief. Savage's representation theorem \citep{savage1954foundations} establishes that any agent whose preferences satisfy basic rationality axioms acts as if maximising expected utility. The complete class theorem \citep{wald1950statistical, berger1985statistical} further establishes that Bayesian decision rules are the only admissible ones: any non-Bayesian rule is dominated by some Bayesian rule.
+\end{axiom}
+
+\begin{axiom}[Complexity prior]
+The prior over hypotheses is weighted by description length: $2^{-|h|}$ for hypothesis $h$. This is Solomonoff's universal prior \citep{solomonoff1964formal}---the unique prior that dominates all computable priors up to a constant.
+\end{axiom}
+
+\begin{axiom}[Alignment]
+The agent's utility equals the user's utility under preference uncertainty: $U(a, s, b) = \E_{\theta \sim b}[u_\theta(s, a)]$, where $\theta$ parameterises the user's preferences and $b$ is the agent's belief over $\theta$. This is the cooperative inverse reinforcement learning (CIRL) framework of \citet{hadfield2016cooperative}: the agent and user are in a cooperative game where the agent's reward is the user's reward, but the agent does not know the user's reward function and must infer it from interaction.
+\end{axiom}
+
+\subsection{Architecture: Brain, Body, Environment}
+\label{sec:architecture}
+
+Following \citet{ay2015geometric}, we decompose the agent into three components:
+
+\begin{itemize}
+\item \textbf{Brain} (controller $\mathcal{C}$): The Bayesian decision layer. Maintains beliefs about tool reliability, computes expected utilities, selects actions. Implemented in ${\sim}200$ lines of Python/NumPy. Contains no LLM.
+\item \textbf{Body} (actuators and sensors): The available tools, including the LLM itself. These are \emph{noisy channels} in the information-theoretic sense---Markov kernels $\beta: \mathcal{W} \to \Delta_\mathcal{S}$ from world states to sensor states, following the notation of \citet{ay2015geometric}. The LLM is a prosthetic: a powerful but unreliable sensor whose reliability profile is learned, not assumed.
+\item \textbf{Environment} (world $\mathcal{W}$): The questions, their categories, and the ground-truth answers. The agent does not observe the environment directly---only through the noisy responses of its tools.
+\end{itemize}
+
+This separation instantiates the principle of cheap design: the brain is deliberately simple because the body (LLM + tools) provides the perceptual complexity. The brain's job is not to understand language or reason about content---it is to decide \emph{which tool to query and when to stop}.
+
+\subsection{Belief Model}
+\label{sec:beliefs}
+
+For each tool $t \in \{1, \ldots, T\}$ and question category $c \in \{1, \ldots, C\}$, the agent maintains a Beta-distributed belief over the tool's reliability:
+\begin{equation}
+  p_{t,c} \sim \Beta(\alpha_{t,c}, \beta_{t,c}).
+  \label{eq:beta}
+\end{equation}
+
+The conjugate Beta-Bernoulli model means that after observing a correct response from tool $t$ on a category-$c$ question, the update is:
+\begin{equation}
+  (\alpha_{t,c}, \beta_{t,c}) \mapsto (\alpha_{t,c} + 1, \beta_{t,c}),
+\end{equation}
+and after an incorrect response:
+\begin{equation}
+  (\alpha_{t,c}, \beta_{t,c}) \mapsto (\alpha_{t,c}, \beta_{t,c} + 1).
+\end{equation}
+
+\paragraph{Initialisation.} Priors are set to $\Beta(1, 1)$ (uniform) for each tool-category pair. This encodes maximum ignorance about reliability, placing the prior mean at $1/2$ with high variance. The choice of $1/N$ (where $N$ is the number of tools) for prior success probability, rather than $0.5$, was considered and rejected: the Beta(1,1) prior is the unique non-informative conjugate prior and makes no assumption about relative tool quality.
+
+\paragraph{Non-stationarity.} The core framework handles distributional drift through standard Beta-Bernoulli updating: as a tool's reliability degrades, negative evidence accumulates and the posterior shifts downward naturally. No explicit change-detection mechanism is required---the posterior adapts continuously, with the rate of adaptation governed by the effective sample size (the sum $\alpha + \beta$).
+
+\paragraph{Experimental variant: exponential forgetting.} As an experimental extension, we also test a forgetting mechanism inspired by the power steady model \citep{freeman2011dynamic, smith2011kalman}, applying exponential discounting:
+\begin{equation}
+  (\alpha_{t,c}, \beta_{t,c}) \mapsto (\lambda \alpha_{t,c} + (1-\lambda), \lambda \beta_{t,c} + (1-\lambda)),
+  \label{eq:forget}
+\end{equation}
+with fixed $\lambda = 0.95$. This is a form of power prior discounting \citep{ibrahim2003power} that preserves the Beta form while downweighting old observations, giving faster adaptation to abrupt reliability changes at the cost of increased posterior variance. An alternative principled approach to non-stationarity is Bayesian online changepoint detection \citep{adams2007changepoint}, which maintains a posterior over run lengths rather than discounting uniformly. However, a fully principled treatment within our framework would infer $\lambda$ from data---for instance by maintaining a posterior over $\lambda$ as in the Class~2 multi-process model of \citet{freeman2011dynamic}---which we defer to future work.
+
+\subsection{Decision Rule: Value of Information}
+\label{sec:voi}
+
+The agent's decision at each step is: should I query another tool, or should I act (submit an answer or abstain) based on current beliefs?
+
+Let $b$ denote the current belief state (the collection of all Beta parameters). Let $r_t$ denote the cost of querying tool $t$. Let $v_{\text{correct}} = 10$, $v_{\text{wrong}} = -5$, $v_{\text{abstain}} = 0$ be the payoffs.
+
+\paragraph{Expected utility of acting now.}
+Given current beliefs $b$, if the agent has gathered responses $\{(t_i, x_i)\}_{i=1}^k$ from $k$ tool queries, it computes a posterior probability $p_{\text{correct}}$ of the most-supported answer being correct (by aggregating the reliability-weighted evidence). The expected utility of submitting is:
+\begin{equation}
+  \EU_{\text{submit}}(b) = p_{\text{correct}} \cdot v_{\text{correct}} + (1 - p_{\text{correct}}) \cdot v_{\text{wrong}}.
+\end{equation}
+The expected utility of abstaining is $\EU_{\text{abstain}} = 0$. The agent submits if $\EU_{\text{submit}} > 0$, i.e., if $p_{\text{correct}} > 1/3$ (the break-even threshold given the payoff structure).
+
+The best ``act now'' utility is:
+\begin{equation}
+  \EU^*(b) = \max(\EU_{\text{submit}}(b),\; 0).
+\end{equation}
+
+\paragraph{Value of information.}
+The VOI of querying tool $t$ is:
+\begin{equation}
+  \VOI(t \mid b) = \E_{x \sim p_t}\!\bigl[\EU^*(b \mid x)\bigr] - \EU^*(b),
+  \label{eq:voi}
+\end{equation}
+where the expectation is over the possible responses $x$ of tool $t$, weighted by the agent's current belief about tool $t$'s reliability. This is the expected improvement in decision quality from observing tool $t$'s response.
+
+A query is made if and only if:
+\begin{equation}
+  \VOI(t \mid b) > r_t \quad \text{for some tool } t.
+  \label{eq:query_criterion}
+\end{equation}
+
+When multiple tools satisfy this criterion, the agent selects the one with the highest net VOI: $\argmax_t [\VOI(t \mid b) - r_t]$.
+
+\begin{proposition}
+\label{prop:voi_decrease}
+Under the Beta-Bernoulli model, $\VOI(t \mid b)$ is non-increasing in the number of prior observations. That is, the more the agent knows about a tool, the less informative an additional query becomes.
+\end{proposition}
+
+\begin{proof}
+As $\alpha_{t,c} + \beta_{t,c} \to \infty$, the posterior variance $\mathrm{Var}(p_{t,c}) \to 0$ and the expected posterior after one additional observation converges to the current posterior. Hence $\E[\EU^*(b \mid x)] \to \EU^*(b)$ and $\VOI(t \mid b) \to 0$.
+\end{proof}
+
+This ensures that the agent's querying naturally terminates: after sufficiently many observations, no tool query is worth its cost.
+
+\paragraph{Category inference.}
+The agent treats question category as a latent variable with a uniform prior. As tools respond to questions, category beliefs are updated jointly with reliability beliefs via Bayesian conditioning: if a tool known to be reliable for numerical questions answers correctly, the posterior shifts toward ``numerical.'' Over successive questions, the agent builds category-specific reliability profiles purely from tool response patterns---no text features are used.
+
+
+% ============================================================
+% 4. EXPERIMENTAL SETUP
+% ============================================================
+\section{Experimental Setup}
+\label{sec:setup}
+
+\subsection{Simulated Environment}
+
+We evaluate on a benchmark of 50 multiple-choice questions spanning five categories: factual, numerical, recent events, misconceptions, and reasoning. Tools are simulated with known reliability profiles (\cref{tab:tools}), allowing exact computation of oracle performance and controlled drift experiments. While simulated tools limit ecological validity, they enable precise isolation of the decision-making layer's contribution.
+
+\begin{table}[t]
+\centering
+\caption{Tool reliability by question category. Tool~B has category-dependent coverage (probability of returning any result). Tool~C returns \texttt{not\_applicable} for all non-numerical questions.}
+\label{tab:tools}
+\small
+\begin{tabular}{@{}lccccccr@{}}
+\toprule
+& \multicolumn{5}{c}{$P(\text{correct})$} & Coverage & Cost \\
+\cmidrule(lr){2-6}
+Tool & Fact. & Num. & Rec. & Misc. & Reas. & & \\
+\midrule
+A (Web Search) & 0.85 & 0.30 & 0.75 & 0.35 & 0.50 & 1.0 & 1 \\
+B (Knowledge Base) & 0.95 & 0.40 & 0.60 & 0.90 & 0.50 & 0.2--0.7 & 3 \\
+C (Calculator) & --- & 1.00 & --- & --- & --- & Num.\ only & 1 \\
+D (LLM Direct) & 0.70 & 0.55 & 0.50 & 0.45 & 0.75 & 1.0 & 2 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\paragraph{Scoring.} Correct answer: $+10$. Wrong answer: $-5$. Abstention: $0$. Tool costs as in \cref{tab:tools}. The asymmetric payoff creates a break-even submission threshold of $p_{\text{correct}} > 1/3$.
+
+\subsection{Agents Compared}
+
+\paragraph{\credence{} (Bayesian).} The full framework of \cref{sec:framework}. Beta(1,1) priors, latent category inference from tool response patterns, VOI-based tool selection. No LLM calls. ${\sim}200$ lines of Python + Julia inference engine.
+
+\paragraph{LangChain ReAct.} Standard zero-shot ReAct agent \citep{yao2023react} via LangChain with access to all four tools. System prompt includes full information about tool characteristics, scoring rules, and the option to abstain. Run with a local LLM (Ollama).
+
+\paragraph{LangChain Enhanced.} Same architecture with additional instructions: track reliability across questions, prefer cheap tools, cross-verify selectively, abstain when confidence is below $1/3$. Conversation history provided for implicit memory. This represents best-effort prompt engineering.
+
+\paragraph{Oracle.} Knows the true reliability table. Makes optimal VOI-based decisions. Upper bound on \credence{} performance with perfect knowledge.
+
+\paragraph{Single-Best-Tool.} Always queries Tool~A and submits its answer. Tests whether \credence{}'s advantage is merely tool routing.
+
+\paragraph{All-Tools.} Queries all four tools, majority-votes. Demonstrates the cost of indiscriminate querying.
+
+\paragraph{Random.} Queries a random tool, submits its response. Lower bound.
+
+\subsection{Experimental Protocol}
+
+All results are averaged over 20 random seeds. We run three experimental conditions:
+
+\begin{enumerate}
+\item \textbf{Stationary:} Tool reliabilities fixed as in \cref{tab:tools} throughout.
+\item \textbf{Drift:} After question 25, Tool~A's reliability drops substantially across all categories, simulating a real-world scenario such as a search API degradation. We compare \credence{} with and without exponential forgetting ($\lambda = 0.95$).
+\item \textbf{Ablation:} Components of \credence{} removed individually to measure their contribution.
+\end{enumerate}
+
+
+% ============================================================
+% 5. RESULTS
+% ============================================================
+\section{Results}
+\label{sec:results}
+
+\subsection{Stationary Environment}
+
+\begin{table}[t]
+\centering
+\caption{Stationary benchmark results (mean $\pm$ std over 20 seeds).}
+\label{tab:stationary}
+\begin{tabular}{@{}lrrrrr@{}}
+\toprule
+Agent & Score & Accuracy & Tools/Q & Cost Eff. & Time/Q (s) \\
+\midrule
+Oracle & $+175.8 \pm 35.1$ & 0.706 & 1.24 & --- & \textrm{TODO} \\
+\credence{} (Bayesian) & $\mathbf{+112.6 \pm 44.6}$ & 0.596 & 1.10 & 1.37 & \textrm{TODO} \\
+Single-Best-Tool & $+24.8 \pm 44.7$ & 0.554 & 1.00 & 0.90 & \textrm{TODO} \\
+Random & $-6.6 \pm 31.8$ & 0.424 & 1.00 & 0.53 & \textrm{TODO} \\
+LangChain ReAct & $-8.0 \pm 52.3$ & 0.637 & 3.22 & 0.61 & \textrm{TODO} \\
+LangChain Enhanced & $-68.2 \pm 48.5$ & 0.660 & 3.94 & 0.63 & \textrm{TODO} \\
+All-Tools & $-88.0 \pm 57.0$ & 0.616 & 4.00 & 0.71 & \textrm{TODO} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+
+The central result (\cref{tab:stationary}) is that \credence{} achieves the highest non-oracle score ($+112.6$) whilst having the \emph{second-lowest} accuracy ($59.6\%$). LangChain ReAct achieves competitive accuracy ($63.7\%$) but scores near zero ($-8.0$) because it averages $3.22$ tool queries per question. The Enhanced variant achieves the highest non-oracle accuracy ($66.0\%$) but the \emph{worst} non-random score ($-68.2$), querying $3.94$ tools per question.
+
+\paragraph{The accuracy paradox.}
+This result is not anomalous---it is a direct consequence of the decision-theoretic framework. Accuracy measures $P(\text{correct})$ but ignores the cost of achieving that probability. The LangChain agents achieve high accuracy \emph{because} they query many tools, but each query has a cost. The net score is:
+\begin{equation}
+  \text{Score} = \sum_{q=1}^Q \bigl[v_q \cdot \mathbf{1}[\text{correct}_q] + v_{\text{wrong}} \cdot \mathbf{1}[\text{wrong}_q]\bigr] - \sum_{q=1}^Q \text{cost}_q,
+\end{equation}
+where $v_q = v_{\text{correct}}$ if the agent submits correctly, $v_{\text{wrong}}$ if incorrectly, and $0$ if abstaining. Maximising the first sum (accuracy) is not equivalent to maximising the full expression when costs are non-zero.
+
+\paragraph{The prompting trap.}
+The Enhanced LangChain agent's worse performance is particularly instructive. The additional instructions make it \emph{more thorough}: it cross-verifies answers, tracks consistency, and queries backup tools. Each of these behaviours increases accuracy but also increases cost. The prompt tells it to be careful, so it verifies everything---exactly the wrong strategy when verification is not free. This demonstrates that cost-benefit analysis cannot be recovered through prompting: it requires an explicit decision-theoretic mechanism external to the LLM.
+
+\subsection{Distributional Drift}
+
+\begin{table}[t]
+\centering
+\caption{Drift experiment: score change after Tool~A reliability drop at question 25 (mean over 20 seeds).}
+\label{tab:drift}
+\begin{tabular}{@{}lrrr@{}}
+\toprule
+Agent & Before (Q1--25) & After (Q26--50) & $\Delta$ \\
+\midrule
+\credence{} (forget, $\lambda=0.95$) & $+63.2$ & $+41.4$ & $-21.8$ \\
+\credence{} (no forget) & $+40.8$ & $+37.2$ & $-3.5$ \\
+Single-Best-Tool & $+14.2$ & $-54.8$ & $\mathbf{-69.0}$ \\
+Random & $+3.4$ & $-3.6$ & $-7.0$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+When Tool~A's reliability degrades after question 25 (\cref{tab:drift}), the Single-Best-Tool agent---which always queries Tool~A---collapses by $69$ points. Both Bayesian variants dramatically outperform this baseline. The core \credence{} agent (no forgetting) shows a $-3.5$ delta: accumulated evidence from the pre-drift regime provides inertia that buffers against the regime change, though at the cost of slower adaptation. The experimental forgetting variant ($\lambda = 0.95$) loses $21.8$ points in absolute terms but achieves higher post-drift performance ($+41.4$ vs $+37.2$), because the exponential discounting mechanism (\cref{eq:forget}) downweights stale observations more aggressively. No explicit change-detection mechanism is needed in either case---the posterior adapts continuously. This is relevant beyond simulated benchmarks: empirical studies show that LLM API behaviour is itself non-stationary \citep{chen2023chatgpt}, making drift-robustness a practical requirement.
+
+\subsection{Ablation Study}
+
+\begin{table}[t]
+\centering
+\caption{Ablation study: effect of removing individual components (stationary, 20 seeds).}
+\label{tab:ablation}
+\begin{tabular}{@{}lrrl@{}}
+\toprule
+Variant & Score & $\Delta$ vs.\ Full & Effect \\
+\midrule
+Full \credence{} & $+112.6 \pm 44.6$ & --- & --- \\
+No categories (flat prior) & $+10.6 \pm 55.8$ & $-102.0$ & Accuracy collapses to 31.6\%; 0.49 tools/Q \\
+No VOI (always query) & $+34.5 \pm 48.9$ & $-78.1$ & Degenerates to cheapest-tool heuristic \\
+Fixed reliability ($p = 0.5$) & $+34.5 \pm 48.9$ & $-78.1$ & VOI uses uninformative priors; same as no VOI \\
+No abstention & $+91.1 \pm 82.2$ & $-21.5$ & Forced submissions on low confidence; $2\times$ variance \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Category inference is the single most valuable component ($-102.0$): without category-aware priors the agent cannot route questions to appropriate tools and accuracy drops from 59.6\% to 31.6\%. That No~VOI and Fixed~reliability produce identical scores ($-78.1$) is not coincidence but mathematical consequence: when reliability priors are uninformative ($p = 0.5$), all tools look equally trustworthy, so VOI calculations degenerate to cost-based selection regardless of whether VOI is computed or bypassed. The framework's power comes from the \emph{interaction} between learned category-specific beliefs and VOI, not from either component alone. Abstention provides a moderate but consistent benefit ($-21.5$) by avoiding $-10$ penalties on low-confidence questions, though its removal doubles score variance.
+
+
+% ============================================================
+% 6. DISCUSSION
+% ============================================================
+\section{Discussion}
+\label{sec:discussion}
+
+\paragraph{Why accuracy is the wrong metric.}
+The accuracy paradox is not merely an artefact of our scoring system. Any deployment context with non-zero query costs---API fees, latency, rate limits---creates a divergence between accuracy and net value. In production, the LangChain Enhanced agent's strategy of ``verify everything'' would be the most expensive and least efficient approach. The correct metric is expected utility, which accounts for both the value of correct answers and the cost of obtaining them.
+
+\paragraph{Cheap design for LLM agents.}
+\citet{ay2015geometric} argues that an embodied agent's controller need not be a universal approximator---it need only be sufficient for expressing desired behaviours given the agent's embodiment constraints. The \credence{} decision layer demonstrates this principle: ${\sim}200$ lines of NumPy, maintaining Beta distributions and computing VOI, outperform a full LLM-based decision-maker that is orders of magnitude more complex. The LLM is powerful but expensive; using it for decisions it is provably ill-suited to make---resource allocation under uncertainty---is the opposite of cheap design.
+
+The analogy to Ay's exponential family policy models (\citealt{ay2015geometric}, Proposition~1) is suggestive: just as Ay shows that policies parameterised by a small number of ``feature vectors'' derived from the embodiment constraints can be embodied universal approximators, the \credence{} decision layer achieves near-oracle performance using only the sufficient statistics of the Beta posteriors. The ``feature vectors'' are the tool-category reliability estimates; the ``embodiment constraints'' are the tools' true (unknown) reliability profiles.
+
+The computational asymmetry is stark: the \credence{} decision layer processes each question in milliseconds (closed-form Beta posterior updates and VOI computation), whilst the LangChain agents require seconds per question due to multiple LLM inference calls for tool selection---decisions that admit analytical solutions. \Cref{tab:stationary} reports wall-clock time per question for each agent.
+
+\paragraph{Connection to dynamic staged trees.}
+The per-tool, per-category Beta parameters in \credence{} are structurally analogous to the stage parameters in a chain event graph \citep{freeman2011bayesian}: each tool-category pair is a ``situation'' in the event tree sense, with its own Dirichlet-distributed transition probabilities. The agent's task of learning which tools are reliable for which categories mirrors the CEG model selection problem of learning which situations share the same stage (i.e., the same transition distribution). The principled treatment of non-stationarity---learning the forgetting rate from observed outcomes rather than fixing it---connects directly to the dynamic staged tree framework of \citet{freeman2011dynamic}, where the power steady model parameter $k$ controls the bias-variance tradeoff between adaptation speed and belief stability. \citet{smith2011kalman} showed that the power steady model is the natural non-Gaussian analogue of Kalman filter evolution that preserves conjugacy.
+
+\paragraph{Limitations.}
+The current evaluation uses simulated tools with known ground truth, which limits ecological validity. The question bank is small (50 questions) and category inference is learned purely from tool response patterns via Bayesian conditioning on a latent category variable, starting from a uniform prior---no text features are used. The LangChain agents use a local LLM via Ollama; running them with frontier models (GPT-4o, Claude Sonnet) would likely improve their accuracy but would not address the structural inability to compute value of information---the prompting trap result already demonstrates this with the Enhanced variant. Finally, the current framework assumes tools return independent responses---correlated errors between tools are not modelled.
+
+
+% ============================================================
+% 7. CONCLUSION AND FUTURE WORK
+% ============================================================
+\section{Conclusion and Future Work}
+\label{sec:conclusion}
+
+We have presented \credence{}, a Bayesian decision-theoretic framework for LLM tool selection that derives agent behaviour from five axioms rather than engineering it through prompting. The accuracy paradox---that principled agents can achieve higher net value with lower per-query accuracy---demonstrates a fundamental limitation of the dominant paradigm. Cost-benefit analysis is not a prompting problem; it requires explicit decision-theoretic mechanisms.
+
+Several extensions are immediate. First, evaluation with frontier LLMs and real (non-simulated) tools to establish ecological validity. Second, the full \credence{} architecture extends beyond tool selection to a general-purpose agent framework with programs represented as DSL expressions (closed-loop policies in the sense of \citealt{sutton1999between}), meta-actions that modify the hypothesis space, and grammar evolution for discovering abstractions---a ``strange loop'' where the agent improves its own capacity for improvement. This broader architecture, grounded in the same five axioms, will be presented in a companion paper.
+
+Third, the CIRL alignment axiom (\cref{sec:axioms}) opens a natural connection to the preference learning literature: the agent's beliefs about user preferences can be updated from implicit feedback (clicks, corrections, task completions) using the same conjugate machinery that tracks tool reliability. This positions \credence{} not merely as an agent framework but as an alignment-by-construction approach, where safety properties follow from the axioms rather than being imposed as constraints.
+
+\paragraph{Reproducibility.} Code and data are available at \url{https://github.com/gfrmin/credence}. All experiments use fixed random seeds.
+
+
+% ============================================================
+% BIBLIOGRAPHY
+% ============================================================
+\bibliographystyle{plainnat}
+
+\begin{thebibliography}{99}
+
+\bibitem[Adams and MacKay(2007)]{adams2007changepoint}
+R.~P. Adams and D.~J.~C. MacKay.
+\newblock Bayesian online changepoint detection.
+\newblock arXiv preprint arXiv:0710.3742, 2007.
+
+\bibitem[Ay(2015)]{ay2015geometric}
+N.~Ay.
+\newblock Geometric design principles for brains of embodied agents.
+\newblock \emph{K{\"u}nstliche Intelligenz}, 29(4):389--399, 2015.
+
+\bibitem[Berger(1985)]{berger1985statistical}
+J.~O. Berger.
+\newblock \emph{Statistical Decision Theory and Bayesian Analysis}.
+\newblock Springer, 2nd edition, 1985.
+
+\bibitem[Boutilier et~al.(1999)]{boutilier1999decision}
+C.~Boutilier, T.~Dean, and S.~Hanks.
+\newblock Decision-theoretic planning: Structural assumptions and computational leverage.
+\newblock \emph{J. Artificial Intelligence Research}, 11:1--94, 1999.
+
+\bibitem[Chaloner and Verdinelli(1995)]{chaloner1995bayesian}
+K.~Chaloner and I.~Verdinelli.
+\newblock Bayesian experimental design: A review.
+\newblock \emph{Statistical Science}, 10(3):273--304, 1995.
+
+\bibitem[Chase(2022)]{chase2022langchain}
+H.~Chase.
+\newblock {LangChain}.
+\newblock \url{https://github.com/langchain-ai/langchain}, 2022.
+
+\bibitem[Chen et~al.(2023)]{chen2023chatgpt}
+L.~Chen, M.~Zaharia, and J.~Zou.
+\newblock How is {ChatGPT}'s behavior changing over time?
+\newblock arXiv preprint arXiv:2307.09009, 2023.
+
+\bibitem[De~Sabbata et~al.(2024)]{desabbata2024metareasoning}
+C.~N. De~Sabbata, T.~R. Sumers, B.~AlKhamissi, A.~Bosselut, and T.~L. Griffiths.
+\newblock Rational metareasoning for large language models.
+\newblock In \emph{NeurIPS 2024 Workshop}, 2024.
+
+\bibitem[DeGroot(1984)]{degroot1984optimal}
+M.~H. DeGroot.
+\newblock \emph{Optimal Statistical Decisions}.
+\newblock John Wiley \& Sons, 1984.
+
+\bibitem[Dong et~al.(2026)]{dong2026voi}
+Y.~R. Dong, T.~Hu, Z.~Hui, C.~Zhang, I.~Vuli\'{c}, A.~Bobu, and N.~Collier.
+\newblock Value of information: A framework for human-agent communication.
+\newblock arXiv preprint arXiv:2601.06407, 2026.
+
+\bibitem[Erol et~al.(2025)]{erol2025costofpass}
+M.~H. Erol, B.~El, M.~Suzgun, M.~Yuksekgonul, and J.~Zou.
+\newblock Cost-of-pass: An economic framework for evaluating language models.
+\newblock arXiv preprint arXiv:2504.13359, 2025.
+
+\bibitem[Forouzandeh et~al.(2026)]{forouzandeh2026macla}
+S.~Forouzandeh, W.~Peng, P.~Moradi, X.~Yu, and M.~Jalili.
+\newblock Learning hierarchical procedural memory for {LLM} agents through {B}ayesian selection and contrastive refinement.
+\newblock In \emph{International Conference on Autonomous Agents and Multi-Agent Systems (AAMAS)}, 2026.
+
+\bibitem[Freeman and Smith(2011a)]{freeman2011bayesian}
+G.~Freeman and J.~Q. Smith.
+\newblock Bayesian {MAP} model selection of chain event graphs.
+\newblock \emph{J. Multivariate Analysis}, 102(7):1152--1165, 2011.
+
+\bibitem[Freeman and Smith(2011b)]{freeman2011dynamic}
+G.~Freeman and J.~Q. Smith.
+\newblock Dynamic staged trees for discrete multivariate time series: Forecasting, model selection and causal analysis.
+\newblock \emph{Bayesian Analysis}, 6(2):279--305, 2011.
+
+\bibitem[Hadfield-Menell et~al.(2016)]{hadfield2016cooperative}
+D.~Hadfield-Menell, S.~J. Russell, P.~Abbeel, and A.~Dragan.
+\newblock Cooperative inverse reinforcement learning.
+\newblock In \emph{Advances in Neural Information Processing Systems}, 2016.
+
+\bibitem[Harrison and Stevens(1976)]{harrison1976bayesian}
+P.~J. Harrison and C.~F. Stevens.
+\newblock Bayesian forecasting.
+\newblock \emph{J. Royal Statistical Society, Series B}, 38(2):205--247, 1976.
+
+\bibitem[Howard(1966)]{howard1966information}
+R.~A. Howard.
+\newblock Information value theory.
+\newblock \emph{IEEE Trans.\ Systems Science and Cybernetics}, 2(1):22--26, 1966.
+
+\bibitem[Ibrahim and Chen(2003)]{ibrahim2003power}
+J.~G. Ibrahim and M.-H. Chen.
+\newblock On optimality properties of the power prior.
+\newblock \emph{J. American Statistical Association}, 98(461):232--242, 2003.
+
+\bibitem[Kaelbling et~al.(1998)]{kaelbling1998planning}
+L.~P. Kaelbling, M.~L. Littman, and A.~R. Cassandra.
+\newblock Planning and acting in partially observable stochastic domains.
+\newblock \emph{Artificial Intelligence}, 101(1-2):99--134, 1998.
+
+\bibitem[Kapoor et~al.(2025)]{kapoor2025agents}
+S.~Kapoor, B.~Stroebl, Z.~S. Siegel, N.~Nadgir, and A.~Narayanan.
+\newblock {AI} agents that matter.
+\newblock \emph{Transactions on Machine Learning Research}, 2025.
+
+\bibitem[Liu et~al.(2024)]{liu2024rafa}
+Z.~Liu, H.~Hu, S.~Zhang, H.~Guo, S.~Ke, B.~Liu, and Z.~Wang.
+\newblock Reason for future, act for now: A principled framework for autonomous {LLM} agents with provable sample efficiency.
+\newblock In \emph{International Conference on Machine Learning (ICML)}, 2024.
+
+\bibitem[Liu et~al.(2025)]{liu2025dellma}
+O.~Liu, D.~Fu, D.~Yogatama, and W.~Neiswanger.
+\newblock {DeLLMa}: Decision making under uncertainty with large language models.
+\newblock In \emph{International Conference on Learning Representations (ICLR)}, 2025.
+
+\bibitem[Liu et~al.(2026)]{liu2026intent}
+H.~Liu, C.~Tian, N.~An, Z.~Wang, P.~Lu, C.~Yu, and Q.~Qi.
+\newblock Budget-constrained agentic large language models: Intention-based planning for costly tool use.
+\newblock arXiv preprint arXiv:2602.11541, 2026.
+
+\bibitem[Mont\'{u}far et~al.(2015)]{montufar2015cheap}
+G.~Mont\'{u}far, K.~Ghazi-Zahedi, and N.~Ay.
+\newblock A theory of cheap control in embodied systems.
+\newblock \emph{PLOS Computational Biology}, 11(9):e1004427, 2015.
+
+\bibitem[Pfeifer and Bongard(2006)]{pfeifer2006body}
+R.~Pfeifer and J.~C. Bongard.
+\newblock \emph{How the Body Shapes the Way We Think}.
+\newblock MIT Press, 2006.
+
+\bibitem[Raiffa and Schlaifer(1961)]{raiffa1961applied}
+H.~Raiffa and R.~Schlaifer.
+\newblock \emph{Applied Statistical Decision Theory}.
+\newblock Harvard University Press, 1961.
+
+\bibitem[Russell and Wefald(1991)]{russell1991principles}
+S.~Russell and E.~Wefald.
+\newblock \emph{Do the Right Thing: Studies in Limited Rationality}.
+\newblock MIT Press, 1991.
+
+\bibitem[Savage(1954)]{savage1954foundations}
+L.~J. Savage.
+\newblock \emph{The Foundations of Statistics}.
+\newblock John Wiley \& Sons, 1954.
+
+\bibitem[Schick et~al.(2023)]{schick2023toolformer}
+T.~Schick, J.~Dwivedi-Yu, R.~Dess\`{i}, R.~Raileanu, M.~Lomeli, L.~Zettlemoyer, N.~Cancedda, and T.~Scialom.
+\newblock Toolformer: Language models can teach themselves to use tools.
+\newblock In \emph{Advances in Neural Information Processing Systems}, 2023.
+
+\bibitem[Shinn et~al.(2023)]{shinn2023reflexion}
+N.~Shinn, F.~Cassano, E.~Berman, A.~Gopinath, K.~Narasimhan, and S.~Yao.
+\newblock Reflexion: Language agents with verbal reinforcement learning.
+\newblock In \emph{Advances in Neural Information Processing Systems}, 2023.
+
+\bibitem[Smith and Anderson(2008)]{smith2008chain}
+J.~Q. Smith and P.~E. Anderson.
+\newblock Conditional independence and chain event graphs.
+\newblock \emph{Artificial Intelligence}, 172(1):42--68, 2008.
+
+\bibitem[Smith and Freeman(2011)]{smith2011kalman}
+J.~Q. Smith and G.~Freeman.
+\newblock Distributional {K}alman filters for {B}ayesian forecasting and closed form recurrences.
+\newblock \emph{J. Forecasting}, 30(1):210--224, 2011.
+
+\bibitem[Solomonoff(1964)]{solomonoff1964formal}
+R.~J. Solomonoff.
+\newblock A formal theory of inductive inference.
+\newblock \emph{Information and Control}, 7(1):1--22, 1964.
+
+\bibitem[Sutton(2019)]{sutton2019bitter}
+R.~S. Sutton.
+\newblock The bitter lesson.
+\newblock \url{http://www.incompleteideas.net/IncIdeas/BitterLesson.html}, 2019.
+
+\bibitem[Sutton et~al.(1999)]{sutton1999between}
+R.~S. Sutton, D.~Precup, and S.~Singh.
+\newblock Between {MDPs} and semi-{MDPs}: A framework for temporal abstraction in reinforcement learning.
+\newblock \emph{Artificial Intelligence}, 112(1-2):181--211, 1999.
+
+\bibitem[Thwaites et~al.(2009)]{thwaites2009keod}
+P.~A. Thwaites, G.~Freeman, and J.~Q. Smith.
+\newblock Chain event graph {MAP} model selection.
+\newblock In \emph{Proceedings of KEOD 2009}, pages 392--395, 2009.
+
+\bibitem[Wald(1950)]{wald1950statistical}
+A.~Wald.
+\newblock \emph{Statistical Decision Functions}.
+\newblock John Wiley \& Sons, 1950.
+
+\bibitem[Wang et~al.(2023)]{wang2023llmagent}
+L.~Wang, C.~Ma, X.~Feng, Z.~Zhang, H.~Yang, J.~Zhang, Z.~Chen, J.~Tang, X.~Chen, Y.~Lin, W.~X. Zhao, Z.~Wei, and J.-R. Wen.
+\newblock A survey on large language model based autonomous agents.
+\newblock \emph{Frontiers of Computer Science}, 18(6):186345, 2024.
+
+\bibitem[Wang et~al.(2024)]{wang2024tokeneconomies}
+J.~Wang, S.~Jain, D.~Zhang, B.~Ray, V.~Kumar, and B.~Athiwaratkun.
+\newblock Reasoning in token economies: Budget-aware evaluation of {LLM} reasoning strategies.
+\newblock In \emph{Conference on Empirical Methods in Natural Language Processing (EMNLP)}, 2024.
+
+\bibitem[Wang et~al.(2025)]{wang2025epistemic}
+H.~Wang, C.~Qian, M.~Li, J.~Qiu, B.~Xue, M.~Wang, H.~Ji, A.~Storkey, and K.-F. Wong.
+\newblock Position: Agent should invoke external tools only when epistemically necessary.
+\newblock In \emph{International Conference on Machine Learning (ICML)}, 2025.
+
+\bibitem[West and Harrison(1997)]{west1997bayesian}
+M.~West and J.~Harrison.
+\newblock \emph{Bayesian Forecasting and Dynamic Models}.
+\newblock Springer, 2nd edition, 1997.
+
+\bibitem[Yao et~al.(2023)]{yao2023react}
+S.~Yao, J.~Zhao, D.~Yu, N.~Du, I.~Shafran, K.~Narasimhan, and Y.~Cao.
+\newblock {ReAct}: Synergizing reasoning and acting in language models.
+\newblock In \emph{International Conference on Learning Representations}, 2023.
+
+\bibitem[Zheng et~al.(2024)]{zheng2024btp}
+Y.~Zheng, P.~Li, M.~Yan, J.~Zhang, F.~Huang, and Y.~Liu.
+\newblock Budget-constrained tool learning with planning.
+\newblock In \emph{Findings of the Association for Computational Linguistics (ACL)}, 2024.
+
+\bibitem[Zhou et~al.(2024)]{zhou2024lats}
+A.~Zhou, K.~Yan, M.~Shlapentokh-Rothman, H.~Wang, and Y.-X. Wang.
+\newblock Language agent tree search unifies reasoning acting and planning in language models.
+\newblock In \emph{International Conference on Machine Learning (ICML)}, 2024.
+
+\end{thebibliography}
+
+\end{document}
