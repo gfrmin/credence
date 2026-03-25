@@ -48,7 +48,7 @@
 \begin{abstract}
 Current LLM agent frameworks select tools through prompting heuristics without any formal mechanism for evaluating whether a tool query is worth its cost. We introduce \credence{}, a Bayesian decision-theoretic framework that derives tool selection from first principles: agents maintain conjugate beliefs about tool reliability, update them from observed outcomes, and select queries by maximising expected utility via value-of-information calculations. The framework is grounded in five axioms---Bayesian conditioning, expected utility integration, EU maximisation, a Solomonoff complexity prior, and a cooperative inverse reinforcement learning (CIRL) alignment commitment---from which all agent behaviour is derived rather than engineered.
 
-On a controlled benchmark, \credence{} scores $+112.6$ points compared to $-8.0$ for LangChain ReAct, despite achieving \emph{lower} per-query accuracy ($59.6\%$ vs.\ $63.7\%$). We term this the \emph{accuracy paradox}: optimising accuracy without accounting for query costs is provably suboptimal, and no amount of prompt engineering can remedy this---an enhanced LangChain agent with explicit cost-awareness instructions achieves the highest non-oracle accuracy ($66.0\%$) but the worst non-random score ($-68.2$). Under distributional drift, \credence{} degrades gracefully (score change: $-21.8$) while a fixed-tool baseline collapses ($-69.0$). These results suggest that the dominant paradigm of designing agents through prompting is fundamentally limited, and that principled Bayesian approaches offer a practical and theoretically grounded alternative.
+On a controlled benchmark, \credence{} scores $+129.5$ points compared to $+10.8$ for the best LLM agent (ReAct with strategy prompting and cross-question memory), despite achieving \emph{lower} per-query accuracy ($62.6\%$ vs.\ $76.4\%$). We term this the \emph{accuracy paradox}: optimising accuracy without accounting for query costs is provably suboptimal. We evaluate three LLM agent variants---bare prompting, ReAct reasoning traces \citep{yao2023react}, and a fully enhanced variant---and find that additional prompting techniques improve accuracy but never close the score gap: the best LLM variant achieves the highest accuracy of any agent yet scores $12\times$ less than \credence{}. Under distributional drift, \credence{} degrades gracefully (score change: $-21.8$) while a fixed-tool baseline collapses ($-69.0$). These results suggest that the dominant paradigm of designing agents through prompting is fundamentally limited, and that principled Bayesian approaches offer a practical and theoretically grounded alternative.
 \end{abstract}
 
 % ============================================================
@@ -90,7 +90,7 @@ Cost-aware approaches to LLM tool use span five tiers of increasing formality: (
 
 \citet{kapoor2025agents} demonstrate that agent evaluation without cost accounting is misleading---accuracy alone fails to capture real-world value. \citet{wang2024tokeneconomies} show that budget-aware reasoning strategies outperform unconstrained ones, and \citet{erol2025costofpass} propose an economic framework for model evaluation that accounts for inference cost. \citet{wang2025epistemic} argue that agents should invoke tools ``only when epistemically necessary,'' defining a knowledge boundary concept but providing no computational mechanism. A Bayesian VOI framework provides exactly the mechanism they call for.
 
-Our Enhanced LangChain result (\S\ref{sec:results}) empirically demonstrates the failure of tier~1: adding cost-awareness prompts to a capable agent makes it \emph{more} expensive, not less. The prompting trap arises because natural language cannot express the quantitative tradeoff between information gain and query cost that VOI captures naturally. \citet{desabbata2024metareasoning} reach a complementary conclusion from the metareasoning perspective: LLMs benefit from explicit computational cost-benefit analysis rather than implicit prompt-level reasoning.
+Our LLM agent results (\S\ref{sec:results}) empirically demonstrate the failure of tier~1: adding cost-awareness prompts, reasoning traces, and cross-question memory to a capable agent improves accuracy but never closes the score gap with \credence{}. The prompting trap arises because natural language cannot express the quantitative tradeoff between information gain and query cost that VOI captures naturally. \citet{desabbata2024metareasoning} reach a complementary conclusion from the metareasoning perspective: LLMs benefit from explicit computational cost-benefit analysis rather than implicit prompt-level reasoning.
 
 \subsection{Theoretical Foundations}
 
@@ -249,7 +249,7 @@ Tool & Fact. & Num. & Rec. & Misc. & Reas. & & \\
 \midrule
 A (Web Search) & 0.85 & 0.30 & 0.75 & 0.35 & 0.50 & 1.0 & 1 \\
 B (Knowledge Base) & 0.95 & 0.40 & 0.60 & 0.90 & 0.50 & 0.2--0.7 & 3 \\
-C (Calculator) & --- & 1.00 & --- & --- & --- & Num.\ only & 1 \\
+C (Calculator) &1.00 &--- &Num.\ only & 1 \\
 D (LLM Direct) & 0.70 & 0.55 & 0.50 & 0.45 & 0.75 & 1.0 & 2 \\
 \bottomrule
 \end{tabular}
@@ -259,11 +259,15 @@ D (LLM Direct) & 0.70 & 0.55 & 0.50 & 0.45 & 0.75 & 1.0 & 2 \\
 
 \subsection{Agents Compared}
 
-\paragraph{\credence{} (Bayesian).} The full framework of \cref{sec:framework}. Beta(1,1) priors, latent category inference from tool response patterns, VOI-based tool selection. No LLM calls. ${\sim}200$ lines of Python + Julia inference engine.
+\paragraph{\credence{} (Bayesian).} The full framework of \cref{sec:framework}. Beta(1,1) priors, latent category inference from tool response patterns, VOI-based tool selection. No LLM calls. Pure Julia inference engine.
 
-\paragraph{LangChain ReAct.} Standard zero-shot ReAct agent \citep{yao2023react} via LangChain with access to all four tools. System prompt includes full information about tool characteristics, scoring rules, and the option to abstain. Run with a local LLM (Ollama).
-
-\paragraph{LangChain Enhanced.} Same architecture with additional instructions: track reliability across questions, prefer cheap tools, cross-verify selectively, abstain when confidence is below $1/3$. Conversation history provided for implicit memory. This represents best-effort prompt engineering.
+\paragraph{LLM agents.} Three variants of an LLM-based tool selection agent (Llama 3.1 8B via Ollama, temperature 0), differing in prompting technique. All share the same system prompt describing the four tools, scoring rules, and the option to abstain. The variants form a factorial design over three prompting techniques:
+\begin{itemize}
+\item \textbf{LLM Bare}: base prompt only---the LLM outputs an action (QUERY, SUBMIT, or ABSTAIN) with no reasoning.
+\item \textbf{LLM ReAct}: adds explicit Thought/Action/Observation traces \citep{yao2023react}, with the full reasoning history included in each prompt.
+\item \textbf{LLM ReAct+S+H}: adds strategy guidance (cost-awareness, per-tool reliability heuristics) and cross-question history (last 10 outcomes). This represents maximum prompt engineering effort.
+\end{itemize}
+The comparison is between decision-making paradigms---Bayesian EU maximisation vs.\ LLM-prompted reasoning---not software frameworks.
 
 \paragraph{Oracle.} Knows the true reliability table. Makes optimal VOI-based decisions. Upper bound on \credence{} performance with perfect knowledge.
 
@@ -296,33 +300,33 @@ All results are averaged over 20 random seeds. We run three experimental conditi
 \centering
 \caption{Stationary benchmark results (mean $\pm$ std over 20 seeds).}
 \label{tab:stationary}
-\begin{tabular}{@{}lrrrrr@{}}
+\begin{tabular}{@{}lrrrr@{}}
 \toprule
-Agent & Score & Accuracy & Tools/Q & Cost Eff. & Time/Q (s) \\
+Agent & Score & Accuracy & Tools/Q & Time/Q (s) \\
 \midrule
-Oracle & $+175.8 \pm 35.1$ & 0.706 & 1.24 & --- & \textrm{TODO} \\
-\credence{} (Bayesian) & $\mathbf{+112.6 \pm 44.6}$ & 0.596 & 1.10 & 1.37 & \textrm{TODO} \\
-Single-Best-Tool & $+24.8 \pm 44.7$ & 0.554 & 1.00 & 0.90 & \textrm{TODO} \\
-Random & $-6.6 \pm 31.8$ & 0.424 & 1.00 & 0.53 & \textrm{TODO} \\
-LangChain ReAct & $-8.0 \pm 52.3$ & 0.637 & 3.22 & 0.61 & \textrm{TODO} \\
-LangChain Enhanced & $-68.2 \pm 48.5$ & 0.660 & 3.94 & 0.63 & \textrm{TODO} \\
-All-Tools & $-88.0 \pm 57.0$ & 0.616 & 4.00 & 0.71 & \textrm{TODO} \\
+\credence{} (Bayesian) & $\mathbf{+129.5 \pm 51.3}$ & 0.626 & 1.80 &0.07 \\
+Single-Best-Tool & $+58.5 \pm 55.9$ & 0.478 & 1.00 &$<$0.01 \\
+Random & $+12.2 \pm 54.8$ & 0.450 & 1.00 &$<$0.01 \\
+LLM ReAct+S+H & $+10.8 \pm 50.8$ & \textbf{0.764} & 3.05 &5.65 \\
+LLM ReAct & $-15.3 \pm 28.0$ & 0.660 & 2.70 &4.60 \\
+All-Tools & $-114.2 \pm 60.1$ & 0.581 & 4.00 &$<$0.01 \\
+LLM Bare & $-160.5 \pm 36.1$ & 0.438 & 3.26 &0.93 \\
 \bottomrule
 \end{tabular}
 \end{table}
 
 
-The central result (\cref{tab:stationary}) is that \credence{} achieves the highest non-oracle score ($+112.6$) whilst having the \emph{second-lowest} accuracy ($59.6\%$). LangChain ReAct achieves competitive accuracy ($63.7\%$) but scores near zero ($-8.0$) because it averages $3.22$ tool queries per question. The Enhanced variant achieves the highest non-oracle accuracy ($66.0\%$) but the \emph{worst} non-random score ($-68.2$), querying $3.94$ tools per question.
+The central result (\cref{tab:stationary}) is that \credence{} achieves the highest score ($+129.5$) whilst having \emph{lower} accuracy ($62.6\%$) than any of the LLM agents. The best LLM variant (ReAct+S+H) achieves the highest accuracy of any agent ($76.4\%$) but scores $+10.8$---$12\times$ less than \credence{}---because it averages $3.05$ tool queries per question and takes $5.65$ seconds per question compared to \credence{}'s $0.07$ seconds.
 
 \paragraph{The accuracy paradox.}
-This result is not anomalous---it is a direct consequence of the decision-theoretic framework. Accuracy measures $P(\text{correct})$ but ignores the cost of achieving that probability. The LangChain agents achieve high accuracy \emph{because} they query many tools, but each query has a cost. The net score is:
+This result is not anomalous---it is a direct consequence of the decision-theoretic framework. Accuracy measures $P(\text{correct})$ but ignores the cost of achieving that probability. The LLM agents achieve high accuracy \emph{because} they query many tools, but each query has a cost. The net score is:
 \begin{equation}
   \text{Score} = \sum_{q=1}^Q \bigl[v_q \cdot \mathbf{1}[\text{correct}_q] + v_{\text{wrong}} \cdot \mathbf{1}[\text{wrong}_q]\bigr] - \sum_{q=1}^Q \text{cost}_q,
 \end{equation}
 where $v_q = v_{\text{correct}}$ if the agent submits correctly, $v_{\text{wrong}}$ if incorrectly, and $0$ if abstaining. Maximising the first sum (accuracy) is not equivalent to maximising the full expression when costs are non-zero.
 
 \paragraph{The prompting trap.}
-The Enhanced LangChain agent's worse performance is particularly instructive. The additional instructions make it \emph{more thorough}: it cross-verifies answers, tracks consistency, and queries backup tools. Each of these behaviours increases accuracy but also increases cost. The prompt tells it to be careful, so it verifies everything---exactly the wrong strategy when verification is not free. This demonstrates that cost-benefit analysis cannot be recovered through prompting: it requires an explicit decision-theoretic mechanism external to the LLM.
+The three LLM variants reveal a clear gradient: LLM Bare ($-160.5$), LLM ReAct ($-15.3$), LLM ReAct+S+H ($+10.8$). Each prompting technique---reasoning traces, strategy guidance, cross-question memory---improves accuracy. But the improvements never close the gap: even the fully enhanced variant, with the highest accuracy of any agent ($76.4\%$), scores $12\times$ less than \credence{}. The additional reasoning makes the agent \emph{more thorough}: it considers tool reliability, tracks past performance, and deliberates before each query. But deliberation itself costs time ($5.65$s vs.\ $0.07$s per question), and the LLM still queries $3.05$ tools per question because it lacks a formal mechanism for computing whether a query is worth its cost. This demonstrates that cost-benefit analysis cannot be recovered through prompting: it requires an explicit decision-theoretic mechanism external to the LLM.
 
 \subsection{Distributional Drift}
 
@@ -354,7 +358,7 @@ When Tool~A's reliability degrades after question 25 (\cref{tab:drift}), the Sin
 \toprule
 Variant & Score & $\Delta$ vs.\ Full & Effect \\
 \midrule
-Full \credence{} & $+112.6 \pm 44.6$ & --- & --- \\
+Full \credence{} & $+112.6 \pm 44.6$ &--- \\
 No categories (flat prior) & $+10.6 \pm 55.8$ & $-102.0$ & Accuracy collapses to 31.6\%; 0.49 tools/Q \\
 No VOI (always query) & $+34.5 \pm 48.9$ & $-78.1$ & Degenerates to cheapest-tool heuristic \\
 Fixed reliability ($p = 0.5$) & $+34.5 \pm 48.9$ & $-78.1$ & VOI uses uninformative priors; same as no VOI \\
@@ -373,20 +377,20 @@ Category inference is the single most valuable component ($-102.0$): without cat
 \label{sec:discussion}
 
 \paragraph{Why accuracy is the wrong metric.}
-The accuracy paradox is not merely an artefact of our scoring system. Any deployment context with non-zero query costs---API fees, latency, rate limits---creates a divergence between accuracy and net value. In production, the LangChain Enhanced agent's strategy of ``verify everything'' would be the most expensive and least efficient approach. The correct metric is expected utility, which accounts for both the value of correct answers and the cost of obtaining them.
+The accuracy paradox is not merely an artefact of our scoring system. Any deployment context with non-zero query costs---API fees, latency, rate limits---creates a divergence between accuracy and net value. In production, the LLM ReAct+S+H agent's strategy of ``reason carefully about every query'' would be the most expensive and least efficient approach: it achieves $76.4\%$ accuracy but takes $80\times$ longer per question than \credence{} and still scores $12\times$ less. The correct metric is expected utility, which accounts for both the value of correct answers and the cost of obtaining them.
 
 \paragraph{Cheap design for LLM agents.}
-\citet{ay2015geometric} argues that an embodied agent's controller need not be a universal approximator---it need only be sufficient for expressing desired behaviours given the agent's embodiment constraints. The \credence{} decision layer demonstrates this principle: ${\sim}200$ lines of NumPy, maintaining Beta distributions and computing VOI, outperform a full LLM-based decision-maker that is orders of magnitude more complex. The LLM is powerful but expensive; using it for decisions it is provably ill-suited to make---resource allocation under uncertainty---is the opposite of cheap design.
+\citet{ay2015geometric} argues that an embodied agent's controller need not be a universal approximator---it need only be sufficient for expressing desired behaviours given the agent's embodiment constraints. The \credence{} decision layer demonstrates this principle: a Julia inference engine maintaining Beta distributions and computing VOI outperforms a full LLM-based decision-maker that is orders of magnitude more complex. The LLM is powerful but expensive; using it for decisions it is provably ill-suited to make---resource allocation under uncertainty---is the opposite of cheap design.
 
 The analogy to Ay's exponential family policy models (\citealt{ay2015geometric}, Proposition~1) is suggestive: just as Ay shows that policies parameterised by a small number of ``feature vectors'' derived from the embodiment constraints can be embodied universal approximators, the \credence{} decision layer achieves near-oracle performance using only the sufficient statistics of the Beta posteriors. The ``feature vectors'' are the tool-category reliability estimates; the ``embodiment constraints'' are the tools' true (unknown) reliability profiles.
 
-The computational asymmetry is stark: the \credence{} decision layer processes each question in milliseconds (closed-form Beta posterior updates and VOI computation), whilst the LangChain agents require seconds per question due to multiple LLM inference calls for tool selection---decisions that admit analytical solutions. \Cref{tab:stationary} reports wall-clock time per question for each agent.
+The computational asymmetry is stark: the \credence{} decision layer processes each question in $0.07$ seconds (closed-form Beta posterior updates and VOI computation), whilst the best LLM agent requires $5.65$ seconds---an $80\times$ difference driven entirely by LLM inference overhead for tool selection decisions that admit analytical solutions. \Cref{tab:stationary} reports wall-clock time per question for each agent.
 
 \paragraph{Connection to dynamic staged trees.}
 The per-tool, per-category Beta parameters in \credence{} are structurally analogous to the stage parameters in a chain event graph \citep{freeman2011bayesian}: each tool-category pair is a ``situation'' in the event tree sense, with its own Dirichlet-distributed transition probabilities. The agent's task of learning which tools are reliable for which categories mirrors the CEG model selection problem of learning which situations share the same stage (i.e., the same transition distribution). The principled treatment of non-stationarity---learning the forgetting rate from observed outcomes rather than fixing it---connects directly to the dynamic staged tree framework of \citet{freeman2011dynamic}, where the power steady model parameter $k$ controls the bias-variance tradeoff between adaptation speed and belief stability. \citet{smith2011kalman} showed that the power steady model is the natural non-Gaussian analogue of Kalman filter evolution that preserves conjugacy.
 
 \paragraph{Limitations.}
-The current evaluation uses simulated tools with known ground truth, which limits ecological validity. The question bank is small (50 questions) and category inference is learned purely from tool response patterns via Bayesian conditioning on a latent category variable, starting from a uniform prior---no text features are used. The LangChain agents use a local LLM via Ollama; running them with frontier models (GPT-4o, Claude Sonnet) would likely improve their accuracy but would not address the structural inability to compute value of information---the prompting trap result already demonstrates this with the Enhanced variant. Finally, the current framework assumes tools return independent responses---correlated errors between tools are not modelled.
+The current evaluation uses simulated tools with known ground truth, which limits ecological validity. The question bank is small (50 questions) and category inference is learned purely from tool response patterns via Bayesian conditioning on a latent category variable, starting from a uniform prior---no text features are used. The LLM agents use a local model (Llama 3.1 8B via Ollama); running them with frontier models (GPT-4o, Claude Sonnet) would likely improve their accuracy but would not address the structural inability to compute value of information---the prompting trap result already demonstrates this, as the fully enhanced LLM variant achieves $76.4\%$ accuracy yet still scores $12\times$ less than \credence{}. Finally, the current framework assumes tools return independent responses---correlated errors between tools are not modelled.
 
 
 % ============================================================
