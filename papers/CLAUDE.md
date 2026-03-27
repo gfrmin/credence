@@ -2,7 +2,7 @@
 
 ## Context
 
-You are helping co-author an academic paper: "Credence: Bayesian Decision-Theoretic Tool Selection for LLM Agents." The LaTeX source is at `paper/credence.tex`. Framing decisions, reference lists, and positioning notes are at `paper/NOTES.md`. Read NOTES.md thoroughly before making any changes to the paper.
+You are helping co-author an academic paper: "Credence: Bayesian Decision-Theoretic Tool Selection for LLM Agents." The LaTeX source is at `credence.tex`. Framing decisions, reference lists, and positioning notes are at `NOTES.md`. Benchmark results are at `RESULTS.md`. Read NOTES.md thoroughly before making any changes to the paper.
 
 The author is Guy Freeman (guy@gfrm.in), an independent researcher with a PhD in Statistics from Warwick (Bayesian graphical models, chain event graphs) and 10+ years of production ML experience. He is currently on contract at Booking.com designing agentic flows.
 
@@ -11,25 +11,26 @@ The author is Guy Freeman (guy@gfrm.in), an independent researcher with a PhD in
 This is an **architecture paper**, not merely a benchmark paper. The benchmark results are evidence for a deeper claim: that LLM tool selection is fundamentally a decision-theoretic problem, not a perception problem, and that principled Bayesian methods outperform prompting-based approaches for structural reasons that no amount of prompt engineering can overcome.
 
 Three headline results:
-1. **Accuracy paradox**: +112.6 vs -8.0 despite lower accuracy (59.6% vs 63.7%)
-2. **Prompting trap**: Enhanced LangChain scores worst (-68.2) — cost-awareness prompting backfires
+1. **Accuracy paradox**: +129.5 vs +10.8 despite lower accuracy (62.6% vs 76.4%) — highest-accuracy agent scores 12× less
+2. **Prompting trap**: Three LLM variants form a gradient — Bare (-160.5) → ReAct (-15.3) → ReAct+S+H (+10.8) — more prompting helps but never closes the gap
 3. **Graceful degradation**: Bayesian agent absorbs drift (-21.8 delta) while single-best collapses (-69.0)
 
 ## What needs doing (in priority order)
 
 ### 1. Fill in the ablation table
 
-Table 4 (`\label{tab:ablation}`) has placeholder values. Extract exact numbers from `results/RESULTS.md` (or run `python run_ablation.py` if needed). The table should show:
+Table 4 (`\label{tab:ablation}`) has values from the older Python benchmark. These need re-running in the Julia benchmark (`domains/qa_benchmark/host.jl`). Current numbers from `RESULTS.md`:
 
 | Variant | Score | Δ vs Full | Effect |
 |---------|-------|-----------|--------|
 | Full Credence | +112.6 | — | — |
-| No VOI (always query) | [exact] | [exact] | [describe] |
-| No categories (flat prior) | [exact] | [exact] | [describe] |
-| No abstention | [exact] | [exact] | [describe] |
-| Fixed reliability (p=0.5) | [exact] | [exact] | [describe] |
+| No VOI (always query) | +34.5 | -78.1 | Degenerates to single-best |
+| No categories (flat prior) | +10.6 | -102.0 | Most critical — accuracy collapses to 31.6% |
+| No abstention | +91.1 | -21.5 | Variance doubles, forced wrong answers |
+| Fixed reliability (p=0.5) | +34.5 | -78.1 | Same as no VOI — uninformative priors |
+| No cross-verify | +117.6 | +5.0 | Slightly better — second query sometimes not worth cost |
 
-After filling in numbers, add 1-2 sentences of analysis after the table discussing which component contributes most.
+These ablation numbers are from the old Python run and need re-running with the current Julia benchmark to match the new stationary baseline (+129.5).
 
 ### 2. Expand the bibliography
 
@@ -54,7 +55,7 @@ The key sentence: "To our knowledge, no published work combines per-tool Bayesia
 
 **§2.2 Cost-aware agent approaches**
 Cover the five tiers of increasing formality:
-- Prompt-based: expose budget in prompt (limited effectiveness — our Enhanced LangChain result shows this fails)
+- Prompt-based: expose budget in prompt (limited effectiveness — our LLM agent results show the prompting gradient never closes the gap)
 - RL reward shaping: penalise tool calls in reward
 - Planning/optimisation: BTP (Zheng et al., ACL 2024), SayCanPay
 - Sequential decision-making: INTENT (arXiv 2602.11541) — the most formally rigorous
@@ -72,7 +73,7 @@ Also cite: AI Agents That Matter (Kapoor et al., TMLR 2025), Reasoning in Token 
 
 - Remove the subtitle "Or, Why Your AI Agent Is an Expensive Flowchart" if it's still there — too informal for arXiv
 - Add Smith & Freeman (2011) "Distributional Kalman Filters" J. Forecasting to the bibliography and cite it in the non-stationarity discussion alongside West & Harrison (1997)
-- In the Limitations paragraph, add: "Running the LangChain agents with frontier models (GPT-4o, Claude Sonnet) would likely improve their accuracy but would not address the structural inability to compute value of information — the prompting trap result already demonstrates this with the Enhanced variant."
+- In the Limitations paragraph, add: "Running the LLM agents with frontier models (GPT-4o, Claude Sonnet) would likely improve their accuracy but would not address the structural inability to compute value of information — the prompting trap result already demonstrates this, as the fully enhanced variant achieves 76.4% accuracy yet still scores 12× less than Credence." (DONE)
 - Verify the `\date` is set to `\today` or a specific month/year
 
 ## What NOT to do
@@ -87,7 +88,7 @@ Also cite: AI Agents That Matter (Kapoor et al., TMLR 2025), Reasoning in Token 
 ## Compilation
 
 ```bash
-cd paper/
+cd papers/
 pdflatex -interaction=nonstopmode credence.tex
 pdflatex -interaction=nonstopmode credence.tex  # twice for references
 ```

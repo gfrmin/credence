@@ -13,8 +13,8 @@ An architecture paper presenting Credence, a Bayesian decision-theoretic framewo
 - The gap is wide open — no peer-reviewed paper at a top venue does what Credence does
 
 ### Three headline results
-1. **Accuracy paradox**: Bayesian agent scores +112.6 vs LangChain ReAct's -8.0, despite LOWER accuracy (59.6% vs 63.7%). Higher accuracy + undisciplined querying = negative value.
-2. **Prompting trap**: Enhanced LangChain with cost-awareness prompting scores WORST (-68.2). More sophisticated prompts make agents more expensive, not more economical. This empirically falsifies the hypothesis that prompting can substitute for decision theory.
+1. **Accuracy paradox**: Bayesian agent scores +129.5 vs best LLM agent's +10.8, despite LOWER accuracy (62.6% vs 76.4%). The highest-accuracy agent scores 12× less. Higher accuracy + undisciplined querying = marginal value.
+2. **Prompting trap**: Three LLM variants form a gradient — Bare (-160.5) → ReAct (-15.3) → ReAct+S+H (+10.8). Each prompting technique improves accuracy but never closes the score gap. This empirically falsifies the hypothesis that prompting can substitute for decision theory.
 3. **Graceful degradation**: Under drift, single-best-tool collapses (-69.0 delta), Bayesian agent barely notices (-21.8 with forgetting). No change-detection heuristic needed.
 
 ### Connections to author's prior work
