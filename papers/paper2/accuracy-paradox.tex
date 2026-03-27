@@ -1,0 +1,138 @@
+\documentclass[11pt]{article}
+
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{amsmath,amssymb,amsthm}
+\usepackage{booktabs}
+\usepackage{hyperref}
+\usepackage{natbib}
+\usepackage[margin=1in]{geometry}
+
+\newcommand{\credence}{\textsc{Credence}}
+
+\title{The Accuracy Paradox in Tool-Using LLM Agents}
+
+\author{
+  Guy Freeman \\
+  Independent Researcher, Tel Aviv
+}
+
+\date{\today}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+% Core claim: Optimising agent accuracy without accounting for tool costs is provably
+% suboptimal. We demonstrate this empirically with three LLM agent variants that form
+% a monotone gradient: more sophisticated prompting -> higher accuracy -> lower net value.
+\end{abstract}
+
+
+% ============================================================
+% EXTRACTED FROM PAPER 1:
+% ============================================================
+
+% --- From §6 "Why accuracy is the wrong metric" (Paper 1 lines 379-380) ---
+%
+% \paragraph{Why accuracy is the wrong metric.}
+% The accuracy paradox is not merely an artefact of our scoring system. Any deployment context with non-zero query costs---API fees, latency, rate limits---creates a divergence between accuracy and net value. In production, the LLM ReAct+S+H agent's strategy of ``reason carefully about every query'' would be the most expensive and least efficient approach: it achieves $76.4\%$ accuracy but takes $80\times$ longer per question than \credence{} and still scores $12\times$ less. The correct metric is expected utility, which accounts for both the value of correct answers and the cost of obtaining them.
+
+% --- From §5.1 score equation (Paper 1 lines 323-326) ---
+%
+% \begin{equation}
+%   \text{Score} = \sum_{q=1}^Q \bigl[v_q \cdot \mathbf{1}[\text{correct}_q] + v_{\text{wrong}} \cdot \mathbf{1}[\text{wrong}_q]\bigr] - \sum_{q=1}^Q \text{cost}_q,
+% \end{equation}
+% where $v_q = v_{\text{correct}}$ if the agent submits correctly, $v_{\text{wrong}}$ if incorrectly, and $0$ if abstaining. Maximising the first sum (accuracy) is not equivalent to maximising the full expression when costs are non-zero.
+
+% --- From §5.1 "The accuracy paradox" (Paper 1 lines 321-323) ---
+%
+% \paragraph{The accuracy paradox.}
+% This result is not anomalous---it is a direct consequence of the decision-theoretic framework. Accuracy measures $P(\text{correct})$ but ignores the cost of achieving that probability. The LLM agents achieve high accuracy \emph{because} they query many tools, but each query has a cost. The net score is:
+
+% --- From §5.1 "The prompting trap" (Paper 1 lines 328-329) ---
+%
+% \paragraph{The prompting trap.}
+% The three LLM variants reveal a clear gradient: LLM Bare ($-160.5$), LLM ReAct ($-15.3$), LLM ReAct+S+H ($+10.8$). Each prompting technique---reasoning traces, strategy guidance, cross-question memory---improves accuracy. But the improvements never close the gap: even the fully enhanced variant, with the highest accuracy of any agent ($76.4\%$), scores $12\times$ less than \credence{}. The additional reasoning makes the agent \emph{more thorough}: it considers tool reliability, tracks past performance, and deliberates before each query. But deliberation itself costs time ($5.65$s vs.\ $0.07$s per question), and the LLM still queries $3.05$ tools per question because it lacks a formal mechanism for computing whether a query is worth its cost. This demonstrates that cost-benefit analysis cannot be recovered through prompting: it requires an explicit decision-theoretic mechanism external to the LLM.
+
+% --- Table 2: Stationary benchmark results (Paper 1 lines 299-316) ---
+%
+% \begin{table}[t]
+% \centering
+% \caption{Stationary benchmark results (mean $\pm$ std over 20 seeds).}
+% \label{tab:stationary}
+% \begin{tabular}{@{}lrrrr@{}}
+% \toprule
+% Agent & Score & Accuracy & Tools/Q & Time/Q (s) \\
+% \midrule
+% \credence{} (Bayesian) & $\mathbf{+129.5 \pm 51.3}$ & 0.626 & 1.80 &0.07 \\
+% Single-Best-Tool & $+58.5 \pm 55.9$ & 0.478 & 1.00 &$<$0.01 \\
+% Random & $+12.2 \pm 54.8$ & 0.450 & 1.00 &$<$0.01 \\
+% LLM ReAct+S+H & $+10.8 \pm 50.8$ & \textbf{0.764} & 3.05 &5.65 \\
+% LLM ReAct & $-15.3 \pm 28.0$ & 0.660 & 2.70 &4.60 \\
+% All-Tools & $-114.2 \pm 60.1$ & 0.581 & 4.00 &$<$0.01 \\
+% LLM Bare & $-160.5 \pm 36.1$ & 0.438 & 3.26 &0.93 \\
+% \bottomrule
+% \end{tabular}
+% \end{table}
+
+% --- §4.2 LLM agents description (Paper 1 lines 264-269) ---
+%
+% \paragraph{LLM agents.} Three variants of an LLM-based tool selection agent (Llama 3.1 8B via Ollama, temperature 0), differing in prompting technique. All share the same system prompt describing the four tools, scoring rules, and the option to abstain. The variants form a factorial design over three prompting techniques:
+% \begin{itemize}
+% \item \textbf{LLM Bare}: base prompt only---the LLM outputs an action (QUERY, SUBMIT, or ABSTAIN) with no reasoning.
+% \item \textbf{LLM ReAct}: adds explicit Thought/Action/Observation traces \citep{yao2023react}, with the full reasoning history included in each prompt.
+% \item \textbf{LLM ReAct+S+H}: adds strategy guidance (cost-awareness, per-tool reliability heuristics) and cross-question history (last 10 outcomes). This represents maximum prompt engineering effort.
+% \end{itemize}
+
+
+% ============================================================
+% NEW MATERIAL NEEDED:
+% ============================================================
+
+% 1. Frame against accuracy paradox literature: Chen et al. 2024 (RLHF), Bedi et al. 2025
+%    (clinical), Intervention Paradox (arXiv 2602.03338), Reasoning in Token Economies (EMNLP 2024)
+%
+% 2. Formal proof that accuracy-maximisation != utility-maximisation when costs > 0 (straightforward)
+%
+% 3. Pareto frontier analysis (accuracy vs. score) -- plot all agents on this
+%
+% 4. Ideally: run at least one frontier LLM (GPT-4o or Claude Sonnet) to show the paradox
+%    persists even with much better perception. This pre-empts the main criticism.
+%
+% 5. Discussion of implications for agent benchmarks (connect to Kapoor et al. 2025)
+%
+% 6. This paper cites Paper 1 for the framework and experimental setup, but contributes
+%    to a different literature (agent evaluation, not agent architecture).
+
+
+% ============================================================
+% BIBLIOGRAPHY
+% ============================================================
+\bibliographystyle{plainnat}
+
+\begin{thebibliography}{99}
+
+\bibitem[Erol et~al.(2025)]{erol2025costofpass}
+M.~H. Erol, B.~El, M.~Suzgun, M.~Yuksekgonul, and J.~Zou.
+\newblock Cost-of-pass: An economic framework for evaluating language models.
+\newblock arXiv preprint arXiv:2504.13359, 2025.
+
+\bibitem[Kapoor et~al.(2025)]{kapoor2025agents}
+S.~Kapoor, B.~Stroebl, Z.~S. Siegel, N.~Nadgir, and A.~Narayanan.
+\newblock {AI} agents that matter.
+\newblock \emph{Transactions on Machine Learning Research}, 2025.
+
+\bibitem[Wang et~al.(2024)]{wang2024tokeneconomies}
+J.~Wang, S.~Jain, D.~Zhang, B.~Ray, V.~Kumar, and B.~Athiwaratkun.
+\newblock Reasoning in token economies: Budget-aware evaluation of {LLM} reasoning strategies.
+\newblock In \emph{Conference on Empirical Methods in Natural Language Processing (EMNLP)}, 2024.
+
+\bibitem[Yao et~al.(2023)]{yao2023react}
+S.~Yao, J.~Zhao, D.~Yu, N.~Du, I.~Shafran, K.~Narasimhan, and Y.~Cao.
+\newblock {ReAct}: Synergizing reasoning and acting in language models.
+\newblock In \emph{International Conference on Learning Representations}, 2023.
+
+\end{thebibliography}
+
+\end{document}

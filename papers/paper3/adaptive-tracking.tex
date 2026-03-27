@@ -1,0 +1,171 @@
+\documentclass[11pt]{article}
+
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{amsmath,amssymb,amsthm}
+\usepackage{booktabs}
+\usepackage{hyperref}
+\usepackage{cleveref}
+\usepackage{natbib}
+\usepackage[margin=1in]{geometry}
+
+\newcommand{\credence}{\textsc{Credence}}
+\newcommand{\Beta}{\mathrm{Beta}}
+
+\title{Adaptive Bayesian Tool Reliability Tracking \\for Non-Stationary LLM Agents}
+
+\author{
+  Guy Freeman \\
+  Independent Researcher, Tel Aviv
+}
+
+\date{\today}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+% Core claim: LLM APIs are empirically non-stationary. Classical Bayesian forgetting
+% mechanisms -- power priors, exponential discounting, changepoint detection -- provide
+% principled solutions that current agent frameworks lack entirely.
+\end{abstract}
+
+
+% ============================================================
+% EXTRACTED FROM PAPER 1:
+% ============================================================
+
+% --- From §1 Introduction (Paper 1 line 70) ---
+%
+% Second, the author's prior work on \emph{dynamic staged trees} \citep{freeman2011dynamic} and \emph{chain event graph} (CEG) model selection \citep{freeman2011bayesian}, which demonstrated that Bayesian structure learning with conjugate updates can handle non-stationary discrete processes through multi-process switching. The Beta-Bernoulli reliability model in \credence{} is a specialisation of the Dirichlet-categorical conjugate framework used for CEG stage learning, and the exponential forgetting mechanism for handling drift mirrors the power steady model of \citet{freeman2011dynamic}.
+
+% --- From §2.3 "Graphical models" (Paper 1 line 99) ---
+%
+% \paragraph{Graphical models.} Chain event graphs \citep{smith2008chain, freeman2011bayesian, thwaites2009keod} generalise Bayesian networks to handle context-specific independence with conjugate model selection via product Dirichlet priors. Dynamic staged trees \citep{freeman2011dynamic} extend this to non-stationary time series through multi-process switching models. The per-tool, per-category Beta-Bernoulli reliability model in \credence{} is a specialisation of the product Dirichlet conjugate framework developed for chain event graph model selection \citep{freeman2011bayesian}, where \citet[Theorem~18]{freeman2011bayesian} showed that path and floret independence assumptions characterise the Dirichlet prior on staged tree parameters. Each tool-category pair in \credence{} corresponds to a floret in the CEG sense, with the correct/incorrect outcome defining a two-edge floret whose natural conjugate prior is Beta. The experimental forgetting variant draws on the power steady model of \citet{freeman2011dynamic}, with connections to distributional Kalman filtering \citep{smith2011kalman} and the multi-process framework of \citet{harrison1976bayesian, west1997bayesian}.
+
+% --- From §3.3 non-stationarity + forgetting (Paper 1 lines 170-177) ---
+%
+% \paragraph{Non-stationarity.} The core framework handles distributional drift through standard Beta-Bernoulli updating: as a tool's reliability degrades, negative evidence accumulates and the posterior shifts downward naturally. No explicit change-detection mechanism is required---the posterior adapts continuously, with the rate of adaptation governed by the effective sample size (the sum $\alpha + \beta$).
+%
+% \paragraph{Experimental variant: exponential forgetting.} As an experimental extension, we also test a forgetting mechanism inspired by the power steady model \citep{freeman2011dynamic, smith2011kalman}, applying exponential discounting:
+% \begin{equation}
+%   (\alpha_{t,c}, \beta_{t,c}) \mapsto (\lambda \alpha_{t,c} + (1-\lambda), \lambda \beta_{t,c} + (1-\lambda)),
+%   \label{eq:forget}
+% \end{equation}
+% with fixed $\lambda = 0.95$. This is a form of power prior discounting \citep{ibrahim2003power} that preserves the Beta form while downweighting old observations, giving faster adaptation to abrupt reliability changes at the cost of increased posterior variance. An alternative principled approach to non-stationarity is Bayesian online changepoint detection \citep{adams2007changepoint}, which maintains a posterior over run lengths rather than discounting uniformly. However, a fully principled treatment within our framework would infer $\lambda$ from data---for instance by maintaining a posterior over $\lambda$ as in the Class~2 multi-process model of \citet{freeman2011dynamic}---which we defer to future work.
+
+% --- From §5.2 drift experiment + Table 3 (Paper 1 lines 331-349) ---
+%
+% \subsection{Distributional Drift}
+%
+% \begin{table}[t]
+% \centering
+% \caption{Drift experiment: score change after Tool~A reliability drop at question 25 (mean over 20 seeds).}
+% \label{tab:drift}
+% \begin{tabular}{@{}lrrr@{}}
+% \toprule
+% Agent & Before (Q1--25) & After (Q26--50) & $\Delta$ \\
+% \midrule
+% \credence{} (forget, $\lambda=0.95$) & $+63.2$ & $+41.4$ & $-21.8$ \\
+% \credence{} (no forget) & $+40.8$ & $+37.2$ & $-3.5$ \\
+% Single-Best-Tool & $+14.2$ & $-54.8$ & $\mathbf{-69.0}$ \\
+% Random & $+3.4$ & $-3.6$ & $-7.0$ \\
+% \bottomrule
+% \end{tabular}
+% \end{table}
+%
+% When Tool~A's reliability degrades after question 25, the Single-Best-Tool agent---which always queries Tool~A---collapses by $69$ points. Both Bayesian variants dramatically outperform this baseline. The core \credence{} agent (no forgetting) shows a $-3.5$ delta: accumulated evidence from the pre-drift regime provides inertia that buffers against the regime change, though at the cost of slower adaptation. The experimental forgetting variant ($\lambda = 0.95$) loses $21.8$ points in absolute terms but achieves higher post-drift performance ($+41.4$ vs $+37.2$), because the exponential discounting mechanism downweights stale observations more aggressively. No explicit change-detection mechanism is needed in either case---the posterior adapts continuously.
+
+% --- From §6 "Connection to dynamic staged trees" (Paper 1 lines 389-390) ---
+%
+% \paragraph{Connection to dynamic staged trees.}
+% The per-tool, per-category Beta parameters in \credence{} are structurally analogous to the stage parameters in a chain event graph \citep{freeman2011bayesian}: each tool-category pair is a ``situation'' in the event tree sense, with its own Dirichlet-distributed transition probabilities. The agent's task of learning which tools are reliable for which categories mirrors the CEG model selection problem of learning which situations share the same stage (i.e., the same transition distribution). The principled treatment of non-stationarity---learning the forgetting rate from observed outcomes rather than fixing it---connects directly to the dynamic staged tree framework of \citet{freeman2011dynamic}, where the power steady model parameter $k$ controls the bias-variance tradeoff between adaptation speed and belief stability. \citet{smith2011kalman} showed that the power steady model is the natural non-Gaussian analogue of Kalman filter evolution that preserves conjugacy.
+
+
+% ============================================================
+% NEW MATERIAL NEEDED:
+% ============================================================
+
+% 1. Extended drift experiments: multiple drift types (gradual, sudden, cyclic,
+%    correlated across tools)
+%
+% 2. Comparison of forgetting mechanisms: fixed lambda vs. learned lambda vs.
+%    BOCD (Adams & MacKay) vs. BAM (Nassar et al. 2022)
+%
+% 3. Learn lambda online (Class 2 multi-process model from Guy's thesis --
+%    the principled version)
+%
+% 4. Explicit connection to CEG stage learning: each tool-category pair = a floret,
+%    Beta prior is the natural conjugate, AHC algorithm discovers which tool-category
+%    pairs share reliability stages
+%
+% 5. Connection to power steady model (Freeman & Smith 2011b) and distributional
+%    Kalman filtering (Smith & Freeman 2011)
+%
+% 6. Empirical evidence of real API non-stationarity (Chen et al. 2023, plus the
+%    2026 study showing daily/weekly periodic patterns)
+%
+% 7. This paper cites Paper 1 for the base framework, then extends the belief
+%    model to handle non-stationarity rigorously.
+
+
+% ============================================================
+% BIBLIOGRAPHY
+% ============================================================
+\bibliographystyle{plainnat}
+
+\begin{thebibliography}{99}
+
+\bibitem[Adams and MacKay(2007)]{adams2007changepoint}
+R.~P. Adams and D.~J.~C. MacKay.
+\newblock Bayesian online changepoint detection.
+\newblock arXiv preprint arXiv:0710.3742, 2007.
+
+\bibitem[Chen et~al.(2023)]{chen2023chatgpt}
+L.~Chen, M.~Zaharia, and J.~Zou.
+\newblock How is {ChatGPT}'s behavior changing over time?
+\newblock arXiv preprint arXiv:2307.09009, 2023.
+
+\bibitem[Freeman and Smith(2011a)]{freeman2011bayesian}
+G.~Freeman and J.~Q. Smith.
+\newblock Bayesian {MAP} model selection of chain event graphs.
+\newblock \emph{J. Multivariate Analysis}, 102(7):1152--1165, 2011.
+
+\bibitem[Freeman and Smith(2011b)]{freeman2011dynamic}
+G.~Freeman and J.~Q. Smith.
+\newblock Dynamic staged trees for discrete multivariate time series: Forecasting, model selection and causal analysis.
+\newblock \emph{Bayesian Analysis}, 6(2):279--305, 2011.
+
+\bibitem[Harrison and Stevens(1976)]{harrison1976bayesian}
+P.~J. Harrison and C.~F. Stevens.
+\newblock Bayesian forecasting.
+\newblock \emph{J. Royal Statistical Society, Series B}, 38(2):205--247, 1976.
+
+\bibitem[Ibrahim and Chen(2003)]{ibrahim2003power}
+J.~G. Ibrahim and M.-H. Chen.
+\newblock On optimality properties of the power prior.
+\newblock \emph{J. American Statistical Association}, 98(461):232--242, 2003.
+
+\bibitem[Smith and Anderson(2008)]{smith2008chain}
+J.~Q. Smith and P.~E. Anderson.
+\newblock Conditional independence and chain event graphs.
+\newblock \emph{Artificial Intelligence}, 172(1):42--68, 2008.
+
+\bibitem[Smith and Freeman(2011)]{smith2011kalman}
+J.~Q. Smith and G.~Freeman.
+\newblock Distributional {K}alman filters for {B}ayesian forecasting and closed form recurrences.
+\newblock \emph{J. Forecasting}, 30(1):210--224, 2011.
+
+\bibitem[Thwaites et~al.(2009)]{thwaites2009keod}
+P.~A. Thwaites, G.~Freeman, and J.~Q. Smith.
+\newblock Chain event graph {MAP} model selection.
+\newblock In \emph{Proceedings of KEOD 2009}, pages 392--395, 2009.
+
+\bibitem[West and Harrison(1997)]{west1997bayesian}
+M.~West and J.~Harrison.
+\newblock \emph{Bayesian Forecasting and Dynamic Models}.
+\newblock Springer, 2nd edition, 1997.
+
+\end{thebibliography}
+
+\end{document}
