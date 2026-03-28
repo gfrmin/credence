@@ -17,10 +17,13 @@ mutable struct EmailMetricsTracker
     cumulative_ask_count::Vector{Int}
     meta_actions_per_step::Vector{Int}
     llm_called::Vector{Bool}
+    episode_lengths::Vector{Int}
+    episode_actions::Vector{Vector{Symbol}}
 
     EmailMetricsTracker() = new(
         Int[], Symbol[], Symbol[], Bool[], Bool[],
-        Dict{Int,Float64}[], Int[], Float64[], Int[], Int[], Bool[])
+        Dict{Int,Float64}[], Int[], Float64[], Int[], Int[], Bool[],
+        Int[], Vector{Symbol}[])
 end
 
 function record_email!(m::EmailMetricsTracker;
@@ -33,7 +36,9 @@ function record_email!(m::EmailMetricsTracker;
                        n_components::Int,
                        surprise::Float64,
                        n_meta_actions::Int=0,
-                       used_llm::Bool=false)
+                       used_llm::Bool=false,
+                       episode_length::Int=1,
+                       episode_action_list::Vector{Symbol}=Symbol[])
     push!(m.steps, step)
     push!(m.actions_taken, action_taken)
     push!(m.correct_actions, correct_action)
@@ -46,6 +51,8 @@ function record_email!(m::EmailMetricsTracker;
     push!(m.cumulative_ask_count, prev_asks + (asked ? 1 : 0))
     push!(m.meta_actions_per_step, n_meta_actions)
     push!(m.llm_called, used_llm)
+    push!(m.episode_lengths, episode_length)
+    push!(m.episode_actions, episode_action_list)
 end
 
 function print_email_summary(m::EmailMetricsTracker; last_n::Int=20)

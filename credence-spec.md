@@ -250,33 +250,65 @@ Our Bayesian core is a brain. The host is the body. The email server, the user, 
 
 The brain (the Bayesian inference core) operates exclusively on:
 
-- **Observations:** feature vectors, preprocessed by the body (like the retina preprocesses light).
-- **Actions:** symbols from a vocabulary (like motor commands — "extend arm", not "contract muscle fibre #4721").
+- **Features:** a dictionary of named values — `Dict{Symbol, Float64}`. Not a positional vector. The brain knows what it's looking at: `:urgency`, `:is_manager`, `:has_label_urgent`. Names survive the addition of new senses; indices don't. (See §6.7.)
+- **Actions:** named symbols from a vocabulary — `:archive`, `:mark_read`, `:ask_user`. Like motor commands.
 - **Outcomes:** user reactions (the proprioceptive feedback — did my action achieve what I intended?).
 
 The brain decides *what* to do. It does not know *how* the body executes its decisions. It learns what each action *achieves* (the affordance) through conditioning on outcomes.
 
-### 6.3 What the body does
+### 6.3 Connections: how the body meets the world
+
+The body connects to external services — Gmail, Google Calendar, the filesystem, Telegram. Each connection provides named features (sensors) and named actions (effectors). A connection registers what it offers:
+
+```julia
+struct Connection
+    name::Symbol                    # :gmail, :calendar
+    features::Vector{Symbol}        # [:urgency, :is_manager, :topic_finance, ...]
+    actions::Vector{Symbol}         # [:archive, :mark_read, :add_label_urgent, ...]
+    extract::Function               # event → Dict{Symbol, Float64} (partial)
+    execute!::Function              # (event_context, action) → outcome
+end
+```
+
+The body assembles the full feature dictionary by merging all connections' contributions. Adding a new connection means registering it — new named features appear, new named actions become available. No changes to the brain, no changes to existing connections, no index shifting.
+
+### 6.4 What the body does
 
 The body (the host) handles:
 
-- **Preprocessing (sensors):** raw email → feature vector. Like the eye performing edge detection before signals reach the visual cortex. The LLM can be part of this pipeline — extracting urgency, classifying topics — just as the retina does contrast enhancement.
+- **Preprocessing (sensors):** raw email → named features. Like the eye performing edge detection before signals reach the visual cortex. The LLM can be part of this pipeline — extracting urgency, classifying topics — just as the retina does contrast enhancement. Each connection contributes its features to the merged dictionary.
 - **Execution (effectors):** action symbol → world effects. `:draft_response` → LLM generates text → sends email. `:archive` → API call moves email. The brain doesn't know how archiving works; it knows that `:archive` in context X tends to produce user approval.
 - **Feedback routing (proprioception):** user reactions → observation delivered to brain. The body translates world events into the format the brain can process.
 
 The body is not a dumb relay. It does real computational work. But it doesn't make decisions about *what* to do — it makes decisions about *how to do what the brain decided.*
 
-### 6.4 LLMs as prosthetics
+### 6.5 LLMs as prosthetics
 
-An LLM is a prosthetic that extends the agent's sensory or effector capabilities — like glasses, or a calculator. The agent discovers that using the prosthetic (calling the LLM) helps it see better (extract richer features) or act more effectively (generate better drafts) in certain situations. It decides when to use the prosthetic via EU, like any other action. The LLM is part of the body, not the brain.
+An LLM is a prosthetic that extends the agent's sensory or effector capabilities — like glasses, or a calculator. The agent discovers that using the prosthetic (calling the LLM) helps it see better (extract richer features) or act more effectively (generate better drafts) in certain situations. It decides when to use the prosthetic via EU, like any other action. The LLM is part of the body, not the brain. The LLM prosthetic is itself a connection — it registers features it can provide (`:llm_urgency`, `:llm_topic`) and actions it can perform (`:ask_llm`).
 
-### 6.5 Embodiment constraints and cheap design
+### 6.6 Embodiment constraints and cheap design
 
 Ay's key result: the extrinsic constraints of the body (what it can and cannot do) reduce the effective dimensionality of the control problem. The agent doesn't need to explore all possible programs — only programs consistent with what its body can actually execute. Failed actions (API errors, user confusion from malformed output) provide negative feedback, and programs that violate body constraints lose posterior weight.
 
 This is "cheap design" — the body does some of the brain's work for free. Physical constraints reduce the hypothesis space, making inference tractable. The email API constrains what action sequences are possible; the agent discovers these constraints through use rather than being told.
 
-### 6.6 Learning the body
+### 6.7 Named features: the brain knows what it's looking at
+
+Features are `Dict{Symbol, Float64}`, not `Vector{Float64}`. The brain knows that `:urgency` is urgency and `:is_manager` is whether the sender is a manager. This is not mere labelling — it's a design choice with deep theoretical support:
+
+**Factored MDPs** (Boutilier, Dearden, Goldszmidt 2000): state as a product of named variable domains, with transitions encoded as Dynamic Bayesian Networks. Exponential compression over flat representations. Conditional independence expressed as DBN sparsity over named variables.
+
+**Object-Oriented MDPs** (Diuk, Cohen, Littman 2008): state organised into typed objects with named attributes and inter-object relations. Learning that touching any wall blocks movement, regardless of which wall — class-level generalisation impossible with positional indices.
+
+**Konidaris's skill-symbol loop** (2018): the symbols necessary for planning are completely determined by the agent's available actions. Grounding named features in sensorimotor reality — the representational vocabulary is derived, not designed. Our grammar evolution is exactly this: the skills (programs) determine which feature names matter.
+
+**Gymnasium Dict spaces**: the standard RL interface uses `Dict` for heterogeneous multi-modal observations. Every major framework has converged on named, typed composition.
+
+The practical consequence: adding calendar means new named features (`:meeting_in_1hr`, `:n_participants`) appear in the dictionary. Existing programs reference `:urgency` — they don't break, they don't shift, they don't notice. New grammars that reference the calendar features are proposed by meta-actions or seed grammars. The agent discovers whether they're informative through the same conditioning that discovers everything else.
+
+A program that references a feature not currently in the dictionary gets 0.0 (the default). A program using `(gt :meeting_in_1hr 0.5)` before calendar is connected silently evaluates to `0.0 > 0.5` — always false. Once calendar connects, the feature starts providing real values. Programs that were dormant become active, compete, and prove their worth. The agent discovers the new sense.
+
+### 6.8 Learning the body
 
 A baby doesn't know what its hands can do. It learns through motor babbling — trying random actions and observing effects. Our agent does the same. The action vocabulary is given (like muscles), but what each action achieves (the affordance) is learned through conditioning on outcomes. The agent's programs are hypotheses about affordances: "when I send `:add_label_urgent` in the context of an urgent-from-manager email, the effect is user approval."
 
@@ -312,9 +344,9 @@ The terminal alphabet includes the inference primitives, control flow, predicate
 (if predicate then else)                  cost: 1
 (let ((var expr)) body)                   cost: 1
 
-;; Predicates (sensors — domain-provided, including processing state)
-(gt channel threshold)                    cost: 1
-(lt channel threshold)                    cost: 1
+;; Predicates (reference features by name — see §6.7)
+(gt :feature_name threshold)                    cost: 1
+(lt :feature_name threshold)                    cost: 1
 (and p q)  (or p q)  (not p)             cost: 1 each
 
 ;; Temporal operators
@@ -327,7 +359,7 @@ Note the absence of `(begin ...)`. Action sequences are not part of the language
 
 ### 7.2 Programs encode preference hypotheses
 
-Each program in the mixture is a hypothesis about what the user wants. A simple program: `(if (gt urgency 0.7) flag-urgent archive)` — "the user flags urgent emails and archives the rest." A complex program might invoke the LLM, condition on its analysis, and decide based on multiple factors. The complexity prior governs the tradeoff: simple hypotheses are favoured unless the data demands complexity.
+Each program in the mixture is a hypothesis about what the user wants. A simple program: `(if (gt :urgency 0.7) flag-urgent archive)` — "the user flags urgent emails and archives the rest." A complex program might invoke the LLM, condition on its analysis, and decide based on multiple factors. The complexity prior governs the tradeoff: simple hypotheses are favoured unless the data demands complexity.
 
 ### 7.3 There are no "stages"
 
@@ -341,30 +373,43 @@ Options are not action sequences. They are conditional policies that observe the
 
 This matters because Sutton et al. proved that the polling execution mode — re-evaluating which option to follow at every step — yields higher expected value than committing to a plan (hierarchical execution). Open-loop sequences commit without feedback. Closed-loop policies adapt.
 
-**Our programs ARE options.** An IfExpr that maps states to actions is a closed-loop policy. When applied repeatedly to an evolving state (the same email with processing-state features updating as actions are executed), it produces multi-step behaviour:
+**Our programs ARE options.** An IfExpr that maps states to actions is a closed-loop policy. When the agent faces a multi-step task (an email that requires labelling, moving, and notifying), it re-evaluates ALL programs at every step against the current processing state and selects the best one. Different programs may dominate at different steps — P₁ is best when the email hasn't been labelled, P₂ is best when it's labelled but not moved. This is polling execution, which Sutton et al. proved is optimal.
 
 ```scheme
-;; A "triage" option — applied at each step, reads current state
-(if (and (gt urgency 0.7) (not (gt has_label_urgent 0.5)))
+;; P₁: good when nothing is done yet
+(if (and (gt :urgency 0.7) (not (gt :has_label_urgent 0.5)))
     (add-label-urgent)
-    (if (and (gt has_label_urgent 0.5) (not (gt in_priority 0.5)))
-        (move-to-priority)
-        (if (and (gt in_priority 0.5) (not (gt user_notified 0.5)))
-            (notify-user)
-            (done))))
+    (done))
+
+;; P₂: good when labelled but not moved
+(if (and (gt :has_label_urgent 0.5) (not (gt :in_priority 0.5)))
+    (move-to-priority)
+    (done))
+
+;; P₃: good when moved but user not notified
+(if (and (gt :in_priority 0.5) (not (gt :user_notified 0.5)))
+    (notify-user)
+    (done))
 ```
 
-This program, evaluated across multiple time steps against the same email with evolving processing-state features, produces the sequence: label → move → notify → done. But it's not encoding a sequence — it's a conditional policy that checks what's been done and decides what to do next. If interrupted mid-way ("actually, just archive this"), it re-evaluates against the new state.
+Programs P₁, P₂, P₃ are separate options. Each is simple (depth 2). Together they produce the sequence: label → move → notify → done. But no single program encodes the sequence — it emerges from the mixture selecting the best option at each step. A monolithic program encoding the entire triage policy would also exist in the mixture, at higher complexity cost. The complexity prior determines which approach wins.
 
 The host loop for multi-step processing:
 
 ```
-while action ≠ :done
-    features = extract_features(email, processing_state)
-    action = best_program.evaluate(features)
-    execute(action)
-    update(processing_state, action)
+while action ≠ :done and steps < max_steps:
+    features = assemble_features(connections, event, processing_state)
+    for each program: evaluate(features) → recommended action
+    best_action = argmax EU over all programs and all actions
+    execute(best_action)
+    update(processing_state, best_action)
+    condition(belief, kernel, observation)   # per-step conditioning
+    steps += 1
 ```
+
+**Conditioning happens at every step**, not at episode end. At each step, we know the processing state and the target actions (the set of primitives the user would have wanted, derived from their preferred high-level action). Programs recommending a correct next action (any remaining action in the target set) get positive evidence. Programs recommending an incorrect or redundant action get negative evidence. Multiple conditioning events per email — the agent learns faster because each step provides an observation.
+
+The Beta for each program tracks: P(this program's recommendation is correct | the state it sees). This includes processing state. A program that recommends `:mark_read` is correct when the email isn't read yet and the user would want it read; it's incorrect when the email is already read. The program learns this conditional correctness through the processing-state features.
 
 ### 7.5 Why `(begin ...)` is absent
 
@@ -378,7 +423,7 @@ An open-loop sequence `(begin (add-label-urgent) (move-to-priority) (notify-user
 
 Grammar perturbation extracts recurring program subtrees and promotes them to nonterminals. This applies to the full conditional policy, not just predicate fragments:
 
-- Predicate compression: `(and (gt urgency 0.7) (gt sender_is_manager 0.5))` → `URGENT-FROM-BOSS`
+- Predicate compression: `(and (gt :urgency 0.7) (gt :is_manager 0.5))` → `URGENT-FROM-BOSS`
 - Skill compression: the multi-branch triage program from §7.4 → `TRIAGE-URGENT`
 
 A compressed skill is a reusable closed-loop policy. The neuroscience literature on motor chunking confirms this: acquired chunks can be flexibly recombined in novel sequences. The grammar evolves the agent's vocabulary of both concepts and skills — its language of thought and action.
@@ -389,7 +434,7 @@ A compressed skill is a reusable closed-loop policy. The neuroscience literature
 
 Concepts emerge from raw observations through five layers, each from inference under the complexity prior at a different timescale. The stack applies uniformly to perceptual abstractions and motor skills:
 
-**Layer 0 (given): Raw primitives.** Feature predicates (`gt`, `lt`) and body actions (`add-label-urgent`, `move-to-priority`, or higher-level equivalents). Processing-state predicates (`has_label_urgent`, `is_in_archive`). The terminal alphabet.
+**Layer 0 (given): Raw primitives.** Named feature predicates (`(gt :urgency 0.7)`, `(lt :word_count 0.1)`) and body actions (`:add_label_urgent`, `:move_to_priority`, or higher-level equivalents). Processing-state features (`:has_label_urgent`, `:is_in_archive`). The terminal alphabet.
 
 **Layer 1 (emerges): Abstractions.** Frequent patterns promoted to grammar nonterminals. "Urgent" compresses a predicate pattern. "Triage-urgent" compresses a multi-branch closed-loop policy. Perceptual and motor abstractions emerge through the same mechanism.
 
@@ -435,7 +480,7 @@ Meta-actions terminate naturally: each one reduces posterior entropy (more hypot
 - What the user wants (θ — the preference parameter).
 - What each action achieves (affordances — learned through conditioning on outcomes).
 - What each action costs (learned through user reactions to latency, resource use).
-- Which features are informative (grammar evolution over sensor configurations).
+- Which features are informative (grammar evolution over named feature sets).
 - What abstractions are useful — both perceptual and motor (grammar evolution).
 - When to think vs act (meta-actions evaluated by EU).
 - When to ask the user vs act autonomously (asking is an action with EU).
@@ -478,21 +523,23 @@ An LLM extends the agent's sensory and effector capabilities (§6.4). As a senso
 
 ### 12.1 Three tiers
 
-**Tier 1 (`src/`):** DSL core. Measures, kernels, `condition`, `expect`, `optimise`, `TaggedBetaMeasure`, evaluator, stdlib (which includes `voi` as a derived computation). Domain-independent.
+**Tier 1 (`brain/`):** DSL core. Measures, kernels, `condition`, `expect`, `optimise`, `TaggedBetaMeasure`, evaluator, stdlib (which includes `voi` as a derived computation). Domain-independent.
 
-**Tier 2 (`src/program_space/`):** Program-space inference. Grammars, enumeration, compilation, perturbation, `AgentState`. Domain-independent.
+**Tier 2 (`brain/program_space/`):** Program-space inference. Grammars, enumeration, compilation, perturbation, `AgentState`. Domain-independent. Features are `Dict{Symbol, Float64}`. `GTExpr` and `LTExpr` carry `Symbol` (feature name), not `Int` (channel index). Grammars specify a `feature_set::Set{Symbol}` — the features they attend to. Compilation does hash lookup on feature names.
 
-**Tier 3 (`domains/`):** Applications. Each domain provides features, terminals, actions, feedback, host driver.
+**Tier 3 (`connections/` + `interface/` + `server.jl`):** The body. Each connection provides named features and named actions. The interface handles user communication. The server loop mediates brain and body.
+
+**Test fixtures (`test/fixtures/`):** Synthetic testbeds (grid world, synthetic email) for validating the brain. Not part of the product.
 
 ### 12.2 One agent per user
 
-Domains are event sources, not agents. A single `AgentState` per user. Every observation from every domain conditions the same belief.
+Connections are event sources, not agents. A single `AgentState` per user. Every observation from every connection conditions the same belief. Adding a connection means new features and actions appear — the brain discovers their utility through conditioning.
 
 ### 12.3 Design invariant enforcement
 
-**Type-level (primary):** `CompiledKernel` has no AST field. `propose_nonterminal` requires `SubprogramFrequencyTable`.
+**Type-level (primary):** `CompiledKernel` has no AST field. `propose_nonterminal` requires `SubprogramFrequencyTable`. `GTExpr.feature` is `Symbol`, not `Int`.
 
-**Tests (secondary):** Observable consequences of correct implementation. 10K kernel evals < 1ms. Nonterminals are real posterior subtrees. Compression payoff is measurable.
+**Tests (secondary):** Observable consequences of correct implementation. 10K kernel evals < 1ms. Nonterminals are real posterior subtrees. Programs using named features compile and evaluate correctly against `Dict{Symbol, Float64}`.
 
 **CLAUDE.md (tertiary):** Documents the reasoning behind the constraints.
 

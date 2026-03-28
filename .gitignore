@@ -13,3 +13,11 @@ __pycache__/
 
 # Serena cache (config is committed, cache is not)
 .serena/cache/
+
+# LaTeX build artifacts
+papers/*.aux
+papers/*.log
+papers/*.pdf
+
+# Debug logs
+domains/qa_benchmark/llm_debug.log

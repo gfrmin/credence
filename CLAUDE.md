@@ -1,4 +1,8 @@
-# CLAUDE.md — Constitution for Credence
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
+# Constitution for Credence
 
 > Read this entire document before writing any code.
 
@@ -229,6 +233,7 @@ Run tests:
     julia test/test_host.jl             # Host helper tests
     julia test/test_program_space.jl    # Tier 2 tests
     julia test/test_grid_world.jl       # Tier 3 grid-world tests
+    julia test/test_email_agent.jl      # Email agent domain tests
 
 Run an example:
     julia -e 'push!(LOAD_PATH, "src"); using Credence; run_dsl(read("examples/coin.bdsl", String))'
@@ -247,7 +252,10 @@ Load DSL and get callable closures (host-driver pattern):
     env = load_dsl(read("examples/credence_agent.bdsl", String))
     agent_step = env[Symbol("agent-step")]
 
-No external dependencies — Julia stdlib only.
+Requires Julia >=1.9. External deps: HTTP, JSON3, Serialization.
+
+Python bindings (python/):
+    cd python && PYTHON_JULIACALL_HANDLE_SIGNALS=yes uv run pytest tests/
 
 ## Project structure
 
@@ -291,6 +299,11 @@ No external dependencies — Julia stdlib only.
       test_host.jl                Host helper tests
       test_program_space.jl       Tier 2 tests (enumeration, compilation, perturbation)
       test_grid_world.jl          Tier 3 tests (full agent, regime change, meta-learning)
+      test_email_agent.jl         Email agent domain tests
+    domains/
+      DOMAIN_INTERFACE.md         Contract for new Tier 3 domains
+    python/                       Python bindings (juliacall, Python >=3.11)
+    papers/                       Publication (credence.tex)
 
 DSL source files use the `.bdsl` extension.
 
@@ -308,7 +321,7 @@ Three-tier architecture. See credence-spec.md for details.
 
 - Tier 1 (src/): DSL core — condition, expect, optimise, voi, TaggedBetaMeasure
 - Tier 2 (src/program_space/): program-space inference — grammars, enumeration, compilation, perturbation
-- Tier 3 (domains/): domain applications — each provides features, terminals, host driver
+- Tier 3 (domains/): domain applications — each provides features, terminals, host driver (see domains/DOMAIN_INTERFACE.md)
 
     ┌─────────────────────────────┐
     │  Three types                │  FROZEN
