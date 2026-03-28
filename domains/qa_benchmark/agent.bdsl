@@ -1,0 +1,98 @@
+; ============================================================
+; agent.bdsl — QA benchmark Bayesian tool selection
+;
+; VOI-based tool selection for multiple-choice questions.
+; Learns tool reliability from feedback via Beta-Bernoulli.
+; No coverage mechanism — all tools always respond.
+;
+; Three types only. condition/expect are regular functions.
+; The kernel explicitly types the observation model.
+; ============================================================
+
+; ── Spaces ──
+(define answer-space (space :finite 0 1 2 3))
+(define binary-space (space :finite 0 1))
+(define reliability-space (space :interval 0 1))
+
+; ── Reliability kernel ──
+; For a given reliability r, the probability of getting the
+; right answer is r, wrong answer is (1-r)/(n-1)
+(define answer-kernel
+  (lambda (reliability-measure n)
+    (kernel answer-space answer-space
+      (lambda (true-answer)
+        (lambda (response)
+          ; Marginalise reliability out:
+          ; log ∫ P(response|answer,r) P(r) dr
+          (log (expect reliability-measure
+            (lambda (r)
+              (if (= true-answer response)
+                r
+                (/ (- 1.0 r) (- n 1)))))))))))
+
+; ── Reliability kernel for learning ──
+; Observation: was the tool correct? Binary.
+; Used by the host: condition(rel_beta, reliability-kernel, was_correct)
+(define reliability-kernel
+  (kernel reliability-space binary-space
+    (lambda (r)
+      (lambda (was-correct)
+        (if (= was-correct 1)
+          (log r)
+          (log (- 1.0 r)))))))
+
+; ── Agent step: decide what to do ──
+; Given beliefs about the answer, beliefs about tool reliability,
+; tool costs, and the abstain/submit payoffs, choose:
+;   submit answer | abstain | query a tool
+;
+; This is pure EU maximisation. The "exploration" of uncertain
+; tools happens naturally through VOI — no epsilon-greedy,
+; no exploration bonus.
+(define agent-step
+  (lambda (answer-measure reliability-measures tool-costs submit-value abstain-value penalty-wrong)
+    (let n (length (support answer-space))
+      (let action-space (space :finite -1 0 1 2 3)
+
+        ; Preference: submit correct = submit-value, wrong = penalty-wrong, abstain = abstain-value
+        (let pref (lambda (true-answer action)
+                    (if (= action -1) abstain-value
+                      (if (= true-answer action) submit-value penalty-wrong)))
+
+          ; Current best EU
+          (let current-val (value answer-measure action-space pref)
+
+            ; Build tool index list dynamically
+            (let n-tools (length reliability-measures)
+            (let tool-indices (range n-tools)
+
+            ; For each tool, compute net VOI
+            (let tool-evals
+              (map (lambda (i)
+                     (let rel-m (nth reliability-measures i)
+                       (let cost (nth tool-costs i)
+                         (let k (answer-kernel rel-m n)
+                           (let v (voi answer-measure k action-space pref
+                                       (support answer-space))
+                             (list (- v cost) i))))))
+                   tool-indices)
+
+              ; Find best tool
+              (let best-tool (fold (lambda (a b)
+                                     (if (> (first a) (first b)) a b))
+                                   tool-evals)
+
+                ; If best tool has positive net VOI, query it.
+                ; Otherwise submit or abstain.
+                ; >= 0: indifference implies exploration (VOI from outcome is positive)
+                (if (> (first best-tool) 0.0)
+                  (list 2 (second best-tool))           ; query tool
+                  (let act (optimise answer-measure action-space pref)
+                    (if (= act -1)
+                      (list 1 0)                         ; abstain
+                      (list 0 act))))))))))))))          ; submit
+
+; ── update-on-response: alias for condition (readability only) ──
+(define update-on-response
+  (lambda (answer-measure k response)
+    (condition answer-measure k response)))

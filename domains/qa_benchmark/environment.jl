@@ -1,10 +1,66 @@
 """
-    questions.jl — 50 hand-curated multiple-choice questions across 5 categories.
+    environment.jl — Simulated tools and question bank for the QA benchmark.
 
-Distribution: 15 factual, 10 numerical, 8 recent_events, 7 misconceptions, 10 reasoning.
+Tools have category-dependent reliability. All tools always respond (no coverage
+mechanism). Questions are 4-choice multiple-choice across 5 categories.
 """
 
 using Random
+
+# ─── Categories ───
+
+const CATEGORIES = ("factual", "numerical", "recent_events", "misconceptions", "reasoning")
+
+# ─── Scoring ───
+
+const REWARD_CORRECT = 10.0
+const PENALTY_WRONG  = -5.0
+const REWARD_ABSTAIN =  0.0
+
+# ─── Tools ───
+
+struct SimulatedTool
+    name::String
+    cost::Float64
+    reliability_by_category::Dict{String,Float64}
+end
+
+"""
+    query_tool(tool, question, rng) → candidate_idx::Int
+
+All tools always respond. If rng < reliability → correct answer, else uniform
+random wrong answer from the 3 incorrect candidates.
+"""
+function query_tool(tool::SimulatedTool, question, rng)
+    reliability = get(tool.reliability_by_category, question.category, 0.25)
+    if rand(rng) < reliability
+        return question.correct_index
+    end
+    wrong = [i for i in 0:3 if i != question.correct_index]
+    return wrong[rand(rng, 1:3)]
+end
+
+function make_spec_tools()
+    tool_a = SimulatedTool("web_search", 1.0,
+        Dict("factual" => 0.70, "numerical" => 0.20, "recent_events" => 0.65,
+             "misconceptions" => 0.25, "reasoning" => 0.40))
+
+    tool_b = SimulatedTool("knowledge_base", 2.0,
+        Dict("factual" => 0.92, "numerical" => 0.40, "recent_events" => 0.55,
+             "misconceptions" => 0.88, "reasoning" => 0.45))
+
+    tool_c = SimulatedTool("calculator", 1.0,
+        Dict("factual" => 0.25, "numerical" => 1.00, "recent_events" => 0.25,
+             "misconceptions" => 0.25, "reasoning" => 0.25))
+
+    tool_d = SimulatedTool("llm_direct", 2.0,
+        Dict("factual" => 0.65, "numerical" => 0.50, "recent_events" => 0.45,
+             "misconceptions" => 0.40, "reasoning" => 0.72))
+
+    [tool_a, tool_b, tool_c, tool_d]
+end
+
+# ─── Questions ───
 
 struct Question
     id::String

@@ -970,5 +970,22 @@ end
 println()
 
 println("=" ^ 60)
+println("TEST 43: range — generates 0-indexed integer lists")
+println("=" ^ 60)
+
+result = run_dsl("(range 4)")
+@assert result == [0, 1, 2, 3]  "range 4 should be [0,1,2,3], got $result"
+println("PASSED: (range 4) = ", result)
+
+result = run_dsl("(range 1)")
+@assert result == [0]  "range 1 should be [0], got $result"
+println("PASSED: (range 1) = ", result)
+
+result = run_dsl("(map (lambda (i) (* i i)) (range 5))")
+@assert result == [0, 1, 4, 9, 16]  "map over range should work, got $result"
+println("PASSED: (map square (range 5)) = ", result)
+println()
+
+println("=" ^ 60)
 println("ALL TESTS PASSED")
 println("=" ^ 60)

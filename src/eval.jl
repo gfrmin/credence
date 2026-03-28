@@ -186,6 +186,10 @@ function eval_dsl(expr::SList, env::Env)
             return lst[Int(idx) + 1]
         end
         if sym == :length; return length(eval_dsl(args[1], env)); end
+        if sym == :range
+            n = Int(eval_dsl(args[1], env))
+            return collect(0:n-1)
+        end
 
         # ── Query operations on types ──
 

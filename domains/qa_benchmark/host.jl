@@ -1,35 +1,30 @@
 """
     host.jl — QA benchmark host driver.
 
-Runs the Bayesian agent (credence_agent.bdsl) and baselines against 50
+Runs the Bayesian agent (agent.bdsl) and baselines against 50
 simulated multiple-choice questions with 4 tools of varying reliability.
 
 Usage:
     julia domains/qa_benchmark/host.jl                          # 20 seeds, fast agents only
     julia domains/qa_benchmark/host.jl --seeds 3                # quick test
-    julia domains/qa_benchmark/host.jl --seeds 20 --include-llm # full run with 8 LLM variants
+    julia domains/qa_benchmark/host.jl --seeds 20 --include-llm # with LLM agents
 """
 
 # --- Setup ---
 push!(LOAD_PATH, joinpath(@__DIR__, "..", "..", "src"))
 using Credence
 using Random
-using Statistics: mean as smean
 
-include(joinpath(@__DIR__, "tools.jl"))
-include(joinpath(@__DIR__, "questions.jl"))
+include(joinpath(@__DIR__, "environment.jl"))
 include(joinpath(@__DIR__, "metrics.jl"))
 
-const REWARD_CORRECT = 10.0
-const PENALTY_WRONG = -5.0
-const REWARD_ABSTAIN = 0.0
-
 # --- Load DSL ---
-const BDSL_PATH = joinpath(@__DIR__, "..", "..", "examples", "credence_agent.bdsl")
+const BDSL_PATH = joinpath(@__DIR__, "agent.bdsl")
 const DSL_ENV = load_dsl(read(BDSL_PATH, String))
 const AGENT_STEP = DSL_ENV[Symbol("agent-step")]
 const UPDATE_ON_RESPONSE = DSL_ENV[Symbol("update-on-response")]
 const ANSWER_KERNEL = DSL_ENV[Symbol("answer-kernel")]
+const RELIABILITY_KERNEL = DSL_ENV[Symbol("reliability-kernel")]
 
 # --- Bayesian agent ---
 
@@ -39,12 +34,8 @@ function run_bayesian_seed(tools::Vector{SimulatedTool}, seed::Int)
     n_tools = length(tools)
     n_cats = length(CATEGORIES)
 
-    # Per-tool state (reset each seed)
-    rel_states = [initial_rel_state(n_cats) for _ in 1:n_tools]
-    cov_states = [initial_cov_state(n_cats,
-                    Float64[get(t.coverage_by_category, c, 0.0) for c in CATEGORIES])
-                  for t in tools]
-    cat_belief = CategoricalMeasure(Finite(Float64.(0:n_cats-1)))
+    # Per-tool per-category reliability: flat matrix of Betas, all Beta(1,1)
+    rel_betas = [BetaMeasure() for _ in 1:n_tools, _ in 1:n_cats]
 
     records = QuestionResult[]
     total_reward = 0.0
@@ -52,14 +43,15 @@ function run_bayesian_seed(tools::Vector{SimulatedTool}, seed::Int)
     t_start = time()
 
     for q in questions
+        cat_idx = findfirst(==(q.category), CATEGORIES)
         answer_measure = CategoricalMeasure(Finite(Float64[0, 1, 2, 3]))
         available = collect(1:n_tools)
-        tools_queried = Int[]
+        tool_responses = Dict{Int,Int}()
         q_cost = 0.0
 
         while true
-            cat_w = weights(cat_belief)
-            rel_measures = [marginalize_betas(rel_states[t], cat_w) for t in available]
+            # Extract reliability measures for available tools in this category
+            rel_measures = [rel_betas[t, cat_idx] for t in available]
             costs_jl = Float64[tools[t].cost for t in available]
 
             result = AGENT_STEP(answer_measure, rel_measures, costs_jl,
@@ -67,26 +59,17 @@ function run_bayesian_seed(tools::Vector{SimulatedTool}, seed::Int)
             action_type = Int(result[1])
             action_arg = Int(result[2])
 
-            if action_type == 2  # query
+            if action_type == 2  # query tool
                 tool_local_idx = action_arg + 1  # DSL is 0-indexed
                 tool_idx = available[tool_local_idx]
-                push!(tools_queried, tool_idx)
                 q_cost += tools[tool_idx].cost
 
                 response = query_tool(tools[tool_idx], q, rng)
+                tool_responses[tool_idx] = response
 
-                if response !== nothing
-                    # Update answer belief
-                    k = ANSWER_KERNEL(marginalize_betas(rel_states[tool_idx], cat_w), 4.0)
-                    answer_measure = UPDATE_ON_RESPONSE(answer_measure, k, Float64(response))
-                    # Update coverage (responded)
-                    cov_states[tool_idx], cat_belief = update_beta_state(
-                        cov_states[tool_idx], cat_belief, 1.0)
-                else
-                    # Update coverage (not responded)
-                    cov_states[tool_idx], cat_belief = update_beta_state(
-                        cov_states[tool_idx], cat_belief, 0.0)
-                end
+                # Update answer belief via DSL
+                k = ANSWER_KERNEL(rel_betas[tool_idx, cat_idx], 4.0)
+                answer_measure = UPDATE_ON_RESPONSE(answer_measure, k, Float64(response))
 
                 filter!(!=(tool_idx), available)
 
@@ -97,20 +80,31 @@ function run_bayesian_seed(tools::Vector{SimulatedTool}, seed::Int)
                 total_reward += reward
                 total_tool_cost += q_cost
 
-                # Update reliability for each queried tool
-                for t in tools_queried
-                    tool_response = nothing  # find what this tool said
-                    # We need to track responses... let me fix this
+                # Update reliability beliefs with ground truth
+                for (t, resp) in tool_responses
+                    rel_betas[t, cat_idx] = condition(
+                        rel_betas[t, cat_idx], RELIABILITY_KERNEL,
+                        resp == q.correct_index ? 1.0 : 0.0)
                 end
 
-                push!(records, QuestionResult(q.id, q.category, tools_queried,
+                push!(records, QuestionResult(q.id, q.category,
+                    collect(keys(tool_responses)), tool_responses,
                     submitted, was_correct, reward, q_cost))
                 break
 
             else  # abstain
                 total_reward += REWARD_ABSTAIN
                 total_tool_cost += q_cost
-                push!(records, QuestionResult(q.id, q.category, tools_queried,
+
+                # Update reliability beliefs with ground truth
+                for (t, resp) in tool_responses
+                    rel_betas[t, cat_idx] = condition(
+                        rel_betas[t, cat_idx], RELIABILITY_KERNEL,
+                        resp == q.correct_index ? 1.0 : 0.0)
+                end
+
+                push!(records, QuestionResult(q.id, q.category,
+                    collect(keys(tool_responses)), tool_responses,
                     nothing, nothing, REWARD_ABSTAIN, q_cost))
                 break
             end
@@ -137,17 +131,12 @@ function run_single_best_seed(tools::Vector{SimulatedTool}, seed::Int; tool_idx:
         cost = tools[tool_idx].cost
         total_tool_cost += cost
 
-        if response !== nothing
-            was_correct = response == q.correct_index
-            reward = was_correct ? REWARD_CORRECT : PENALTY_WRONG
-        else
-            # Tool didn't respond — submit candidate 0 as fallback
-            was_correct = 0 == q.correct_index
-            reward = was_correct ? REWARD_CORRECT : PENALTY_WRONG
-        end
+        was_correct = response == q.correct_index
+        reward = was_correct ? REWARD_CORRECT : PENALTY_WRONG
         total_reward += reward
         push!(records, QuestionResult(q.id, q.category, [tool_idx],
-            response !== nothing ? response : 0, was_correct, reward, cost))
+            Dict(tool_idx => response),
+            response, was_correct, reward, cost))
     end
 
     wall_time = time() - t_start
@@ -169,12 +158,12 @@ function run_random_seed(tools::Vector{SimulatedTool}, seed::Int)
         cost = tools[t].cost
         total_tool_cost += cost
 
-        submitted = response !== nothing ? response : rand(rng, 0:3)
-        was_correct = submitted == q.correct_index
+        was_correct = response == q.correct_index
         reward = was_correct ? REWARD_CORRECT : PENALTY_WRONG
         total_reward += reward
         push!(records, QuestionResult(q.id, q.category, [t],
-            submitted, was_correct, reward, cost))
+            Dict(t => response),
+            response, was_correct, reward, cost))
     end
 
     wall_time = time() - t_start
@@ -191,7 +180,7 @@ function run_all_tools_seed(tools::Vector{SimulatedTool}, seed::Int)
     t_start = time()
 
     for q in questions
-        responses = Dict{Int,Union{Int,Nothing}}()
+        responses = Dict{Int,Int}()
         cost = 0.0
         for t in 1:length(tools)
             responses[t] = query_tool(tools[t], q, rng)
@@ -200,36 +189,21 @@ function run_all_tools_seed(tools::Vector{SimulatedTool}, seed::Int)
         total_tool_cost += cost
 
         # Majority vote
-        votes = [r for r in values(responses) if r !== nothing]
-        submitted = if isempty(votes)
-            0
-        else
-            # Most common
-            counts = Dict{Int,Int}()
-            for v in votes; counts[v] = get(counts, v, 0) + 1; end
-            first(sort(collect(counts); by=last, rev=true))[1]
-        end
+        counts = Dict{Int,Int}()
+        for v in values(responses); counts[v] = get(counts, v, 0) + 1; end
+        submitted = first(sort(collect(counts); by=last, rev=true))[1]
+
         was_correct = submitted == q.correct_index
         reward = was_correct ? REWARD_CORRECT : PENALTY_WRONG
         total_reward += reward
         push!(records, QuestionResult(q.id, q.category, collect(1:length(tools)),
-            submitted, was_correct, reward, cost))
+            responses, submitted, was_correct, reward, cost))
     end
 
     wall_time = time() - t_start
     SeedResult(seed, records, total_reward - total_tool_cost,
                total_reward, total_tool_cost, wall_time)
 end
-
-# --- LLM agents (optional) ---
-include("llm_agents.jl")
-
-# 3 variants: bare, reasoning only, maximum prompting
-const LLM_VARIANTS = [
-    (react=false, strategy=false, history=false),  # bare
-    (react=true,  strategy=false, history=false),  # R (reasoning traces)
-    (react=true,  strategy=true,  history=true),   # RSH (max prompting)
-]
 
 # --- CLI parsing ---
 
@@ -248,6 +222,8 @@ function parse_args()
             push!(models, ARGS[i + 1])
         elseif startswith(arg, "--model=")
             push!(models, split(arg, "=")[2])
+        elseif arg == "--ablation"
+            println(stderr, "Ablation mode not yet implemented")
         end
     end
     if isempty(models); models = ["llama3.1"]; end
@@ -260,13 +236,13 @@ function main()
     args = parse_args()
     tools = make_spec_tools()
 
-    mode = args.include_llm ? "fast + 8 LLM variants" : "fast agents only"
+    mode = args.include_llm ? "fast + LLM agents" : "fast agents only"
     println(stderr, "QA Benchmark: $(args.n_seeds) seeds, $(length(QUESTION_BANK)) questions, $mode")
     flush(stderr)
 
     all_results = Dict{String,Vector{SeedResult}}()
 
-    # Fast agents (seconds)
+    # Fast agents
     println(stderr, "\n--- Fast agents ---")
     for seed in 0:args.n_seeds-1
         for (name, runner) in [
@@ -284,37 +260,33 @@ function main()
     println(stderr, "\n--- Fast agent results ---")
     println(stderr, summary_table(all_results)); flush(stderr)
 
-    # LLM agents — sequential per model × variant × seed
+    # LLM agents (optional)
     if args.include_llm
-        n_variants = length(LLM_VARIANTS)
-        logpath = joinpath(@__DIR__, "llm_debug.log")
-        logfile = open(logpath, "w")
-
+        include(joinpath(@__DIR__, "llm_agent.jl"))
         for model in args.models
-            println(stderr, "\n--- LLM agents: $model ($n_variants variants × $(args.n_seeds) seeds) ---")
-            println(stderr, "  Debug log: $logpath"); flush(stderr)
-
-            for variant in LLM_VARIANTS
-                vname = llm_variant_name(; variant...)
-                name = length(args.models) > 1 ? "$(model)_$vname" : vname
-                println(stderr, "  Starting $name..."); flush(stderr)
-                for seed in 0:args.n_seeds-1
-                    result = run_llm_seed(tools, seed; variant..., model, logfile)
-                    push!(get!(all_results, name, SeedResult[]), result)
-                    score = @sprintf("%+.1f", result.total_score)
-                    println(stderr, "    $name seed $seed: score=$score"); flush(stderr)
+            println(stderr, "\n--- LLM agent: $model ---"); flush(stderr)
+            for seed in 0:args.n_seeds-1
+                backend = if startswith(model, "claude")
+                    AnthropicBackend(model, get(ENV, "ANTHROPIC_API_KEY", ""))
+                else
+                    OllamaBackend(model, "http://localhost:11434")
                 end
-                # Running table after each variant
-                println(stderr, "\n--- Results after $name ---")
-                println(stderr, summary_table(all_results)); flush(stderr)
+                result = run_llm_seed(backend, tools, seed)
+                push!(get!(all_results, model, SeedResult[]), result)
+                score = @sprintf("%+.1f", result.total_score)
+                println(stderr, "  $model seed $seed: score=$score"); flush(stderr)
             end
+            println(stderr, "\n--- Results after $model ---")
+            println(stderr, summary_table(all_results)); flush(stderr)
         end
-
-        close(logfile)
     end
 
     # Final table to stdout
     println(summary_table(all_results)); flush(stdout)
+
+    # Save raw results
+    results_path = joinpath(@__DIR__, "results", "results.json")
+    save_results(results_path, all_results)
 end
 
 main()
