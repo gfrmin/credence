@@ -134,3 +134,20 @@ function get_questions(; seed::Int=0)
     shuffle!(MersenneTwister(seed), qs)
     qs
 end
+
+"""
+    generate_response_table(tools, questions, rng) → Matrix{Int}
+
+Pre-generate all tool responses for all questions under one RNG pass.
+Entry [q, t] is the response that tool t gives to question q.
+All agents see identical tool outputs for identical (question, tool) pairs.
+"""
+function generate_response_table(tools::Vector{SimulatedTool}, questions::Vector{Question}, rng)
+    table = Matrix{Int}(undef, length(questions), length(tools))
+    for (qi, q) in enumerate(questions)
+        for (ti, t) in enumerate(tools)
+            table[qi, ti] = query_tool(t, q, rng)
+        end
+    end
+    table
+end

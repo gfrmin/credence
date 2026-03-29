@@ -4,10 +4,16 @@
 Runs the Bayesian agent (agent.bdsl) and baselines against 50
 simulated multiple-choice questions with 4 tools of varying reliability.
 
+All agents see identical tool responses for a given seed: responses are
+pre-generated in a response table before any agent runs.
+
+Results stored in SQLite at results/benchmark.db.
+
 Usage:
     julia domains/qa_benchmark/host.jl                          # 20 seeds, fast agents only
     julia domains/qa_benchmark/host.jl --seeds 3                # quick test
     julia domains/qa_benchmark/host.jl --seeds 20 --include-llm # with LLM agents
+    julia domains/qa_benchmark/host.jl --seeds 20 --llm-only --model claude-haiku-4-5-20251001
 """
 
 # --- Setup ---
@@ -17,6 +23,9 @@ using Random
 
 include(joinpath(@__DIR__, "environment.jl"))
 include(joinpath(@__DIR__, "metrics.jl"))
+include(joinpath(@__DIR__, "llm_agent.jl"))
+
+const DB_PATH = joinpath(@__DIR__, "results", "benchmark.db")
 
 # --- Load DSL ---
 const BDSL_PATH = joinpath(@__DIR__, "agent.bdsl")
@@ -28,13 +37,12 @@ const RELIABILITY_KERNEL = DSL_ENV[Symbol("reliability-kernel")]
 
 # --- Bayesian agent ---
 
-function run_bayesian_seed(tools::Vector{SimulatedTool}, seed::Int)
-    rng = MersenneTwister(seed)
-    questions = get_questions(; seed)
+function run_bayesian_seed(tools::Vector{SimulatedTool},
+                           questions::Vector{Question},
+                           response_table::Matrix{Int})
     n_tools = length(tools)
     n_cats = length(CATEGORIES)
 
-    # Per-tool per-category reliability: flat matrix of Betas, all Beta(1,1)
     rel_betas = [BetaMeasure() for _ in 1:n_tools, _ in 1:n_cats]
 
     records = QuestionResult[]
@@ -42,7 +50,8 @@ function run_bayesian_seed(tools::Vector{SimulatedTool}, seed::Int)
     total_tool_cost = 0.0
     t_start = time()
 
-    for q in questions
+    for (qi, q) in enumerate(questions)
+        q_t0 = time()
         cat_idx = findfirst(==(q.category), CATEGORIES)
         answer_measure = CategoricalMeasure(Finite(Float64[0, 1, 2, 3]))
         available = collect(1:n_tools)
@@ -50,7 +59,6 @@ function run_bayesian_seed(tools::Vector{SimulatedTool}, seed::Int)
         q_cost = 0.0
 
         while true
-            # Extract reliability measures for available tools in this category
             rel_measures = [rel_betas[t, cat_idx] for t in available]
             costs_jl = Float64[tools[t].cost for t in available]
 
@@ -64,10 +72,9 @@ function run_bayesian_seed(tools::Vector{SimulatedTool}, seed::Int)
                 tool_idx = available[tool_local_idx]
                 q_cost += tools[tool_idx].cost
 
-                response = query_tool(tools[tool_idx], q, rng)
+                response = response_table[qi, tool_idx]
                 tool_responses[tool_idx] = response
 
-                # Update answer belief via DSL
                 k = ANSWER_KERNEL(rel_betas[tool_idx, cat_idx], 4.0)
                 answer_measure = UPDATE_ON_RESPONSE(answer_measure, k, Float64(response))
 
@@ -80,7 +87,6 @@ function run_bayesian_seed(tools::Vector{SimulatedTool}, seed::Int)
                 total_reward += reward
                 total_tool_cost += q_cost
 
-                # Update reliability beliefs with ground truth
                 for (t, resp) in tool_responses
                     rel_betas[t, cat_idx] = condition(
                         rel_betas[t, cat_idx], RELIABILITY_KERNEL,
@@ -89,14 +95,13 @@ function run_bayesian_seed(tools::Vector{SimulatedTool}, seed::Int)
 
                 push!(records, QuestionResult(q.id, q.category,
                     collect(keys(tool_responses)), tool_responses,
-                    submitted, was_correct, reward, q_cost))
+                    submitted, was_correct, reward, q_cost, time() - q_t0, 0, 0))
                 break
 
             else  # abstain
                 total_reward += REWARD_ABSTAIN
                 total_tool_cost += q_cost
 
-                # Update reliability beliefs with ground truth
                 for (t, resp) in tool_responses
                     rel_betas[t, cat_idx] = condition(
                         rel_betas[t, cat_idx], RELIABILITY_KERNEL,
@@ -105,29 +110,31 @@ function run_bayesian_seed(tools::Vector{SimulatedTool}, seed::Int)
 
                 push!(records, QuestionResult(q.id, q.category,
                     collect(keys(tool_responses)), tool_responses,
-                    nothing, nothing, REWARD_ABSTAIN, q_cost))
+                    nothing, nothing, REWARD_ABSTAIN, q_cost, time() - q_t0, 0, 0))
                 break
             end
         end
     end
 
     wall_time = time() - t_start
-    SeedResult(seed, records, total_reward - total_tool_cost,
-               total_reward, total_tool_cost, wall_time)
+    total_score = total_reward - total_tool_cost
+    SeedResult(0, records, total_score, total_reward, total_tool_cost, wall_time)
 end
 
 # --- Baseline agents ---
 
-function run_single_best_seed(tools::Vector{SimulatedTool}, seed::Int; tool_idx::Int=1)
-    rng = MersenneTwister(seed)
-    questions = get_questions(; seed)
+function run_single_best_seed(tools::Vector{SimulatedTool},
+                              questions::Vector{Question},
+                              response_table::Matrix{Int};
+                              tool_idx::Int=1)
     records = QuestionResult[]
     total_reward = 0.0
     total_tool_cost = 0.0
     t_start = time()
 
-    for q in questions
-        response = query_tool(tools[tool_idx], q, rng)
+    for (qi, q) in enumerate(questions)
+        q_t0 = time()
+        response = response_table[qi, tool_idx]
         cost = tools[tool_idx].cost
         total_tool_cost += cost
 
@@ -136,25 +143,27 @@ function run_single_best_seed(tools::Vector{SimulatedTool}, seed::Int; tool_idx:
         total_reward += reward
         push!(records, QuestionResult(q.id, q.category, [tool_idx],
             Dict(tool_idx => response),
-            response, was_correct, reward, cost))
+            response, was_correct, reward, cost, time() - q_t0, 0, 0))
     end
 
     wall_time = time() - t_start
-    SeedResult(seed, records, total_reward - total_tool_cost,
+    SeedResult(0, records, total_reward - total_tool_cost,
                total_reward, total_tool_cost, wall_time)
 end
 
-function run_random_seed(tools::Vector{SimulatedTool}, seed::Int)
-    rng = MersenneTwister(seed)
-    questions = get_questions(; seed)
+function run_random_seed(tools::Vector{SimulatedTool},
+                         questions::Vector{Question},
+                         response_table::Matrix{Int},
+                         rng)
     records = QuestionResult[]
     total_reward = 0.0
     total_tool_cost = 0.0
     t_start = time()
 
-    for q in questions
+    for (qi, q) in enumerate(questions)
+        q_t0 = time()
         t = rand(rng, 1:length(tools))
-        response = query_tool(tools[t], q, rng)
+        response = response_table[qi, t]
         cost = tools[t].cost
         total_tool_cost += cost
 
@@ -163,27 +172,28 @@ function run_random_seed(tools::Vector{SimulatedTool}, seed::Int)
         total_reward += reward
         push!(records, QuestionResult(q.id, q.category, [t],
             Dict(t => response),
-            response, was_correct, reward, cost))
+            response, was_correct, reward, cost, time() - q_t0, 0, 0))
     end
 
     wall_time = time() - t_start
-    SeedResult(seed, records, total_reward - total_tool_cost,
+    SeedResult(0, records, total_reward - total_tool_cost,
                total_reward, total_tool_cost, wall_time)
 end
 
-function run_all_tools_seed(tools::Vector{SimulatedTool}, seed::Int)
-    rng = MersenneTwister(seed)
-    questions = get_questions(; seed)
+function run_all_tools_seed(tools::Vector{SimulatedTool},
+                            questions::Vector{Question},
+                            response_table::Matrix{Int})
     records = QuestionResult[]
     total_reward = 0.0
     total_tool_cost = 0.0
     t_start = time()
 
-    for q in questions
+    for (qi, q) in enumerate(questions)
+        q_t0 = time()
         responses = Dict{Int,Int}()
         cost = 0.0
         for t in 1:length(tools)
-            responses[t] = query_tool(tools[t], q, rng)
+            responses[t] = response_table[qi, t]
             cost += tools[t].cost
         end
         total_tool_cost += cost
@@ -197,11 +207,11 @@ function run_all_tools_seed(tools::Vector{SimulatedTool}, seed::Int)
         reward = was_correct ? REWARD_CORRECT : PENALTY_WRONG
         total_reward += reward
         push!(records, QuestionResult(q.id, q.category, collect(1:length(tools)),
-            responses, submitted, was_correct, reward, cost))
+            responses, submitted, was_correct, reward, cost, time() - q_t0, 0, 0))
     end
 
     wall_time = time() - t_start
-    SeedResult(seed, records, total_reward - total_tool_cost,
+    SeedResult(0, records, total_reward - total_tool_cost,
                total_reward, total_tool_cost, wall_time)
 end
 
@@ -210,10 +220,14 @@ end
 function parse_args()
     n_seeds = 20
     include_llm = false
+    llm_only = false
     models = String[]
     for (i, arg) in enumerate(ARGS)
         if arg == "--include-llm"
             include_llm = true
+        elseif arg == "--llm-only"
+            include_llm = true
+            llm_only = true
         elseif arg == "--seeds" && i < length(ARGS)
             n_seeds = parse(Int, ARGS[i + 1])
         elseif startswith(arg, "--seeds=")
@@ -227,7 +241,7 @@ function parse_args()
         end
     end
     if isempty(models); models = ["llama3.1"]; end
-    (; n_seeds, include_llm, models)
+    (; n_seeds, include_llm, llm_only, models)
 end
 
 # --- Main ---
@@ -236,46 +250,69 @@ function main()
     args = parse_args()
     tools = make_spec_tools()
 
-    mode = args.include_llm ? "fast + LLM agents" : "fast agents only"
+    mode = args.llm_only ? "LLM only" : args.include_llm ? "fast + LLM agents" : "fast agents only"
     println(stderr, "QA Benchmark: $(args.n_seeds) seeds, $(length(QUESTION_BANK)) questions, $mode")
     flush(stderr)
 
     all_results = Dict{String,Vector{SeedResult}}()
 
     # Fast agents
+    if !args.llm_only
     println(stderr, "\n--- Fast agents ---")
     for seed in 0:args.n_seeds-1
+        rng = MersenneTwister(seed)
+        questions = get_questions(; seed)
+        response_table = generate_response_table(tools, questions, rng)
+
+        random_rng = MersenneTwister(seed + 1_000_000)
+
         for (name, runner) in [
-            ("bayesian",    s -> run_bayesian_seed(tools, s)),
-            ("single_best", s -> run_single_best_seed(tools, s)),
-            ("random",      s -> run_random_seed(tools, s)),
-            ("all_tools",   s -> run_all_tools_seed(tools, s)),
+            ("bayesian",    () -> run_bayesian_seed(tools, questions, response_table)),
+            ("single_best", () -> run_single_best_seed(tools, questions, response_table)),
+            ("random",      () -> run_random_seed(tools, questions, response_table, random_rng)),
+            ("all_tools",   () -> run_all_tools_seed(tools, questions, response_table)),
         ]
-            push!(get!(all_results, name, SeedResult[]), runner(seed))
+            result = runner()
+            result = SeedResult(seed, result.records, result.total_score,
+                               result.total_reward, result.total_tool_cost, result.wall_time_s)
+            push!(get!(all_results, name, SeedResult[]), result)
         end
         println(stderr, "  Seed $seed done"); flush(stderr)
     end
 
-    # Intermediate results
     println(stderr, "\n--- Fast agent results ---")
     println(stderr, summary_table(all_results)); flush(stderr)
 
+    # Save fast agents to SQLite
+    for (name, runs) in all_results
+        save_results(DB_PATH, name, runs)
+    end
+    end # !llm_only
+
     # LLM agents (optional)
     if args.include_llm
-        include(joinpath(@__DIR__, "llm_agent.jl"))
         for model in args.models
             println(stderr, "\n--- LLM agent: $model ---"); flush(stderr)
+            llm_runs = SeedResult[]
             for seed in 0:args.n_seeds-1
+                questions = get_questions(; seed)
+                rng = MersenneTwister(seed)
+                response_table = generate_response_table(tools, questions, rng)
+
                 backend = if startswith(model, "claude")
                     AnthropicBackend(model, get(ENV, "ANTHROPIC_API_KEY", ""))
                 else
                     OllamaBackend(model, "http://localhost:11434")
                 end
-                result = run_llm_seed(backend, tools, seed)
+                result = run_llm_seed(backend, tools, questions, response_table, seed)
+                push!(llm_runs, result)
                 push!(get!(all_results, model, SeedResult[]), result)
                 score = @sprintf("%+.1f", result.total_score)
                 println(stderr, "  $model seed $seed: score=$score"); flush(stderr)
             end
+            # Save this LLM agent to SQLite
+            save_results(DB_PATH, model, llm_runs; model)
+
             println(stderr, "\n--- Results after $model ---")
             println(stderr, summary_table(all_results)); flush(stderr)
         end
@@ -283,10 +320,6 @@ function main()
 
     # Final table to stdout
     println(summary_table(all_results)); flush(stdout)
-
-    # Save raw results
-    results_path = joinpath(@__DIR__, "results", "results.json")
-    save_results(results_path, all_results)
 end
 
 main()

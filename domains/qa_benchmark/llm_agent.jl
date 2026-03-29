@@ -234,36 +234,44 @@ end
 # ─── Per-question loop ───
 
 function run_question(backend::OllamaBackend, tools_sim::Vector{SimulatedTool},
-                      q::Question, rng, system_prompt::String)
-    messages = [
-        Dict("role" => "system", "content" => system_prompt),
-        Dict("role" => "user", "content" => build_user_message(q)),
+                      q::Question, qi::Int, response_table::Matrix{Int},
+                      system_prompt::String)
+    messages = Dict{String,Any}[
+        Dict{String,Any}("role" => "system", "content" => system_prompt),
+        Dict{String,Any}("role" => "user", "content" => build_user_message(q)),
     ]
     tool_defs = ollama_tool_defs()
     tools_queried = Int[]
     tool_responses = Dict{Int,Int}()
     q_cost = 0.0
     sim_calls = 0
+    total_in_tok = 0
+    total_out_tok = 0
 
     for _ in 1:8  # safety bound
         data = try
             call_ollama(backend, messages, tool_defs)
         catch e
             @warn "Ollama call failed" exception=e
-            return (nothing, nothing, tools_queried, tool_responses, q_cost)
+            return (nothing, nothing, tools_queried, tool_responses, q_cost, total_in_tok, total_out_tok)
         end
+
+        # Accumulate tokens
+        if hasproperty(data, :prompt_eval_count); total_in_tok += Int(data.prompt_eval_count); end
+        if hasproperty(data, :eval_count); total_out_tok += Int(data.eval_count); end
 
         tc = parse_ollama_response(data)
 
         if tc.name == "submit_answer"
-            idx = get(tc.arguments, "answer_index", 0)
-            return (Int(idx), true, tools_queried, tool_responses, q_cost)
+            raw = get(tc.arguments, "answer_index", 0)
+            idx = raw isa AbstractString ? parse(Int, raw) : Int(raw)
+            return (idx, true, tools_queried, tool_responses, q_cost, total_in_tok, total_out_tok)
         elseif tc.name == "abstain"
-            return (nothing, nothing, tools_queried, tool_responses, q_cost)
+            return (nothing, nothing, tools_queried, tool_responses, q_cost, total_in_tok, total_out_tok)
         elseif haskey(SIMULATED_TOOL_MAP, tc.name)
             t = SIMULATED_TOOL_MAP[tc.name]
             push!(tools_queried, t)
-            response = query_tool(tools_sim[t], q, rng)
+            response = response_table[qi, t]
             tool_responses[t] = response
             q_cost += tools_sim[t].cost
             sim_calls += 1
@@ -272,46 +280,55 @@ function run_question(backend::OllamaBackend, tools_sim::Vector{SimulatedTool},
             append_ollama_tool_exchange!(messages, tc, result_text)
 
             if sim_calls >= 4
-                # Force decision on next turn by removing simulated tools
                 tool_defs = filter(td -> td["function"]["name"] in ("submit_answer", "abstain"), tool_defs)
             end
         else
-            return (nothing, nothing, tools_queried, tool_responses, q_cost)
+            return (nothing, nothing, tools_queried, tool_responses, q_cost, total_in_tok, total_out_tok)
         end
     end
-    (nothing, nothing, tools_queried, tool_responses, q_cost)
+    (nothing, nothing, tools_queried, tool_responses, q_cost, total_in_tok, total_out_tok)
 end
 
 function run_question(backend::AnthropicBackend, tools_sim::Vector{SimulatedTool},
-                      q::Question, rng, system_prompt::String)
-    messages = [
-        Dict("role" => "user", "content" => build_user_message(q)),
+                      q::Question, qi::Int, response_table::Matrix{Int},
+                      system_prompt::String)
+    messages = Dict{String,Any}[
+        Dict{String,Any}("role" => "user", "content" => build_user_message(q)),
     ]
     tool_defs = anthropic_tool_defs()
     tools_queried = Int[]
     tool_responses = Dict{Int,Int}()
     q_cost = 0.0
     sim_calls = 0
+    total_in_tok = 0
+    total_out_tok = 0
 
     for _ in 1:8  # safety bound
         data = try
             call_anthropic(backend, system_prompt, messages, tool_defs)
         catch e
             @warn "Anthropic call failed" exception=e
-            return (nothing, nothing, tools_queried, tool_responses, q_cost)
+            return (nothing, nothing, tools_queried, tool_responses, q_cost, total_in_tok, total_out_tok)
+        end
+
+        # Accumulate tokens
+        if hasproperty(data, :usage)
+            total_in_tok += Int(data.usage.input_tokens)
+            total_out_tok += Int(data.usage.output_tokens)
         end
 
         tc = parse_anthropic_response(data)
 
         if tc.name == "submit_answer"
-            idx = get(tc.arguments, "answer_index", 0)
-            return (Int(idx), true, tools_queried, tool_responses, q_cost)
+            raw = get(tc.arguments, "answer_index", 0)
+            idx = raw isa AbstractString ? parse(Int, raw) : Int(raw)
+            return (idx, true, tools_queried, tool_responses, q_cost, total_in_tok, total_out_tok)
         elseif tc.name == "abstain"
-            return (nothing, nothing, tools_queried, tool_responses, q_cost)
+            return (nothing, nothing, tools_queried, tool_responses, q_cost, total_in_tok, total_out_tok)
         elseif haskey(SIMULATED_TOOL_MAP, tc.name)
             t = SIMULATED_TOOL_MAP[tc.name]
             push!(tools_queried, t)
-            response = query_tool(tools_sim[t], q, rng)
+            response = response_table[qi, t]
             tool_responses[t] = response
             q_cost += tools_sim[t].cost
             sim_calls += 1
@@ -323,24 +340,24 @@ function run_question(backend::AnthropicBackend, tools_sim::Vector{SimulatedTool
                 tool_defs = filter(td -> td["name"] in ("submit_answer", "abstain"), tool_defs)
             end
         else
-            return (nothing, nothing, tools_queried, tool_responses, q_cost)
+            return (nothing, nothing, tools_queried, tool_responses, q_cost, total_in_tok, total_out_tok)
         end
     end
-    (nothing, nothing, tools_queried, tool_responses, q_cost)
+    (nothing, nothing, tools_queried, tool_responses, q_cost, total_in_tok, total_out_tok)
 end
 
 # ─── Seed runner ───
 
-function run_llm_seed(backend::LLMBackend, tools::Vector{SimulatedTool}, seed::Int)
-    rng = MersenneTwister(seed)
-    questions = get_questions(; seed)
+function run_llm_seed(backend::LLMBackend, tools::Vector{SimulatedTool},
+                      questions::Vector{Question}, response_table::Matrix{Int},
+                      seed::Int)
     records = QuestionResult[]
     total_reward = 0.0
     total_tool_cost = 0.0
     history_buffer = String[]
     t_start = time()
 
-    for q in questions
+    for (qi, q) in enumerate(questions)
         # Build system prompt with history
         history_text = if isempty(history_buffer)
             "(no history yet)"
@@ -349,10 +366,15 @@ function run_llm_seed(backend::LLMBackend, tools::Vector{SimulatedTool}, seed::I
         end
         system_prompt = replace(SYSTEM_PROMPT_TEMPLATE, "{HISTORY}" => history_text)
 
-        submitted_raw, _, tools_queried, tool_responses, q_cost = run_question(
-            backend, tools, q, rng, system_prompt)
+        q_t0 = time()
+        submitted_raw, _, tools_queried, tool_responses, q_cost, in_tok, out_tok = run_question(
+            backend, tools, q, qi, response_table, system_prompt)
+        q_wall = time() - q_t0
 
         total_tool_cost += q_cost
+        tool_names = join([tools[t].name for t in tools_queried], ", ")
+        if isempty(tool_names); tool_names = "none"; end
+        tok_str = in_tok + out_tok > 0 ? " [$(in_tok)+$(out_tok) tok]" : ""
 
         if submitted_raw !== nothing
             submitted = Int(submitted_raw)
@@ -360,22 +382,27 @@ function run_llm_seed(backend::LLMBackend, tools::Vector{SimulatedTool}, seed::I
             reward = was_correct ? REWARD_CORRECT : PENALTY_WRONG
             total_reward += reward
             push!(records, QuestionResult(q.id, q.category, tools_queried,
-                tool_responses, submitted, was_correct, reward, q_cost))
+                tool_responses, submitted, was_correct, reward, q_cost, q_wall, in_tok, out_tok))
 
-            # Update history
-            tool_names = join([tools[t].name for t in tools_queried], ", ")
             net = reward - q_cost
-            result_str = was_correct ? "correct" : "wrong"
+            result_str = was_correct ? "correct" : "WRONG"
+            println(stderr, @sprintf("    seed %d q %2d/%-2d [%-15s] %-3s: %s → %s (%+.0f net)%s",
+                seed, qi, length(questions), q.category, q.id, tool_names, result_str, net, tok_str))
+            flush(stderr)
+
             push!(history_buffer,
-                "[$(q.category)] tools: $(isempty(tool_names) ? "none" : tool_names) (cost: $(Int(q_cost))) → $result_str ($(@sprintf("%+.0f", net)) net)")
+                "[$(q.category)] tools: $tool_names (cost: $(Int(q_cost))) → $(lowercase(result_str)) ($(@sprintf("%+.0f", net)) net)")
         else
             total_reward += REWARD_ABSTAIN
             push!(records, QuestionResult(q.id, q.category, tools_queried,
-                tool_responses, nothing, nothing, REWARD_ABSTAIN, q_cost))
+                tool_responses, nothing, nothing, REWARD_ABSTAIN, q_cost, q_wall, in_tok, out_tok))
 
-            tool_names = join([tools[t].name for t in tools_queried], ", ")
+            println(stderr, @sprintf("    seed %d q %2d/%-2d [%-15s] %-3s: %s → abstain (cost: %.0f)%s",
+                seed, qi, length(questions), q.category, q.id, tool_names, q_cost, tok_str))
+            flush(stderr)
+
             push!(history_buffer,
-                "[$(q.category)] tools: $(isempty(tool_names) ? "none" : tool_names) (cost: $(Int(q_cost))) → abstained")
+                "[$(q.category)] tools: $tool_names (cost: $(Int(q_cost))) → abstained")
         end
     end
 
