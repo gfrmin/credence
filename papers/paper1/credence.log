@@ -1,4 +1,4 @@
-This is pdfTeX, Version 3.141592653-2.6-1.40.29 (TeX Live 2026/Arch Linux) (preloaded format=pdflatex 2026.3.23)  27 MAR 2026 22:55
+This is pdfTeX, Version 3.141592653-2.6-1.40.29 (TeX Live 2026/Arch Linux) (preloaded format=pdflatex 2026.3.23)  29 MAR 2026 20:01
 entering extended mode
  restricted \write18 enabled.
  %&-line parsing enabled.
@@ -520,38 +520,38 @@ File: umsb.fd 2013/01/14 v3.01 AMS symbols B
 /enc/dvips/cm-super/cm-super-t1.enc}{/usr/share/texmf-dist/fonts/enc/dvips/cm-s
 uper/cm-super-ts1.enc}]
 [2] [3] [4]
-Overfull \hbox (10.69923pt too wide) in paragraph at lines 167--168
+Overfull \hbox (10.69923pt too wide) in paragraph at lines 170--171
  []\T1/cmr/bx/n/10.95 Non-stationarity.[] \T1/cmr/m/n/10.95 The core frame-work
  han-dles dis-tri-bu-tional drift through stan-dard Beta-Bernoulli
  []
 
 [5] [6]
-Overfull \hbox (13.97505pt too wide) in paragraph at lines 267--268
+Overfull \hbox (13.97505pt too wide) in paragraph at lines 264--265
 \T1/cmr/m/n/10.95 The com-par-i-son is be-tween decision-making paradigms---Bay
 esian EU max-imi-sa-tion vs. LLM-prompted
  []
 
-[7]
-Overfull \hbox (44.11705pt too wide) in paragraph at lines 341--352
+[7] [8]
+Overfull \hbox (52.13904pt too wide) in paragraph at lines 328--339
  [][] 
  []
 
-[8] [9] [10] [11] [12] (./credence.aux)
+[9] [10] [11] [12] [13] (./credence.aux)
  ***********
 LaTeX2e <2025-11-01>
 L3 programming layer <2026-01-19>
  ***********
 Package rerunfilecheck Info: File `credence.out' has not changed.
-(rerunfilecheck)             Checksum: C2D93244138BF0713BC81F6EF55ADFA2;2983.
+(rerunfilecheck)             Checksum: 23E8416D6F5ACCA359E75627A222AF87;2961.
  ) 
 Here is how much of TeX's memory you used:
- 14221 strings out of 469515
- 226603 string characters out of 5470807
+ 14249 strings out of 469515
+ 227245 string characters out of 5470807
  648154 words of memory out of 5000000
- 42571 multiletter control sequences out of 15000+600000
- 654607 words of font info for 106 fonts, out of 8000000 for 9000
+ 42591 multiletter control sequences out of 15000+600000
+ 655534 words of font info for 109 fonts, out of 8000000 for 9000
  14 hyphenation exceptions out of 8191
- 75i,12n,79p,952b,625s stack positions out of 10000i,1000n,20000p,200000b,200000s
+ 75i,12n,79p,1065b,623s stack positions out of 10000i,1000n,20000p,200000b,200000s
 </usr/share/texmf-dist/fonts/type1/public/amsfonts/cm/cmbx10.pfb></usr/share/
 texmf-dist/fonts/type1/public/amsfonts/cm/cmex10.pfb></usr/share/texmf-dist/fon
 ts/type1/public/amsfonts/cm/cmmi10.pfb></usr/share/texmf-dist/fonts/type1/publi
@@ -576,10 +576,10 @@ dist/fonts/type1/public/cm-super/sfti1000.pfb></usr/share/texmf-dist/fonts/type
 er/sftt0900.pfb></usr/share/texmf-dist/fonts/type1/public/cm-super/sftt1095.pfb
 ></usr/share/texmf-dist/fonts/type1/public/cm-super/sfxc1095.pfb></usr/share/te
 xmf-dist/fonts/type1/public/cm-super/sfxc1440.pfb>
-Output written on credence.pdf (12 pages, 502605 bytes).
+Output written on credence.pdf (13 pages, 511261 bytes).
 PDF statistics:
- 487 PDF objects out of 1000 (max. 8388607)
- 408 compressed objects within 5 object streams
- 111 named destinations out of 1000 (max. 500000)
- 161 words of extra memory for PDF output out of 10000 (max. 10000000)
+ 527 PDF objects out of 1000 (max. 8388607)
+ 447 compressed objects within 5 object streams
+ 117 named destinations out of 1000 (max. 500000)
+ 153 words of extra memory for PDF output out of 10000 (max. 10000000)
 
