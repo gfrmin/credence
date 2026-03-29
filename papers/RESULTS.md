@@ -1,121 +1,135 @@
 # Benchmark Results
 
 All experiments run from the Julia benchmark at `domains/qa_benchmark/host.jl`.
-Fast agents (bayesian, baselines) and LLM agents all run 20 seeds.
-LLM agents use Llama 3.1 8B via Ollama (temperature 0).
+Results stored in SQLite at `domains/qa_benchmark/results/benchmark.db`.
+20 seeds, 50 questions per seed, 4 simulated tools with category-dependent reliability.
 
-## Experiment 1: Stationary Tool Reliabilities (20 seeds)
+**Important change from previous version:** Tool responses are pre-generated per seed
+so all agents see identical (question, tool) outputs. No RNG interleaving with agent
+decisions. LLM agents use native tool-calling (structured API), not text parsing.
 
-All agents face 50 questions with fixed tool reliabilities across 4 simulated tools.
+## Agents
 
-| Agent | N | Score | Accuracy | Abstain% | Tools/Q | Time/Q (s) |
-|---|---|---|---|---|---|---|
-| bayesian | 20 | +129.5 +/- 51.3 | 0.626 | 0.000 | 1.80 | 0.07 |
-| single_best | 20 | +58.5 +/- 55.9 | 0.478 | 0.000 | 1.00 | <0.01 |
-| random | 20 | +12.2 +/- 54.8 | 0.450 | 0.000 | 1.00 | <0.01 |
-| llm_RSH | 20 | +10.8 +/- 50.8 | 0.764 | 0.251 | 3.05 | 5.65 |
-| llm_R | 20 | -15.3 +/- 28.0 | 0.660 | 0.255 | 2.70 | 4.60 |
-| all_tools | 20 | -114.2 +/- 60.1 | 0.581 | 0.000 | 4.00 | <0.01 |
-| llm_bare | 20 | -160.5 +/- 36.1 | 0.438 | 0.008 | 3.26 | 0.93 |
+- **bayesian** — VOI-based tool selection, Beta-Bernoulli reliability learning, no LLM.
+  Uses `agent.bdsl` driven by `host.jl`. Cost: $0.
+- **claude-haiku-4-5-20251001** — Anthropic Haiku 4.5 with native tool-calling.
+  Cost: $1/M input, $5/M output tokens.
+- **llama3.1** — Llama 3.1 8B via Ollama with native tool-calling. Cost: $0 (local).
+- **single_best** — Always queries Tool A (web_search, cost 1), submits its answer.
+- **random** — Queries a random tool, submits its answer.
+- **all_tools** — Queries all 4 tools, majority vote.
 
-LLM agent variants:
-- **llm_bare**: base prompt only — LLM outputs an action with no reasoning
-- **llm_R**: adds ReAct reasoning traces (Thought/Action/Observation)
-- **llm_RSH**: adds strategy guidance (cost-awareness, reliability heuristics) and cross-question history (last 10 outcomes)
+## Main Results (20 seeds)
 
-**Key findings:**
+| Agent | Score | Accuracy | Abstain% | Tools/Q | Sim Cost/Q | Time/Q | API Cost (total) |
+|---|---|---|---|---|---|---|---|
+| claude-haiku-4-5-20251001 | +445.5 ± 13.9 | 0.975 | 0.000 | 0.59 | 0.71 | 2.67s | $3.24 |
+| bayesian | +163.7 ± 51.7 | 0.647 | 0.045 | 0.96 | 1.25 | 0.016s | $0.00 |
+| llama3.1 | +79.3 ± 36.7 | 0.594 | 0.229 | 0.90 | 1.44 | 1.56s | $0.00 |
+| random | +55.4 ± 48.7 | 0.509 | 0.000 | 1.00 | 1.53 | ~0s | $0.00 |
+| single_best | +44.2 ± 50.1 | 0.459 | 0.000 | 1.00 | 1.00 | ~0s | $0.00 |
+| all_tools | -67.0 ± 65.7 | 0.644 | 0.000 | 4.00 | 6.00 | ~0s | $0.00 |
 
-- **Bayesian agent scores +129.5 vs best LLM +10.8** despite lower accuracy
-  (62.6% vs 76.4%). The Bayesian agent wins by querying fewer tools per question
-  (1.80 vs 3.05) and taking 0.07s vs 5.65s per question (80× faster).
-- **The prompting gradient never closes the gap.** LLM Bare (-160.5) → LLM ReAct
-  (-15.3) → LLM ReAct+S+H (+10.8). Each prompting technique improves accuracy but
-  the best LLM variant still scores 12× less than the Bayesian agent.
-- **The all_tools baseline (-114.2) demonstrates the cost trap.** Querying all 4 tools
-  every time yields 58.1% accuracy but the tool costs overwhelm the reward.
+## Key Findings
 
-**Plots:** `stationary_full/cumulative_score.png`, `stationary_full/score_comparison.png`,
-`stationary_full/tool_selection_heatmap.png`, `stationary_full/calibration_bayesian.png`,
-`stationary_full/calibration_oracle.png`
+### 1. Frontier LLM dominates on raw score
 
+Haiku 4.5 scores +445.5, nearly 3x the Bayesian agent (+163.7). It answers 97.5% of
+questions correctly while using fewer tools (0.59/q) than any other agent. It answers
+30+/50 questions with no tools at all — pure world knowledge.
 
-## Experiment 2: Tool Reliability Drift (20 seeds)
+### 2. Bayesian agent is the best zero-cost strategy
 
-Tool A's reliability degrades at question 25 (midpoint). Tests whether agents adapt
-to non-stationarity.
+Among agents that don't call an LLM API, the Bayesian agent dominates at +163.7,
+beating random (+55.4) by 3x and single_best (+44.2) by 3.7x. It achieves this
+through principled tool selection (VOI), reliability learning, and selective abstention.
 
-| Agent | Before | After | Delta |
+### 3. The cost-performance tradeoff is stark
+
+| Comparison | Score | API Cost | Latency |
 |---|---|---|---|
-| oracle | 90.2 +/- 35.0 | 73.0 +/- 40.7 | -17.2 |
-| bayesian_forget | 47.6 +/- 30.9 | 25.9 +/- 27.5 | -21.8 |
-| bayesian_no_forget | 40.8 +/- 35.6 | 37.2 +/- 39.9 | -3.5 |
-| single_best | 14.2 +/- 36.0 | -54.8 +/- 31.2 | -69.0 |
-| random | 3.4 +/- 27.8 | -3.6 +/- 28.4 | -7.0 |
+| Haiku 4.5 | 445.5 | $3.24 / 1000q | 2.67s/q |
+| Bayesian | 163.7 | $0.00 | 0.016s/q |
 
-**Key findings:**
+Bayesian gets 37% of Haiku's score at 0% of its cost and 0.6% of its latency.
+At scale (millions of tool-selection decisions), this matters.
 
-- **single_best collapses under drift (-69.0 delta).** It commits to tool A based on
-  early experience and cannot adapt when reliability drops, going from +14.2 to -54.8.
-- **Bayesian agents adapt gracefully.** The forgetting variant (lambda decay on old
-  observations) shows a -21.8 delta vs -3.5 for the no-forget variant. The no-forget
-  agent's prior inertia buffers it — learned reliability drifts slowly when mixed with
-  many pre-drift observations.
-- **Even the oracle suffers (-17.2)** because it still pays tool costs in the degraded
-  regime where fewer tools are worth querying.
+### 4. Local LLM underperforms Bayesian
 
-**Plots:** `drift_full/drift_cumulative.png`, `drift_full/reliability_curve_bayesian_forget.png`,
-`drift_full/reliability_curve_bayesian_no_forget.png`, `drift_full/reliability_curve_oracle.png`
+llama3.1 8B scores +79.3 — half the Bayesian agent. It abstains too aggressively
+(22.9% vs 4.5%) and has lower accuracy (59.4% vs 64.7%). Native tool-calling helps
+vs the old text-parsing approach, but a local 8B model lacks the world knowledge to
+compete with either the Bayesian agent's principled tool selection or a frontier
+model's raw accuracy.
 
+### 5. Accuracy paradox holds among non-LLM agents
 
-## Experiment 3: Ablation Study (20 seeds)
+all_tools has the highest accuracy among non-LLM agents (64.4%) but the worst score
+(-67.0) because querying all 4 tools costs 6.0 per question, destroying the margin.
 
-Each variant removes one component from the full Bayesian agent. Delta is relative
-to the full agent's score of 112.6. (These are from the older Python benchmark run;
-Julia ablation rerun pending.)
+## Querying the Results
 
-| Variant | Score | Accuracy | Tools/Q | Delta |
-|---|---|---|---|---|
-| full_agent | 112.6 +/- 44.6 | 0.596 +/- 0.037 | 0.99 +/- 0.14 | -- |
-| no_voi | 34.5 +/- 48.9 | 0.446 +/- 0.065 | 1.00 +/- 0.00 | -78.1 |
-| no_category | 10.6 +/- 55.8 | 0.316 +/- 0.178 | 0.49 +/- 0.39 | -102.0 |
-| no_abstention | 91.1 +/- 82.2 | 0.539 +/- 0.121 | 0.99 +/- 0.14 | -21.5 |
-| fixed_reliability | 34.5 +/- 48.9 | 0.446 +/- 0.065 | 1.00 +/- 0.00 | -78.1 |
-| no_crossverify | 117.6 +/- 40.8 | 0.600 +/- 0.052 | 0.95 +/- 0.11 | +5.0 |
+All per-question data is in SQLite:
 
-**Component importance ranking (by score delta):**
+```bash
+sqlite3 domains/qa_benchmark/results/benchmark.db
+```
 
-1. **Category inference (-102.0):** Most critical. Without category-aware priors the
-   agent cannot route questions to appropriate tools. Accuracy collapses to 31.6%.
-2. **VOI-based tool selection (-78.1):** Without value-of-information, the agent picks
-   the cheapest tool rather than the most informative, matching single_best performance.
-3. **Reliability learning (-78.1):** Same impact as removing VOI — without learned
-   reliability, VOI calculations use uninformative priors and degenerate to cost-based
-   selection.
-4. **Abstention (-21.5):** Moderate impact. Forcing submission on low-confidence
-   questions adds wrong answers that cost -10 each. Variance doubles (82.2 vs 44.6)
-   indicating less consistent performance.
-5. **Cross-verification (+5.0):** Removing second-tool verification *slightly improves*
-   score. The cost of a second query sometimes outweighs the information gain in this
-   environment. VOI correctly identifies this most of the time, but occasionally
-   over-queries.
+```sql
+-- Summary by agent
+SELECT agent, COUNT(*) as seeds,
+       ROUND(AVG(total_score),1) as avg_score,
+       ROUND(SUM(total_api_cost_usd),4) as total_api_cost
+FROM runs GROUP BY agent ORDER BY avg_score DESC;
 
-**Plots:** `ablation/ablation_comparison.png`, `ablation/ablation_tool_calls.png`
+-- Per-category accuracy by agent
+SELECT r.agent, q.category,
+       ROUND(AVG(q.was_correct)*100,1) as accuracy_pct
+FROM questions q JOIN runs r ON q.run_id=r.id
+WHERE q.submitted IS NOT NULL
+GROUP BY r.agent, q.category ORDER BY r.agent, q.category;
 
+-- Compare agents on same seed
+SELECT agent, total_score, wall_time_s, total_api_cost_usd
+FROM runs WHERE seed=0 ORDER BY total_score DESC;
 
-## Headline Findings
+-- Questions Haiku got wrong
+SELECT r.seed, q.question_id, q.category, q.tools_queried
+FROM questions q JOIN runs r ON q.run_id=r.id
+WHERE r.agent='claude-haiku-4-5-20251001' AND q.was_correct=0;
 
-1. **EU maximisation beats prompt engineering.** The Bayesian agent (+129.5) outscores
-   the best LLM agent (+10.8) by 119 points despite 14 percentage points lower accuracy.
-   The mechanism: principled tool selection via VOI queries ~1.8 tools per question instead
-   of ~3.05, taking 0.07s instead of 5.65s per question.
+-- Bayesian vs Haiku on same questions (seed 0)
+SELECT b.question_id, b.category,
+       b.was_correct as bayes_correct, b.tool_cost as bayes_cost,
+       h.was_correct as haiku_correct, h.api_cost_usd as haiku_api
+FROM questions b
+JOIN runs rb ON b.run_id=rb.id AND rb.agent='bayesian' AND rb.seed=0
+JOIN runs rh ON rh.agent='claude-haiku-4-5-20251001' AND rh.seed=0
+JOIN questions h ON h.run_id=rh.id AND h.question_id=b.question_id;
 
-2. **More prompting helps but never closes the gap.** LLM Bare (-160.5) → LLM ReAct
-   (-15.3) → LLM ReAct+S+H (+10.8). Each technique (reasoning traces, strategy prompts,
-   cross-question memory) improves accuracy, but the best variant scores 12× less than
-   the Bayesian agent. The LLM lacks a formal mechanism for computing whether a query
-   is worth its cost.
+-- Total API spend across all agents
+SELECT agent, ROUND(SUM(total_api_cost_usd),4) as total_usd
+FROM runs GROUP BY agent ORDER BY total_usd DESC;
+```
 
-3. **Category inference is the most valuable component.** Ablation shows removing
-   category-aware priors costs -102 points — more than removing VOI (-78.1) or
-   reliability learning (-78.1). Knowing *which kind* of question you're facing is
-   the single most important input to tool selection.
+## Changes from Previous Results
+
+The old RESULTS.md reported different numbers from a different benchmark configuration:
+- Old: coverage mechanism (tools could return `nothing`), text-based LLM parsing,
+  3 LLM variants (bare/ReAct/ReAct+S+H), interleaved RNG
+- New: no coverage (all tools always respond), native tool-calling, pre-generated
+  response table, Haiku 4.5 frontier model added
+
+The old headline ("Bayesian +129.5 vs best LLM +10.8") no longer holds against
+frontier models. The new headline: Bayesian is the optimal zero-cost strategy,
+but frontier LLMs with native tool-calling and world knowledge can outperform it
+— at a dollar cost.
+
+## Not Yet Run
+
+- **Ablation variants** (no VOI, no learning, no abstention, greedy) — not yet
+  implemented in the redesigned host.jl. Old ablation data (from Python benchmark)
+  has been deleted.
+- **Sonnet 4.6** — not yet run (~$10 estimated for 20 seeds at 3x Haiku pricing).
+- **Non-stationary (drift) scenario** — not yet implemented in new benchmark.
+  Old drift results are no longer valid (different tool specs, coverage mechanism).

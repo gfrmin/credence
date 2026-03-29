@@ -10,27 +10,43 @@ The author is Guy Freeman (guy@gfrm.in), an independent researcher with a PhD in
 
 This is an **architecture paper**, not merely a benchmark paper. The benchmark results are evidence for a deeper claim: that LLM tool selection is fundamentally a decision-theoretic problem, not a perception problem, and that principled Bayesian methods outperform prompting-based approaches for structural reasons that no amount of prompt engineering can overcome.
 
-Three headline results:
-1. **Accuracy paradox**: +129.5 vs +10.8 despite lower accuracy (62.6% vs 76.4%) — highest-accuracy agent scores 12× less
-2. **Prompting trap**: Three LLM variants form a gradient — Bare (-160.5) → ReAct (-15.3) → ReAct+S+H (+10.8) — more prompting helps but never closes the gap
-3. **Graceful degradation**: Bayesian agent absorbs drift (-21.8 delta) while single-best collapses (-69.0)
+**Updated headline results (March 2026 benchmark redesign):**
+
+The benchmark has been redesigned: no coverage mechanism, pre-generated response
+tables (fair comparison), native tool-calling for LLM agents, Haiku 4.5 added.
+Results in SQLite at `domains/qa_benchmark/results/benchmark.db`. See `RESULTS.md`.
+
+1. **Bayesian is optimal at zero cost**: +163.7 score, $0 API cost, 0.016s/question.
+   Beats all non-LLM baselines by 3x. Best strategy when you can't afford API calls.
+2. **Frontier LLM dominates on raw score**: Haiku 4.5 scores +445.5 (97.5% accuracy)
+   at $3.24 total API cost for 1000 questions. It answers most questions from world
+   knowledge alone (0.59 tools/question).
+3. **Local LLM underperforms Bayesian**: llama3.1 8B scores +79.3 — half the Bayesian
+   agent. Abstains too aggressively (22.9%), lower accuracy (59.4%).
+4. **Cost-performance tradeoff**: Bayesian gets 37% of Haiku's score at 0% of its cost
+   and 0.6% of its latency. The question is whether 2.7x more score is worth $3.24.
+5. **Accuracy paradox persists among non-LLM agents**: all_tools has highest non-LLM
+   accuracy (64.4%) but worst score (-67.0) because tool costs destroy the margin.
+
+The old headline ("Bayesian +129.5 vs best LLM +10.8") no longer holds against
+frontier models with native tool-calling. The paper's argument must be reframed:
+Bayesian tool selection is the principled, zero-cost approach; frontier LLMs can
+beat it but only by spending money on world knowledge the Bayesian agent doesn't have.
 
 ## What needs doing (in priority order)
 
-### 1. Fill in the ablation table
+### 1. Update all results tables
 
-Table 4 (`\label{tab:ablation}`) has values from the older Python benchmark. These need re-running in the Julia benchmark (`domains/qa_benchmark/host.jl`). Current numbers from `RESULTS.md`:
+The main results table and all references to specific numbers must be updated to
+match the new benchmark data in `RESULTS.md`. The old numbers (Bayesian +129.5,
+LLM ReAct+S+H +10.8, etc.) are no longer valid.
 
-| Variant | Score | Δ vs Full | Effect |
-|---------|-------|-----------|--------|
-| Full Credence | +112.6 | — | — |
-| No VOI (always query) | +34.5 | -78.1 | Degenerates to single-best |
-| No categories (flat prior) | +10.6 | -102.0 | Most critical — accuracy collapses to 31.6% |
-| No abstention | +91.1 | -21.5 | Variance doubles, forced wrong answers |
-| Fixed reliability (p=0.5) | +34.5 | -78.1 | Same as no VOI — uninformative priors |
-| No cross-verify | +117.6 | +5.0 | Slightly better — second query sometimes not worth cost |
+### 2. Fill in the ablation table
 
-These ablation numbers are from the old Python run and need re-running with the current Julia benchmark to match the new stationary baseline (+129.5).
+Table 4 (`\label{tab:ablation}`) has values from the older Python benchmark.
+Ablation variants are not yet implemented in the redesigned Julia benchmark.
+Either: (a) implement ablation in host.jl and re-run, or (b) remove the table
+and note ablation as future work. The old ablation data has been deleted.
 
 ### 2. Expand the bibliography
 
@@ -73,7 +89,10 @@ Also cite: AI Agents That Matter (Kapoor et al., TMLR 2025), Reasoning in Token 
 
 - Remove the subtitle "Or, Why Your AI Agent Is an Expensive Flowchart" if it's still there — too informal for arXiv
 - Add Smith & Freeman (2011) "Distributional Kalman Filters" J. Forecasting to the bibliography and cite it in the non-stationarity discussion alongside West & Harrison (1997)
-- In the Limitations paragraph, add: "Running the LLM agents with frontier models (GPT-4o, Claude Sonnet) would likely improve their accuracy but would not address the structural inability to compute value of information — the prompting trap result already demonstrates this, as the fully enhanced variant achieves 76.4% accuracy yet still scores 12× less than Credence." (DONE)
+- The Limitations paragraph about frontier models needs updating — we now HAVE
+  frontier model results (Haiku 4.5 at 97.5% accuracy, +445.5 score). The limitation
+  is no longer hypothetical. Reframe: frontier models win on raw score but at API cost;
+  Bayesian is optimal when cost and latency matter.
 - Verify the `\date` is set to `\today` or a specific month/year
 
 ## What NOT to do
