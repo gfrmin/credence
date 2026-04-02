@@ -1,0 +1,13 @@
+__pycache__/
+*.pyc
+*.egg-info/
+.coverage
+.pytest_cache/
+.venv/
+.claude/
+dist/
+build/
+
+# Generated experiment output (reproducible via experiments/)
+results/
+!results/RESULTS.md

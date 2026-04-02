@@ -1,0 +1,50 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "credence-agents"
+version = "0.4.0"
+description = "Bayesian decision theory engine for AI agents — Beta posteriors, VOI, and EU maximisation. Foundation for credence-router."
+license = "AGPL-3.0-only"
+requires-python = ">=3.11"
+readme = "README.md"
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+dependencies = [
+    "numpy>=1.24",
+    "juliacall>=0.9",
+]
+
+[project.optional-dependencies]
+benchmark = [
+    "matplotlib>=3.7",
+    "seaborn>=0.12",
+    "langchain>=0.2",
+    "langchain-openai>=0.1",
+    "langchain-anthropic>=0.1",
+    "langchain-ollama>=1.0.1",
+]
+dev = [
+    "pytest>=7.4",
+    "pytest-cov",
+    "ruff",
+]
+
+[project.urls]
+Homepage = "https://github.com/gfrmin/credence"
+Repository = "https://github.com/gfrmin/credence"
+
+[tool.setuptools.packages.find]
+include = ["credence_agents*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
