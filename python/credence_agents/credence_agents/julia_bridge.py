@@ -1,0 +1,196 @@
+"""Bridge to Julia Credence DSL via juliacall.
+
+Single module that loads Julia, the Credence module, and the BDSL agent
+specification. Provides Python wrappers for DSL functions (agent-step,
+update-on-response, answer-kernel) and host helpers (update_beta_state,
+marginalize_betas, initial_rel_state, initial_cov_state).
+
+All inference runs in Julia. Python keeps host concerns: tool queries,
+benchmark loop, persistence, LangChain comparison.
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+
+class CredenceBridge:
+    """Lazy-loading bridge to Julia Credence DSL."""
+
+    def __init__(
+        self,
+        dsl_path: str | Path | None = None,
+        credence_src: str | Path | None = None,
+    ):
+        self._jl = None
+        self._env = None
+        self._dsl_path = str(Path(dsl_path).resolve()) if dsl_path else None
+        self._credence_src = str(Path(credence_src).resolve()) if credence_src else None
+
+    def _init(self):
+        """Load Julia, Credence module, and BDSL. Called once on first use."""
+        from juliacall import Main as jl
+
+        # Resolve paths
+        dsl_path = self._dsl_path
+        credence_src = self._credence_src
+        if dsl_path is None:
+            candidate = Path.home() / "git" / "credence" / "examples" / "credence_agent.bdsl"
+            if candidate.exists():
+                dsl_path = str(candidate)
+            else:
+                raise FileNotFoundError(
+                    "Cannot find credence_agent.bdsl. Pass dsl_path= explicitly."
+                )
+        if credence_src is None:
+            candidate = Path.home() / "git" / "credence" / "src"
+            if candidate.exists():
+                credence_src = str(candidate)
+            else:
+                raise FileNotFoundError(
+                    "Cannot find credence/src/. Pass credence_src= explicitly."
+                )
+
+        # Load Credence module
+        jl_code = f'push!(LOAD_PATH, "{credence_src}")'
+        jl.seval(jl_code)  # noqa: S307 — trusted path string, not user input
+        jl.seval("using Credence")  # noqa: S307
+
+        # Load BDSL
+        read_code = f'read("{dsl_path}", String)'
+        bdsl_source = jl.seval(read_code)  # noqa: S307
+        self._env = jl.load_dsl(bdsl_source)
+        self._jl = jl
+
+    @property
+    def jl(self):
+        if self._jl is None:
+            self._init()
+        return self._jl
+
+    @property
+    def env(self):
+        if self._env is None:
+            self._init()
+        return self._env
+
+    def _make_float_vector(self, values):
+        """Convert Python iterable of numbers to Julia Float64 vector."""
+        jl = self.jl
+        literal = "Float64[" + ", ".join(str(float(v)) for v in values) + "]"
+        return jl.seval(literal)  # noqa: S307 — numeric literal only
+
+    # --- DSL function calls ---
+
+    def agent_step(self, answer_measure, rel_measures, costs,
+                   submit_val, abstain_val, penalty_wrong):
+        """Call DSL agent-step. Returns (action_type, action_arg) as Python ints."""
+        jl = self.jl
+        fn = self.env[jl.Symbol("agent-step")]
+        result = fn(
+            answer_measure, rel_measures, costs,
+            float(submit_val), float(abstain_val), float(penalty_wrong),
+        )
+        # PythonCall uses 0-based indexing for Julia arrays/lists
+        return (int(result[0]), int(result[1]))
+
+    def update_on_response(self, answer_measure, kernel, response):
+        """Call DSL update-on-response (condition). Returns updated measure."""
+        fn = self.env[self.jl.Symbol("update-on-response")]
+        return fn(answer_measure, kernel, float(response))
+
+    def answer_kernel(self, rel_measure, n_answers):
+        """Call DSL answer-kernel. Returns Kernel."""
+        fn = self.env[self.jl.Symbol("answer-kernel")]
+        return fn(rel_measure, float(n_answers))
+
+    # --- Host helper calls ---
+
+    def initial_rel_state(self, n_categories):
+        return self.jl.initial_rel_state(int(n_categories))
+
+    def initial_cov_state(self, n_categories, coverage):
+        """Create initial coverage state from coverage vector."""
+        cov_jl = self._make_float_vector(coverage)
+        return self.jl.initial_cov_state(int(n_categories), cov_jl)
+
+    def marginalize_betas(self, state, cat_weights):
+        """Marginalize MixtureMeasure of ProductMeasures to MixtureMeasure of Betas."""
+        cat_w_jl = self._make_float_vector(cat_weights)
+        return self.jl.marginalize_betas(state, cat_w_jl)
+
+    def update_beta_state(self, state, cat_belief, obs):
+        """Update per-tool Beta state. Returns (new_state, new_cat_belief)."""
+        result = self.jl.update_beta_state(state, cat_belief, float(obs))
+        # Julia returns a Tuple; PythonCall uses 0-based indexing
+        return (result[0], result[1])
+
+    # --- Type constructors ---
+
+    def make_answer_measure(self, n_answers):
+        """Uniform CategoricalMeasure over n answers (0..n-1)."""
+        jl = self.jl
+        answers = self._make_float_vector(range(n_answers))
+        return jl.CategoricalMeasure(jl.Finite(answers))
+
+    def make_cat_belief(self, n_categories):
+        """Uniform CategoricalMeasure over categories (0..n-1)."""
+        jl = self.jl
+        cats = self._make_float_vector(range(n_categories))
+        return jl.CategoricalMeasure(jl.Finite(cats))
+
+    def make_warm_rel_state(self, n_categories, alpha=7.0, beta=3.0):
+        """Create a rel_state with Beta(alpha, beta) per category (for warm-starting)."""
+        jl = self.jl
+        beta_strs = [f"BetaMeasure({float(alpha)}, {float(beta)})"] * n_categories
+        code = (
+            "let factors = Measure[" + ", ".join(beta_strs) + "]; "
+            "prod = ProductMeasure(factors); "
+            "MixtureMeasure(prod.space, Measure[prod], Float64[0.0]) end"
+        )
+        return jl.seval(code)  # noqa: S307 — trusted numeric literals
+
+    def make_oracle_rel_state(self, reliabilities):
+        """Create a rel_state with known reliabilities (for OracleAgent).
+
+        reliabilities: list of floats, one per category (true reliability values).
+        Returns MixtureMeasure wrapping a single ProductMeasure of tight Betas.
+        """
+        jl = self.jl
+        n_pseudo = 100.0
+        # Build Julia code for the tight-prior ProductMeasure
+        beta_strs = []
+        for r in reliabilities:
+            alpha = max(0.01, n_pseudo * r)
+            beta = max(0.01, n_pseudo * (1.0 - r))
+            beta_strs.append(f"BetaMeasure({alpha}, {beta})")
+        code = (
+            "let factors = Measure[" + ", ".join(beta_strs) + "]; "
+            "prod = ProductMeasure(factors); "
+            "MixtureMeasure(prod.space, Measure[prod], Float64[0.0]) end"
+        )
+        return jl.seval(code)  # noqa: S307 — trusted numeric literals
+
+    # --- Measure accessors ---
+
+    def weights(self, measure):
+        """Extract probability weights as Python list."""
+        w = self.jl.weights(measure)
+        return [float(w[i]) for i in range(len(w))]
+
+    def expect_identity(self, measure):
+        """Compute E_measure[x] (identity function) as Python float."""
+        return float(self.jl.expect(measure, self.jl.seval("r -> r")))  # noqa: S307
+
+    def mean(self, measure):
+        """Extract mean of a BetaMeasure."""
+        return float(self.jl.mean(measure))
+
+    def extract_reliability_means(self, rel_state):
+        """Extract per-category mean reliability from a rel_state.
+
+        Returns list of floats, one per category.
+        """
+        jl = self.jl
+        means = jl.extract_reliability_means(rel_state)
+        return [float(means[i]) for i in range(len(means))]
