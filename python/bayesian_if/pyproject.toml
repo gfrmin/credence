@@ -48,8 +48,8 @@ line-length = 99
 
 
 [tool.uv.sources]
-credence-agents = { path = "../credence-engine", editable = true }
-credence-router = { path = "../credence-router", editable = true }
+credence-agents = { workspace = true }
+credence-router = { workspace = true }
 
 [dependency-groups]
 dev = [

@@ -1,0 +1,16 @@
+[project]
+name = "credence-workspace"
+version = "0.0.0"
+requires-python = ">=3.11"
+
+[tool.uv.workspace]
+members = [
+    "python/credence",
+    "python/credence_agents",
+    "python/credence_router",
+    "python/bayesian_if",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"

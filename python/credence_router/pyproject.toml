@@ -39,7 +39,7 @@ Repository = "https://github.com/gfrmin/credence-router"
 credence-router = "credence_router.cli:main"
 
 [tool.uv.sources]
-credence-agents = { path = "../credence-engine", editable = true }
+credence-agents = { workspace = true }
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/credence_router"]
