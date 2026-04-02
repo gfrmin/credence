@@ -5,7 +5,7 @@ requires-python = ">=3.11"
 
 [tool.uv.workspace]
 members = [
-    "python/credence",
+    "python/credence_bindings",
     "python/credence_agents",
     "python/credence_router",
     "python/bayesian_if",
