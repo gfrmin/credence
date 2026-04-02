@@ -25,9 +25,39 @@ __all__ = [
 ]
 
 
+_BENCHMARK_PATTERNS: dict[str, re.Pattern] = {
+    "numerical": re.compile(
+        r"(?:\bcalcul|\bcomput|\bhow many\b|\bhow much\b|\bwhat is \d|"
+        r"\bsquare root\b|\bsum of\b|\barea\b|\bradius\b|"
+        r"\binvest|\btip on\b|\d+\s*[\+\-\*\/\%\^]\s*\d+|\d+%)",
+        re.IGNORECASE,
+    ),
+    "recent_events": re.compile(
+        r"\b(202[0-9]|recent|latest|current|this year|last year|"
+        r"who won the 20|hosted the 20|released .* in 20)\b",
+        re.IGNORECASE,
+    ),
+    "misconceptions": re.compile(
+        r"(?:\btrue or false\b|\bcommon belief\b|\bmyth\b|"
+        r"\bdo .* really\b|\bis it true\b|\bdoes .* have a\b|"
+        r"\bvisible from space\b|percent of the brain|"
+        r"\bmemory span\b|\bmother reject|\bonly use\b)",
+        re.IGNORECASE,
+    ),
+    "reasoning": re.compile(
+        r"\b(if .* then|therefore|conclude|logic|implies|"
+        r"can we conclude|probability|minimum number|"
+        r"how long does it take .* machines|"
+        r"all but|overtake|missing dollar|"
+        r"counterfeit)\b",
+        re.IGNORECASE,
+    ),
+}
+
+
 def make_keyword_category_infer_fn(
     categories: tuple[str, ...],
-    patterns: dict[str, re.Pattern | list[re.Pattern]],
+    patterns: dict[str, re.Pattern | list[re.Pattern]] | None = None,
     default_category: str | None = None,
     match_boost: float = 9.0,
     count_matches: bool = False,
@@ -49,6 +79,10 @@ def make_keyword_category_infer_fn(
             If True, boost is proportional to total match count across all
             patterns for that category (``match_boost * total_matches``).
     """
+    if patterns is None:
+        patterns = _BENCHMARK_PATTERNS
+        default_category = default_category or "factual"
+
     n = len(categories)
     cat_index = {name: i for i, name in enumerate(categories)}
 

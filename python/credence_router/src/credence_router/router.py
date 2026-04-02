@@ -12,7 +12,8 @@ from pathlib import Path
 
 from credence_agents.agents.bayesian_agent import BayesianAgent
 from credence_agents.agents.common import DecisionStep
-from credence_agents.environment.categories import CATEGORIES, make_keyword_category_infer_fn
+from credence_agents.environment.categories import CATEGORIES
+from credence_router.categories import make_keyword_category_infer_fn
 from credence_agents.inference.voi import ScoringRule, ToolConfig
 from credence_agents.julia_bridge import CredenceBridge
 

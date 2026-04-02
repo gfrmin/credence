@@ -8,7 +8,7 @@ from abc import ABC, abstractmethod
 from typing import Callable
 
 import numpy as np
-from credence import ToolConfig
+from credence_agents import ToolConfig
 
 from bayesian_if.categories import CATEGORIES
 from bayesian_if.world import Observation, World

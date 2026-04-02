@@ -14,7 +14,8 @@ from dataclasses import dataclass, field
 import numpy as np
 from numpy.typing import NDArray
 
-from credence_agents.environment.categories import CATEGORIES, make_keyword_category_infer_fn
+from credence_agents.environment.categories import CATEGORIES
+from credence_router.categories import make_keyword_category_infer_fn
 
 _CATEGORY_INFER_FN = make_keyword_category_infer_fn(CATEGORIES)
 
