@@ -1,0 +1,57 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "credence-router"
+version = "0.3.1"
+description = "Transparent, cost-optimal tool routing via EU maximisation. Drop-in LangGraph replacement. Built on credence."
+readme = "README.md"
+requires-python = ">=3.11"
+license = "AGPL-3.0-only"
+authors = [{ name = "Guy Freeman", email = "guy@publicdatamarket.com" }]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "License :: OSI Approved :: GNU Affero General Public License v3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+dependencies = [
+    "credence-agents>=0.3",
+    "numpy",
+]
+
+[project.optional-dependencies]
+anthropic = ["anthropic"]
+perplexity = ["httpx"]
+langgraph = ["langgraph", "langchain-anthropic"]
+compat = ["langgraph", "langchain-core>=0.2", "langchain-anthropic"]
+demo = ["langchain-ollama", "langgraph", "langchain-core>=0.2"]
+all = ["anthropic", "httpx", "langgraph", "langchain-anthropic", "langchain-core>=0.2", "langchain-ollama"]
+dev = ["pytest", "ruff"]
+
+[project.urls]
+Repository = "https://github.com/gfrmin/credence-router"
+
+[project.scripts]
+credence-router = "credence_router.cli:main"
+
+[tool.uv.sources]
+credence-agents = { path = "../credence-engine", editable = true }
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/credence_router"]
+
+[tool.ruff]
+line-length = 99
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0.2",
+    "ruff>=0.15.5",
+]
