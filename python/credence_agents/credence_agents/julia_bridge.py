@@ -35,21 +35,33 @@ class CredenceBridge:
         dsl_path = self._dsl_path
         credence_src = self._credence_src
         if dsl_path is None:
-            candidate = Path.home() / "git" / "credence" / "examples" / "credence_agent.bdsl"
+            # Monorepo: ../../examples/credence_agent.bdsl relative to this file
+            monorepo = Path(__file__).resolve().parent.parent.parent.parent
+            candidate = monorepo / "examples" / "credence_agent.bdsl"
             if candidate.exists():
                 dsl_path = str(candidate)
             else:
-                raise FileNotFoundError(
-                    "Cannot find credence_agent.bdsl. Pass dsl_path= explicitly."
-                )
+                # Fallback to ~/git/credence for standalone installs
+                fallback = Path.home() / "git" / "credence" / "examples" / "credence_agent.bdsl"
+                if fallback.exists():
+                    dsl_path = str(fallback)
+                else:
+                    raise FileNotFoundError(
+                        "Cannot find credence_agent.bdsl. Pass dsl_path= explicitly."
+                    )
         if credence_src is None:
-            candidate = Path.home() / "git" / "credence" / "src"
+            monorepo = Path(__file__).resolve().parent.parent.parent.parent
+            candidate = monorepo / "src"
             if candidate.exists():
                 credence_src = str(candidate)
             else:
-                raise FileNotFoundError(
-                    "Cannot find credence/src/. Pass credence_src= explicitly."
-                )
+                fallback = Path.home() / "git" / "credence" / "src"
+                if fallback.exists():
+                    credence_src = str(fallback)
+                else:
+                    raise FileNotFoundError(
+                        "Cannot find credence/src/. Pass credence_src= explicitly."
+                    )
 
         # Load Credence module
         jl_code = f'push!(LOAD_PATH, "{credence_src}")'
