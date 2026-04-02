@@ -76,6 +76,7 @@ class IFAgent:
 
         if category_infer_fn is None:
             category_infer_fn = make_if_category_infer_fn(categories)
+        self._category_infer_fn = category_infer_fn
 
         tool_configs = [t.to_tool_config(categories) for t in self.if_tools]
 
@@ -83,7 +84,6 @@ class IFAgent:
             bridge=self._bridge,
             tool_configs=tool_configs,
             categories=categories,
-            category_infer_fn=category_infer_fn,
             forgetting=forgetting,
             scoring=self.scoring,
         )

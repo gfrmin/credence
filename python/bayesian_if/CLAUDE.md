@@ -4,24 +4,23 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What This Is
 
-A Bayesian decision-theoretic Interactive Fiction agent that uses the `credence` library
+A Bayesian decision-theoretic Interactive Fiction agent that uses the `credence_agents` library
 for information-gathering decisions. The agent uses VOI (Value of Information) to decide
 which sources to consult (look, examine, inventory, LLM) before committing to an action.
+
+Lives in the credence monorepo at `python/bayesian_if/`. Dependencies are workspace references.
 
 ## Development Commands
 
 ```bash
-# Install (editable, with dev deps)
-uv sync --all-groups
-
-# Run tests
-pytest tests/
-pytest tests/test_agent.py                # single file
-pytest tests/test_agent.py::test_name -v  # single test
+# From monorepo root (credence/):
+uv sync                                                  # Install workspace
+uv run pytest python/bayesian_if/tests/                  # Run all tests
+uv run pytest python/bayesian_if/tests/test_agent.py -v  # Single file
 
 # Lint and format
-ruff check src/ tests/
-ruff format src/ tests/
+ruff check python/bayesian_if/
+ruff format python/bayesian_if/
 
 # Run against a Z-machine game
 bayesian-if --game path/to/game.z5 --max-steps 100 --verbose
@@ -61,7 +60,7 @@ Same as credence: everything is EU maximisation, no hacks, LLM outputs are data.
 
 ## Dependencies
 
-- `credence-agents` — Bayesian inference layer ([PyPI](https://pypi.org/project/credence-agents/))
+- `credence-agents` — Bayesian inference layer (workspace sibling)
 - `numpy` — numerical computation
 - `jericho` — Z-machine IF interpreter (optional)
 - `textworld` — Procedural IF environments (optional)

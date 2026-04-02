@@ -52,6 +52,8 @@ class Router:
         self._bridge = bridge or CredenceBridge()
 
         # Convert tools to ToolConfig list with effective costs
+        self._category_infer_fn = category_infer_fn or make_keyword_category_infer_fn(categories)
+
         self._tool_configs = [
             ToolConfig(
                 cost=t.cost + latency_weight * t.latency,
@@ -64,7 +66,6 @@ class Router:
             bridge=self._bridge,
             tool_configs=self._tool_configs,
             categories=categories,
-            category_infer_fn=category_infer_fn or make_keyword_category_infer_fn(categories),
             forgetting=forgetting,
             scoring=self._scoring,
             name="credence-router",

@@ -11,12 +11,12 @@ calculations. Zero routing cost, <1ms routing latency, learns from feedback.
 ## Development Commands
 
 ```bash
-uv sync --all-groups                  # Install all deps (including optional + dev)
-pytest tests/                         # Run all tests
-pytest tests/test_router.py           # Run one test file
-pytest -k "test_creates_with_tools"   # Run a single test by name
-ruff check src/ tests/                # Lint
-ruff format src/ tests/               # Format
+# From monorepo root (credence/):
+uv sync                                                    # Install workspace
+uv run pytest python/credence_router/tests/                # Run all tests
+uv run pytest python/credence_router/tests/test_router.py  # Run one test file
+ruff check python/credence_router/                         # Lint
+ruff format python/credence_router/                        # Format
 ```
 
 ```bash
@@ -40,7 +40,7 @@ All source lives under `src/credence_router/`. The core loop is:
 4. Tool responses update the posterior via Bayesian updating
 5. Returns a frozen **Answer** dataclass with choice, confidence, costs, and full reasoning trace
 
-Key dependency: `credence-agents` is a local editable install from `../credence` (configured in `[tool.uv.sources]`). It provides `BayesianAgent`, `ScoringRule`, `ToolConfig`, `DecisionStep`, and the category inference system.
+Key dependency: `credence-agents` is a workspace sibling in the credence monorepo (configured in `[tool.uv.sources]` as `{ workspace = true }`). It provides `BayesianAgent`, `ScoringRule`, `ToolConfig`, `DecisionStep`, and the category inference system.
 
 ### Tool protocol
 

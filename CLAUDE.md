@@ -8,8 +8,22 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this project is
 
-A minimal DSL for Bayesian decision-making agents. S-expression
-syntax. Compiles to Julia. Grounded in axiomatic decision theory.
+A monorepo containing the Credence Bayesian decision-making DSL (Julia)
+and all Python packages that build on it. S-expression syntax. Compiles
+to Julia. Grounded in axiomatic decision theory.
+
+### Python workspace (uv)
+
+The `python/` directory is a uv workspace with four packages:
+
+| Directory | PyPI package | Import path | Description |
+|-----------|-------------|-------------|-------------|
+| `python/credence_bindings/` | `credence` | `import credence` | Low-level Python bindings (Space, Measure, Kernel) |
+| `python/credence_agents/` | `credence-agents` | `import credence_agents` | Agent library + Julia bridge + benchmark |
+| `python/credence_router/` | `credence-router` | `import credence_router` | Tool routing via EU maximisation |
+| `python/bayesian_if/` | — | `import bayesian_if` | Interactive fiction agent application |
+
+Install all: `uv sync` from repo root. Each package has its own CLAUDE.md.
 
 ## The axioms (mathematical truths, not design choices)
 

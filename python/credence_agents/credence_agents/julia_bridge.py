@@ -95,7 +95,7 @@ class CredenceBridge:
     # --- DSL function calls ---
 
     def agent_step(self, answer_measure, rel_measures, costs,
-                   submit_val, abstain_val, penalty_wrong):
+                   cov_probs, submit_val, abstain_val, penalty_wrong):
         """Call DSL agent-step. Returns (action_type, action_arg) as Python ints."""
         jl = self.jl
         fn = self.env[jl.Symbol("agent-step")]

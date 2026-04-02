@@ -64,7 +64,7 @@ Every parameter in the Bayesian agent must be justified:
 ## Architecture Overview
 
 ```
-Python (credence-engine)              Julia (credence DSL)
+Python (credence_agents)              Julia (credence DSL)
 ┌──────────────────────┐              ┌──────────────────────────┐
 │ BayesianAgent        │              │ credence_agent.bdsl      │
 │   choose_action      │─juliacall──→ │   agent-step             │
@@ -80,11 +80,11 @@ Python (credence-engine)              Julia (credence DSL)
 └──────────────────────┘              └──────────────────────────┘
 ```
 
-Everything lives under the `credence` package (PyPI: `credence-agents`).
+Lives in the credence monorepo at `python/credence_agents/`. Import path: `credence_agents` (PyPI: `credence-agents`).
 
 ```
-credence/
-├── credence/                    # The package
+python/credence_agents/
+├── credence_agents/             # The package (import as credence_agents)
 │   ├── __init__.py              # Public API re-exports
 │   ├── julia_bridge.py          # CredenceBridge: lazy juliacall wrapper
 │   ├── inference/               # Types and feedback logic (computation in Julia)
@@ -100,16 +100,12 @@ credence/
 │   │   ├── benchmark.py         # The benchmark harness
 │   │   ├── tools.py             # Simulated tools with known reliability
 │   │   ├── questions.py         # Question bank with ground truth
-│   │   └── categories.py        # CATEGORIES tuple, make_keyword_category_infer_fn()
+│   │   └── categories.py        # CATEGORIES tuple
 │   └── analysis/
 │       ├── metrics.py           # Score, calibration, cost metrics
 │       └── visualisation.py     # Plots and dashboards
 ├── tests/
 ├── experiments/
-│   ├── run_stationary.py        # Main experiment: stationary reliabilities
-│   ├── run_drift.py             # Extension: tool reliability drift
-│   └── run_ablation.py          # Ablation studies
-├── results/                     # Generated plots and data
 └── pyproject.toml               # juliacall + numpy; [benchmark] extras for LangChain
 ```
 
@@ -138,14 +134,14 @@ BayesianAgent(
     bridge: CredenceBridge,                    # Julia bridge (lazy-loads on first use)
     tool_configs: list[ToolConfig],            # Tool costs + coverage vectors
     categories: tuple[str, ...] | None,        # Domain categories (injected)
-    category_infer_fn: Callable | None,        # Question text → category prior (injected)
     forgetting: float = 1.0,                   # Exponential forgetting rate
+    scoring: ScoringRule = ...,                # Reward/penalty configuration
 )
 ```
 
 `ScoringRule` and `ToolConfig` are the only configuration types needed to parameterise
-the entire decision loop. `make_keyword_category_infer_fn()` in `categories.py` is a
-convenience for the benchmark; custom domains provide their own `category_infer_fn`.
+the entire decision loop. Category inference is handled by the caller (e.g. Router
+or IFAgent), not by BayesianAgent itself.
 
 ---
 
@@ -177,7 +173,6 @@ agent = BayesianAgent(
     bridge=bridge,
     tool_configs=tool_configs,
     categories=("factual", "numerical", "recent", "misconception", "reasoning"),
-    category_infer_fn=my_category_infer_fn,
 )
 # Tool selection happens via EU maximisation in the Julia DSL
 ```
@@ -201,13 +196,13 @@ agent = initialize_agent(
 
 ## Testing Strategy
 
-1. **Julia DSL tests pass first** — `julia ~/git/credence/test/test.jl` and `test_host.jl`
+1. **Julia DSL tests pass first** — `julia test/test_core.jl` (from monorepo root)
 2. **Python type/feedback tests** — `test_decision.py` (no Julia needed)
 3. **Agent integration tests** — `test_bayesian_agent.py` (needs Julia via bridge)
 4. **Baseline comparison tests** — `test_baselines.py` (Oracle, Random, AllTools, SingleBest)
 5. **Benchmark harness tests** — `test_benchmark.py` (mock agents, no Julia)
 
-Run all: `PYTHON_JULIACALL_HANDLE_SIGNALS=yes uv run python -m pytest tests/ -v`
+Run from monorepo root: `PYTHON_JULIACALL_HANDLE_SIGNALS=yes uv run pytest python/credence_agents/tests/ -v`
 
 ---
 
@@ -226,4 +221,4 @@ Run all: `PYTHON_JULIACALL_HANDLE_SIGNALS=yes uv run python -m pytest tests/ -v`
 
 - **juliacall** — Python-Julia bridge (lazy-loads Julia on first use)
 - **numpy** — used by benchmark/environment for coverage vectors and category priors
-- **Julia Credence DSL** — at `~/git/credence/` (or pass paths to CredenceBridge)
+- **Julia Credence DSL** — at `../../src/` relative to this package (monorepo), or `~/git/credence/src` (fallback)
