@@ -34,6 +34,7 @@ include("preferences.jl")
 include("metrics.jl")
 include("llm_prosthetic.jl")
 include("action_composition.jl")
+include("cost_model.jl")
 
 using Random
 
@@ -144,16 +145,18 @@ function mean_observation_count(state::AgentState)::Float64
 end
 
 """
-    compute_meta_eu(state, action, rec_cache, component_weights; meta_cost_this_turn) → Float64
+    compute_meta_eu(state, action, rec_cache, component_weights; cost_model, meta_cost_this_turn) → Float64
 
 EU for meta-actions. The entropy of the action distribution proxies for
-the value of information from improving the hypothesis space.
+the value of information from improving the hypothesis space. Cost is
+the expected time from the CostModel.
 """
 function compute_meta_eu(
     state::AgentState,
     action::Symbol,
     rec_cache::Dict{Int, Symbol},
     component_weights::Vector{Float64};
+    cost_model::CostModel=default_cost_model(),
     meta_cost_this_turn::Float64=0.0
 )::Float64
     action == :do_nothing && return -Inf
@@ -163,34 +166,35 @@ function compute_meta_eu(
     entropy_benefit = H / (1.0 + 0.1 * n_obs)
 
     if action == :enumerate_more
-        return entropy_benefit * 0.5 - ENUMERATE_COST - meta_cost_this_turn
+        return entropy_benefit * 0.5 - expected_cost(cost_model, :enumerate_more) - meta_cost_this_turn
     elseif action == :perturb_grammar
         base = n_obs > 5.0 ? entropy_benefit * 0.6 : 0.0
-        return base - PERTURB_COST - meta_cost_this_turn
+        return base - expected_cost(cost_model, :perturb_grammar) - meta_cost_this_turn
     elseif action == :deepen
-        return entropy_benefit * 0.4 - DEEPEN_COST - meta_cost_this_turn
+        return entropy_benefit * 0.4 - expected_cost(cost_model, :deepen) - meta_cost_this_turn
     end
     -Inf
 end
 
 """
-    compute_sensor_eu(state, rec_cache, component_weights; llm_cost, already_enriched) → Float64
+    compute_sensor_eu(state, rec_cache, component_weights; cost_model, already_enriched) → Float64
 
 EU for sensor enrichment via LLM. High when action entropy is high
 (enriched features might resolve ambiguity), returns -Inf if already enriched.
+Cost is the expected time from the CostModel.
 """
 function compute_sensor_eu(
     state::AgentState,
     rec_cache::Dict{Int, Symbol},
     component_weights::Vector{Float64};
-    llm_cost::Float64=LLM_COST,
+    cost_model::CostModel=default_cost_model(),
     already_enriched::Bool=false
 )::Float64
     already_enriched && return -Inf
     H = compute_action_entropy(state, rec_cache, component_weights)
     n_obs = mean_observation_count(state)
     entropy_benefit = H / (1.0 + 0.1 * n_obs)
-    entropy_benefit * 0.7 - llm_cost
+    entropy_benefit * 0.7 - expected_cost(cost_model, :ask_llm)
 end
 
 """
@@ -204,6 +208,7 @@ function compute_eu(
     action::Symbol,
     rec_cache::Dict{Int, Symbol},
     component_weights::Vector{Float64};
+    cost_model::CostModel=default_cost_model(),
     ask_cost::Float64=0.1,
     meta_cost_this_turn::Float64=0.0,
     already_enriched::Bool=false
@@ -211,12 +216,12 @@ function compute_eu(
     # Meta-actions
     action in META_ACTIONS && return compute_meta_eu(
         state, action, rec_cache, component_weights;
-        meta_cost_this_turn=meta_cost_this_turn)
+        cost_model=cost_model, meta_cost_this_turn=meta_cost_this_turn)
 
     # Sensor actions
     action == :ask_llm && return compute_sensor_eu(
         state, rec_cache, component_weights;
-        already_enriched=already_enriched)
+        cost_model=cost_model, already_enriched=already_enriched)
 
     # :ask_user — always correct, costs user attention
     action == :ask_user && return 1.0 - ask_cost
@@ -282,6 +287,7 @@ function compute_eu_step(
     action::Symbol,
     rec_cache::Dict{Int, Symbol},
     component_weights::Vector{Float64};
+    cost_model::CostModel=default_cost_model(),
     remaining_target::Set{Symbol}=Set{Symbol}(),
     ask_cost::Float64=0.1,
     meta_cost_this_turn::Float64=0.0,
@@ -289,11 +295,11 @@ function compute_eu_step(
 )::Float64
     action in META_ACTIONS && return compute_meta_eu(
         state, action, rec_cache, component_weights;
-        meta_cost_this_turn=meta_cost_this_turn)
+        cost_model=cost_model, meta_cost_this_turn=meta_cost_this_turn)
 
     action == :ask_llm && return compute_sensor_eu(
         state, rec_cache, component_weights;
-        already_enriched=already_enriched)
+        cost_model=cost_model, already_enriched=already_enriched)
 
     action == :ask_user && return 1.0 - ask_cost
 
@@ -483,6 +489,7 @@ function run_episode!(
     email::Email,
     target::Set{Symbol},
     temporal_state::Dict{Symbol, Any};
+    cost_model::CostModel=default_cost_model(),
     max_steps::Int=6,
     ask_cost::Float64=0.1,
     llm_config::LLMConfig=default_llm_config(),
@@ -513,19 +520,19 @@ function run_episode!(
             action_eus = Dict{Symbol, Float64}()
             for a in PRIMITIVE_ALL_ACTIONS
                 action_eus[a] = compute_eu_step(state, a, rec_cache, w;
-                    remaining_target=remaining, ask_cost=ask_cost,
+                    cost_model=cost_model, remaining_target=remaining, ask_cost=ask_cost,
                     meta_cost_this_turn=meta_cost, already_enriched=already_enriched)
             end
             chosen = argmax(action_eus)
 
             # Handle meta-actions
             if chosen in META_ACTIONS && chosen != :do_nothing && meta_taken < max_meta_per_step
-                execute_meta_action!(state, chosen;
+                elapsed = @elapsed execute_meta_action!(state, chosen;
                     action_space=vcat(PRIMITIVE_ACTIONS, [:done]),
                     min_log_prior=min_log_prior, verbose=verbose)
+                observe_cost!(cost_model, chosen, elapsed)
                 meta_taken += 1
-                meta_cost += (chosen == :deepen ? DEEPEN_COST :
-                              chosen == :perturb_grammar ? PERTURB_COST : ENUMERATE_COST)
+                meta_cost += expected_cost(cost_model, chosen)
                 features = extract_features(email, ps)
                 sync_prune!(state; threshold=-30.0)
                 sync_truncate!(state; max_components=2000)
@@ -534,9 +541,10 @@ function run_episode!(
 
             # Handle sensor action
             if chosen == :ask_llm && !already_enriched
-                features = llm_enrich_features(llm_config, email, features)
+                elapsed = @elapsed (features = llm_enrich_features(llm_config, email, features))
+                observe_cost!(cost_model, :ask_llm, elapsed)
                 already_enriched = true
-                verbose && println("    [Sensor: ask_llm at episode step $step]")
+                verbose && println("    [Sensor: ask_llm at episode step $step, $(round(elapsed, digits=2))s]")
                 continue
             end
 
@@ -553,7 +561,7 @@ function run_episode!(
             prim_eus = Dict{Symbol, Float64}()
             for a in vcat(PRIMITIVE_ACTIONS, [:ask_user])
                 prim_eus[a] = compute_eu_step(state, a, rec_cache_fb, w_fb;
-                    remaining_target=remaining_fb, ask_cost=ask_cost)
+                    cost_model=cost_model, remaining_target=remaining_fb, ask_cost=ask_cost)
             end
             chosen = argmax(prim_eus)
         end
@@ -614,6 +622,7 @@ function run_agent(;
     min_log_prior::Float64 = -20.0,
     max_meta_per_step::Int = 3,
     ask_cost::Float64 = 0.1,
+    cost_model::CostModel = default_cost_model(),
     population_grammar::Union{Nothing, Vector{Grammar}} = nothing,
     llm_config::LLMConfig = default_llm_config(),
     use_primitives::Bool = false,
@@ -680,9 +689,9 @@ function run_agent(;
             # Multi-step episode (spec §7.4)
             target = ACTION_TARGET_STATE[correct_action]
             ep_actions = run_episode!(state, email, target, temporal_state;
-                max_steps=6, ask_cost=ask_cost, llm_config=llm_config,
-                max_meta_per_step=max_meta_per_step, min_log_prior=min_log_prior,
-                verbose=verbose)
+                cost_model=cost_model, max_steps=6, ask_cost=ask_cost,
+                llm_config=llm_config, max_meta_per_step=max_meta_per_step,
+                min_log_prior=min_log_prior, verbose=verbose)
 
             asked = :ask_user in ep_actions
             # Correctness: all target primitives were completed
@@ -738,30 +747,31 @@ function run_agent(;
                 action_eus = Dict{Symbol, Float64}()
                 for a in ALL_ACTIONS
                     action_eus[a] = compute_eu(state, a, rec_cache, w;
-                        ask_cost=ask_cost, meta_cost_this_turn=meta_cost_this_turn,
+                        cost_model=cost_model, ask_cost=ask_cost,
+                        meta_cost_this_turn=meta_cost_this_turn,
                         already_enriched=already_enriched)
                 end
                 chosen_action = argmax(action_eus)
 
                 if chosen_action in META_ACTIONS && chosen_action != :do_nothing &&
                    meta_actions_taken < max_meta_per_step
-                    execute_meta_action!(state, chosen_action;
+                    elapsed = @elapsed execute_meta_action!(state, chosen_action;
                         action_space=DOMAIN_ACTIONS, min_log_prior=min_log_prior,
                         verbose=verbose)
+                    observe_cost!(cost_model, chosen_action, elapsed)
                     meta_actions_taken += 1
-                    meta_cost_this_turn += (chosen_action == :deepen ? DEEPEN_COST :
-                                            chosen_action == :perturb_grammar ? PERTURB_COST :
-                                            ENUMERATE_COST)
+                    meta_cost_this_turn += expected_cost(cost_model, chosen_action)
                     sync_prune!(state; threshold=-30.0)
                     sync_truncate!(state; max_components=2000)
                     continue
                 end
 
                 if chosen_action == :ask_llm && !already_enriched
-                    features = llm_enrich_features(llm_config, email, features)
+                    elapsed = @elapsed (features = llm_enrich_features(llm_config, email, features))
+                    observe_cost!(cost_model, :ask_llm, elapsed)
                     already_enriched = true
                     used_llm = true
-                    verbose && println("  [Sensor: ask_llm at step $step]")
+                    verbose && println("  [Sensor: ask_llm at step $step, $(round(elapsed, digits=2))s]")
                     continue
                 end
 
@@ -775,7 +785,8 @@ function run_agent(;
                 w = weights(state.belief)
                 action_eus = Dict{Symbol, Float64}()
                 for a in EMAIL_ACTIONS
-                    action_eus[a] = compute_eu(state, a, rec_cache, w; ask_cost=ask_cost)
+                    action_eus[a] = compute_eu(state, a, rec_cache, w;
+                        cost_model=cost_model, ask_cost=ask_cost)
                 end
                 chosen_action = argmax(action_eus)
             end
@@ -860,6 +871,7 @@ function run_multi_user(;
             min_log_prior=min_log_prior,
             max_meta_per_step=max_meta_per_step,
             ask_cost=ask_cost,
+            cost_model=default_cost_model(),
             population_grammar=grammar_pool,
             rng_seed=rng_seed + i,
             verbose=verbose

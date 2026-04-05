@@ -42,7 +42,4 @@ const ACTION_TARGET_STATE = Dict{Symbol, Set{Symbol}}(
 # Combined action space for multi-step episodes
 const PRIMITIVE_ALL_ACTIONS = vcat(PRIMITIVE_ACTIONS, [:ask_user], META_ACTIONS, SENSOR_ACTIONS)
 
-# Costs: fraction of approval utility lost by spending a turn computing
-const ENUMERATE_COST = 0.05
-const PERTURB_COST = 0.05
-const DEEPEN_COST = 0.10
+# Costs moved to cost_model.jl — uncertain, time-based NormalGamma beliefs

@@ -104,10 +104,10 @@ Body: [$(email.word_count) words about $(string(email.topic))]"""
 end
 
 # ═══════════════════════════════════════
-# Costs and simulation
+# Simulation
 # ═══════════════════════════════════════
 
-const LLM_COST = 0.15
+# LLM cost moved to cost_model.jl — uncertain, time-based NormalGamma belief
 
 """
     simulate_llm_enrichment(email, base_features) → Dict{Symbol, Float64}
