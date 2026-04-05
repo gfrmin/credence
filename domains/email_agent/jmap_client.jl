@@ -93,13 +93,26 @@ function get_mailbox_id(session::JMAPSession, role::String)::String
 end
 
 """
-    query_inbox_emails(session; limit=100) → Vector{Dict}
+    query_inbox_emails(session; limit=100, exclude_keywords=[]) → Vector{Dict}
 
-Fetch inbox emails sorted by receivedAt (newest first).
-Returns full email dicts with EMAIL_PROPERTIES.
+Fetch inbox emails sorted by receivedAt (newest first), excluding emails
+with any of the specified keywords. Returns full email dicts with EMAIL_PROPERTIES.
 """
-function query_inbox_emails(session::JMAPSession; limit::Int=100)::Vector
+function query_inbox_emails(session::JMAPSession;
+                            limit::Int=100,
+                            exclude_keywords::Vector{String}=String[])::Vector
     inbox_id = get_mailbox_id(session, "inbox")
+
+    # Build filter: inbox + exclude keywords
+    conditions = Dict{String,Any}[Dict("inMailbox" => inbox_id)]
+    for kw in exclude_keywords
+        push!(conditions, Dict("notKeyword" => kw))
+    end
+    filter = if length(conditions) == 1
+        conditions[1]
+    else
+        Dict("operator" => "AND", "conditions" => conditions)
+    end
 
     # Query email IDs with pagination
     all_ids = String[]
@@ -111,7 +124,7 @@ function query_inbox_emails(session::JMAPSession; limit::Int=100)::Vector
         resp = jmap_call(session, [
             ["Email/query", Dict(
                 "accountId" => session.account_id,
-                "filter" => Dict("inMailbox" => inbox_id),
+                "filter" => filter,
                 "sort" => [Dict("property" => "receivedAt", "isAscending" => false)],
                 "position" => position,
                 "limit" => batch_size

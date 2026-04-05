@@ -143,6 +143,7 @@ function run_live(;
     ask_cost::Float64 = 0.1,
     email_limit::Int = 100,
     state_path::String = DEFAULT_STATE_PATH,
+    dry_run::Bool = false,
     verbose::Bool = true
 )
     # 1. Connect to Fastmail
@@ -159,6 +160,7 @@ function run_live(;
     end
     verbose && !llm_config.enabled && println("LLM enrichment: disabled (set OLLAMA_HOST to enable)")
     verbose && llm_config.enabled && println("LLM enrichment: enabled ($(llm_config.host))")
+    dry_run && println("DRY RUN: no JMAP mutations will be executed")
 
     # 3. Load or initialise state
     loaded = load_email_state(state_path)
@@ -206,9 +208,11 @@ function run_live(;
                           "$(length(grammar_pool)) grammars")
     end
 
-    # 4. Fetch inbox
-    println("\nFetching inbox...")
-    elapsed_fetch = @elapsed (raw_emails = query_inbox_emails(session; limit=email_limit))
+    # 4. Fetch inbox (exclude already-processed and flagged emails)
+    println("\nFetching inbox (unflagged, unprocessed)...")
+    elapsed_fetch = @elapsed (raw_emails = query_inbox_emails(session;
+        limit=email_limit,
+        exclude_keywords=["\$flagged", "\$credence_processed"]))
     observe_cost!(cost_model, :jmap_fetch, elapsed_fetch)
     println("Fetched $(length(raw_emails)) emails ($(round(elapsed_fetch, digits=2))s)")
 
@@ -333,11 +337,16 @@ function run_live(;
         sync_prune!(state; threshold=-30.0)
         sync_truncate!(state; max_components=2000)
 
-        # Execute JMAP action
-        try
-            execute_jmap_action!(session, jmap_id, correct_action, cost_model; verbose=verbose)
-        catch e
-            @warn "JMAP action failed" action=correct_action exception=e
+        # Execute JMAP action + mark as processed
+        if dry_run
+            verbose && println("  [DRY RUN] Would execute: $(correct_action)")
+        else
+            try
+                execute_jmap_action!(session, jmap_id, correct_action, cost_model; verbose=verbose)
+                set_keyword(session, [jmap_id], "\$credence_processed")
+            catch e
+                @warn "JMAP action failed" action=correct_action exception=e
+            end
         end
     end
 
@@ -364,5 +373,6 @@ end
 # ═══════════════════════════════════════
 
 if abspath(PROGRAM_FILE) == @__FILE__
-    run_live()
+    dry_run = "--dry-run" in ARGS
+    run_live(; dry_run=dry_run)
 end
