@@ -293,12 +293,55 @@ end
 # JMAP → Email bridge (live mode)
 # ═══════════════════════════════════════
 
-"""
-    jmap_to_email(raw, idx; sender_history, thread_counts) → (Email, jmap_id)
+"""Infer sender category from email address and frequency."""
+function _infer_sender_category(sender::String, sender_freq::Float64)::Symbol
+    parts = split(sender, '@'; limit=2)
+    domain = length(parts) == 2 ? lowercase(String(parts[2])) : ""
+    # Bulk/newsletter senders
+    for pattern in ("substack.com", "mailchimp.com", "sendgrid.net", "sendgrid.com",
+                    "linkedin.com", "facebookmail.com", "github.com", "noreply",
+                    "notification", "digest", "mailer", "news.", "mail.")
+        contains(domain, pattern) && return :external
+        contains(lowercase(String(parts[1])), pattern) && return :external
+    end
+    # Frequent senders are likely colleagues/contacts
+    sender_freq > 0.3 && return :frequent
+    # Low frequency external
+    sender_freq < 0.05 && return :rare
+    :unknown
+end
 
-Convert a JMAP email dict to an Email struct. Cheap fields are parsed
-directly; expensive fields (urgency, topic, requires_action) get safe
-defaults that the agent can enrich via VOI-gated LLM when worthwhile.
+"""Infer topic from subject and preview text."""
+function _infer_topic(subject::String, preview::String)::Symbol
+    text = lowercase(subject * " " * first(preview, 200))
+    contains(text, r"budget|invoice|payment|financ|billing|receipt|expense|tax") && return :finance
+    contains(text, r"meeting|schedule|calendar|standup|sync|agenda|rsvp|invite") && return :scheduling
+    contains(text, r"newsletter|unsubscribe|promo|marketing|digest|weekly.?update|roundup") && return :marketing
+    contains(text, r"deploy|server|bug|commit|merge|pull.?request|pipeline|build|error|alert") && return :technical
+    :personal
+end
+
+"""Infer urgency from subject signals."""
+function _infer_urgency(subject::String)::Float64
+    text = lowercase(subject)
+    contains(text, r"urgent|asap|critical|important|action.?required|deadline") && return 0.85
+    contains(text, r"fyi|fwd:|newsletter|digest|weekly|monthly|roundup") && return 0.15
+    contains(text, r"re:|reply|follow.?up") && return 0.55
+    0.4
+end
+
+"""Infer requires_action from subject and preview."""
+function _infer_requires_action(subject::String, preview::String)::Bool
+    text = lowercase(subject * " " * first(preview, 200))
+    contains(text, r"please.?(review|approve|confirm|sign|respond|reply)|action.?required|deadline|assigned.?to.?you")
+end
+
+"""
+    jmap_to_email(raw, idx; sender_history, thread_counts) → (Email, jmap_id, preview)
+
+Convert a JMAP email dict to an Email struct. Extracts cheap features
+from subject/preview/sender via keyword heuristics. LLM enrichment can
+still override these when the agent decides it's worth the time cost.
 """
 function jmap_to_email(
     raw, idx::Int;
@@ -316,8 +359,9 @@ function jmap_to_email(
     # Sender frequency from session history
     sender_freq = min(1.0, get(sender_history, sender, 0) / 20.0)
 
-    # Subject
+    # Subject and preview
     subject = String(get(raw, "subject", "(no subject)"))
+    preview = String(get(raw, "preview", ""))
 
     # Word count estimate from byte size
     size_bytes = Int(get(raw, "size", 600))
@@ -337,13 +381,14 @@ function jmap_to_email(
     # JMAP ID for action execution
     jmap_id = String(get(raw, "id", ""))
 
-    # Preview text (stored on Email.subject for LLM prompt access)
-    preview = String(get(raw, "preview", ""))
+    # Infer features from text (cheap, no LLM)
+    sender_category = _infer_sender_category(sender, sender_freq)
+    topic = _infer_topic(subject, preview)
+    urgency = _infer_urgency(subject)
+    requires_action = _infer_requires_action(subject, preview)
 
-    email = Email(idx, sender, sender_freq, :unknown, subject,
-                  0.5,        # urgency: default, LLM-enrichable
-                  :unknown,   # topic: default, LLM-enrichable
-                  false,      # requires_action: default, LLM-enrichable
+    email = Email(idx, sender, sender_freq, sender_category, subject,
+                  urgency, topic, requires_action,
                   word_count, has_attachment, hour, thread_depth)
 
     (email, jmap_id, preview)
@@ -351,7 +396,6 @@ end
 
 """Parse hour (0-23) from ISO 8601 datetime string."""
 function _parse_hour(iso::String)::Int
-    # Find T, take next 2 chars as hour
     t_pos = findfirst('T', iso)
     t_pos === nothing && return 12
     length(iso) < t_pos + 2 && return 12
