@@ -7,8 +7,8 @@ host.jl, but with interactive CLI review instead of a simulated user.
 All actions are timed and feed the cost model. State persists across sessions.
 
 Usage:
-    FASTMAIL_TOKEN=fmu1-xxx julia domains/email_agent/live.jl
-    FASTMAIL_TOKEN=fmu1-xxx OLLAMA_HOST=http://localhost:11434 julia domains/email_agent/live.jl
+    julia domains/email_agent/live.jl
+    OLLAMA_URL=http://localhost:11434 julia domains/email_agent/live.jl
 """
 
 # host.jl brings all domain files + Credence imports + shared functions
@@ -131,13 +131,20 @@ function run_live(;
     println("Connected: account=$(session.account_id)")
 
     # 2. Configure LLM
-    ollama_host = get(ENV, "OLLAMA_HOST", "")
-    llm_config = if !isempty(ollama_host)
-        LLMConfig(ollama_host, "llama3.2", 200, true, 10.0)
+    ollama_url = get(ENV, "OLLAMA_URL", "")
+    if isempty(ollama_url)
+        # Fall back to OLLAMA_HOST, adding scheme/port if bare
+        raw = get(ENV, "OLLAMA_HOST", "")
+        if !isempty(raw)
+            ollama_url = startswith(raw, "http") ? raw : "http://$raw:11434"
+        end
+    end
+    llm_config = if !isempty(ollama_url)
+        LLMConfig(ollama_url, "llama3.2", 200, true, 10.0)
     else
         default_llm_config()  # disabled
     end
-    verbose && !llm_config.enabled && println("LLM enrichment: disabled (set OLLAMA_HOST to enable)")
+    verbose && !llm_config.enabled && println("LLM enrichment: disabled (set OLLAMA_URL to enable)")
     verbose && llm_config.enabled && println("LLM enrichment: enabled ($(llm_config.host))")
     dry_run && println("DRY RUN: no JMAP mutations will be executed")
 
