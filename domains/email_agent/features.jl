@@ -288,3 +288,73 @@ function _weighted_choice(rng, items, weights)
     end
     last(items)
 end
+
+# ═══════════════════════════════════════
+# JMAP → Email bridge (live mode)
+# ═══════════════════════════════════════
+
+"""
+    jmap_to_email(raw, idx; sender_history, thread_counts) → (Email, jmap_id)
+
+Convert a JMAP email dict to an Email struct. Cheap fields are parsed
+directly; expensive fields (urgency, topic, requires_action) get safe
+defaults that the agent can enrich via VOI-gated LLM when worthwhile.
+"""
+function jmap_to_email(
+    raw, idx::Int;
+    sender_history::Dict{String, Int}=Dict{String, Int}(),
+    thread_counts::Dict{String, Int}=Dict{String, Int}()
+)
+    # Sender
+    from_list = get(raw, "from", nothing)
+    sender = if from_list !== nothing && length(from_list) > 0
+        String(get(from_list[1], "email", "unknown@unknown"))
+    else
+        "unknown@unknown"
+    end
+
+    # Sender frequency from session history
+    sender_freq = min(1.0, get(sender_history, sender, 0) / 20.0)
+
+    # Subject
+    subject = String(get(raw, "subject", "(no subject)"))
+
+    # Word count estimate from byte size
+    size_bytes = Int(get(raw, "size", 600))
+    word_count = max(10, size_bytes ÷ 6)
+
+    # Attachment
+    has_attachment = Bool(get(raw, "hasAttachment", false))
+
+    # Hour from receivedAt (ISO 8601: "2026-04-05T10:30:00Z")
+    received_at = String(get(raw, "receivedAt", "2000-01-01T12:00:00Z"))
+    hour = _parse_hour(received_at)
+
+    # Thread depth from session counts
+    thread_id = String(get(raw, "threadId", ""))
+    thread_depth = get(thread_counts, thread_id, 0)
+
+    # JMAP ID for action execution
+    jmap_id = String(get(raw, "id", ""))
+
+    # Preview text (stored on Email.subject for LLM prompt access)
+    preview = String(get(raw, "preview", ""))
+
+    email = Email(idx, sender, sender_freq, :unknown, subject,
+                  0.5,        # urgency: default, LLM-enrichable
+                  :unknown,   # topic: default, LLM-enrichable
+                  false,      # requires_action: default, LLM-enrichable
+                  word_count, has_attachment, hour, thread_depth)
+
+    (email, jmap_id, preview)
+end
+
+"""Parse hour (0-23) from ISO 8601 datetime string."""
+function _parse_hour(iso::String)::Int
+    # Find T, take next 2 chars as hour
+    t_pos = findfirst('T', iso)
+    t_pos === nothing && return 12
+    length(iso) < t_pos + 2 && return 12
+    h = tryparse(Int, iso[t_pos+1:t_pos+2])
+    h === nothing ? 12 : clamp(h, 0, 23)
+end

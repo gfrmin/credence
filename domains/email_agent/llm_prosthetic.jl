@@ -58,9 +58,16 @@ Enrich features via Ollama when enabled, otherwise fall back to simulation.
 On any failure (network, parse), falls back to simulation transparently.
 """
 function llm_enrich_features(config::LLMConfig, email::Email,
-                              base_features::Dict{Symbol, Float64})::Dict{Symbol, Float64}
+                              base_features::Dict{Symbol, Float64};
+                              preview::String="")::Dict{Symbol, Float64}
     if !config.enabled
         return simulate_llm_enrichment(email, base_features)
+    end
+
+    body_line = if !isempty(preview)
+        "Body: $(first(preview, 300))"
+    else
+        "Body: [$(email.word_count) words about $(string(email.topic))]"
     end
 
     prompt = """Analyse this email. Respond with ONLY a JSON object, no other text.
@@ -68,7 +75,7 @@ function llm_enrich_features(config::LLMConfig, email::Email,
 
 From: $(email.sender)
 Subject: $(email.subject)
-Body: [$(email.word_count) words about $(string(email.topic))]"""
+$body_line"""
 
     response = call_ollama(config, prompt)
 
