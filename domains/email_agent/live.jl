@@ -11,31 +11,10 @@ Usage:
     FASTMAIL_TOKEN=fmu1-xxx OLLAMA_HOST=http://localhost:11434 julia domains/email_agent/live.jl
 """
 
-push!(LOAD_PATH, joinpath(@__DIR__, "..", "..", "src"))
-using Credence
-using Credence: expect, condition, weights, mean
-using Credence: CategoricalMeasure, BetaMeasure, TaggedBetaMeasure, MixtureMeasure
-using Credence: Finite, Interval, Kernel, Measure
-using Credence: prune, truncate
-using Credence: AgentState, sync_prune!, sync_truncate!
-using Credence: Grammar, Program, CompiledKernel, ProductionRule
-using Credence: enumerate_programs, compile_kernel
-using Credence: analyse_posterior_subtrees, perturb_grammar
-using Credence: aggregate_grammar_weights, top_k_grammar_ids, add_programs_to_state!
-using Credence: next_grammar_id, reset_grammar_counter!
-using Credence: NormalGammaMeasure
-
-include("features.jl")
-include("terminals.jl")
-include("preferences.jl")
-include("metrics.jl")
-include("llm_prosthetic.jl")
-include("action_composition.jl")
-include("cost_model.jl")
+# host.jl brings all domain files + Credence imports + shared functions
+include("host.jl")
 include("jmap_client.jl")
 include("state_persistence.jl")
-
-using Random
 
 # ═══════════════════════════════════════
 # Interactive review
@@ -137,8 +116,8 @@ end
 # ═══════════════════════════════════════
 
 function run_live(;
-    program_max_depth::Int = 3,
-    min_log_prior::Float64 = -20.0,
+    program_max_depth::Int = 2,
+    min_log_prior::Float64 = -15.0,
     max_meta_per_step::Int = 3,
     ask_cost::Float64 = 0.1,
     email_limit::Int = 100,

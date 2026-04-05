@@ -40,11 +40,16 @@ end
 """
     discover_session() → JMAPSession
 
-Discover session using ENV["FASTMAIL_TOKEN"].
+Discover session using ENV["FASTMAIL_TOKEN"], falling back to secret-tool.
 """
 function discover_session()::JMAPSession
     token = get(ENV, "FASTMAIL_TOKEN", "")
-    isempty(token) && error("FASTMAIL_TOKEN environment variable must be set")
+    if isempty(token)
+        try
+            token = String(strip(read(`secret-tool lookup service jmap account guy@publicdatamarket.com`, String)))
+        catch; end
+    end
+    isempty(token) && error("FASTMAIL_TOKEN not set and secret-tool lookup failed")
     discover_session(token)
 end
 
