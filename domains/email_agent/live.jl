@@ -139,8 +139,9 @@ function run_live(;
             ollama_url = startswith(raw, "http") ? raw : "http://$raw:11434"
         end
     end
+    ollama_model = get(ENV, "OLLAMA_MODEL", "llama3.1")
     llm_config = if !isempty(ollama_url)
-        LLMConfig(ollama_url, "llama3.2", 200, true, 10.0)
+        LLMConfig(ollama_url, ollama_model, 200, true, 10.0)
     else
         default_llm_config()  # disabled
     end
