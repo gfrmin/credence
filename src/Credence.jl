@@ -28,7 +28,7 @@ export Measure, CategoricalMeasure, BetaMeasure, TaggedBetaMeasure, GaussianMeas
 export Kernel, FactorSelector, kernel_source, kernel_target
 export condition, expect, push_measure, density, log_density_at, log_predictive, log_marginal
 export draw, optimise, value
-export weights, mean, variance, prune, truncate
+export weights, mean, variance, prune, truncate, logsumexp
 export save_state, load_state
 export initial_rel_state, initial_cov_state, marginalize_betas, update_beta_state
 export extract_reliability_means

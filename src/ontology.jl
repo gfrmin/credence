@@ -19,7 +19,7 @@ export Measure, CategoricalMeasure, BetaMeasure, TaggedBetaMeasure, GaussianMeas
 export Kernel, FactorSelector, kernel_source, kernel_target, kernel_params
 export condition, expect, push_measure, density, log_predictive, log_marginal
 export draw, optimise, value
-export weights, mean, variance, log_density_at, prune, truncate
+export weights, mean, variance, log_density_at, prune, truncate, logsumexp
 
 # ================================================================
 # TYPE 1: Space
@@ -204,6 +204,15 @@ function weights(m::MixtureMeasure)
     max_lw = maximum(m.log_weights)
     w = exp.(m.log_weights .- max_lw)
     w ./ sum(w)
+end
+
+# ── Utility: numerically stable log-sum-exp ──
+
+function logsumexp(xs::AbstractVector{<:Real})::Float64
+    isempty(xs) && return -Inf
+    m = maximum(xs)
+    m == -Inf && return -Inf
+    m + log(sum(exp(x - m) for x in xs))
 end
 
 # ================================================================
