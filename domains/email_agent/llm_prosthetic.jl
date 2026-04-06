@@ -2,13 +2,13 @@
     llm_prosthetic.jl — LLM as sensor prosthetic (spec §6.4)
 
 The LLM extends the agent's sensory capabilities. When invoked, it
-enriches the feature dictionary by reducing noise on key features (urgency,
-topic classification). The agent decides when to use the prosthetic
-via EU, like any other action. The LLM is part of the body, not the brain.
+can detect features that keyword matching misses (e.g., sarcastic
+urgency, implicit action requests). The agent decides when to use
+the prosthetic via EU, like any other action. The LLM is part of
+the body, not the brain.
 
 In simulation mode (default for tests), no API call is made — the
-enrichment returns ground-truth features, simulating what a well-calibrated
-LLM would provide.
+enrichment returns ground-truth features from the Email struct.
 """
 
 using HTTP, JSON3
@@ -19,14 +19,14 @@ using HTTP, JSON3
 
 struct LLMConfig
     host::String              # "http://localhost:11434"
-    model::String             # "llama3.2" or "phi3"
+    model::String             # "llama3.1" or "phi3"
     max_tokens::Int           # 200
     enabled::Bool             # false for testing without Ollama
     timeout::Float64          # 10.0 seconds
 end
 
 function default_llm_config(; enabled::Bool=false)
-    LLMConfig("http://localhost:11434", "llama3.2", 200, enabled, 10.0)
+    LLMConfig("http://localhost:11434", "llama3.1", 200, enabled, 10.0)
 end
 
 function call_ollama(config::LLMConfig, prompt::String)::Union{String, Nothing}
@@ -52,10 +52,11 @@ function call_ollama(config::LLMConfig, prompt::String)::Union{String, Nothing}
 end
 
 """
-    llm_enrich_features(config, email, base_features) → Dict{Symbol, Float64}
+    llm_enrich_features(config, email, base_features; preview) → Dict{Symbol, Float64}
 
 Enrich features via Ollama when enabled, otherwise fall back to simulation.
-On any failure (network, parse), falls back to simulation transparently.
+The LLM detects features that keyword matching misses — it doesn't
+produce semantic labels, just additional binary signals.
 """
 function llm_enrich_features(config::LLMConfig, email::Email,
                               base_features::Dict{Symbol, Float64};
@@ -67,11 +68,11 @@ function llm_enrich_features(config::LLMConfig, email::Email,
     body_line = if !isempty(preview)
         "Body: $(first(preview, 300))"
     else
-        "Body: [$(email.word_count) words about $(string(email.topic))]"
+        "Body: [$(email.word_count) words]"
     end
 
     prompt = """Analyse this email. Respond with ONLY a JSON object, no other text.
-{"urgency": <0.0-1.0>, "topic": "<finance|scheduling|marketing|personal|technical>", "requires_action": <true|false>}
+{"has_urgent_signal": <true|false>, "has_action_request": <true|false>, "has_money_topic": <true|false>, "has_meeting_topic": <true|false>, "has_question": <true|false>}
 
 From: $(email.sender)
 Subject: $(email.subject)
@@ -90,17 +91,21 @@ $body_line"""
 
         enriched = copy(base_features)
 
-        if haskey(parsed, :urgency)
-            enriched[:urgency] = clamp(Float64(parsed.urgency), 0.0, 1.0)
+        # LLM can detect signals that keyword matching misses
+        if haskey(parsed, :has_urgent_signal) && Bool(parsed.has_urgent_signal)
+            enriched[:subject_has_urgent_kw] = 1.0
         end
-        if haskey(parsed, :topic)
-            topic = Symbol(parsed.topic)
-            enriched[:topic_finance] = topic == :finance ? 1.0 : 0.0
-            enriched[:topic_scheduling] = topic == :scheduling ? 1.0 : 0.0
-            enriched[:topic_marketing] = topic == :marketing ? 1.0 : 0.0
+        if haskey(parsed, :has_action_request) && Bool(parsed.has_action_request)
+            enriched[:subject_has_action_kw] = 1.0
         end
-        if haskey(parsed, :requires_action)
-            enriched[:requires_action] = Bool(parsed.requires_action) ? 1.0 : 0.0
+        if haskey(parsed, :has_money_topic) && Bool(parsed.has_money_topic)
+            enriched[:subject_has_money_kw] = 1.0
+        end
+        if haskey(parsed, :has_meeting_topic) && Bool(parsed.has_meeting_topic)
+            enriched[:subject_has_meeting_kw] = 1.0
+        end
+        if haskey(parsed, :has_question) && Bool(parsed.has_question)
+            enriched[:preview_has_question] = 1.0
         end
 
         return enriched
@@ -119,14 +124,10 @@ end
 """
     simulate_llm_enrichment(email, base_features) → Dict{Symbol, Float64}
 
-Simulate LLM feature enrichment: sharpen urgency and topic features
-by replacing noisy observations with ground-truth values.
+Simulate LLM feature enrichment: the LLM can detect signals that
+keyword matching misses. In simulation, this is a no-op since the
+synthetic corpus already has ground-truth keyword features.
 """
 function simulate_llm_enrichment(email::Email, base_features::Dict{Symbol, Float64})::Dict{Symbol, Float64}
-    enriched = copy(base_features)
-    enriched[:urgency] = email.urgency
-    enriched[:topic_finance] = email.topic == :finance ? 1.0 : 0.0
-    enriched[:topic_scheduling] = email.topic == :scheduling ? 1.0 : 0.0
-    enriched[:topic_marketing] = email.topic == :marketing ? 1.0 : 0.0
-    enriched
+    copy(base_features)
 end

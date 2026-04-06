@@ -1,8 +1,8 @@
 """
     terminals.jl — Email terminal alphabet and seed grammars
 
-Email-specific seed grammars. GTExpr/LTExpr reference named features
-directly (e.g., :urgency, :sender_is_manager).
+Email-specific seed grammars. GTExpr/LTExpr reference raw observable
+features directly (e.g., :subject_has_you, :sender_is_bulk_domain).
 """
 
 push!(LOAD_PATH, joinpath(@__DIR__, "..", "..", "src"))
@@ -18,92 +18,86 @@ using Credence: next_grammar_id, reset_grammar_counter!
 """
     generate_email_seed_grammars() → Vector{Grammar}
 
-Generate 14 seed grammars for the email domain.
+Generate seed grammars for the email domain using raw observable features.
 """
 function generate_email_seed_grammars()::Vector{Grammar}
     reset_grammar_counter!()
     grammars = Grammar[]
 
-    # 1. Minimal: sender_freq, is_manager, urgency
+    # 1. Personalization: "your"/"you" + confirmed + new event
     push!(grammars, Grammar(
-        Set([:sender_frequency, :sender_is_manager, :urgency]),
+        Set([:subject_has_you, :subject_has_confirmed, :subject_has_new_event]),
         ProductionRule[], next_grammar_id()))
 
-    # 2. Sender-focused: sender_freq, is_manager, is_dr, is_external
+    # 2. Actionability: failed + action_kw + money
     push!(grammars, Grammar(
-        Set([:sender_frequency, :sender_is_manager, :sender_is_direct_report, :sender_is_external]),
+        Set([:subject_has_failed, :subject_has_action_kw, :subject_has_money_kw]),
         ProductionRule[], next_grammar_id()))
 
-    # 3. Topic-focused: topic_finance, topic_scheduling, topic_marketing
+    # 3. Newsletter signals: news sender + large + click + unsubscribe
     push!(grammars, Grammar(
-        Set([:topic_finance, :topic_scheduling, :topic_marketing]),
+        Set([:sender_has_news_kw, :is_large_html, :preview_has_click, :preview_has_unsubscribe]),
         ProductionRule[], next_grammar_id()))
 
-    # 4. Action-focused: urgency, requires_action
+    # 4. Sender type: noreply + bulk + news + frequency
     push!(grammars, Grammar(
-        Set([:urgency, :requires_action]),
+        Set([:sender_is_noreply, :sender_is_bulk_domain, :sender_has_news_kw, :sender_frequency]),
         ProductionRule[], next_grammar_id()))
 
-    # 5. Content: urgency, email_length, has_attachment
+    # 5. Sender identity: hash bits for sender fingerprinting
     push!(grammars, Grammar(
-        Set([:urgency, :email_length, :has_attachment]),
+        Set([:sender_h0, :sender_h1, :sender_h2, :sender_h3]),
         ProductionRule[], next_grammar_id()))
 
-    # 6. Metadata: time_of_day, thread_depth
+    # 6. Subject content: urgent + action + reply + fwd
     push!(grammars, Grammar(
-        Set([:time_of_day, :thread_depth]),
+        Set([:subject_has_urgent_kw, :subject_has_action_kw, :subject_is_reply, :subject_is_fwd]),
         ProductionRule[], next_grammar_id()))
 
-    # 7. Sender + urgency: sender_freq, is_manager, is_dr, is_external, urgency
+    # 7. Mixed signals: personalized + large + attachment
     push!(grammars, Grammar(
-        Set([:sender_frequency, :sender_is_manager, :sender_is_direct_report, :sender_is_external, :urgency]),
+        Set([:subject_has_you, :is_large_html, :has_attachment]),
         ProductionRule[], next_grammar_id()))
 
-    # 8. Full: all 13 content features
+    # 8. Cross-cutting: personalization + sender type + size
     push!(grammars, Grammar(
-        ALL_EMAIL_FEATURES,
+        Set([:subject_has_you, :sender_is_noreply, :sender_has_news_kw,
+             :is_large_html, :subject_has_new_event, :subject_has_confirmed]),
         ProductionRule[], next_grammar_id()))
 
-    # 9. Minimal with FROM_BOSS nonterminal
-    #    FROM_BOSS = GT(:sender_is_manager, 0.5)
+    # 9. PERSONAL = AND(subject_has_you, NOT(sender_has_news_kw))
     push!(grammars, Grammar(
-        Set([:sender_frequency, :sender_is_manager, :urgency]),
-        [ProductionRule(:FROM_BOSS, GTExpr(:sender_is_manager, 0.5))],
+        Set([:subject_has_you, :sender_has_news_kw, :is_large_html]),
+        [ProductionRule(:PERSONAL, AndExpr(GTExpr(:subject_has_you, 0.5), NotExpr(GTExpr(:sender_has_news_kw, 0.5))))],
         next_grammar_id()))
 
-    # 10. Action-focused with NEEDS_ATTENTION nonterminal
-    #     NEEDS_ATTENTION = AND(GT(:requires_action, 0.5), GT(:urgency, 0.7))
+    # 10. NEWSLETTER = AND(is_large_html, OR(sender_has_news_kw, preview_has_click))
     push!(grammars, Grammar(
-        Set([:urgency, :requires_action]),
-        [ProductionRule(:NEEDS_ATTENTION, AndExpr(GTExpr(:requires_action, 0.5), GTExpr(:urgency, 0.7)))],
+        Set([:is_large_html, :sender_has_news_kw, :preview_has_click]),
+        [ProductionRule(:NEWSLETTER, AndExpr(GTExpr(:is_large_html, 0.5), OrExpr(GTExpr(:sender_has_news_kw, 0.5), GTExpr(:preview_has_click, 0.5))))],
         next_grammar_id()))
 
-    # 11. Topic + urgency with ROUTINE nonterminal
-    #     ROUTINE = AND(GT(:topic_marketing, 0.5), NOT(GT(:urgency, 0.7)))
+    # 11. NEEDS_ACTION = OR(subject_has_failed, subject_has_action_kw)
     push!(grammars, Grammar(
-        Set([:urgency, :topic_marketing]),
-        [ProductionRule(:ROUTINE, AndExpr(GTExpr(:topic_marketing, 0.5), NotExpr(GTExpr(:urgency, 0.7))))],
+        Set([:subject_has_failed, :subject_has_action_kw, :subject_has_you]),
+        [ProductionRule(:NEEDS_ACTION, OrExpr(GTExpr(:subject_has_failed, 0.5), GTExpr(:subject_has_action_kw, 0.5)))],
         next_grammar_id()))
 
-    # 12. Sender + urgency with FROM_BOSS + NEEDS_ATTENTION
+    # 12. Sender hash + noreply with KNOWN_SENDER
     push!(grammars, Grammar(
-        Set([:sender_frequency, :sender_is_manager, :urgency, :requires_action]),
-        [ProductionRule(:FROM_BOSS, GTExpr(:sender_is_manager, 0.5)),
-         ProductionRule(:NEEDS_ATTENTION, AndExpr(GTExpr(:requires_action, 0.5), GTExpr(:urgency, 0.7)))],
+        Set([:sender_h0, :sender_h1, :sender_h2, :sender_h3, :sender_is_noreply]),
+        [ProductionRule(:KNOWN_SENDER, AndExpr(GTExpr(:sender_h0, 0.5), GTExpr(:sender_h2, 0.5)))],
         next_grammar_id()))
 
-    # 13. Sender + topic with ROUTINE + FROM_BOSS
+    # 13. Metadata: time + thread + length + question
     push!(grammars, Grammar(
-        Set([:sender_frequency, :sender_is_manager, :urgency, :topic_marketing]),
-        [ProductionRule(:ROUTINE, AndExpr(GTExpr(:topic_marketing, 0.5), NotExpr(GTExpr(:urgency, 0.7)))),
-         ProductionRule(:FROM_BOSS, GTExpr(:sender_is_manager, 0.5))],
-        next_grammar_id()))
+        Set([:time_of_day, :thread_depth, :email_length, :preview_has_question]),
+        ProductionRule[], next_grammar_id()))
 
-    # 14. Sender with TRUSTED nonterminal
-    #     TRUSTED = AND(GT(:sender_frequency, 0.5), NOT(GT(:sender_is_external, 0.5)))
+    # 14. Money + attachment with INVOICE
     push!(grammars, Grammar(
-        Set([:sender_frequency, :sender_is_manager, :sender_is_direct_report, :sender_is_external]),
-        [ProductionRule(:TRUSTED, AndExpr(GTExpr(:sender_frequency, 0.5), NotExpr(GTExpr(:sender_is_external, 0.5))))],
+        Set([:subject_has_money_kw, :has_attachment, :subject_has_confirmed]),
+        [ProductionRule(:INVOICE, AndExpr(GTExpr(:subject_has_money_kw, 0.5), GTExpr(:has_attachment, 0.5)))],
         next_grammar_id()))
 
     grammars
@@ -118,26 +112,26 @@ content-only grammars plus 4 processing-state-aware grammars.
 function generate_email_seed_grammars_extended()::Vector{Grammar}
     grammars = generate_email_seed_grammars()
 
-    # 15. Triage: urgency, has_label_urgent, is_in_priority, user_notified
-    #     NOT_YET_LABELLED = NOT(GT(:has_label_urgent, 0.5))
+    # 15. Triage state
     push!(grammars, Grammar(
-        Set([:urgency, :has_label_urgent, :is_in_priority, :user_notified]),
+        Set([:subject_has_urgent_kw, :has_label_urgent, :is_in_priority, :user_notified]),
         [ProductionRule(:NOT_YET_LABELLED, NotExpr(GTExpr(:has_label_urgent, 0.5)))],
         next_grammar_id()))
 
-    # 16. Archive: topic_marketing, is_in_archive, is_read
+    # 16. Archive state
     push!(grammars, Grammar(
-        Set([:topic_marketing, :is_in_archive, :is_read]),
+        Set([:preview_has_unsubscribe, :is_in_archive, :is_read]),
         ProductionRule[], next_grammar_id()))
 
-    # 17. Delegate: is_manager, has_label_delegated, is_assigned
+    # 17. Delegate state
     push!(grammars, Grammar(
-        Set([:sender_is_manager, :has_label_delegated, :is_assigned]),
+        Set([:sender_frequency, :has_label_delegated, :is_assigned]),
         ProductionRule[], next_grammar_id()))
 
-    # 18. Full extended: all 22 features
+    # 18. Cross-cutting extended
     push!(grammars, Grammar(
-        ALL_EMAIL_FEATURES_EXTENDED,
+        Set([:subject_has_you, :sender_has_news_kw, :subject_has_failed,
+             :has_label_urgent, :is_in_archive, :is_read]),
         ProductionRule[], next_grammar_id()))
 
     grammars

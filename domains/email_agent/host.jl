@@ -210,6 +210,7 @@ function compute_eu(
     component_weights::Vector{Float64};
     cost_model::CostModel=default_cost_model(),
     ask_cost::Float64=0.1,
+    utility::Dict{Symbol, Tuple{Float64, Float64}}=Dict{Symbol, Tuple{Float64, Float64}}(),
     meta_cost_this_turn::Float64=0.0,
     already_enriched::Bool=false
 )::Float64
@@ -223,22 +224,27 @@ function compute_eu(
         state, rec_cache, component_weights;
         cost_model=cost_model, already_enriched=already_enriched)
 
-    # :ask_user — always correct, costs user attention
-    action == :ask_user && return 1.0 - ask_cost
+    # :ask_user — fixed utility independent of correctness
+    if action == :ask_user
+        u_skip = get(utility, :ask_user, (1.0 - ask_cost, 1.0 - ask_cost))
+        return u_skip[1]
+    end
 
-    # Domain actions — weighted-average approval rate
-    weighted_approval = 0.0
+    # Domain actions — E[U] = Σ w_j * [θ_j * U(correct) + (1-θ_j) * U(wrong)]
+    weighted_eu = 0.0
     matching_weight = 0.0
+    u_c, u_w = get(utility, action, (1.0, 0.0))
     for (j, comp) in enumerate(state.belief.components)
         haskey(rec_cache, j) || continue
         rec_cache[j] == action || continue
         tbm = comp::TaggedBetaMeasure
         w = component_weights[j]
-        weighted_approval += w * mean(tbm.beta)
+        θ = mean(tbm.beta)
+        weighted_eu += w * (θ * u_c + (1.0 - θ) * u_w)
         matching_weight += w
     end
-    matching_weight < 1e-300 && return 0.5
-    weighted_approval / matching_weight
+    matching_weight < 1e-300 && return (u_c + u_w) / 2.0
+    weighted_eu / matching_weight
 end
 
 # ═══════════════════════════════════════
@@ -622,6 +628,7 @@ function run_agent(;
     min_log_prior::Float64 = -20.0,
     max_meta_per_step::Int = 3,
     ask_cost::Float64 = 0.1,
+    utility::Dict{Symbol, Tuple{Float64, Float64}} = Dict{Symbol, Tuple{Float64, Float64}}(),
     cost_model::CostModel = default_cost_model(),
     population_grammar::Union{Nothing, Vector{Grammar}} = nothing,
     llm_config::LLMConfig = default_llm_config(),
@@ -747,7 +754,7 @@ function run_agent(;
                 action_eus = Dict{Symbol, Float64}()
                 for a in ALL_ACTIONS
                     action_eus[a] = compute_eu(state, a, rec_cache, w;
-                        cost_model=cost_model, ask_cost=ask_cost,
+                        cost_model=cost_model, ask_cost=ask_cost, utility=utility,
                         meta_cost_this_turn=meta_cost_this_turn,
                         already_enriched=already_enriched)
                 end
@@ -786,7 +793,7 @@ function run_agent(;
                 action_eus = Dict{Symbol, Float64}()
                 for a in EMAIL_ACTIONS
                     action_eus[a] = compute_eu(state, a, rec_cache, w;
-                        cost_model=cost_model, ask_cost=ask_cost)
+                        cost_model=cost_model, ask_cost=ask_cost, utility=utility)
                 end
                 chosen_action = argmax(action_eus)
             end
@@ -798,7 +805,7 @@ function run_agent(;
             evaluate_programs!(rec_cache, state.compiled_kernels,
                                features, temporal_state)
             w = weights(state.belief)
-            eu_correct = compute_eu(state, correct_action, rec_cache, w; ask_cost=ask_cost)
+            eu_correct = compute_eu(state, correct_action, rec_cache, w; ask_cost=ask_cost, utility=utility)
             surprise = -log(max(eu_correct, 1e-300))
 
             k = build_email_observation_kernel(
