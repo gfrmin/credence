@@ -18,7 +18,7 @@ export Space, Finite, Interval, ProductSpace, Simplex, Euclidean, PositiveReals,
 export Measure, CategoricalMeasure, BetaMeasure, TaggedBetaMeasure, GaussianMeasure, DirichletMeasure, NormalGammaMeasure, ProductMeasure, MixtureMeasure
 export Kernel, FactorSelector, kernel_source, kernel_target, kernel_params
 export condition, expect, push_measure, density, log_predictive, log_marginal
-export draw, optimise, value
+export draw, optimise, value, voi, eu, predictive_prob, net_voi
 export weights, mean, variance, log_density_at, prune, truncate, logsumexp
 
 # ================================================================
@@ -801,6 +801,35 @@ function value(m::Measure, actions::Finite, pref)
     end
     best_eu
 end
+
+"""
+    voi(m, k, actions, pref, possible_obs) → Float64
+
+Value of information: how much would one observation from kernel k
+improve the decision? VOI = E_o[value(condition(m,k,o))] - value(m).
+Composed from condition, value, expect, density.
+"""
+function voi(m::Measure, k::Kernel, actions::Finite, pref, possible_obs)
+    current = value(m, actions, pref)
+    pred = [expect(m, h -> exp(density(k, h, o))) for o in possible_obs]
+    total_w = sum(pred)
+    total_w < 1e-300 && return 0.0
+    expected_post_value = sum(
+        (pred[i] / total_w) * value(condition(m, k, o), actions, pref)
+        for (i, o) in enumerate(possible_obs)
+    )
+    expected_post_value - current
+end
+
+"EU of a specific action: expect(m, h -> pref(h, action))."
+eu(m::Measure, action, pref) = expect(m, h -> pref(h, action))
+
+"Predictive probability: P(obs | m, k) = E_m[exp(density(k, h, obs))]."
+predictive_prob(m::Measure, k::Kernel, obs) = expect(m, h -> exp(density(k, h, obs)))
+
+"Net VOI: value of information minus cost of observing."
+net_voi(m::Measure, k::Kernel, actions::Finite, pref, possible_obs, cost::Float64) =
+    voi(m, k, actions, pref, possible_obs) - cost
 
 # ================================================================
 # log_marginal — Dirichlet-Multinomial marginal likelihood

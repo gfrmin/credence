@@ -16,7 +16,8 @@ Tier 3: email-domain-specific. Uses Tier 1 (Credence DSL) and Tier 2
 
 push!(LOAD_PATH, joinpath(@__DIR__, "..", "..", "src"))
 using Credence
-using Credence: expect, condition, push_measure, optimise, value, weights, mean, density
+using Credence: expect, condition, push_measure, optimise, value, voi, eu, predictive_prob, net_voi
+using Credence: weights, mean, density
 using Credence: CategoricalMeasure, BetaMeasure, TaggedBetaMeasure, MixtureMeasure
 using Credence: Finite, Interval, Kernel, Measure, ProductSpace, Euclidean, PositiveReals, Space
 using Credence: prune, truncate
@@ -245,24 +246,41 @@ function compute_meta_eu(
 end
 
 """
-    compute_sensor_eu(state, rec_cache, component_weights; cost_model, already_enriched) → Float64
+    compute_sensor_voi(state, features, email, temporal_state; ...) → Float64
 
-EU for sensor enrichment via LLM. High when action entropy is high
-(enriched features might resolve ambiguity), returns -Inf if already enriched.
-Cost is the expected time from the CostModel.
+VOI for LLM sensor enrichment. Computes the improvement in decision
+value from enriched features minus the expected time cost.
+Returns -Inf if already enriched.
 """
-function compute_sensor_eu(
+function compute_sensor_voi(
     state::AgentState,
-    rec_cache::Dict{Int, Symbol},
-    component_weights::Vector{Float64};
+    features::Dict{Symbol, Float64},
+    email::Email,
+    temporal_state::Dict{Symbol, Any};
+    action_space::Vector{Symbol}=DOMAIN_ACTIONS,
+    utility::Function=DEFAULT_UTILITY,
     cost_model::CostModel=default_cost_model(),
     already_enriched::Bool=false
 )::Float64
     already_enriched && return -Inf
-    H = compute_action_entropy(state, rec_cache, component_weights)
-    n_obs = mean_observation_count(state)
-    entropy_benefit = H / (1.0 + 0.1 * n_obs)
-    entropy_benefit * 0.7 - expected_cost(cost_model, :ask_llm)
+
+    actions_finite = Finite(action_space)
+
+    # Current decision value
+    rec_cache = Dict{Int, Symbol}()
+    evaluate_programs!(rec_cache, state.compiled_kernels, features, temporal_state)
+    predictive_now = build_predictive(state, rec_cache, action_space)
+    val_now = value(predictive_now, actions_finite, utility)
+
+    # Value after enrichment
+    enriched = simulate_llm_enrichment(email, features)
+    rec_cache_e = Dict{Int, Symbol}()
+    evaluate_programs!(rec_cache_e, state.compiled_kernels, enriched, temporal_state)
+    predictive_e = build_predictive(state, rec_cache_e, action_space)
+    val_after = value(predictive_e, actions_finite, utility)
+
+    # net-VOI = improvement - cost
+    (val_after - val_now) - expected_cost(cost_model, :ask_llm)
 end
 
 """
@@ -287,10 +305,8 @@ function compute_eu(
         state, action, rec_cache, component_weights;
         cost_model=cost_model, meta_cost_this_turn=meta_cost_this_turn)
 
-    # Sensor actions
-    action == :ask_llm && return compute_sensor_eu(
-        state, rec_cache, component_weights;
-        cost_model=cost_model, already_enriched=already_enriched)
+    # Sensor actions — handled by compute_sensor_voi at call site
+    action == :ask_llm && return -Inf
 
     # :ask_user — fixed utility independent of correctness
     if action == :ask_user
@@ -371,9 +387,7 @@ function compute_eu_step(
         state, action, rec_cache, component_weights;
         cost_model=cost_model, meta_cost_this_turn=meta_cost_this_turn)
 
-    action == :ask_llm && return compute_sensor_eu(
-        state, rec_cache, component_weights;
-        cost_model=cost_model, already_enriched=already_enriched)
+    action == :ask_llm && return -Inf  # handled by compute_sensor_voi at call site
 
     action == :ask_user && return 1.0 - ask_cost
 
@@ -825,6 +839,11 @@ function run_agent(;
                         meta_cost_this_turn=meta_cost_this_turn,
                         already_enriched=already_enriched)
                 end
+                # Sensor VOI: replaces ad-hoc entropy heuristic
+                action_eus[:ask_llm] = compute_sensor_voi(
+                    state, features, email, temporal_state;
+                    action_space=DOMAIN_ACTIONS, cost_model=cost_model,
+                    already_enriched=already_enriched)
                 chosen_action = argmax(action_eus)
 
                 if chosen_action in META_ACTIONS && chosen_action != :do_nothing &&

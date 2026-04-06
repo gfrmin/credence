@@ -27,7 +27,7 @@ export Space, Finite, Interval, ProductSpace, Simplex, Euclidean, PositiveReals,
 export Measure, CategoricalMeasure, BetaMeasure, TaggedBetaMeasure, GaussianMeasure, DirichletMeasure, NormalGammaMeasure, ProductMeasure, MixtureMeasure
 export Kernel, FactorSelector, kernel_source, kernel_target
 export condition, expect, push_measure, density, log_density_at, log_predictive, log_marginal
-export draw, optimise, value
+export draw, optimise, value, voi, eu, predictive_prob, net_voi
 export weights, mean, variance, prune, truncate, logsumexp
 export save_state, load_state
 export initial_rel_state, initial_cov_state, marginalize_betas, update_beta_state
