@@ -639,6 +639,29 @@ function push_measure(m::CategoricalMeasure, k::Kernel)
     end
 end
 
+function push_measure(m::MixtureMeasure, k::Kernel)
+    # Pushforward of a mixture: Σ_i w_i · push(component_i, kernel)
+    # For finite targets, integrate kernel density over each component via expect.
+    tgt = k.target
+    tgt isa Finite || error("push_measure to non-Finite target not implemented for MixtureMeasure")
+    w = weights(m)
+    tgt_logw = fill(-Inf, length(tgt.values))
+    for (i, comp) in enumerate(m.components)
+        for (j, o) in enumerate(tgt.values)
+            p = expect(comp, h -> exp(density(k, h, o)))
+            p > 0 || continue
+            contrib = log(w[i]) + log(p)
+            if tgt_logw[j] == -Inf
+                tgt_logw[j] = contrib
+            else
+                mx = max(tgt_logw[j], contrib)
+                tgt_logw[j] = mx + log(exp(tgt_logw[j] - mx) + exp(contrib - mx))
+            end
+        end
+    end
+    CategoricalMeasure(tgt, tgt_logw)
+end
+
 function push_measure(m::DirichletMeasure, k::Kernel)
     # Any kernel Simplex → Finite is a categorical draw: each simplex
     # point IS a categorical distribution. The pushforward is the

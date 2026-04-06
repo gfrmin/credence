@@ -162,34 +162,18 @@ function init_agent(; action_space::Vector{Symbol}, program_max_depth::Int=2,
 end
 
 # ═══════════════════════════════════════
-# Utility function
+# Utility function — pref(true_action, chosen_action) → Float64
 # ═══════════════════════════════════════
 
-const EVAL_UTILITY = Dict{Symbol, Tuple{Float64, Float64}}(
-    :flag_urgent => (1.0, -0.1),    # correct flag=1.0, false alarm=-0.1
-    :archive     => (0.5, -1.0),    # correct archive=0.5, missed flag=-1.0
-    :ask_user    => (-0.05, -0.05), # skip: fixed mild cost
-)
-
-function select_best_action(state::AgentState, features::Dict{Symbol, Float64},
-                             action_space::Vector{Symbol},
-                             temporal_state::Dict{Symbol, Any};
-                             utility::Dict{Symbol, Tuple{Float64, Float64}}=EVAL_UTILITY)
-    rec_cache = Dict{Int, Symbol}()
-    evaluate_programs!(rec_cache, state.compiled_kernels, features, temporal_state)
-    w = weights(state.belief)
-
-    best_action = :ask_user
-    best_eu = -Inf
-    for a in vcat(action_space, [:ask_user])
-        eu = compute_eu(state, a, rec_cache, w; utility=utility)
-        if eu > best_eu
-            best_eu = eu
-            best_action = a
-        end
-    end
-    (action=best_action, eu=best_eu, rec_cache=rec_cache)
+function eval_utility(true_action::Symbol, chosen_action::Symbol)::Float64
+    true_action == :flag_urgent && chosen_action == :flag_urgent && return 1.0
+    true_action == :flag_urgent && chosen_action == :archive    && return -1.0
+    true_action == :archive     && chosen_action == :flag_urgent && return -0.1
+    true_action == :archive     && chosen_action == :archive    && return 0.5
+    0.0
 end
+
+const EVAL_SKIP_UTILITY = -0.05
 
 # ═══════════════════════════════════════
 # Run evaluation
@@ -231,7 +215,8 @@ function run_eval(; rng_seed::Int=42, train_frac::Float64=0.7)
         true_label = is_flagged ? :flag_urgent : :archive
         features = extract_features(email)
 
-        result = select_best_action(state, features, action_space, temporal_state)
+        result = select_action_eu(state, features, temporal_state;
+            action_space=action_space, utility=eval_utility, skip_utility=EVAL_SKIP_UTILITY)
         predicted = result.action
         correct = predicted == true_label
         train_correct += correct
@@ -247,12 +232,6 @@ function run_eval(; rng_seed::Int=42, train_frac::Float64=0.7)
         # Rolling window accuracy
         if i % window_size == 0
             recent_start = max(1, i - window_size + 1)
-            recent_correct = sum(
-                (select_best_action(state, extract_features(train_set[j][1]),
-                    action_space, temporal_state).action ==
-                    (train_set[j][2] ? :flag_urgent : :archive))
-                for j in recent_start:i; init=0)
-            # Actually just track from the loop
             acc = train_correct / train_total
             println("  Step $i/$n_train: cumulative=$(round(acc*100, digits=1))%, " *
                     "components=$(length(state.belief.components))")
@@ -269,7 +248,8 @@ function run_eval(; rng_seed::Int=42, train_frac::Float64=0.7)
     for (email, is_flagged, _) in test_set
         true_label = is_flagged ? :flag_urgent : :archive
         features = extract_features(email)
-        result = select_best_action(state, features, action_space, temporal_state)
+        result = select_action_eu(state, features, temporal_state;
+            action_space=action_space, utility=eval_utility, skip_utility=EVAL_SKIP_UTILITY)
         predicted = result.action
 
         if predicted == :ask_user

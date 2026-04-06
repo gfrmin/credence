@@ -16,9 +16,9 @@ Tier 3: email-domain-specific. Uses Tier 1 (Credence DSL) and Tier 2
 
 push!(LOAD_PATH, joinpath(@__DIR__, "..", "..", "src"))
 using Credence
-using Credence: expect, condition, weights, mean
+using Credence: expect, condition, push_measure, optimise, value, weights, mean, density
 using Credence: CategoricalMeasure, BetaMeasure, TaggedBetaMeasure, MixtureMeasure
-using Credence: Finite, Interval, Kernel, Measure
+using Credence: Finite, Interval, Kernel, Measure, ProductSpace, Euclidean, PositiveReals, Space
 using Credence: prune, truncate
 using Credence: AgentState, sync_prune!, sync_truncate!
 using Credence: Grammar, Program, CompiledKernel, ProductionRule
@@ -100,6 +100,74 @@ function evaluate_programs!(
         cache[tag] = ck.evaluate(features, temporal_state)
     end
     cache
+end
+
+"""
+    build_predictive(state, rec_cache, action_space) → CategoricalMeasure
+
+Push the belief through program recommendations to get the predictive
+distribution over the user's true action. For each action a:
+  P(user wants a) = Σ_j w_j * [r_j == a ? E[θ_j] : E[1-θ_j]/(|A|-1)]
+
+This IS push_measure(belief, action_kernel), computed using the mixture
+structure: each component's Beta gives E[θ] via expect, the mixture
+weights marginalize over programs.
+"""
+function build_predictive(
+    state::AgentState,
+    rec_cache::Dict{Int, Symbol},
+    action_space::Vector{Symbol}
+)::CategoricalMeasure
+    w = weights(state.belief)
+    n_actions = length(action_space)
+    action_probs = Dict{Symbol, Float64}(a => 0.0 for a in action_space)
+
+    for (j, comp) in enumerate(state.belief.components)
+        haskey(rec_cache, j) || continue
+        tbm = comp::TaggedBetaMeasure
+        # E[θ_j] via credence's expect on the Beta component
+        θ_mean = expect(tbm, identity)
+        r_j = rec_cache[j]
+        for a in action_space
+            p = a == r_j ? θ_mean : (1.0 - θ_mean) / max(n_actions - 1, 1)
+            action_probs[a] += w[j] * p
+        end
+    end
+
+    logw = [log(max(action_probs[a], 1e-300)) for a in action_space]
+    CategoricalMeasure(Finite(action_space), logw)
+end
+
+const DEFAULT_UTILITY = (true_action, chosen_action) -> true_action == chosen_action ? 1.0 : 0.0
+
+"""
+    select_action_eu(state, features, temporal_state; ...) → NamedTuple
+
+Action selection via push + optimise:
+1. Evaluate programs → rec_cache
+2. build_predictive (= push) → CategoricalMeasure over user's true action
+3. optimise(predictive, actions, utility) → best action
+4. value(predictive, actions, utility) vs skip_utility → skip if uncertain
+"""
+function select_action_eu(
+    state::AgentState,
+    features::Dict{Symbol, Float64},
+    temporal_state::Dict{Symbol, Any};
+    action_space::Vector{Symbol}=DOMAIN_ACTIONS,
+    utility::Function=DEFAULT_UTILITY,
+    skip_utility::Float64=-Inf,
+)
+    rec_cache = Dict{Int, Symbol}()
+    evaluate_programs!(rec_cache, state.compiled_kernels, features, temporal_state)
+
+    predictive = build_predictive(state, rec_cache, action_space)
+    actions_finite = Finite(action_space)
+
+    best = optimise(predictive, actions_finite, utility)
+    best_eu = value(predictive, actions_finite, utility)
+
+    chosen = best_eu > skip_utility ? best : :ask_user
+    (action=chosen, eu=best_eu, predictive=predictive, rec_cache=rec_cache)
 end
 
 """
@@ -628,7 +696,6 @@ function run_agent(;
     min_log_prior::Float64 = -20.0,
     max_meta_per_step::Int = 3,
     ask_cost::Float64 = 0.1,
-    utility::Dict{Symbol, Tuple{Float64, Float64}} = Dict{Symbol, Tuple{Float64, Float64}}(),
     cost_model::CostModel = default_cost_model(),
     population_grammar::Union{Nothing, Vector{Grammar}} = nothing,
     llm_config::LLMConfig = default_llm_config(),
@@ -736,7 +803,7 @@ function run_agent(;
                           episode_length=length(ep_actions),
                           episode_action_list=ep_actions)
         else
-            # Single-decision-per-email (original path)
+            # Single-decision-per-email
             features = extract_features(email)
 
             meta_cost_this_turn = 0.0
@@ -754,7 +821,7 @@ function run_agent(;
                 action_eus = Dict{Symbol, Float64}()
                 for a in ALL_ACTIONS
                     action_eus[a] = compute_eu(state, a, rec_cache, w;
-                        cost_model=cost_model, ask_cost=ask_cost, utility=utility,
+                        cost_model=cost_model, ask_cost=ask_cost,
                         meta_cost_this_turn=meta_cost_this_turn,
                         already_enriched=already_enriched)
                 end
@@ -793,7 +860,7 @@ function run_agent(;
                 action_eus = Dict{Symbol, Float64}()
                 for a in EMAIL_ACTIONS
                     action_eus[a] = compute_eu(state, a, rec_cache, w;
-                        cost_model=cost_model, ask_cost=ask_cost, utility=utility)
+                        cost_model=cost_model, ask_cost=ask_cost)
                 end
                 chosen_action = argmax(action_eus)
             end
@@ -805,7 +872,7 @@ function run_agent(;
             evaluate_programs!(rec_cache, state.compiled_kernels,
                                features, temporal_state)
             w = weights(state.belief)
-            eu_correct = compute_eu(state, correct_action, rec_cache, w; ask_cost=ask_cost, utility=utility)
+            eu_correct = compute_eu(state, correct_action, rec_cache, w; ask_cost=ask_cost)
             surprise = -log(max(eu_correct, 1e-300))
 
             k = build_email_observation_kernel(
