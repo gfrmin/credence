@@ -30,16 +30,10 @@ function default_env()
         # Their BEHAVIOUR is frozen (Bayesian inversion, integration,
         # composition, density). Their presence in the env is how the
         # DSL accesses them — not via special forms.
-        :condition  => condition,
-        :expect     => expect,
-        :push       => push_measure,
-        :density    => density,
-        :optimise   => optimise,
-        :value      => value,
-        :voi        => voi,
-        :eu         => eu,
-        :predictive => predictive_prob,
-        Symbol("net-voi") => net_voi,
+        :condition => condition,
+        :expect    => expect,
+        :push      => push_measure,
+        :density   => density,
 
         # Utility functions for fold/map
         :+ => +,

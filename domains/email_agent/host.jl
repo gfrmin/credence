@@ -16,8 +16,8 @@ Tier 3: email-domain-specific. Uses Tier 1 (Credence DSL) and Tier 2
 
 push!(LOAD_PATH, joinpath(@__DIR__, "..", "..", "src"))
 using Credence
-using Credence: expect, condition, push_measure, optimise, value, voi, eu, predictive_prob, net_voi
-using Credence: weights, mean, density
+using Credence: expect, condition, push_measure, density, weights, mean
+using Credence: load_dsl
 using Credence: CategoricalMeasure, BetaMeasure, TaggedBetaMeasure, MixtureMeasure
 using Credence: Finite, Interval, Kernel, Measure, ProductSpace, Euclidean, PositiveReals, Space
 using Credence: prune, truncate
@@ -38,6 +38,12 @@ include("action_composition.jl")
 include("cost_model.jl")
 
 using Random
+
+# Load stdlib — derived functions (optimise, value, voi) live in the DSL
+const _STDLIB_ENV = load_dsl("")
+const optimise = _STDLIB_ENV[:optimise]
+const value_fn = _STDLIB_ENV[:value]  # avoid shadowing Base.value
+const voi_fn = _STDLIB_ENV[:voi]
 
 # ═══════════════════════════════════════
 # Primitive action execution (multi-step episodes)
@@ -148,7 +154,7 @@ Action selection via push + optimise:
 1. Evaluate programs → rec_cache
 2. build_predictive (= push) → CategoricalMeasure over user's true action
 3. optimise(predictive, actions, utility) → best action
-4. value(predictive, actions, utility) vs skip_utility → skip if uncertain
+4. value_fn(predictive, actions, utility) vs skip_utility → skip if uncertain
 """
 function select_action_eu(
     state::AgentState,
@@ -165,7 +171,7 @@ function select_action_eu(
     actions_finite = Finite(action_space)
 
     best = optimise(predictive, actions_finite, utility)
-    best_eu = value(predictive, actions_finite, utility)
+    best_eu = value_fn(predictive, actions_finite, utility)
 
     chosen = best_eu > skip_utility ? best : :ask_user
     (action=chosen, eu=best_eu, predictive=predictive, rec_cache=rec_cache)
@@ -270,14 +276,14 @@ function compute_sensor_voi(
     rec_cache = Dict{Int, Symbol}()
     evaluate_programs!(rec_cache, state.compiled_kernels, features, temporal_state)
     predictive_now = build_predictive(state, rec_cache, action_space)
-    val_now = value(predictive_now, actions_finite, utility)
+    val_now = value_fn(predictive_now, actions_finite, utility)
 
     # Value after enrichment
     enriched = simulate_llm_enrichment(email, features)
     rec_cache_e = Dict{Int, Symbol}()
     evaluate_programs!(rec_cache_e, state.compiled_kernels, enriched, temporal_state)
     predictive_e = build_predictive(state, rec_cache_e, action_space)
-    val_after = value(predictive_e, actions_finite, utility)
+    val_after = value_fn(predictive_e, actions_finite, utility)
 
     # net-VOI = improvement - cost
     (val_after - val_now) - expected_cost(cost_model, :ask_llm)

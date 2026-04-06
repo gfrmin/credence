@@ -1,10 +1,67 @@
 ; ============================================================
 ; stdlib.bdsl — Credence standard library
 ;
-; The derived functions (optimise, value, voi, eu, predictive,
-; net-voi) are implemented in ontology.jl and exposed via
-; default_env. This file contains only self-tests.
+; Three types: Space, Measure, Kernel
+; Axiom-constrained functions: condition, expect, push, density
+; Everything here is composed from those.
 ; ============================================================
+
+; ── optimise: the ONE decision mechanism ──
+; argmax over actions of E[pref(h, a)]
+; Returns the best action.
+(define optimise
+  (lambda (m actions pref)
+    (first (fold (lambda (best candidate)
+                   (if (> (second candidate) (second best))
+                     candidate
+                     best))
+                 (map (lambda (a)
+                        (list a (expect m (lambda (h) (pref h a)))))
+                      (support actions))))))
+
+; ── value: EU of the optimal action ──
+(define value
+  (lambda (m actions pref)
+    (second (fold (lambda (best candidate)
+                    (if (> (second candidate) (second best))
+                      candidate
+                      best))
+                  (map (lambda (a)
+                         (list a (expect m (lambda (h) (pref h a)))))
+                       (support actions))))))
+
+; ── eu: expected utility of a specific action ──
+(define eu
+  (lambda (m action pref)
+    (expect m (lambda (h) (pref h action)))))
+
+; ── predictive: P(observation | measure, kernel) ──
+; The probability of seeing obs, marginalised over hypotheses
+(define predictive
+  (lambda (m k obs)
+    (expect m (lambda (h) (exp (density k h obs))))))
+
+; ── voi: value of information ──
+; How much would one observation from kernel k improve the
+; decision over actions with preference pref?
+;
+; VOI = E_o[value(condition(m,k,o))] - value(m)
+; where E_o is weighted by predictive probability
+(define voi
+  (lambda (m k actions pref possible-obs)
+    (let current-val (value m actions pref)
+      (let total-weight (fold + (map (lambda (o) (predictive m k o))
+                                     possible-obs))
+        (- (fold + (map (lambda (o)
+                          (* (/ (predictive m k o) total-weight)
+                             (value (condition m k o) actions pref)))
+                        possible-obs))
+           current-val)))))
+
+; ── net-voi: VOI minus the cost of observing ──
+(define net-voi
+  (lambda (m k actions pref possible-obs cost)
+    (- (voi m k actions pref possible-obs) cost)))
 
 ; ── Self-test: VOI of flat kernel must be zero ──
 (let s (space :finite 1 2)
