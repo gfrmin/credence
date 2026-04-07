@@ -248,6 +248,7 @@ Run tests:
     julia test/test_program_space.jl    # Tier 2 tests
     julia test/test_grid_world.jl       # Tier 3 grid-world tests
     julia test/test_email_agent.jl      # Email agent domain tests
+    julia test/test_rss.jl              # RSS domain tests
 
 Run an example:
     julia -e 'push!(LOAD_PATH, "src"); using Credence; run_dsl(read("examples/coin.bdsl", String))'
@@ -289,23 +290,44 @@ Python bindings (python/):
         perturbation.jl           Posterior subtree analysis, grammar perturbation
         agent_state.jl            AgentState, sync_prune!, sync_truncate!
     domains/                      Tier 3: domain applications
+      DOMAIN_INTERFACE.md         Contract for new Tier 3 domains
       grid_world/                 Grid-world domain
         simulation.jl             World simulation, entities, regime changes
-        sensors.jl                Sensor configuration and projection
         terminals.jl              Seed grammars and terminal alphabet
         host.jl                   Host driver (agent loop)
         metrics.jl                Performance tracking
         agent.bdsl                Agent DSL program
-      email_agent/                Email domain (stubs)
-        features.jl               Email feature extraction (stub)
-        terminals.jl              Seed grammars (stub)
-        preferences.jl            Outcome classification (stub)
-        host.jl                   Host driver (stub)
-        metrics.jl                Metrics (stub)
+      email_agent/                Email domain (JMAP integration)
+        features.jl               Email feature extraction
+        terminals.jl              Seed grammars
+        preferences.jl            Outcome classification
+        host.jl                   Host driver (1006 lines, full JMAP)
+        metrics.jl                Metrics
         agent.bdsl                Agent DSL program
+        jmap_client.jl            Julia JMAP client for Fastmail
+        live.jl                   Live Fastmail host driver
+        llm_prosthetic.jl         LLM-based feature inference
+        cost_model.jl             Uncertain time-based cost model
+        eval_retrospective.jl     Retrospective evaluation
+        state_persistence.jl      Save/load agent state
+        action_composition.jl     Action composition helpers
+      qa_benchmark/               QA benchmark domain
+        environment.jl            Benchmark environment
+        host.jl                   Host driver
+        llm_agent.jl              LLM comparison agent
+        metrics.jl                Metrics
+        agent.bdsl                Agent DSL program
+      rss/                        RSS article ranking domain
+        db.jl                     Article database
+        features.jl               Article feature extraction
+        host.jl                   Host driver
+        preferences.jl            Preference learning
+        terminals.jl              Seed grammars
+        server.jl                 Server interface
     examples/                     Legacy examples (still functional)
       coin.bdsl                   Biased coin learning
       credence_agent.bdsl         Agent DSL (pure functions, host-driven)
+      grid_agent.bdsl             Grid agent DSL
       host_credence_agent.jl      Julia host driver for credence agent
     test/
       test_core.jl                Core DSL tests (42 tests)
@@ -314,8 +336,9 @@ Python bindings (python/):
       test_program_space.jl       Tier 2 tests (enumeration, compilation, perturbation)
       test_grid_world.jl          Tier 3 tests (full agent, regime change, meta-learning)
       test_email_agent.jl         Email agent domain tests
-    domains/
-      DOMAIN_INTERFACE.md         Contract for new Tier 3 domains
+      test_rss.jl                 RSS domain tests
+    docs/                         Additional documentation
+      rss-preference-learning.md  RSS preference learning design
     python/                       Python bindings (juliacall, Python >=3.11)
     papers/                       Publication (credence.tex)
 
@@ -331,7 +354,7 @@ Constructors: `CategoricalMeasure(Finite(vals))` for uniform prior,
 
 ## Architecture
 
-Three-tier architecture. See credence-spec.md for details.
+Three-tier architecture. See SPEC.md for details.
 
 - Tier 1 (src/): DSL core — condition, expect, optimise, voi, TaggedBetaMeasure
 - Tier 2 (src/program_space/): program-space inference — grammars, enumeration, compilation, perturbation
