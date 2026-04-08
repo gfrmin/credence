@@ -1,0 +1,14 @@
+# Logs and benchmark output
+logs/
+*.log
+
+# Python virtualenv (for Jericho)
+.venv/
+__pycache__/
+*.pyc
+
+# Julia artifacts
+*.ji
+
+# Serena MCP (local cache/state)
+.serena/
