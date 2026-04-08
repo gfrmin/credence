@@ -250,6 +250,12 @@ Run tests:
     julia test/test_email_agent.jl      # Email agent domain tests
     julia test/test_rss.jl              # RSS domain tests
 
+Run POMDP agent tests:
+    cd julia/pomdp_agent && julia --project=. -e 'using Pkg; Pkg.test()'
+
+Run the Jericho IF agent:
+    cd julia/pomdp_agent && julia --project=. examples/jericho_agent.jl /path/to/game.z3
+
 Run an example:
     julia -e 'push!(LOAD_PATH, "src"); using Credence; run_dsl(read("examples/coin.bdsl", String))'
 
@@ -324,6 +330,13 @@ Python bindings (python/):
         preferences.jl            Preference learning
         terminals.jl              Seed grammars
         server.jl                 Server interface
+    julia/                        Additional Julia packages
+      pomdp_agent/                POMDP agent (MCTS, factored models, state abstraction)
+        Project.toml              Separate Julia package depending on Credence
+        src/                      BayesianAgents module
+        examples/                 Jericho IF agent, gridworld
+        test/                     55 unit tests
+        CLAUDE.md                 Package-specific guidance
     examples/                     Legacy examples (still functional)
       coin.bdsl                   Biased coin learning
       credence_agent.bdsl         Agent DSL (pure functions, host-driven)

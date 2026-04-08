@@ -146,6 +146,93 @@ def cmd_bench(args: argparse.Namespace) -> None:
         print(format_reliability_table(router.learned_reliability))
 
 
+def cmd_eval_search(args: argparse.Namespace) -> None:
+    """Run the search provider evaluation benchmark."""
+    from credence_router.benchmarks.search_eval import (
+        QUERY_BANK,
+        format_category_table,
+        format_eval_table,
+        format_provider_table,
+        run_search_eval,
+    )
+    from credence_router.tool import SearchTool
+
+    search_tools: list[SearchTool] = []
+    providers = args.providers.split(",") if args.providers else ["brave", "perplexity", "tavily"]
+
+    if "brave" in providers and os.environ.get("BRAVE_API_KEY"):
+        from credence_router.tools.web.brave import BraveSearchTool
+        search_tools.append(BraveSearchTool())
+    if "perplexity" in providers and os.environ.get("PERPLEXITY_API_KEY"):
+        from credence_router.tools.web.perplexity import PerplexitySearchTool
+        search_tools.append(PerplexitySearchTool())
+    if "tavily" in providers and os.environ.get("TAVILY_API_KEY"):
+        from credence_router.tools.web.tavily import TavilySearchTool
+        search_tools.append(TavilySearchTool())
+
+    if not search_tools:
+        print(
+            "Error: no search provider API keys found.\n"
+            "Set at least one of: BRAVE_API_KEY, PERPLEXITY_API_KEY, TAVILY_API_KEY",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    print(f"Providers: {[t.name for t in search_tools]}")
+    print(f"Queries: {len(QUERY_BANK)}, Seeds: {args.seeds}")
+    print()
+
+    all_seed_results = []
+    for seed in range(args.seeds):
+        print(f"\n{'='*60}")
+        print(f"Seed {seed}")
+        print(f"{'='*60}")
+        results = run_search_eval(
+            search_tools,
+            seed=seed,
+            verbose=not args.quiet,
+        )
+        all_seed_results.append(results)
+
+    # Aggregate across seeds
+    if args.seeds == 1:
+        results = all_seed_results[0]
+        print(f"\n\n{'='*60}")
+        print("Results")
+        print(f"{'='*60}\n")
+        print(format_eval_table(results))
+        print()
+        print(format_category_table(results))
+        print()
+        print(format_provider_table(results))
+    else:
+        # Average across seeds
+        import numpy as np
+
+        solver_names = [r.solver_name for r in all_seed_results[0]]
+        print(f"\n\n{'='*60}")
+        print(f"Aggregated across {args.seeds} seeds")
+        print(f"{'='*60}\n")
+
+        header = f"{'Solver':<22s} {'Quality':>12s} {'Cost$':>12s}"
+        print(header)
+        print("-" * len(header))
+        for i, name in enumerate(solver_names):
+            qualities = [seed_results[i].mean_quality for seed_results in all_seed_results]
+            costs = [seed_results[i].total_cost for seed_results in all_seed_results]
+            print(
+                f"{name:<22s} "
+                f"{np.mean(qualities):>5.2f}+-{np.std(qualities):>4.2f} "
+                f"${np.mean(costs):>5.3f}+-{np.std(costs):>4.3f}"
+            )
+
+
+def cmd_serve(args: argparse.Namespace) -> None:
+    """Start the HTTP server."""
+    from credence_router.server import serve
+    serve(host=args.host, port=args.port)
+
+
 def cmd_route(args: argparse.Namespace) -> None:
     """Route a single question interactively."""
     from credence_router.router import Router
@@ -215,11 +302,26 @@ def main() -> None:
         "--simulate", action="store_true", help="Force simulated tools (no API calls)"
     )
 
+    # eval-search subcommand
+    eval_search = subparsers.add_parser("eval-search", help="Evaluate search provider routing")
+    eval_search.add_argument("--seeds", type=int, default=1, help="Number of seeds to run")
+    eval_search.add_argument("--providers", type=str, default=None, help="Comma-separated providers")
+    eval_search.add_argument("--quiet", action="store_true", help="Suppress per-query output")
+
+    # serve subcommand
+    serve = subparsers.add_parser("serve", help="Start HTTP server for search routing")
+    serve.add_argument("--host", type=str, default="0.0.0.0", help="Bind host")
+    serve.add_argument("--port", type=int, default=8377, help="Bind port")
+
     args = parser.parse_args()
     if args.command == "bench":
         cmd_bench(args)
     elif args.command == "route":
         cmd_route(args)
+    elif args.command == "eval-search":
+        cmd_eval_search(args)
+    elif args.command == "serve":
+        cmd_serve(args)
     else:
         parser.print_help()
         sys.exit(1)

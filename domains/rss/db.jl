@@ -22,7 +22,7 @@ function fetch_feeds(conn)::Vector{Tuple{Int, String}}
         FROM feeds f
         ORDER BY f.id
     """)
-    [(parse(Int, row[1]), row[2]) for row in result]
+    [(Int(row[1]), row[2]) for row in result]
 end
 
 function fetch_categories(conn)::Vector{String}
@@ -37,7 +37,7 @@ end
 
 function fetch_feed_priorities(conn)::Dict{Int, Int}
     result = execute(conn, "SELECT feed_id, COALESCE(priority, 2) FROM feed_config")
-    Dict(parse(Int, row[1]) => parse(Int, row[2]) for row in result)
+    Dict(Int(row[1]) => Int(row[2]) for row in result)
 end
 
 # ── Article loading ──
@@ -75,13 +75,13 @@ function fetch_unread_articles(conn, priorities::Dict{Int, Int})::Vector{Article
     """)
 
     # Batch-load tags for all unread entries
-    entry_ids = [parse(Int, row[1]) for row in result]
+    entry_ids = [Int(row[1]) for row in result]
     tags_by_entry = _fetch_tags_batch(conn, entry_ids)
 
     articles = Article[]
     for row in result
-        eid = parse(Int, row[1])
-        fid = parse(Int, row[2])
+        eid = Int(row[1])
+        fid = Int(row[2])
         content_text = something(row[8], "")
         content_html = something(row[9], "")
 
@@ -110,7 +110,7 @@ function _fetch_tags_batch(conn, entry_ids::Vector{Int})::Dict{Int, Vector{Strin
     result = execute(conn, "SELECT entry_id, tag FROM article_tags WHERE entry_id IN ($ids_str)")
     tags = Dict{Int, Vector{String}}()
     for row in result
-        eid = parse(Int, row[1])
+        eid = Int(row[1])
         push!(get!(tags, eid, String[]), row[2])
     end
     tags
@@ -158,7 +158,7 @@ function fetch_read_events_since(conn, since::DateTime)::Vector{ReadEvent}
         WHERE read_at > '$(Dates.format(since, dateformat"yyyy-mm-dd HH:MM:SS"))'
         ORDER BY read_at ASC
     """)
-    [ReadEvent(parse(Int, row[1]), _parse_pg_timestamp(row[2])) for row in result]
+    [ReadEvent(Int(row[1]), _parse_pg_timestamp(row[2])) for row in result]
 end
 
 """
@@ -178,7 +178,7 @@ function fetch_dismiss_events_since(conn, since::DateTime)::Vector{DismissEvent}
               SELECT entry_id FROM read_events WHERE read_at > '$since_str'
           )
     """)
-    [DismissEvent(parse(Int, row[1])) for row in result]
+    [DismissEvent(Int(row[1])) for row in result]
 end
 
 """
@@ -188,7 +188,7 @@ All historical read events, for bootstrapping.
 """
 function fetch_all_read_events(conn)::Vector{ReadEvent}
     result = execute(conn, "SELECT entry_id, read_at FROM read_events ORDER BY read_at ASC")
-    [ReadEvent(parse(Int, row[1]), _parse_pg_timestamp(row[2])) for row in result]
+    [ReadEvent(Int(row[1]), _parse_pg_timestamp(row[2])) for row in result]
 end
 
 """
@@ -225,8 +225,8 @@ function fetch_article_features_for_entries(
     features = Dict{Int, Dict{Symbol, Float64}}()
 
     for row in result
-        eid = parse(Int, row[1])
-        fid = parse(Int, row[2])
+        eid = Int(row[1])
+        fid = Int(row[2])
         content_text = something(row[8], "")
         content_html = something(row[9], "")
 
