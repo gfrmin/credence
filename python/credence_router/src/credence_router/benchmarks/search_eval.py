@@ -59,7 +59,12 @@ QUERY_BANK: list[SearchQuery] = [
     SearchQuery("what is the half-life of carbon-14", "factual", ["5,730 years"]),
     SearchQuery("largest ocean on Earth by area", "factual", ["Pacific Ocean"]),
     SearchQuery("melting point of iron in celsius", "factual", ["1538 degrees celsius"]),
-    # --- recent_events (10) ---
+    SearchQuery("what is the deepest point in the ocean", "factual", ["Mariana Trench", "Challenger Deep", "~11,000 meters"]),
+    SearchQuery("who painted the Mona Lisa", "factual", ["Leonardo da Vinci"]),
+    SearchQuery("what is the atomic number of gold", "factual", ["79"]),
+    SearchQuery("how long is the Great Wall of China", "factual", ["~21,196 km", "various measurements"]),
+    SearchQuery("what year did the Berlin Wall fall", "factual", ["1989"]),
+    # --- recent_events (20) ---
     SearchQuery("latest Federal Reserve interest rate decision 2026", "recent_events", ["most recent rate", "date of decision"]),
     SearchQuery("who won the 2026 FIFA World Cup", "recent_events", ["winning country or upcoming status"]),
     SearchQuery("latest SpaceX Starship launch results", "recent_events", ["most recent launch date", "success/failure"]),
@@ -70,7 +75,17 @@ QUERY_BANK: list[SearchQuery] = [
     SearchQuery("who is the current UN Secretary General", "recent_events", ["name", "term information"]),
     SearchQuery("latest iPhone model released", "recent_events", ["model name/number", "key features"]),
     SearchQuery("recent major AI model releases 2026", "recent_events", ["model names", "companies", "capabilities"]),
-    # --- technical (10) ---
+    SearchQuery("latest Mars rover discoveries 2026", "recent_events", ["rover name", "findings", "date"]),
+    SearchQuery("recent changes to EU AI regulation", "recent_events", ["EU AI Act", "implementation timeline"]),
+    SearchQuery("who won the latest Grammy for Album of the Year", "recent_events", ["artist name", "album title", "year"]),
+    SearchQuery("current price of gold per ounce", "recent_events", ["price in USD", "recent date"]),
+    SearchQuery("latest developments in nuclear fusion energy 2026", "recent_events", ["facility or project", "milestone achieved"]),
+    SearchQuery("recent major tech company layoffs 2026", "recent_events", ["company names", "numbers affected"]),
+    SearchQuery("current state of Ukraine conflict 2026", "recent_events", ["recent developments", "peace negotiations"]),
+    SearchQuery("latest James Webb Space Telescope discoveries", "recent_events", ["discovery details", "date published"]),
+    SearchQuery("who won the 2026 Australian Open tennis", "recent_events", ["winner name", "final score"]),
+    SearchQuery("latest global ocean temperature records 2026", "recent_events", ["temperature anomaly", "record broken", "data source"]),
+    # --- technical (20) ---
     SearchQuery("how to use Rust async traits", "technical", ["async fn in traits", "syntax example", "stabilization status"]),
     SearchQuery("PostgreSQL JSONB indexing strategies", "technical", ["GIN index", "expression index", "performance considerations"]),
     SearchQuery("kubernetes pod autoscaling based on custom metrics", "technical", ["HPA configuration", "metrics server", "custom metrics adapter"]),
@@ -81,7 +96,17 @@ QUERY_BANK: list[SearchQuery] = [
     SearchQuery("implementing OAuth 2.0 PKCE flow", "technical", ["code verifier", "code challenge", "authorization endpoint"]),
     SearchQuery("eBPF for network monitoring tutorial", "technical", ["BPF programs", "maps", "tracing"]),
     SearchQuery("how to optimize Docker image size", "technical", ["multi-stage builds", "alpine base", "layer caching"]),
-    # --- synthesis (10) ---
+    SearchQuery("Zig vs Rust for systems programming", "technical", ["memory safety", "compile times", "error handling"]),
+    SearchQuery("how to set up a Nix flake for a Python project", "technical", ["flake.nix structure", "devShell", "buildInputs"]),
+    SearchQuery("Linux io_uring tutorial for async file IO", "technical", ["submission queue", "completion queue", "liburing"]),
+    SearchQuery("how to write a custom Prometheus exporter in Go", "technical", ["collector interface", "metrics types", "registration"]),
+    SearchQuery("SQLite WAL mode vs journal mode", "technical", ["concurrent readers", "write performance", "crash recovery"]),
+    SearchQuery("implementing consistent hashing for distributed cache", "technical", ["ring structure", "virtual nodes", "rebalancing"]),
+    SearchQuery("how to use DuckDB for analytics on Parquet files", "technical", ["query syntax", "performance", "memory management"]),
+    SearchQuery("Tailwind CSS vs vanilla CSS for large projects", "technical", ["bundle size", "maintainability", "utility classes"]),
+    SearchQuery("how to deploy a Julia application in production", "technical", ["PackageCompiler", "sysimage", "Docker"]),
+    SearchQuery("implementing rate limiting with Redis sliding window", "technical", ["ZADD", "ZRANGEBYSCORE", "atomicity"]),
+    # --- synthesis (20) ---
     SearchQuery("pros and cons of microservices vs monolith architecture", "synthesis", ["scalability", "complexity", "team size considerations"]),
     SearchQuery("comparison of React vs Svelte for web development 2026", "synthesis", ["performance", "developer experience", "ecosystem"]),
     SearchQuery("should I use SQL or NoSQL for my application", "synthesis", ["ACID vs eventual consistency", "query patterns", "scale considerations"]),
@@ -92,12 +117,37 @@ QUERY_BANK: list[SearchQuery] = [
     SearchQuery("privacy implications of large language models", "synthesis", ["training data", "memorization", "regulatory considerations"]),
     SearchQuery("containerization vs serverless for startup backends", "synthesis", ["cost at scale", "cold starts", "vendor lock-in"]),
     SearchQuery("when to use GraphQL vs REST API", "synthesis", ["overfetching", "schema complexity", "caching"]),
-    # --- local/niche (5) ---
+    SearchQuery("is Kubernetes worth it for small teams", "synthesis", ["operational overhead", "alternatives", "team size threshold"]),
+    SearchQuery("impact of AI code assistants on developer productivity", "synthesis", ["productivity studies", "code quality", "learning effects"]),
+    SearchQuery("buy vs build decision for internal tools", "synthesis", ["total cost of ownership", "customization needs", "maintenance burden"]),
+    SearchQuery("edge computing vs cloud computing tradeoffs", "synthesis", ["latency", "bandwidth costs", "data sovereignty"]),
+    SearchQuery("monorepo vs polyrepo for microservices", "synthesis", ["tooling requirements", "CI/CD complexity", "code sharing"]),
+    SearchQuery("static typing vs dynamic typing for team productivity", "synthesis", ["refactoring safety", "development speed", "onboarding"]),
+    SearchQuery("open source vs proprietary LLMs for enterprise", "synthesis", ["data privacy", "cost", "customization", "support"]),
+    SearchQuery("SPA vs MPA vs islands architecture for web apps", "synthesis", ["initial load", "SEO", "interactivity", "complexity"]),
+    SearchQuery("is WebAssembly replacing JavaScript", "synthesis", ["use cases", "performance gaps", "ecosystem maturity"]),
+    SearchQuery("pros and cons of event sourcing vs CRUD", "synthesis", ["audit trail", "complexity", "eventual consistency"]),
+    # --- local/niche (20) ---
     SearchQuery("best ramen restaurants in Shibuya Tokyo", "local", ["specific restaurant names", "specialties"]),
     SearchQuery("Tel Aviv coworking spaces with monthly plans", "local", ["specific space names", "pricing", "locations"]),
     SearchQuery("hiking trails near Queenstown New Zealand difficulty levels", "local", ["trail names", "difficulty ratings", "distances"]),
     SearchQuery("specialty coffee roasters in Melbourne Australia", "local", ["roaster names", "locations", "styles"]),
     SearchQuery("public transportation from Zurich airport to city center", "local", ["options", "duration", "cost"]),
+    SearchQuery("best vegetarian restaurants in Chiang Mai Thailand", "local", ["restaurant names", "cuisine types", "price range"]),
+    SearchQuery("Berlin techno clubs open on weeknights", "local", ["club names", "opening hours", "entry policy"]),
+    SearchQuery("surf spots near Lisbon Portugal for beginners", "local", ["beach names", "wave conditions", "accessibility"]),
+    SearchQuery("public libraries with coworking in Amsterdam", "local", ["library names", "facilities", "opening hours"]),
+    SearchQuery("day trips from Kyoto by train under 2 hours", "local", ["destinations", "train lines", "travel time"]),
+    SearchQuery("craft beer breweries in Portland Oregon", "local", ["brewery names", "specialties", "tasting rooms"]),
+    SearchQuery("best bookshops in Buenos Aires", "local", ["shop names", "specialties", "neighborhoods"]),
+    SearchQuery("rock climbing gyms in Seoul South Korea", "local", ["gym names", "bouldering vs lead", "day pass prices"]),
+    SearchQuery("farmers markets in Copenhagen Denmark schedule", "local", ["market names", "days", "locations"]),
+    SearchQuery("budget accommodation near Machu Picchu", "local", ["hostel/hotel names", "price range", "Aguas Calientes"]),
+    SearchQuery("skateparks in Barcelona with bowls", "local", ["park names", "features", "locations"]),
+    SearchQuery("vegan bakeries in London Shoreditch area", "local", ["bakery names", "specialties", "addresses"]),
+    SearchQuery("hot springs near Reykjavik Iceland not Blue Lagoon", "local", ["spring names", "prices", "distance"]),
+    SearchQuery("jazz clubs in New Orleans French Quarter", "local", ["club names", "live music schedule", "cover charge"]),
+    SearchQuery("indoor swimming pools in Vienna open to public", "local", ["pool names", "opening hours", "entry fee"]),
 ]
 
 
@@ -780,6 +830,33 @@ def sweep_preferences(
 # ---------------------------------------------------------------------------
 
 
+def _format_category_routing(credence: EvalResult, fallback: EvalResult) -> str:
+    """Per-category provider distribution + quality comparison."""
+    # Group credence results by category
+    by_cat: dict[str, list[QueryResult]] = {}
+    for r in credence.results:
+        by_cat.setdefault(r.category, []).append(r)
+
+    fb_quality = fallback.quality_by_category()
+
+    parts: list[str] = []
+    for cat in sorted(by_cat):
+        results = by_cat[cat]
+        providers: dict[str, int] = {}
+        for r in results:
+            providers[r.provider] = providers.get(r.provider, 0) + 1
+        routing = ", ".join(
+            f"{p}={n}" for p, n in sorted(providers.items(), key=lambda x: -x[1])
+        )
+        avg_q = sum(r.scores.get("composite", 0.0) for r in results) / len(results)
+        fb_q = fb_quality.get(cat, 0.0)
+        delta = avg_q - fb_q
+        sign = "+" if delta >= 0 else ""
+        parts.append(f"    {cat:<16s} {routing:<24s} q={avg_q:.1f} (vs fallback {fb_q:.1f}, {sign}{delta:.1f})")
+
+    return "  routing by category:\n" + "\n".join(parts)
+
+
 def format_frontier_table(frontier: PreferenceFrontier) -> str:
     """Format the preference frontier as an actionable table for OpenClaw."""
     lines: list[str] = []
@@ -834,10 +911,19 @@ def format_frontier_table(frontier: PreferenceFrontier) -> str:
             diff = c_eu - f_eu
             if diff > 0:
                 lines.append(f"  -> credence wins by {diff:+.4f} EU per query")
+                # Per-category routing breakdown
+                lines.append(_format_category_routing(credence_r, fallback_r))
             elif diff < 0:
                 lines.append(f"  -> openclaw-fallback wins by {-diff:+.4f} EU per query")
             else:
                 lines.append("  -> tie")
+
+            # Learning curve for credence
+            early, late = credence_r.learning_curve(window=15)
+            delta = late - early
+            if abs(delta) > 0.01:
+                sign = "+" if delta >= 0 else ""
+                lines.append(f"  learning: first-15={early:.1f}, last-15={late:.1f} ({sign}{delta:.1f})")
 
         lines.append("")
 
