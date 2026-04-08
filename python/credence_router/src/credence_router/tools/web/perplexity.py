@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import os
 
 import httpx
@@ -9,6 +10,8 @@ import numpy as np
 from numpy.typing import NDArray
 
 from credence_router.tool import SearchResult
+
+log = logging.getLogger(__name__)
 
 PERPLEXITY_API_URL = "https://api.perplexity.ai/chat/completions"
 
@@ -49,33 +52,30 @@ class PerplexitySearchTool:
         return 3.0  # synthesis takes longer
 
     def search(self, query: str) -> SearchResult | None:
-        try:
-            resp = httpx.post(
-                PERPLEXITY_API_URL,
-                json={
-                    "model": self._model,
-                    "messages": [{"role": "user", "content": query}],
-                },
-                headers={
-                    "Authorization": f"Bearer {self._api_key}",
-                    "Content-Type": "application/json",
-                },
-                timeout=self._timeout,
-            )
-            resp.raise_for_status()
-            data = resp.json()
+        resp = httpx.post(
+            PERPLEXITY_API_URL,
+            json={
+                "model": self._model,
+                "messages": [{"role": "user", "content": query}],
+            },
+            headers={
+                "Authorization": f"Bearer {self._api_key}",
+                "Content-Type": "application/json",
+            },
+            timeout=self._timeout,
+        )
+        resp.raise_for_status()
+        data = resp.json()
 
-            text = data["choices"][0]["message"]["content"]
-            citations = data.get("citations", [])
+        text = data["choices"][0]["message"]["content"]
+        citations = data.get("citations", [])
 
-            return SearchResult(
-                text=text,
-                urls=citations,
-                provider="perplexity",
-                raw=data,
-            )
-        except (httpx.HTTPError, KeyError, IndexError, ValueError):
-            return None
+        return SearchResult(
+            text=text,
+            urls=citations,
+            provider="perplexity",
+            raw=data,
+        )
 
     def coverage(self, categories: tuple[str, ...]) -> NDArray[np.float64]:
         return np.array([_DEFAULT_COVERAGE.get(c, 0.5) for c in categories])

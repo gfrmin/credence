@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import os
 
 import httpx
@@ -9,6 +10,8 @@ import numpy as np
 from numpy.typing import NDArray
 
 from credence_router.tool import SearchResult
+
+log = logging.getLogger(__name__)
 
 TAVILY_API_URL = "https://api.tavily.com/search"
 
@@ -51,43 +54,41 @@ class TavilySearchTool:
         return 2.0
 
     def search(self, query: str) -> SearchResult | None:
-        try:
-            resp = httpx.post(
-                TAVILY_API_URL,
-                json={
-                    "query": query,
-                    "max_results": self._max_results,
-                    "search_depth": self._search_depth,
-                    "api_key": self._api_key,
-                },
-                headers={"Content-Type": "application/json"},
-                timeout=self._timeout,
-            )
-            resp.raise_for_status()
-            data = resp.json()
+        resp = httpx.post(
+            TAVILY_API_URL,
+            json={
+                "query": query,
+                "max_results": self._max_results,
+                "search_depth": self._search_depth,
+                "api_key": self._api_key,
+            },
+            headers={"Content-Type": "application/json"},
+            timeout=self._timeout,
+        )
+        resp.raise_for_status()
+        data = resp.json()
 
-            results = data.get("results", [])
-            if not results:
-                return None
-
-            text_parts = []
-            urls = []
-            for r in results:
-                title = r.get("title", "")
-                content = r.get("content", "")
-                url = r.get("url", "")
-                text_parts.append(f"{title}\n{content}")
-                if url:
-                    urls.append(url)
-
-            return SearchResult(
-                text="\n\n".join(text_parts),
-                urls=urls,
-                provider="tavily",
-                raw=data,
-            )
-        except (httpx.HTTPError, KeyError, ValueError):
+        results = data.get("results", [])
+        if not results:
+            log.info("Tavily returned no results for: %s", query)
             return None
+
+        text_parts = []
+        urls = []
+        for r in results:
+            title = r.get("title", "")
+            content = r.get("content", "")
+            url = r.get("url", "")
+            text_parts.append(f"{title}\n{content}")
+            if url:
+                urls.append(url)
+
+        return SearchResult(
+            text="\n\n".join(text_parts),
+            urls=urls,
+            provider="tavily",
+            raw=data,
+        )
 
     def coverage(self, categories: tuple[str, ...]) -> NDArray[np.float64]:
         return np.array([_DEFAULT_COVERAGE.get(c, 0.5) for c in categories])

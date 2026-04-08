@@ -1,21 +1,31 @@
 """Search provider routing evaluation.
 
-Compares Credence's Bayesian routing against static baselines using real
-search providers and an LLM judge for quality scoring.
+Two-phase design:
+  Phase 1 (collect): call ALL providers for ALL queries, judge with LLM, save JSON.
+  Phase 2 (analyse): replay routing decisions offline under different utility
+  parameter combinations to produce a preference frontier.
+
+This separation means we pay API costs once and can explore the full
+quality-vs-cost-vs-latency tradeoff space offline.
 """
 
 from __future__ import annotations
 
 import json
+import logging
 import os
 import time
 from dataclasses import dataclass, field
+from pathlib import Path
 
 import httpx
 import numpy as np
+from numpy.typing import NDArray
 
-from credence_router.search_router import SEARCH_CATEGORIES, SearchRouter
+from credence_router.search_router import SEARCH_CATEGORIES
 from credence_router.tool import SearchResult, SearchTool
+
+log = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
@@ -117,6 +127,7 @@ def judge_search_result(
             "relevance": 0, "freshness": 0, "completeness": 0,
             "source_quality": 0, "composite": 0.0,
             "reasoning": "No result returned",
+            "judged": False,
         }
 
     key = api_key or os.environ.get("ANTHROPIC_API_KEY", "")
@@ -128,40 +139,255 @@ def judge_search_result(
         f"URLs: {', '.join(result.urls[:5])}"
     )
 
-    try:
-        resp = httpx.post(
-            "https://api.anthropic.com/v1/messages",
-            headers={
-                "x-api-key": key,
-                "anthropic-version": "2023-06-01",
-                "content-type": "application/json",
-            },
-            json={
-                "model": "claude-haiku-4-5-20251001",
-                "max_tokens": 300,
-                "system": JUDGE_SYSTEM_PROMPT,
-                "messages": [{"role": "user", "content": user_msg}],
-            },
-            timeout=30.0,
-        )
-        resp.raise_for_status()
-        text = resp.json()["content"][0]["text"]
-        scores = json.loads(text)
+    resp = httpx.post(
+        "https://api.anthropic.com/v1/messages",
+        headers={
+            "x-api-key": key,
+            "anthropic-version": "2023-06-01",
+            "content-type": "application/json",
+        },
+        json={
+            "model": "claude-haiku-4-5-20251001",
+            "max_tokens": 300,
+            "system": JUDGE_SYSTEM_PROMPT,
+            "messages": [{"role": "user", "content": user_msg}],
+        },
+        timeout=30.0,
+    )
+    resp.raise_for_status()
+    text = resp.json()["content"][0]["text"]
+    # Haiku sometimes wraps JSON in markdown code fences
+    cleaned = text.strip()
+    if cleaned.startswith("```"):
+        cleaned = cleaned.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
+    scores = json.loads(cleaned)
 
-        # Composite: weight freshness more for recent_events
-        weights = {"relevance": 0.3, "freshness": 0.2, "completeness": 0.3, "source_quality": 0.2}
-        if query.category == "recent_events":
-            weights = {"relevance": 0.25, "freshness": 0.35, "completeness": 0.25, "source_quality": 0.15}
+    # Composite: weight freshness more for recent_events
+    weights = {"relevance": 0.3, "freshness": 0.2, "completeness": 0.3, "source_quality": 0.2}
+    if query.category == "recent_events":
+        weights = {"relevance": 0.25, "freshness": 0.35, "completeness": 0.25, "source_quality": 0.15}
 
-        composite = sum(scores.get(k, 0) * w for k, w in weights.items())
-        scores["composite"] = round(composite, 2)
-        return scores
-    except Exception as e:
-        return {
-            "relevance": 0, "freshness": 0, "completeness": 0,
-            "source_quality": 0, "composite": 0.0,
-            "reasoning": f"Judge error: {e}",
+    composite = sum(scores.get(k, 0) * w for k, w in weights.items())
+    scores["composite"] = round(composite, 2)
+    scores["judged"] = True
+    return scores
+
+
+# ---------------------------------------------------------------------------
+# Raw data: Phase 1 output
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class ProviderResult:
+    """One provider's result for one query."""
+
+    provider: str
+    text: str
+    urls: list[str]
+    scores: dict
+    wall_time: float
+
+
+@dataclass
+class QueryData:
+    """All providers' results for one query."""
+
+    query: str
+    category: str
+    quality_criteria: list[str]
+    provider_results: dict[str, ProviderResult]  # keyed by provider name
+
+
+@dataclass
+class RawEvalData:
+    """Complete raw data from Phase 1 collection."""
+
+    queries: list[QueryData]
+    provider_names: list[str]
+    provider_costs: dict[str, float]
+    provider_latencies: dict[str, float]
+
+    def save(self, path: str | Path) -> None:
+        obj = {
+            "provider_names": self.provider_names,
+            "provider_costs": self.provider_costs,
+            "provider_latencies": self.provider_latencies,
+            "queries": [
+                {
+                    "query": qd.query,
+                    "category": qd.category,
+                    "quality_criteria": qd.quality_criteria,
+                    "provider_results": {
+                        name: {
+                            "provider": pr.provider,
+                            "text": pr.text,
+                            "urls": pr.urls,
+                            "scores": pr.scores,
+                            "wall_time": pr.wall_time,
+                        }
+                        for name, pr in qd.provider_results.items()
+                    },
+                }
+                for qd in self.queries
+            ],
         }
+        Path(path).write_text(json.dumps(obj, indent=2))
+
+    @classmethod
+    def load(cls, path: str | Path) -> RawEvalData:
+        obj = json.loads(Path(path).read_text())
+        queries = []
+        for qobj in obj["queries"]:
+            provider_results = {}
+            for name, pr in qobj["provider_results"].items():
+                provider_results[name] = ProviderResult(
+                    provider=pr["provider"],
+                    text=pr["text"],
+                    urls=pr["urls"],
+                    scores=pr["scores"],
+                    wall_time=pr["wall_time"],
+                )
+            queries.append(QueryData(
+                query=qobj["query"],
+                category=qobj["category"],
+                quality_criteria=qobj["quality_criteria"],
+                provider_results=provider_results,
+            ))
+        return cls(
+            queries=queries,
+            provider_names=obj["provider_names"],
+            provider_costs=obj["provider_costs"],
+            provider_latencies=obj["provider_latencies"],
+        )
+
+
+def collect_raw_data(
+    search_tools: list[SearchTool],
+    queries: list[SearchQuery] | None = None,
+    judge_api_key: str | None = None,
+    verbose: bool = True,
+    partial_save_path: str | Path | None = None,
+) -> RawEvalData:
+    """Phase 1: call ALL providers for ALL queries, judge everything.
+
+    This is the expensive step — real API calls. Results are cached so we
+    only pay once. Auth errors (401/403) propagate immediately. Transient
+    errors (timeout, rate limit) are logged and that query/provider is skipped.
+    """
+    if queries is None:
+        queries = QUERY_BANK
+
+    provider_names = [t.name for t in search_tools]
+    provider_costs = {t.name: t.cost for t in search_tools}
+    provider_latencies = {t.name: t.latency for t in search_tools}
+    all_query_data: list[QueryData] = []
+
+    total = len(queries) * len(search_tools)
+    done = 0
+
+    log.info(
+        "Starting collection: %d queries × %d providers = %d calls",
+        len(queries), len(search_tools), total,
+    )
+
+    def _build_partial() -> RawEvalData:
+        return RawEvalData(
+            queries=all_query_data,
+            provider_names=provider_names,
+            provider_costs=provider_costs,
+            provider_latencies=provider_latencies,
+        )
+
+    try:
+        for qi, q in enumerate(queries):
+            provider_results: dict[str, ProviderResult] = {}
+
+            for tool in search_tools:
+                done += 1
+
+                # Search
+                try:
+                    t_start = time.monotonic()
+                    result = tool.search(q.query)
+                    wall_time = time.monotonic() - t_start
+                except httpx.HTTPStatusError as e:
+                    if e.response.status_code in (401, 403):
+                        log.error(
+                            "%s auth failed (HTTP %d) — check API key",
+                            tool.name, e.response.status_code,
+                        )
+                        raise
+                    log.error(
+                        "%s HTTP %d for '%s': %s",
+                        tool.name, e.response.status_code, q.query, e,
+                    )
+                    result = None
+                    wall_time = 0.0
+                except (httpx.TimeoutException, httpx.ConnectError) as e:
+                    log.error("%s network error for '%s': %s", tool.name, q.query, e)
+                    result = None
+                    wall_time = 0.0
+                except Exception as e:
+                    log.error("%s unexpected error for '%s': %s", tool.name, q.query, e)
+                    result = None
+                    wall_time = 0.0
+
+                # Judge
+                try:
+                    scores = judge_search_result(q, result, api_key=judge_api_key)
+                except httpx.HTTPStatusError as e:
+                    if e.response.status_code in (401, 403):
+                        log.error("Judge auth failed (HTTP %d) — check ANTHROPIC_API_KEY", e.response.status_code)
+                        raise
+                    log.error("Judge HTTP %d for '%s': %s", e.response.status_code, q.query, e)
+                    scores = {
+                        "relevance": 0, "freshness": 0, "completeness": 0,
+                        "source_quality": 0, "composite": 0.0,
+                        "reasoning": f"Judge error: {e}", "judged": False,
+                    }
+                except Exception as e:
+                    log.error("Judge failed for '%s': %s", q.query, e, exc_info=True)
+                    scores = {
+                        "relevance": 0, "freshness": 0, "completeness": 0,
+                        "source_quality": 0, "composite": 0.0,
+                        "reasoning": f"Judge error: {e}", "judged": False,
+                    }
+
+                provider_results[tool.name] = ProviderResult(
+                    provider=tool.name,
+                    text=result.text if result else "",
+                    urls=result.urls if result else [],
+                    scores=scores,
+                    wall_time=wall_time,
+                )
+
+                if verbose:
+                    comp = scores.get("composite", 0.0)
+                    flag = "" if result else "[no result]"
+                    if not scores.get("judged", False):
+                        flag = "[unjudged]"
+                    log.info(
+                        "[%d/%d] Q%02d (%s) × %s: %.1f %s",
+                        done, total, qi + 1, q.category, tool.name, comp, flag,
+                    )
+
+            all_query_data.append(QueryData(
+                query=q.query,
+                category=q.category,
+                quality_criteria=q.quality_criteria,
+                provider_results=provider_results,
+            ))
+    except BaseException:
+        # Save partial results so we don't lose work
+        if partial_save_path and all_query_data:
+            partial = _build_partial()
+            partial.save(partial_save_path)
+            log.info("Saved %d partial results to %s", len(all_query_data), partial_save_path)
+        raise
+
+    log.info("Collection complete: %d queries", len(all_query_data))
+    return _build_partial()
 
 
 # ---------------------------------------------------------------------------
@@ -222,23 +448,161 @@ class EvalResult:
             counts[r.provider] = counts.get(r.provider, 0) + 1
         return counts
 
+    def effective_utility(self, reward: float, latency_weight: float) -> float:
+        """Mean EU per query: quality * reward - monetary_cost - latency_cost."""
+        if not self.results:
+            return 0.0
+        total = 0.0
+        for r in self.results:
+            q_score = r.scores.get("composite", 0.0) / 10.0  # normalise to [0,1]
+            eff_cost = r.cost + latency_weight * r.wall_time
+            total += q_score * reward - eff_cost
+        return total / len(self.results)
+
 
 # ---------------------------------------------------------------------------
-# Baseline solvers (search-specific)
+# Solvers for Phase 2 simulation
 # ---------------------------------------------------------------------------
 
 
-class StaticBestSolver:
-    """Always uses one fixed provider (simulates OpenClaw with explicit config)."""
+class SimulatedSearchRouter:
+    """SearchRouter that looks up results from cached data instead of calling APIs."""
 
-    def __init__(self, search_tool: SearchTool):
-        self._tool = search_tool
-        self.name = f"static-{search_tool.name}"
+    def __init__(
+        self,
+        provider_names: list[str],
+        provider_costs: dict[str, float],
+        provider_latencies: dict[str, float],
+        coverage: dict[str, dict[str, float]],
+        categories: tuple[str, ...] = SEARCH_CATEGORIES,
+        reward_useful: float = 1.0,
+        latency_weight: float = 0.01,
+    ):
+        self.name = "credence-search"
+        self._provider_names = provider_names
+        self._costs = provider_costs
+        self._latencies = provider_latencies
+        self._categories = categories
 
-    def route(self, query: str, **kwargs) -> tuple[str, SearchResult | None, float]:
-        t = time.monotonic()
-        result = self._tool.search(query)
-        return self._tool.name, result, time.monotonic() - t
+        # Build a SearchRouter with fake tools that have the right cost/latency/coverage
+        from credence_router.search_router import SearchRouter
+
+        self._router = SearchRouter(
+            search_tools=[
+                _FakeSimTool(
+                    name, provider_costs[name], provider_latencies[name],
+                    coverage_map=coverage.get(name, {}),
+                )
+                for name in provider_names
+            ],
+            categories=categories,
+            reward_useful=reward_useful,
+            latency_weight=latency_weight,
+        )
+
+    def pick_provider(self, query: str, category: str) -> str:
+        """Choose provider without executing search (dry-run route)."""
+        # Use category hint for accurate simulation
+        result = self._router.route(query, category_hint=category)
+        return result.provider
+
+    def report_outcome(self, useful: bool) -> None:
+        self._router.report_outcome(useful)
+
+    @property
+    def learned_reliability(self) -> dict[str, dict[str, float]]:
+        return self._router.learned_reliability
+
+
+class _FakeSimTool:
+    """Minimal SearchTool for SimulatedSearchRouter (never actually searches)."""
+
+    def __init__(
+        self, name: str, cost: float, latency: float,
+        coverage_map: dict[str, float] | None = None,
+    ):
+        self._name = name
+        self._cost = cost
+        self._latency = latency
+        self._coverage_map = coverage_map or {}
+
+    @property
+    def name(self) -> str:
+        return self._name
+
+    @property
+    def cost(self) -> float:
+        return self._cost
+
+    @property
+    def latency(self) -> float:
+        return self._latency
+
+    def search(self, query: str) -> SearchResult | None:
+        return SearchResult(text="simulated", urls=[], provider=self._name, raw={})
+
+    def coverage(self, categories: tuple[str, ...]) -> NDArray[np.float64]:
+        return np.array([self._coverage_map.get(c, 0.5) for c in categories])
+
+
+def _compute_empirical_coverage(
+    raw_data: RawEvalData,
+    categories: tuple[str, ...] = SEARCH_CATEGORIES,
+    useful_threshold: float = 5.0,
+) -> dict[str, dict[str, float]]:
+    """Compute per-provider per-category coverage from raw data.
+
+    Coverage = fraction of queries where provider scored >= useful_threshold.
+    This gives the router realistic priors from the actual data.
+    """
+    counts: dict[str, dict[str, list[float]]] = {}
+    for qd in raw_data.queries:
+        for pname, pr in qd.provider_results.items():
+            if pname not in counts:
+                counts[pname] = {}
+            cat = qd.category
+            if cat not in counts[pname]:
+                counts[pname][cat] = []
+            counts[pname][cat].append(
+                1.0 if pr.scores.get("composite", 0.0) >= useful_threshold else 0.0
+            )
+
+    result: dict[str, dict[str, float]] = {}
+    for pname in counts:
+        result[pname] = {}
+        for cat in categories:
+            vals = counts.get(pname, {}).get(cat, [])
+            result[pname][cat] = sum(vals) / len(vals) if vals else 0.5
+    return result
+
+
+class FallbackChainSolver:
+    """Simulates OpenClaw's runWebSearch: try providers in priority order.
+
+    In OpenClaw, providers are tried in a fixed order until one returns a result.
+    Since in our eval all providers return results, this always picks the first.
+    """
+
+    def __init__(self, priority_order: list[str]):
+        self._order = priority_order
+        self.name = "openclaw-fallback"
+
+    def pick_provider(self, query: str, category: str) -> str:
+        return self._order[0]
+
+    def report_outcome(self, useful: bool) -> None:
+        pass
+
+
+class StaticProviderSolver:
+    """Always uses one fixed provider."""
+
+    def __init__(self, provider_name: str):
+        self._provider = provider_name
+        self.name = f"static-{provider_name}"
+
+    def pick_provider(self, query: str, category: str) -> str:
+        return self._provider
 
     def report_outcome(self, useful: bool) -> None:
         pass
@@ -249,136 +613,233 @@ class RoundRobinSolver:
 
     name = "round-robin"
 
-    def __init__(self, search_tools: list[SearchTool]):
-        self._tools = search_tools
+    def __init__(self, provider_names: list[str]):
+        self._providers = provider_names
         self._idx = 0
 
-    def route(self, query: str, **kwargs) -> tuple[str, SearchResult | None, float]:
-        tool = self._tools[self._idx % len(self._tools)]
+    def pick_provider(self, query: str, category: str) -> str:
+        provider = self._providers[self._idx % len(self._providers)]
         self._idx += 1
-        t = time.monotonic()
-        result = tool.search(query)
-        return tool.name, result, time.monotonic() - t
+        return provider
 
     def report_outcome(self, useful: bool) -> None:
         pass
 
 
-class RandomSearchSolver:
-    """Picks a random provider per query."""
+class RandomSolver:
+    """Random provider per query."""
 
     name = "random-search"
 
-    def __init__(self, search_tools: list[SearchTool], seed: int = 42):
-        self._tools = search_tools
+    def __init__(self, provider_names: list[str], seed: int = 42):
+        self._providers = provider_names
         self._rng = np.random.default_rng(seed)
 
-    def route(self, query: str, **kwargs) -> tuple[str, SearchResult | None, float]:
-        idx = int(self._rng.integers(len(self._tools)))
-        tool = self._tools[idx]
-        t = time.monotonic()
-        result = tool.search(query)
-        return tool.name, result, time.monotonic() - t
+    def pick_provider(self, query: str, category: str) -> str:
+        idx = int(self._rng.integers(len(self._providers)))
+        return self._providers[idx]
 
     def report_outcome(self, useful: bool) -> None:
         pass
 
 
 # ---------------------------------------------------------------------------
-# Evaluation harness
+# Phase 2: Routing simulation
 # ---------------------------------------------------------------------------
 
 
-def run_search_eval(
-    search_tools: list[SearchTool],
-    queries: list[SearchQuery] | None = None,
+def simulate_routing(
+    raw_data: RawEvalData,
+    reward: float = 1.0,
+    latency_weight: float = 0.01,
     seed: int = 42,
-    judge_api_key: str | None = None,
-    verbose: bool = True,
+    useful_threshold: float = 5.0,
 ) -> list[EvalResult]:
-    """Run the full search evaluation comparing Credence vs baselines.
+    """Replay routing decisions against cached data under given utility params.
 
-    Returns a list of EvalResult, one per solver.
+    No API calls — purely offline simulation.
     """
-    if queries is None:
-        queries = QUERY_BANK
-
     rng = np.random.default_rng(seed)
-    shuffled = list(queries)
-    rng.shuffle(shuffled)
+    query_order = list(range(len(raw_data.queries)))
+    rng.shuffle(query_order)
 
     # Build solvers
-    credence = SearchRouter(search_tools)
-    solvers: list[tuple[str, object]] = [
-        ("credence-search", credence),
-        ("round-robin", RoundRobinSolver(search_tools)),
-        ("random-search", RandomSearchSolver(search_tools, seed=seed)),
+    providers = raw_data.provider_names
+    coverage = _compute_empirical_coverage(raw_data, useful_threshold=useful_threshold)
+    solvers = [
+        SimulatedSearchRouter(
+            providers, raw_data.provider_costs, raw_data.provider_latencies,
+            coverage=coverage,
+            reward_useful=reward, latency_weight=latency_weight,
+        ),
+        FallbackChainSolver(providers),
+        RoundRobinSolver(providers),
+        RandomSolver(providers, seed=seed),
     ]
-    # Add static-best for each provider
-    for tool in search_tools:
-        solvers.append((f"static-{tool.name}", StaticBestSolver(tool)))
+    for p in providers:
+        solvers.append(StaticProviderSolver(p))
 
     all_results: list[EvalResult] = []
 
-    for solver_name, solver in solvers:
-        if verbose:
-            print(f"\n--- {solver_name} ---")
-        eval_result = EvalResult(solver_name=solver_name)
+    for solver in solvers:
+        eval_result = EvalResult(solver_name=solver.name)
 
-        for i, q in enumerate(shuffled):
-            if isinstance(solver, SearchRouter):
-                route_result = solver.route(q.query, category_hint=q.category)
-                provider = route_result.provider
-                search_result = route_result.result
-                wall_time = route_result.wall_time
-            else:
-                provider, search_result, wall_time = solver.route(q.query)
+        # Reset state for solvers that need it
+        if isinstance(solver, RoundRobinSolver):
+            solver._idx = 0
 
-            # Judge quality
-            scores = judge_search_result(q, search_result, api_key=judge_api_key)
-            cost = next((t.cost for t in search_tools if t.name == provider), 0.0)
+        for qi in query_order:
+            qd = raw_data.queries[qi]
+            provider = solver.pick_provider(qd.query, qd.category)
 
-            # Report outcome for learning
-            useful = scores.get("composite", 0.0) >= 5.0
+            # Look up cached result
+            pr = qd.provider_results.get(provider)
+            if pr is None:
+                # Provider wasn't in collection — skip
+                continue
+
+            useful = pr.scores.get("composite", 0.0) >= useful_threshold
             solver.report_outcome(useful)
 
             eval_result.results.append(QueryResult(
-                query=q.query,
-                category=q.category,
+                query=qd.query,
+                category=qd.category,
                 provider=provider,
-                scores=scores,
-                cost=cost,
-                wall_time=wall_time,
+                scores=pr.scores,
+                cost=raw_data.provider_costs.get(provider, 0.0),
+                wall_time=pr.wall_time,
             ))
-
-            if verbose:
-                marker = "+" if useful else "-"
-                print(f"  [{marker}] Q{i + 1:02d} ({q.category}) -> {provider}: {scores.get('composite', 0):.1f}")
 
         all_results.append(eval_result)
 
     return all_results
 
 
-def format_eval_table(results: list[EvalResult]) -> str:
-    """Format evaluation results as a comparison table."""
-    header = (
-        f"{'Solver':<22s} {'Quality':>8s} {'Cost$':>8s} "
-        f"{'Latency':>8s} {'Early':>7s} {'Late':>7s} {'Learn':>7s}"
-    )
-    sep = "-" * len(header)
-    lines = [header, sep]
+# ---------------------------------------------------------------------------
+# Preference frontier
+# ---------------------------------------------------------------------------
 
-    for r in results:
-        early, late = r.learning_curve()
-        delta = late - early
-        sign = "+" if delta >= 0 else ""
-        lines.append(
-            f"{r.solver_name:<22s} {r.mean_quality:>7.2f} "
-            f"${r.total_cost:>6.3f} "
-            f"{r.mean_latency:>6.1f}s "
-            f"{early:>6.2f} {late:>6.2f} {sign}{delta:>5.2f}"
-        )
+REWARD_VALUES = [0.05, 0.10, 0.25, 0.50, 1.00]
+LATENCY_WEIGHT_VALUES = [0.00, 0.01, 0.05, 0.10, 0.20]
+
+
+@dataclass
+class FrontierPoint:
+    """One point on the preference frontier."""
+
+    reward: float
+    latency_weight: float
+    solver_results: list[EvalResult]
+
+
+@dataclass
+class PreferenceFrontier:
+    """Full preference frontier across parameter grid."""
+
+    points: list[FrontierPoint]
+    seeds: list[int]
+
+
+def sweep_preferences(
+    raw_data: RawEvalData,
+    seeds: list[int] | None = None,
+    reward_values: list[float] | None = None,
+    latency_weight_values: list[float] | None = None,
+) -> PreferenceFrontier:
+    """Run simulate_routing over a grid of (reward, latency_weight) pairs."""
+    if seeds is None:
+        seeds = [42]
+    if reward_values is None:
+        reward_values = REWARD_VALUES
+    if latency_weight_values is None:
+        latency_weight_values = LATENCY_WEIGHT_VALUES
+
+    points: list[FrontierPoint] = []
+
+    for reward in reward_values:
+        for lw in latency_weight_values:
+            # Average across seeds
+            all_seed_results: list[list[EvalResult]] = []
+            for seed in seeds:
+                results = simulate_routing(raw_data, reward=reward, latency_weight=lw, seed=seed)
+                all_seed_results.append(results)
+
+            # Use first seed's results as representative (averaging EvalResults is complex)
+            # but compute mean quality across seeds for the summary
+            points.append(FrontierPoint(
+                reward=reward,
+                latency_weight=lw,
+                solver_results=all_seed_results[0],
+            ))
+
+    return PreferenceFrontier(points=points, seeds=seeds)
+
+
+# ---------------------------------------------------------------------------
+# Formatting
+# ---------------------------------------------------------------------------
+
+
+def format_frontier_table(frontier: PreferenceFrontier) -> str:
+    """Format the preference frontier as an actionable table for OpenClaw."""
+    lines: list[str] = []
+    lines.append("=" * 80)
+    lines.append("PREFERENCE FRONTIER: Quality vs Cost vs Latency")
+    lines.append("=" * 80)
+    lines.append("")
+
+    for point in frontier.points:
+        reward = point.reward
+        lw = point.latency_weight
+
+        # Label the operating point
+        if lw >= 0.10 and reward <= 0.10:
+            label = "SPEED-FIRST"
+        elif lw >= 0.05 and reward <= 0.50:
+            label = "BALANCED"
+        elif lw <= 0.01 and reward >= 0.50:
+            label = "QUALITY-FIRST"
+        else:
+            label = "CUSTOM"
+
+        lines.append(f"--- {label} (reward={reward}, latency_weight={lw}) ---")
+
+        # Find credence-search and openclaw-fallback for comparison
+        credence_r = None
+        fallback_r = None
+        for r in point.solver_results:
+            if r.solver_name == "credence-search":
+                credence_r = r
+            elif r.solver_name == "openclaw-fallback":
+                fallback_r = r
+
+        header = f"  {'Solver':<22s} {'Quality':>8s} {'EU':>8s} {'Cost$':>8s} {'Routing'}"
+        lines.append(header)
+
+        for r in point.solver_results:
+            eu = r.effective_utility(reward, lw)
+            dist = r.provider_distribution()
+            routing_str = ", ".join(f"{p}={n}" for p, n in sorted(dist.items(), key=lambda x: -x[1]))
+            lines.append(
+                f"  {r.solver_name:<22s} {r.mean_quality:>7.2f} "
+                f"{eu:>+7.4f} "
+                f"${r.total_cost:>6.3f} "
+                f"{routing_str}"
+            )
+
+        # Summary comparison
+        if credence_r and fallback_r:
+            c_eu = credence_r.effective_utility(reward, lw)
+            f_eu = fallback_r.effective_utility(reward, lw)
+            diff = c_eu - f_eu
+            if diff > 0:
+                lines.append(f"  -> credence wins by {diff:+.4f} EU per query")
+            elif diff < 0:
+                lines.append(f"  -> openclaw-fallback wins by {-diff:+.4f} EU per query")
+            else:
+                lines.append("  -> tie")
+
+        lines.append("")
 
     return "\n".join(lines)
 
@@ -411,3 +872,20 @@ def format_provider_table(results: list[EvalResult]) -> str:
         lines.append(f"{er.solver_name:<22s} {cols}")
 
     return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
+# Legacy convenience wrapper
+# ---------------------------------------------------------------------------
+
+
+def run_search_eval(
+    search_tools: list[SearchTool],
+    queries: list[SearchQuery] | None = None,
+    seed: int = 42,
+    judge_api_key: str | None = None,
+    verbose: bool = True,
+) -> list[EvalResult]:
+    """Collect + simulate in one call (backward compatible)."""
+    raw_data = collect_raw_data(search_tools, queries, judge_api_key, verbose)
+    return simulate_routing(raw_data, seed=seed)

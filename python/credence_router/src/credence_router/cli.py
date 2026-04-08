@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import logging
 import os
 import sys
 
@@ -146,20 +147,19 @@ def cmd_bench(args: argparse.Namespace) -> None:
         print(format_reliability_table(router.learned_reliability))
 
 
-def cmd_eval_search(args: argparse.Namespace) -> None:
-    """Run the search provider evaluation benchmark."""
-    from credence_router.benchmarks.search_eval import (
-        QUERY_BANK,
-        format_category_table,
-        format_eval_table,
-        format_provider_table,
-        run_search_eval,
-    )
+def _build_search_tools(providers: list[str] | None = None) -> list:
+    """Build search tool list from available providers."""
     from credence_router.tool import SearchTool
 
-    search_tools: list[SearchTool] = []
-    providers = args.providers.split(",") if args.providers else ["brave", "perplexity", "tavily"]
+    if providers is None:
+        providers = ["duckduckgo", "brave", "perplexity", "tavily"]
 
+    search_tools: list[SearchTool] = []
+
+    # DuckDuckGo: always available (no API key)
+    if "duckduckgo" in providers:
+        from credence_router.tools.web.duckduckgo import DuckDuckGoSearchTool
+        search_tools.append(DuckDuckGoSearchTool())
     if "brave" in providers and os.environ.get("BRAVE_API_KEY"):
         from credence_router.tools.web.brave import BraveSearchTool
         search_tools.append(BraveSearchTool())
@@ -170,61 +170,90 @@ def cmd_eval_search(args: argparse.Namespace) -> None:
         from credence_router.tools.web.tavily import TavilySearchTool
         search_tools.append(TavilySearchTool())
 
-    if not search_tools:
+    return search_tools
+
+
+def cmd_eval_search(args: argparse.Namespace) -> None:
+    """Run the search provider evaluation benchmark."""
+    level = logging.DEBUG if args.debug else logging.INFO
+    logging.basicConfig(
+        level=level,
+        format="%(levelname)s %(name)s: %(message)s",
+    )
+
+    from credence_router.benchmarks.search_eval import (
+        QUERY_BANK,
+        RawEvalData,
+        collect_raw_data,
+        format_category_table,
+        format_frontier_table,
+        format_provider_table,
+        simulate_routing,
+        sweep_preferences,
+    )
+
+    # Analyse mode: read cached data, sweep preferences
+    if args.analyse:
+        logging.getLogger(__name__).info("Loading cached data from %s", args.analyse)
+        raw_data = RawEvalData.load(args.analyse)
+        seeds = list(range(args.seeds))
+        frontier = sweep_preferences(raw_data, seeds=seeds)
+        print(format_frontier_table(frontier))
+        return
+
+    # Collect mode: need real search tools
+    providers = args.providers.split(",") if args.providers else None
+    search_tools = _build_search_tools(providers)
+
+    if len(search_tools) < 2:
         print(
-            "Error: no search provider API keys found.\n"
-            "Set at least one of: BRAVE_API_KEY, PERPLEXITY_API_KEY, TAVILY_API_KEY",
+            "Error: need at least 2 search providers for routing evaluation.\n"
+            "DuckDuckGo is always available (no key). Also set one of:\n"
+            "  BRAVE_API_KEY, PERPLEXITY_API_KEY, TAVILY_API_KEY",
             file=sys.stderr,
         )
         sys.exit(1)
 
-    print(f"Providers: {[t.name for t in search_tools]}")
-    print(f"Queries: {len(QUERY_BANK)}, Seeds: {args.seeds}")
-    print()
-
-    all_seed_results = []
-    for seed in range(args.seeds):
-        print(f"\n{'='*60}")
-        print(f"Seed {seed}")
-        print(f"{'='*60}")
-        results = run_search_eval(
-            search_tools,
-            seed=seed,
-            verbose=not args.quiet,
+    if not os.environ.get("ANTHROPIC_API_KEY"):
+        print(
+            "Error: ANTHROPIC_API_KEY required for LLM judge.",
+            file=sys.stderr,
         )
-        all_seed_results.append(results)
+        sys.exit(1)
 
-    # Aggregate across seeds
-    if args.seeds == 1:
-        results = all_seed_results[0]
-        print(f"\n\n{'='*60}")
-        print("Results")
-        print(f"{'='*60}\n")
-        print(format_eval_table(results))
-        print()
-        print(format_category_table(results))
-        print()
-        print(format_provider_table(results))
-    else:
-        # Average across seeds
-        import numpy as np
+    output_path = args.output or "eval_raw_data.json"
 
-        solver_names = [r.solver_name for r in all_seed_results[0]]
-        print(f"\n\n{'='*60}")
-        print(f"Aggregated across {args.seeds} seeds")
-        print(f"{'='*60}\n")
+    logging.getLogger(__name__).info(
+        "Providers: %s, Queries: %d", [t.name for t in search_tools], len(QUERY_BANK),
+    )
 
-        header = f"{'Solver':<22s} {'Quality':>12s} {'Cost$':>12s}"
-        print(header)
-        print("-" * len(header))
-        for i, name in enumerate(solver_names):
-            qualities = [seed_results[i].mean_quality for seed_results in all_seed_results]
-            costs = [seed_results[i].total_cost for seed_results in all_seed_results]
-            print(
-                f"{name:<22s} "
-                f"{np.mean(qualities):>5.2f}+-{np.std(qualities):>4.2f} "
-                f"${np.mean(costs):>5.3f}+-{np.std(costs):>4.3f}"
-            )
+    # Phase 1: Collect
+    raw_data = collect_raw_data(
+        search_tools, verbose=not args.quiet, partial_save_path=output_path,
+    )
+
+    output_path = args.output or "eval_raw_data.json"
+    raw_data.save(output_path)
+    print(f"\nRaw data saved to {output_path}")
+
+    if args.collect_only:
+        print("Done (collect only). Re-run with --analyse to explore preferences.")
+        return
+
+    # Phase 2: Analyse
+    print("\nPhase 2: Sweeping preference frontier...")
+    seeds = list(range(args.seeds))
+    frontier = sweep_preferences(raw_data, seeds=seeds)
+    print(format_frontier_table(frontier))
+
+    # Also show detailed breakdown for the balanced point
+    print("\n" + "=" * 60)
+    print("Detailed breakdown (balanced: reward=0.25, latency_weight=0.05)")
+    print("=" * 60 + "\n")
+    balanced = simulate_routing(raw_data, reward=0.25, latency_weight=0.05, seed=42)
+    print(format_category_table(balanced))
+    print()
+    print(format_provider_table(balanced))
 
 
 def cmd_serve(args: argparse.Namespace) -> None:
@@ -304,9 +333,13 @@ def main() -> None:
 
     # eval-search subcommand
     eval_search = subparsers.add_parser("eval-search", help="Evaluate search provider routing")
-    eval_search.add_argument("--seeds", type=int, default=1, help="Number of seeds to run")
+    eval_search.add_argument("--seeds", type=int, default=3, help="Number of seeds for preference sweep")
     eval_search.add_argument("--providers", type=str, default=None, help="Comma-separated providers")
     eval_search.add_argument("--quiet", action="store_true", help="Suppress per-query output")
+    eval_search.add_argument("--collect-only", action="store_true", help="Only collect data, don't analyse")
+    eval_search.add_argument("--analyse", type=str, default=None, help="Analyse cached JSON data file")
+    eval_search.add_argument("--output", type=str, default=None, help="Output path for raw data JSON")
+    eval_search.add_argument("--debug", action="store_true", help="Enable DEBUG logging")
 
     # serve subcommand
     serve = subparsers.add_parser("serve", help="Start HTTP server for search routing")
