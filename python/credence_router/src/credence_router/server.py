@@ -68,8 +68,10 @@ def startup():
     _search_router = SearchRouter(search_tools, reward_useful=reward, latency_weight=latency_weight)
 
     # --- LLM domain ---
-    if os.environ.get("ANTHROPIC_API_KEY"):
-        _init_llm_domain()
+    has_anthropic = bool(os.environ.get("ANTHROPIC_API_KEY"))
+    has_openai = bool(os.environ.get("OPENAI_API_KEY"))
+    if has_anthropic or has_openai:
+        _init_llm_domain(has_anthropic, has_openai)
 
     # --- State persistence ---
     _state_path = Path(os.environ.get("CREDENCE_STATE_PATH", "credence-state.json"))
@@ -86,8 +88,8 @@ def startup():
     )
 
 
-def _init_llm_domain():
-    """Initialise the LLM routing domain."""
+def _init_llm_domain(has_anthropic: bool, has_openai: bool):
+    """Initialise the LLM routing domain with available providers."""
     global _llm_domain
 
     from credence_agents.inference.voi import ScoringRule, ToolConfig
@@ -95,19 +97,31 @@ def _init_llm_domain():
 
     from credence_router.categories import LLM_CATEGORIES, make_llm_category_infer_fn
     from credence_router.routing_domain import RoutingDomain
-    from credence_router.tools.llm.anthropic import (
-        ANTHROPIC_MODELS,
-        model_cost,
-        model_coverage,
-    )
 
     bridge = CredenceBridge()
 
-    model_names = list(ANTHROPIC_MODELS.keys())
-    model_configs = [
-        ToolConfig(cost=model_cost(m), coverage_by_category=model_coverage(m))
-        for m in model_names
-    ]
+    model_names: list[str] = []
+    model_configs: list[ToolConfig] = []
+
+    if has_anthropic:
+        from credence_router.tools.llm.anthropic import (
+            ANTHROPIC_MODELS,
+            model_cost as a_cost,
+            model_coverage as a_cov,
+        )
+        for m in ANTHROPIC_MODELS:
+            model_names.append(m)
+            model_configs.append(ToolConfig(cost=a_cost(m), coverage_by_category=a_cov(m)))
+
+    if has_openai:
+        from credence_router.tools.llm.openai import (
+            OPENAI_MODELS,
+            model_cost as o_cost,
+            model_coverage as o_cov,
+        )
+        for m in OPENAI_MODELS:
+            model_names.append(m)
+            model_configs.append(ToolConfig(cost=o_cost(m), coverage_by_category=o_cov(m)))
 
     scoring = ScoringRule(
         reward_correct=1.0,
@@ -155,38 +169,40 @@ def route_search(req: RouteRequest):
 # ---------------------------------------------------------------------------
 
 
-@app.post("/v1/messages")
-async def proxy_anthropic_messages(request: Request):
-    """Proxy Anthropic Messages API with Bayesian model routing.
+def _get_llm_provider_module(model_name: str):
+    """Get the right provider module for a model name."""
+    from credence_router.tools.llm import anthropic as anthropic_mod
+    from credence_router.tools.llm import openai as openai_mod
 
-    Receives an Anthropic-format request, classifies the query,
-    EU-maximises over available models, swaps the model field,
-    forwards to Anthropic, and streams the response back.
-    """
+    if model_name.startswith("claude-"):
+        return anthropic_mod
+    if model_name.startswith("gpt-"):
+        return openai_mod
+    # Default to anthropic
+    return anthropic_mod
+
+
+async def _proxy_llm(request: Request, extract_fn):
+    """Shared LLM proxy logic for both Anthropic and OpenAI endpoints."""
     if _llm_domain is None:
-        return {"error": "LLM domain not initialised (set ANTHROPIC_API_KEY)"}, 503
-
-    from credence_router.tools.llm.anthropic import (
-        extract_user_message,
-        forward_streaming,
-    )
+        return {"error": "LLM domain not initialised (set ANTHROPIC_API_KEY or OPENAI_API_KEY)"}, 503
 
     body = await request.body()
-    user_message = extract_user_message(body)
+    user_message = extract_fn(body)
 
     # Route: classify + EU-maximise
     decision = _llm_domain.route(user_message)
     log.info("LLM routing: '%s...' → %s", user_message[:50], decision.provider_name)
 
-    # Stream response from selected model
+    provider_mod = _get_llm_provider_module(decision.provider_name)
+
     async def generate():
         observation = None
-        async for chunk, obs in forward_streaming(body, decision.provider_name):
+        async for chunk, obs in provider_mod.forward_streaming(body, decision.provider_name):
             if obs is not None:
                 observation = obs
             else:
                 yield chunk
-        # Update beliefs after stream completes
         if observation is not None:
             _llm_domain.report_outcome(observation)
 
@@ -198,6 +214,20 @@ async def proxy_anthropic_messages(request: Request):
             "X-Credence-Reasoning": decision.reasoning.replace("\n", " | "),
         },
     )
+
+
+@app.post("/v1/messages")
+async def proxy_anthropic_messages(request: Request):
+    """Proxy Anthropic Messages API with Bayesian model routing."""
+    from credence_router.tools.llm.anthropic import extract_user_message
+    return await _proxy_llm(request, extract_user_message)
+
+
+@app.post("/v1/chat/completions")
+async def proxy_openai_completions(request: Request):
+    """Proxy OpenAI Chat Completions API with Bayesian model routing."""
+    from credence_router.tools.llm.openai import extract_user_message
+    return await _proxy_llm(request, extract_user_message)
 
 
 # ---------------------------------------------------------------------------
