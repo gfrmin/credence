@@ -2,6 +2,10 @@
 
 Unified proxy routing both search and LLM calls via EU maximisation.
 One process, one port, one learned state.
+
+LLM: single /v1/chat/completions endpoint (OpenAI format). Routes across
+ALL providers (Anthropic, OpenAI, Google) via their OpenAI-compatible
+endpoints. The client sends one request; the proxy picks the best model.
 """
 
 from __future__ import annotations
@@ -43,7 +47,7 @@ class OutcomeRequest(BaseModel):
 def startup():
     global _search_router, _llm_domain, _state_path
 
-    # --- Search domain (existing) ---
+    # --- Search domain ---
     from credence_router.search_router import SearchRouter
     from credence_router.tool import SearchTool
     from credence_router.tools.web.duckduckgo import DuckDuckGoSearchTool
@@ -68,10 +72,7 @@ def startup():
     _search_router = SearchRouter(search_tools, reward_useful=reward, latency_weight=latency_weight)
 
     # --- LLM domain ---
-    has_anthropic = bool(os.environ.get("ANTHROPIC_API_KEY"))
-    has_openai = bool(os.environ.get("OPENAI_API_KEY"))
-    if has_anthropic or has_openai:
-        _init_llm_domain(has_anthropic, has_openai)
+    _init_llm_domain()
 
     # --- State persistence ---
     _state_path = Path(os.environ.get("CREDENCE_STATE_PATH", "credence-state.json"))
@@ -84,13 +85,20 @@ def startup():
     log.info(
         "Credence proxy started: search=%s, llm=%s",
         [t.name for t in search_tools],
-        "enabled" if _llm_domain else "disabled (no ANTHROPIC_API_KEY)",
+        _llm_domain.provider_names if _llm_domain else "disabled (no API keys)",
     )
 
 
-def _init_llm_domain(has_anthropic: bool, has_openai: bool):
-    """Initialise the LLM routing domain with available providers."""
+def _init_llm_domain():
+    """Initialise the LLM routing domain with all available providers."""
     global _llm_domain
+
+    from credence_router.tools.llm.provider import available_models, model_cost
+
+    models = available_models()
+    if not models:
+        log.info("No LLM API keys found — LLM routing disabled")
+        return
 
     from credence_agents.inference.voi import ScoringRule, ToolConfig
     from credence_agents.julia_bridge import CredenceBridge
@@ -100,28 +108,11 @@ def _init_llm_domain(has_anthropic: bool, has_openai: bool):
 
     bridge = CredenceBridge()
 
-    model_names: list[str] = []
-    model_configs: list[ToolConfig] = []
-
-    if has_anthropic:
-        from credence_router.tools.llm.anthropic import (
-            ANTHROPIC_MODELS,
-            model_cost as a_cost,
-            model_coverage as a_cov,
-        )
-        for m in ANTHROPIC_MODELS:
-            model_names.append(m)
-            model_configs.append(ToolConfig(cost=a_cost(m), coverage_by_category=a_cov(m)))
-
-    if has_openai:
-        from credence_router.tools.llm.openai import (
-            OPENAI_MODELS,
-            model_cost as o_cost,
-            model_coverage as o_cov,
-        )
-        for m in OPENAI_MODELS:
-            model_names.append(m)
-            model_configs.append(ToolConfig(cost=o_cost(m), coverage_by_category=o_cov(m)))
+    model_names = [m.name for m in models]
+    model_configs = [
+        ToolConfig(cost=model_cost(m), coverage_by_category=m.coverage)
+        for m in models
+    ]
 
     scoring = ScoringRule(
         reward_correct=1.0,
@@ -141,7 +132,7 @@ def _init_llm_domain(has_anthropic: bool, has_openai: bool):
 
 
 # ---------------------------------------------------------------------------
-# Search endpoints (existing)
+# Search endpoint
 # ---------------------------------------------------------------------------
 
 
@@ -165,40 +156,33 @@ def route_search(req: RouteRequest):
 
 
 # ---------------------------------------------------------------------------
-# LLM proxy endpoint
+# LLM proxy — ONE endpoint, ALL providers
 # ---------------------------------------------------------------------------
 
 
-def _get_llm_provider_module(model_name: str):
-    """Get the right provider module for a model name."""
-    from credence_router.tools.llm import anthropic as anthropic_mod
-    from credence_router.tools.llm import openai as openai_mod
+@app.post("/v1/chat/completions")
+async def proxy_chat_completions(request: Request):
+    """Proxy OpenAI Chat Completions format with Bayesian model routing.
 
-    if model_name.startswith("claude-"):
-        return anthropic_mod
-    if model_name.startswith("gpt-"):
-        return openai_mod
-    # Default to anthropic
-    return anthropic_mod
-
-
-async def _proxy_llm(request: Request, extract_fn):
-    """Shared LLM proxy logic for both Anthropic and OpenAI endpoints."""
+    Accepts OpenAI format. Routes across ALL providers (Anthropic, OpenAI, etc.)
+    via their OpenAI-compatible endpoints. Picks the best model for the query,
+    streams the response back, and updates beliefs from the outcome.
+    """
     if _llm_domain is None:
-        return {"error": "LLM domain not initialised (set ANTHROPIC_API_KEY or OPENAI_API_KEY)"}, 503
+        return {"error": "LLM domain not initialised. Set ANTHROPIC_API_KEY and/or OPENAI_API_KEY."}, 503
+
+    from credence_router.tools.llm.provider import extract_user_message, forward_streaming
 
     body = await request.body()
-    user_message = extract_fn(body)
+    user_message = extract_user_message(body)
 
-    # Route: classify + EU-maximise
+    # Route: classify + EU-maximise across all models from all providers
     decision = _llm_domain.route(user_message)
     log.info("LLM routing: '%s...' → %s", user_message[:50], decision.provider_name)
 
-    provider_mod = _get_llm_provider_module(decision.provider_name)
-
     async def generate():
         observation = None
-        async for chunk, obs in provider_mod.forward_streaming(body, decision.provider_name):
+        async for chunk, obs in forward_streaming(body, decision.provider_name):
             if obs is not None:
                 observation = obs
             else:
@@ -210,24 +194,10 @@ async def _proxy_llm(request: Request, extract_fn):
         generate(),
         media_type="text/event-stream",
         headers={
-            "X-Credence-Provider": decision.provider_name,
+            "X-Credence-Model": decision.provider_name,
             "X-Credence-Reasoning": decision.reasoning.replace("\n", " | "),
         },
     )
-
-
-@app.post("/v1/messages")
-async def proxy_anthropic_messages(request: Request):
-    """Proxy Anthropic Messages API with Bayesian model routing."""
-    from credence_router.tools.llm.anthropic import extract_user_message
-    return await _proxy_llm(request, extract_user_message)
-
-
-@app.post("/v1/chat/completions")
-async def proxy_openai_completions(request: Request):
-    """Proxy OpenAI Chat Completions API with Bayesian model routing."""
-    from credence_router.tools.llm.openai import extract_user_message
-    return await _proxy_llm(request, extract_user_message)
 
 
 # ---------------------------------------------------------------------------
@@ -242,7 +212,9 @@ def report_outcome(req: OutcomeRequest, domain: str = "search"):
         _search_router.report_outcome(req.useful)
     elif domain == "llm" and _llm_domain is not None:
         from credence_router.routing_domain import Observation
-        _llm_domain.report_outcome(Observation(completed=True, error_type=None if req.useful else "user_reported"))
+        _llm_domain.report_outcome(
+            Observation(completed=True, error_type=None if req.useful else "user_reported")
+        )
     if _state_path:
         _search_router.save_state(_state_path)
     return {"status": "updated", "domain": domain}
@@ -250,9 +222,7 @@ def report_outcome(req: OutcomeRequest, domain: str = "search"):
 
 @app.get("/state")
 def get_state():
-    state = {
-        "search": _search_router.learned_reliability,
-    }
+    state = {"search": _search_router.learned_reliability}
     if _llm_domain is not None:
         state["llm"] = _llm_domain.learned_reliability
     return state
@@ -260,9 +230,7 @@ def get_state():
 
 @app.get("/health")
 def health():
-    providers = {
-        "search": list(_search_router.learned_reliability.keys()),
-    }
+    providers = {"search": list(_search_router.learned_reliability.keys())}
     if _llm_domain is not None:
         providers["llm"] = _llm_domain.provider_names
     return {"status": "ok", "providers": providers}

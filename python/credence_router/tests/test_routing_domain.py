@@ -9,13 +9,11 @@ import pytest
 
 from credence_router.categories import LLM_CATEGORIES, make_llm_category_infer_fn
 from credence_router.routing_domain import Observation, RouteDecision
-from credence_router.tools.llm.anthropic import (
-    ANTHROPIC_MODELS,
+from credence_router.tools.llm.provider import (
+    ALL_MODELS,
     compute_cost,
     extract_user_message,
     model_cost,
-    model_coverage,
-    resolve_model,
 )
 
 
@@ -90,63 +88,60 @@ class TestLLMCategoryInference:
 # ---------------------------------------------------------------------------
 
 
-class TestAnthropicProvider:
-    def test_resolve_model_alias(self):
-        assert resolve_model("haiku").startswith("claude-haiku")
-        assert resolve_model("sonnet").startswith("claude-sonnet")
-        assert resolve_model("opus").startswith("claude-opus")
-
-    def test_resolve_model_passthrough(self):
-        full = "claude-haiku-4-5-20251001"
-        assert resolve_model(full) == full
+class TestLLMProvider:
+    def test_all_models_have_specs(self):
+        for name, spec in ALL_MODELS.items():
+            assert spec.name == name
+            assert spec.provider in ("anthropic", "openai")
 
     def test_model_cost_positive(self):
-        for model in ANTHROPIC_MODELS:
-            assert model_cost(model) > 0
+        for spec in ALL_MODELS.values():
+            assert model_cost(spec) > 0
 
-    def test_model_coverage_shape(self):
-        for model in ANTHROPIC_MODELS:
-            cov = model_coverage(model)
-            assert len(cov) == len(LLM_CATEGORIES)
-            assert all(0 <= c <= 1 for c in cov)
+    def test_coverage_shape(self):
+        for spec in ALL_MODELS.values():
+            assert len(spec.coverage) == len(LLM_CATEGORIES)
+            assert all(0 <= c <= 1 for c in spec.coverage)
 
     def test_compute_cost(self):
-        cost = compute_cost("claude-haiku-4-5-20251001", 1000, 500)
-        assert cost > 0
-        # Haiku is cheap
-        opus_cost = compute_cost("claude-opus-4-6-20250514", 1000, 500)
-        assert opus_cost > cost
+        haiku = ALL_MODELS["claude-haiku-4-5-20251001"]
+        opus = ALL_MODELS["claude-opus-4-6-20250514"]
+        haiku_cost = compute_cost(haiku, 1000, 500)
+        opus_cost = compute_cost(opus, 1000, 500)
+        assert haiku_cost > 0
+        assert opus_cost > haiku_cost
+
+    def test_cheaper_models_exist(self):
+        costs = {name: model_cost(spec) for name, spec in ALL_MODELS.items()}
+        cheapest = min(costs, key=costs.get)
+        most_expensive = max(costs, key=costs.get)
+        assert cheapest != most_expensive
 
     def test_extract_user_message_string(self):
         body = json.dumps({
-            "model": "claude-sonnet-4-6-20250514",
-            "messages": [
-                {"role": "user", "content": "hello world"},
-            ],
+            "model": "gpt-4o",
+            "messages": [{"role": "user", "content": "hello world"}],
         }).encode()
         assert extract_user_message(body) == "hello world"
 
     def test_extract_user_message_content_blocks(self):
         body = json.dumps({
-            "model": "claude-sonnet-4-6-20250514",
-            "messages": [
-                {"role": "user", "content": [
-                    {"type": "text", "text": "describe this image"},
-                ]},
-            ],
+            "model": "gpt-4o",
+            "messages": [{"role": "user", "content": [
+                {"type": "text", "text": "describe this image"},
+            ]}],
         }).encode()
         assert extract_user_message(body) == "describe this image"
 
     def test_extract_user_message_multi_turn(self):
         body = json.dumps({
-            "model": "claude-sonnet-4-6-20250514",
+            "model": "gpt-4o",
             "messages": [
                 {"role": "user", "content": "first message"},
                 {"role": "assistant", "content": "response"},
                 {"role": "user", "content": "second message"},
             ],
         }).encode()
-        # Should extract LAST user message
         assert extract_user_message(body) == "second message"
 
     def test_extract_user_message_empty(self):
