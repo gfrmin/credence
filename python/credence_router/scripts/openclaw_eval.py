@@ -32,9 +32,26 @@ log = logging.getLogger("openclaw_eval")
 
 PROXY_URL = "http://localhost:8377"
 OPENCLAW_URL = "http://127.0.0.1:19001"
-OPENCLAW_TOKEN = "e2e692c262b5b8fc2e9d1cacc895b3f60dd439eb1373bedf"
 OPENCLAW_DIR = os.path.expanduser("~/git/openclaw")
 CREDENCE_DIR = os.path.expanduser("~/git/credence")
+
+
+def _read_openclaw_token() -> str:
+    """Read the gateway auth token from OpenClaw's config file."""
+    for config_path in [
+        Path("~/.openclaw-dev/openclaw.json").expanduser(),
+        Path("~/.openclaw/openclaw.json").expanduser(),
+    ]:
+        if config_path.exists():
+            data = json.loads(config_path.read_text())
+            token = data.get("gateway", {}).get("auth", {}).get("token", "")
+            if token:
+                return token
+    token = os.environ.get("OPENCLAW_TOKEN", "")
+    if not token:
+        log.error("No OpenClaw token found. Set OPENCLAW_TOKEN or configure gateway.auth.token.")
+        sys.exit(1)
+    return token
 
 TASKS = [
     # --- chat (10) ---
@@ -117,13 +134,13 @@ def wait_for_health(url: str, timeout: float = 60.0, interval: float = 1.0) -> b
     return False
 
 
-def send_query(query: str) -> tuple[str, float]:
+def send_query(query: str, token: str) -> tuple[str, float]:
     """Send a query to OpenClaw's chat completions endpoint. Returns (response_text, wall_time)."""
     t0 = time.monotonic()
     resp = httpx.post(
         f"{OPENCLAW_URL}/v1/chat/completions",
         headers={
-            "Authorization": f"Bearer {OPENCLAW_TOKEN}",
+            "Authorization": f"Bearer {token}",
             "Content-Type": "application/json",
         },
         json={
@@ -176,7 +193,7 @@ def judge_response(query: str, category: str, response: str) -> dict:
         return {"composite": 0.0, "error": str(e)}
 
 
-def run_phase(phase_name: str, force_model: str | None) -> dict:
+def run_phase(phase_name: str, force_model: str | None, token: str | None = None) -> dict:
     """Run one eval phase: start proxy + OpenClaw, send queries, collect metrics."""
     log.info("=" * 60)
     log.info("Phase: %s (force_model=%s)", phase_name, force_model or "none/Bayesian")
@@ -230,7 +247,7 @@ def run_phase(phase_name: str, force_model: str | None) -> dict:
     for i, task in enumerate(TASKS):
         log.info("[%d/%d] %s: %s", i + 1, len(TASKS), task["category"], task["query"][:50])
         try:
-            response, wall_time = send_query(task["query"])
+            response, wall_time = send_query(task["query"], token or "")
             results.append({
                 "query": task["query"],
                 "category": task["category"],
@@ -343,8 +360,10 @@ def print_comparison(baseline: dict, credence: dict, baseline_scores: list, cred
 def main():
     output_path = Path("openclaw_eval_results.json")
 
+    token = _read_openclaw_token()
+
     # Phase 1: Baseline (always sonnet)
-    baseline = run_phase("baseline", force_model="claude-sonnet-4-6")
+    baseline = run_phase("baseline", force_model="claude-sonnet-4-6", token=token)
     if not baseline:
         log.error("Baseline phase failed")
         sys.exit(1)
@@ -352,7 +371,7 @@ def main():
     time.sleep(3)  # let ports release
 
     # Phase 2: Credence (Bayesian routing)
-    credence = run_phase("credence", force_model=None)
+    credence = run_phase("credence", force_model=None, token=token)
     if not credence:
         log.error("Credence phase failed")
         sys.exit(1)
