@@ -5,7 +5,6 @@ Minimal FastAPI server exposing the SearchRouter as an HTTP service.
 
 from __future__ import annotations
 
-import json
 import os
 from pathlib import Path
 
@@ -35,7 +34,9 @@ def startup():
     from credence_router.search_router import SearchRouter
     from credence_router.tool import SearchTool
 
-    tools: list[SearchTool] = []
+    from credence_router.tools.web.duckduckgo import DuckDuckGoSearchTool
+
+    tools: list[SearchTool] = [DuckDuckGoSearchTool()]
 
     if os.environ.get("BRAVE_API_KEY"):
         from credence_router.tools.web.brave import BraveSearchTool
@@ -49,13 +50,10 @@ def startup():
         from credence_router.tools.web.tavily import TavilySearchTool
         tools.append(TavilySearchTool())
 
-    if not tools:
-        raise RuntimeError(
-            "No search provider API keys found. "
-            "Set at least one of: BRAVE_API_KEY, PERPLEXITY_API_KEY, TAVILY_API_KEY"
-        )
+    reward = float(os.environ.get("CREDENCE_REWARD", "0.25"))
+    latency_weight = float(os.environ.get("CREDENCE_LATENCY_WEIGHT", "0.01"))
 
-    _router = SearchRouter(tools)
+    _router = SearchRouter(tools, reward_useful=reward, latency_weight=latency_weight)
 
     _state_path = Path(os.environ.get("CREDENCE_STATE_PATH", "credence-search-state.json"))
     if _state_path.exists():
