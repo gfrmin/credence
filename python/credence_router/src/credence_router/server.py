@@ -82,6 +82,13 @@ def startup():
         except Exception as e:
             log.warning("Could not load search state: %s", e)
 
+    llm_state_path = Path(os.environ.get("CREDENCE_LLM_STATE_PATH", "credence-llm-state.json"))
+    if _llm_domain is not None and llm_state_path.exists():
+        try:
+            _llm_domain.load_state(llm_state_path)
+        except Exception as e:
+            log.warning("Could not load LLM state: %s", e)
+
     log.info(
         "Credence proxy started: search=%s, llm=%s",
         [t.name for t in search_tools],
@@ -189,6 +196,8 @@ async def proxy_chat_completions(request: Request):
                 yield chunk
         if observation is not None:
             _llm_domain.report_outcome(observation)
+            llm_state = Path(os.environ.get("CREDENCE_LLM_STATE_PATH", "credence-llm-state.json"))
+            _llm_domain.save_state(llm_state)
 
     return StreamingResponse(
         generate(),
@@ -217,6 +226,9 @@ def report_outcome(req: OutcomeRequest, domain: str = "search"):
         )
     if _state_path:
         _search_router.save_state(_state_path)
+    if _llm_domain is not None:
+        llm_state = Path(os.environ.get("CREDENCE_LLM_STATE_PATH", "credence-llm-state.json"))
+        _llm_domain.save_state(llm_state)
     return {"status": "updated", "domain": domain}
 
 

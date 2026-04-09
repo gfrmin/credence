@@ -9,10 +9,12 @@ update beliefs via the Julia DSL.
 
 from __future__ import annotations
 
+import json
 import logging
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
+from pathlib import Path
 
 import numpy as np
 from numpy.typing import NDArray
@@ -178,3 +180,44 @@ class RoutingDomain:
     @property
     def last_decision(self) -> RouteDecision | None:
         return self._last_decision
+
+    def save_state(self, path: str | Path) -> None:
+        """Persist learned state to disk.
+
+        Extracts full MixtureMeasure state (all components + log weights) from Julia.
+        """
+        bridge = self._selector.bridge
+        rel_data = {}
+        cov_data = {}
+        for i, name in enumerate(self._provider_names):
+            rel_data[name] = bridge.extract_mixture_state(self._selector.rel_states[i])
+            cov_data[name] = bridge.extract_mixture_state(self._selector.cov_states[i])
+
+        state = {
+            "provider_names": self._provider_names,
+            "categories": list(self._categories),
+            "rel_states": rel_data,
+            "cov_states": cov_data,
+        }
+        Path(path).write_text(json.dumps(state))
+        log.debug("Saved RoutingDomain state to %s", path)
+
+    def load_state(self, path: str | Path) -> None:
+        """Restore learned state from disk.
+
+        Reconstructs full Julia MixtureMeasures from saved state.
+        """
+        state = json.loads(Path(path).read_text())
+        bridge = self._selector.bridge
+
+        for i, name in enumerate(self._provider_names):
+            if name in state.get("rel_states", {}):
+                self._selector.rel_states[i] = bridge.make_rel_state_from_mixture(
+                    state["rel_states"][name]
+                )
+            if name in state.get("cov_states", {}):
+                self._selector.cov_states[i] = bridge.make_rel_state_from_mixture(
+                    state["cov_states"][name]
+                )
+
+        log.info("Loaded RoutingDomain state from %s", path)

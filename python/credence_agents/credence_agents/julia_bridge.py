@@ -198,6 +198,50 @@ class CredenceBridge:
         """Extract mean of a BetaMeasure."""
         return float(self.jl.mean(measure))
 
+    def extract_mixture_state(self, rel_state) -> dict:
+        """Extract full MixtureMeasure state for persistence.
+
+        Returns dict with 'log_weights' and 'components' (list of list of (alpha, beta)).
+        """
+        jl = self.jl
+        code = """function _extract_full(state)
+            lw = state.log_weights
+            comps = []
+            for prod in state.components
+                push!(comps, [(f.alpha, f.beta) for f in prod.factors])
+            end
+            (lw, comps)
+        end"""
+        fn = jl.seval(code)  # noqa: S307
+        result = fn(rel_state)
+        log_weights = [float(result[0][i]) for i in range(len(result[0]))]
+        components = []
+        for ci in range(len(result[1])):
+            comp = result[1][ci]
+            components.append([(float(comp[j][0]), float(comp[j][1])) for j in range(len(comp))])
+        return {"log_weights": log_weights, "components": components}
+
+    def make_rel_state_from_mixture(self, state_dict: dict):
+        """Reconstruct a MixtureMeasure from saved state.
+
+        Inverse of extract_mixture_state.
+        """
+        jl = self.jl
+        components = state_dict["components"]
+        log_weights = state_dict["log_weights"]
+
+        comp_strs = []
+        for comp in components:
+            beta_strs = [f"BetaMeasure({a}, {b})" for a, b in comp]
+            comp_strs.append("ProductMeasure(Measure[" + ", ".join(beta_strs) + "])")
+
+        lw_str = "Float64[" + ", ".join(str(w) for w in log_weights) + "]"
+        code = (
+            "let comps = Measure[" + ", ".join(comp_strs) + "]; "
+            f"MixtureMeasure(comps[1].space, comps, {lw_str}) end"
+        )
+        return jl.seval(code)  # noqa: S307
+
     def extract_reliability_means(self, rel_state):
         """Extract per-category mean reliability from a rel_state.
 
