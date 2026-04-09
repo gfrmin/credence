@@ -111,6 +111,49 @@ def make_keyword_category_infer_fn(
     return infer
 
 
+LLM_CATEGORIES = ("code", "reasoning", "creative", "factual", "chat")
+
+_LLM_CATEGORY_PATTERNS: dict[str, re.Pattern] = {
+    "code": re.compile(
+        r"(?:```|\bdef\b|\bclass\b|\bfunction\b|\bimport\b|\breturn\b|"
+        r"\.py\b|\.js\b|\.ts\b|\.rs\b|\.go\b|\.jl\b|"
+        r"\bcode\b|\bimplement\b|\brefactor\b|\bdebug\b|\bbug\b|\bfix\b|"
+        r"\bAPI\b|\bSDK\b|\bCLI\b|\bgit\b|\bdocker\b|\bkubernetes\b|"
+        r"\bsyntax\b|\bcompile\b|\btest\b|\bdeploy\b)",
+        re.IGNORECASE,
+    ),
+    "reasoning": re.compile(
+        r"\b(why|explain|compare|contrast|what if|suppose|"
+        r"pros and cons|trade.?off|implication|consequence|"
+        r"should I|which is better|analyze|evaluate|"
+        r"cause|effect|reason|because|therefore|however)\b",
+        re.IGNORECASE,
+    ),
+    "creative": re.compile(
+        r"\b(write|draft|compose|create|design|brainstorm|"
+        r"story|poem|essay|letter|email|blog|article|"
+        r"imagine|invent|generate|suggest names|tagline|slogan|"
+        r"rewrite|rephrase|tone|style)\b",
+        re.IGNORECASE,
+    ),
+    "factual": re.compile(
+        r"\b(what is|who is|when did|where is|how many|how much|"
+        r"define|definition|list|name the|capital of|"
+        r"population|founded|invented|discovered)\b",
+        re.IGNORECASE,
+    ),
+}
+
+
+def make_llm_category_infer_fn() -> Callable[[str], NDArray[np.float64]]:
+    """Return a category inference function for LLM query routing."""
+    return make_keyword_category_infer_fn(
+        LLM_CATEGORIES,
+        patterns=_LLM_CATEGORY_PATTERNS,
+        default_category="chat",
+    )
+
+
 def make_router_category_infer_fn(
     categories: tuple[str, ...],
     keyword_patterns: dict[str, re.Pattern],
