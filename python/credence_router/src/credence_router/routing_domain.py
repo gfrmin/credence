@@ -38,6 +38,8 @@ class Observation:
     output_tokens: int = 0
     truncated: bool = False
     cost_usd: float = 0.0
+    quality_score: float | None = None  # 0.0-1.0 continuous quality (from LLM judge)
+    response_text: str = ""  # buffered response for judging
 
     @property
     def useful(self) -> bool:
@@ -137,14 +139,21 @@ class RoutingDomain:
     def report_outcome(self, observation: Observation) -> None:
         """Update beliefs from an observed outcome.
 
-        Updates quality via the DSL's update_beta_state. Latency and cost
-        are recorded for future EU calculations.
+        Uses continuous quality_score when available (from LLM judge),
+        falls back to binary useful signal. The DSL's update_beta_state
+        accepts any float in [0, 1] for soft Beta updates.
         """
         if self._last_decision is None:
             return
 
         idx = self._last_decision.provider_idx
-        self._selector.update_reliability(idx, 1.0 if observation.useful else 0.0)
+
+        if observation.quality_score is not None:
+            signal = observation.quality_score  # continuous [0, 1]
+        else:
+            signal = 1.0 if observation.useful else 0.0
+
+        self._selector.update_reliability(idx, signal)
 
         if observation.completed:
             self._selector.update_coverage(idx, 1.0)

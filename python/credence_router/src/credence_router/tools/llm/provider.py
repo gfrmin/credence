@@ -166,6 +166,7 @@ async def forward_streaming(
     completed = False
     error_type = None
     truncated = False
+    response_parts: list[str] = []  # buffer response text for quality judging
 
     async with httpx.AsyncClient() as client:
         try:
@@ -212,9 +213,13 @@ async def forward_streaming(
                             if usage:
                                 input_tokens = usage.get("prompt_tokens", usage.get("input_tokens", input_tokens))
                                 output_tokens = usage.get("completion_tokens", usage.get("output_tokens", output_tokens))
-                            # Anthropic compat wraps in choices[]
+                            # Extract content text for quality judging
                             choices = event.get("choices", [])
                             if choices:
+                                delta = choices[0].get("delta", {})
+                                content = delta.get("content")
+                                if content:
+                                    response_parts.append(content)
                                 finish = choices[0].get("finish_reason")
                                 if finish in ("stop", "end_turn"):
                                     completed = True
@@ -237,6 +242,8 @@ async def forward_streaming(
     total_seconds = time.monotonic() - t_start
     cost = compute_cost(spec, input_tokens, output_tokens)
 
+    response_text = "".join(response_parts)
+
     observation = Observation(
         completed=completed and error_type is None,
         error_type=error_type,
@@ -246,6 +253,7 @@ async def forward_streaming(
         output_tokens=output_tokens,
         truncated=truncated,
         cost_usd=cost,
+        response_text=response_text,
     )
 
     log.info(

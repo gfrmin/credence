@@ -10,10 +10,12 @@ endpoints. The client sends one request; the proxy picks the best model.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 from pathlib import Path
 
+import httpx
 from fastapi import FastAPI, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
@@ -164,6 +166,72 @@ def route_search(req: RouteRequest):
 
 
 # ---------------------------------------------------------------------------
+# LLM quality judge (async, runs after response delivery)
+# ---------------------------------------------------------------------------
+
+_JUDGE_SYSTEM = """Rate this LLM response quality 0-10. Consider correctness, completeness, clarity, helpfulness.
+Respond with ONLY a number (0-10), nothing else."""
+
+
+async def _judge_and_update(
+    user_message: str, response_text: str, model: str, observation,
+):
+    """Async quality judge. Runs after the client has received the response."""
+    from credence_router.routing_domain import Observation
+
+    key = os.environ.get("ANTHROPIC_API_KEY", "")
+    try:
+        async with httpx.AsyncClient() as client:
+            resp = await client.post(
+                "https://api.anthropic.com/v1/messages",
+                headers={
+                    "x-api-key": key,
+                    "anthropic-version": "2023-06-01",
+                    "content-type": "application/json",
+                },
+                json={
+                    "model": "claude-haiku-4-5-20251001",
+                    "max_tokens": 10,
+                    "system": _JUDGE_SYSTEM,
+                    "messages": [{"role": "user", "content": (
+                        f"Query: {user_message[:500]}\n\nResponse ({model}):\n{response_text[:1500]}"
+                    )}],
+                },
+                timeout=15.0,
+            )
+            resp.raise_for_status()
+            score_text = resp.json()["content"][0]["text"].strip()
+            score = float(score_text.split()[0])
+            score = max(0.0, min(10.0, score))
+            normalised = score / 10.0
+
+            log.info("Quality judge: %s → %.1f/10 for '%s...'", model, score, user_message[:30])
+
+            # Update with continuous quality signal
+            _llm_domain.report_outcome(Observation(
+                completed=observation.completed,
+                error_type=observation.error_type,
+                ttft_seconds=observation.ttft_seconds,
+                total_seconds=observation.total_seconds,
+                input_tokens=observation.input_tokens,
+                output_tokens=observation.output_tokens,
+                truncated=observation.truncated,
+                cost_usd=observation.cost_usd,
+                quality_score=normalised,
+                response_text=response_text,
+            ))
+
+            # Save state
+            llm_state = Path(os.environ.get("CREDENCE_LLM_STATE_PATH", "credence-llm-state.json"))
+            _llm_domain.save_state(llm_state)
+
+    except Exception as e:
+        log.error("Quality judge failed: %s", e)
+        # Fall back to binary signal
+        _llm_domain.report_outcome(observation)
+
+
+# ---------------------------------------------------------------------------
 # LLM proxy — ONE endpoint, ALL providers
 # ---------------------------------------------------------------------------
 
@@ -202,7 +270,13 @@ async def proxy_chat_completions(request: Request):
             else:
                 yield chunk
         if observation is not None:
-            if not forced:
+            # Schedule async quality judge (runs after response is delivered)
+            if not forced and observation.response_text and os.environ.get("ANTHROPIC_API_KEY"):
+                asyncio.create_task(
+                    _judge_and_update(user_message, observation.response_text, model, observation)
+                )
+            elif not forced:
+                # No judge available — fall back to binary signal
                 _llm_domain.report_outcome(observation)
             _request_log.append({
                 "user_message": user_message[:100],
