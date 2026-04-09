@@ -26,6 +26,7 @@ app = FastAPI(title="credence-proxy", version="0.2.0")
 _search_router = None
 _llm_domain = None
 _state_path: Path | None = None
+_request_log: list[dict] = []
 
 
 class RouteRequest(BaseModel):
@@ -183,19 +184,37 @@ async def proxy_chat_completions(request: Request):
     body = await request.body()
     user_message = extract_user_message(body)
 
-    # Route: classify + EU-maximise across all models from all providers
-    decision = _llm_domain.route(user_message)
-    log.info("LLM routing: '%s...' → %s", user_message[:50], decision.provider_name)
+    # Route: classify + EU-maximise, or use forced model
+    forced = os.environ.get("CREDENCE_FORCE_MODEL")
+    if forced:
+        model = forced
+        log.info("LLM forced: '%s...' → %s", user_message[:50], model)
+    else:
+        decision = _llm_domain.route(user_message)
+        model = decision.provider_name
+        log.info("LLM routing: '%s...' → %s", user_message[:50], model)
 
     async def generate():
         observation = None
-        async for chunk, obs in forward_streaming(body, decision.provider_name):
+        async for chunk, obs in forward_streaming(body, model):
             if obs is not None:
                 observation = obs
             else:
                 yield chunk
         if observation is not None:
-            _llm_domain.report_outcome(observation)
+            if not forced:
+                _llm_domain.report_outcome(observation)
+            _request_log.append({
+                "user_message": user_message[:100],
+                "model_selected": model,
+                "input_tokens": observation.input_tokens,
+                "output_tokens": observation.output_tokens,
+                "cost_usd": observation.cost_usd,
+                "ttft_seconds": observation.ttft_seconds,
+                "total_seconds": observation.total_seconds,
+                "useful": observation.useful,
+                "forced": bool(forced),
+            })
             llm_state = Path(os.environ.get("CREDENCE_LLM_STATE_PATH", "credence-llm-state.json"))
             _llm_domain.save_state(llm_state)
 
@@ -203,8 +222,7 @@ async def proxy_chat_completions(request: Request):
         generate(),
         media_type="text/event-stream",
         headers={
-            "X-Credence-Model": decision.provider_name,
-            "X-Credence-Reasoning": decision.reasoning.replace("\n", " | "),
+            "X-Credence-Model": model,
         },
     )
 
@@ -238,6 +256,19 @@ def get_state():
     if _llm_domain is not None:
         state["llm"] = _llm_domain.learned_reliability
     return state
+
+
+@app.get("/metrics")
+def get_metrics():
+    """Per-request metrics for eval."""
+    return {"requests": _request_log}
+
+
+@app.post("/metrics/clear")
+def clear_metrics():
+    """Clear request log for fresh eval run."""
+    _request_log.clear()
+    return {"status": "cleared"}
 
 
 @app.get("/health")
