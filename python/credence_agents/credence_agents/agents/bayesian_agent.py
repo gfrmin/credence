@@ -7,6 +7,7 @@ state tracking, and post-question reliability updates.
 
 from __future__ import annotations
 
+from credence_agents.agents.bayesian_selector import BayesianSelector
 from credence_agents.agents.common import AgentResult, DecisionStep
 from credence_agents.inference.decision import (
     Action,
@@ -19,8 +20,11 @@ from credence_agents.julia_bridge import CredenceBridge
 _DEFAULT_SCORING = ScoringRule()
 
 
-class BayesianAgent:
+class BayesianAgent(BayesianSelector):
     """EU-maximising agent with per-category Beta reliability tracking.
+
+    Extends BayesianSelector with MCQ-specific logic: answer measures,
+    tool responses, submit/abstain decisions, and the VOI query loop.
 
     Conforms to the benchmark's Agent protocol (on_question_start / choose_action /
     on_tool_response / on_question_end) AND provides solve_question for direct use.
@@ -40,22 +44,20 @@ class BayesianAgent:
         name: str = "bayesian",
         scoring: ScoringRule = _DEFAULT_SCORING,
     ):
+        resolved_categories = categories or tuple(
+            str(i) for i in range(num_categories)
+        )
+        super().__init__(
+            bridge=bridge,
+            option_configs=tool_configs,
+            categories=resolved_categories,
+            scoring=scoring,
+        )
         self.name = name
-        self.bridge = bridge
         self.tool_configs = tool_configs
         self.forgetting = forgetting
-        self.scoring = scoring
         self.num_tools = len(tool_configs)
-        self._num_categories = len(categories) if categories else num_categories
-        self._categories = categories
-
-        # Julia state: per-tool MixtureMeasures + category belief
-        self.rel_states = [bridge.initial_rel_state(self._num_categories) for _ in tool_configs]
-        self.cov_states = [
-            bridge.initial_cov_state(self._num_categories, tc.coverage_by_category)
-            for tc in tool_configs
-        ]
-        self.cat_belief = bridge.make_cat_belief(self._num_categories)
+        self._num_categories = self._n_cats
 
         # Per-question state (set in on_question_start)
         self._answer_measure = None  # Julia CategoricalMeasure
