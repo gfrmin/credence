@@ -208,7 +208,7 @@ async def _judge_and_update(
             log.info("Quality judge: %s → %.1f/10 for '%s...'", model, score, user_message[:30])
 
             # Update with continuous quality signal
-            _llm_domain.report_outcome(Observation(
+            obs_with_quality = Observation(
                 completed=observation.completed,
                 error_type=observation.error_type,
                 ttft_seconds=observation.ttft_seconds,
@@ -219,16 +219,16 @@ async def _judge_and_update(
                 cost_usd=observation.cost_usd,
                 quality_score=normalised,
                 response_text=response_text,
-            ))
-
-            # Save state
-            llm_state = Path(os.environ.get("CREDENCE_LLM_STATE_PATH", "credence-llm-state.json"))
-            _llm_domain.save_state(llm_state)
+            )
+            _llm_domain.report_outcome(obs_with_quality)
 
     except Exception as e:
         log.error("Quality judge failed: %s", e)
         # Fall back to binary signal
-        _llm_domain.report_outcome(observation)
+        try:
+            _llm_domain.report_outcome(observation)
+        except Exception as e2:
+            log.error("Fallback outcome update also failed: %s", e2)
 
 
 # ---------------------------------------------------------------------------
@@ -289,8 +289,11 @@ async def proxy_chat_completions(request: Request):
                 "useful": observation.useful,
                 "forced": bool(forced),
             })
-            llm_state = Path(os.environ.get("CREDENCE_LLM_STATE_PATH", "credence-llm-state.json"))
-            _llm_domain.save_state(llm_state)
+            try:
+                llm_state = Path(os.environ.get("CREDENCE_LLM_STATE_PATH", "credence-llm-state.json"))
+                _llm_domain.save_state(llm_state)
+            except Exception as e:
+                log.debug("State save deferred: %s", e)
 
     return StreamingResponse(
         generate(),

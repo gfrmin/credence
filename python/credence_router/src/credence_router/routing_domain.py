@@ -149,7 +149,10 @@ class RoutingDomain:
         idx = self._last_decision.provider_idx
 
         if observation.quality_score is not None:
-            signal = observation.quality_score  # continuous [0, 1]
+            # Quantize to binary for Beta-Bernoulli conjugate update.
+            # The DSL's update_beta_state requires 0.0 or 1.0.
+            # Threshold at 0.7 (7/10): above = good, below = not good enough.
+            signal = 1.0 if observation.quality_score >= 0.7 else 0.0
         else:
             signal = 1.0 if observation.useful else 0.0
 
