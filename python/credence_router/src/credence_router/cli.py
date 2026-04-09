@@ -256,6 +256,54 @@ def cmd_eval_search(args: argparse.Namespace) -> None:
     print(format_provider_table(balanced))
 
 
+def cmd_eval_llm(args: argparse.Namespace) -> None:
+    """Evaluate LLM model routing."""
+    level = logging.DEBUG if args.debug else logging.INFO
+    logging.basicConfig(level=level, format="%(levelname)s %(name)s: %(message)s")
+
+    from credence_router.benchmarks.llm_eval import (
+        LLM_QUERY_BANK,
+        collect_llm_data,
+    )
+    from credence_router.tools.llm.provider import available_models
+
+    models = available_models()
+    if not models:
+        print("Error: no LLM API keys found. Set ANTHROPIC_API_KEY and/or OPENAI_API_KEY.", file=sys.stderr)
+        sys.exit(1)
+
+    if not os.environ.get("ANTHROPIC_API_KEY"):
+        print("Error: ANTHROPIC_API_KEY required for LLM judge.", file=sys.stderr)
+        sys.exit(1)
+
+    model_names = [m.name for m in models]
+    logging.getLogger(__name__).info("Models: %s, Queries: %d", model_names, len(LLM_QUERY_BANK))
+
+    raw_data = collect_llm_data(
+        model_names, verbose=not args.quiet, partial_save_path=args.output,
+    )
+    raw_data.save(args.output)
+    logging.getLogger(__name__).info("Saved to %s", args.output)
+
+    # Summary
+    print(f"\n{'Model':<35s} {'Quality':>8s} {'Cost$':>8s} {'Latency':>8s}")
+    print("-" * 65)
+    for model in model_names:
+        scores = [
+            qd.model_results[model].scores.get("composite", 0.0)
+            for qd in raw_data.queries if model in qd.model_results
+        ]
+        costs = [qd.model_results[model].cost_usd for qd in raw_data.queries if model in qd.model_results]
+        latencies = [qd.model_results[model].total_seconds for qd in raw_data.queries if model in qd.model_results]
+        n = len(scores)
+        if n > 0:
+            print(
+                f"{model:<35s} {sum(scores)/n:>7.2f} "
+                f"${sum(costs):>6.3f} "
+                f"{sum(latencies)/n:>6.1f}s"
+            )
+
+
 def cmd_serve(args: argparse.Namespace) -> None:
     """Start the HTTP server."""
     from credence_router.server import serve
@@ -341,8 +389,14 @@ def main() -> None:
     eval_search.add_argument("--output", type=str, default=None, help="Output path for raw data JSON")
     eval_search.add_argument("--debug", action="store_true", help="Enable DEBUG logging")
 
+    # eval-llm subcommand
+    eval_llm = subparsers.add_parser("eval-llm", help="Evaluate LLM model routing")
+    eval_llm.add_argument("--output", type=str, default="llm_eval_data.json", help="Output path")
+    eval_llm.add_argument("--quiet", action="store_true", help="Suppress per-query output")
+    eval_llm.add_argument("--debug", action="store_true", help="Enable DEBUG logging")
+
     # serve subcommand
-    serve = subparsers.add_parser("serve", help="Start HTTP server for search routing")
+    serve = subparsers.add_parser("serve", help="Start HTTP server")
     serve.add_argument("--host", type=str, default="0.0.0.0", help="Bind host")
     serve.add_argument("--port", type=int, default=8377, help="Bind port")
 
@@ -353,6 +407,8 @@ def main() -> None:
         cmd_route(args)
     elif args.command == "eval-search":
         cmd_eval_search(args)
+    elif args.command == "eval-llm":
+        cmd_eval_llm(args)
     elif args.command == "serve":
         cmd_serve(args)
     else:
