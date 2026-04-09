@@ -58,20 +58,20 @@ PROVIDER_ENDPOINTS = {
 
 # All available models
 ALL_MODELS: dict[str, ModelSpec] = {
-    "claude-haiku-4-5-20251001": ModelSpec(
-        name="claude-haiku-4-5-20251001", provider="anthropic",
+    "claude-haiku-4-5": ModelSpec(
+        name="claude-haiku-4-5", provider="anthropic",
         input_price_per_1k=0.0008, output_price_per_1k=0.004,
         expected_latency=1.0,
         coverage=np.array([0.5, 0.3, 0.4, 0.8, 0.9]),
     ),
-    "claude-sonnet-4-6-20250514": ModelSpec(
-        name="claude-sonnet-4-6-20250514", provider="anthropic",
+    "claude-sonnet-4-6": ModelSpec(
+        name="claude-sonnet-4-6", provider="anthropic",
         input_price_per_1k=0.003, output_price_per_1k=0.015,
         expected_latency=3.0,
         coverage=np.array([0.8, 0.7, 0.7, 0.7, 0.7]),
     ),
-    "claude-opus-4-6-20250514": ModelSpec(
-        name="claude-opus-4-6-20250514", provider="anthropic",
+    "claude-opus-4-6": ModelSpec(
+        name="claude-opus-4-6", provider="anthropic",
         input_price_per_1k=0.015, output_price_per_1k=0.075,
         expected_latency=8.0,
         coverage=np.array([0.9, 0.9, 0.9, 0.6, 0.5]),

@@ -104,8 +104,8 @@ class TestLLMProvider:
             assert all(0 <= c <= 1 for c in spec.coverage)
 
     def test_compute_cost(self):
-        haiku = ALL_MODELS["claude-haiku-4-5-20251001"]
-        opus = ALL_MODELS["claude-opus-4-6-20250514"]
+        haiku = ALL_MODELS["claude-haiku-4-5"]
+        opus = ALL_MODELS["claude-opus-4-6"]
         haiku_cost = compute_cost(haiku, 1000, 500)
         opus_cost = compute_cost(opus, 1000, 500)
         assert haiku_cost > 0
