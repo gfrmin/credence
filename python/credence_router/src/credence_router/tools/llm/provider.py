@@ -156,8 +156,7 @@ async def forward_streaming(
     data = json.loads(request_body)
     data["model"] = model_name
     data["stream"] = True
-    if spec.provider == "openai":
-        data["stream_options"] = {"include_usage": True}
+    data["stream_options"] = {"include_usage": True}
 
     t_start = time.monotonic()
     ttft = 0.0

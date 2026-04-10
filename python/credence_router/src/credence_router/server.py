@@ -312,7 +312,10 @@ def report_outcome(req: OutcomeRequest, domain: str = "search"):
 def get_state():
     state = {"search": _search_router.learned_reliability}
     if _llm_domain is not None:
-        state["llm"] = _llm_domain.learned_reliability
+        try:
+            state["llm"] = _llm_domain.learned_reliability
+        except Exception as e:
+            state["llm"] = {"error": str(e)}
     return state
 
 

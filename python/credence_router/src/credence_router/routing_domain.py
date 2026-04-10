@@ -84,6 +84,7 @@ class RoutingDomain:
             "make-router-state", len(provider_names), len(categories),
         )
         self._last_decision: RouteDecision | None = None
+        self._cached_reliability: dict[str, dict[str, float]] = {}
 
     def route(self, text: str, category_hint: str | None = None) -> RouteDecision:
         """Route a query to the best provider."""
@@ -109,6 +110,13 @@ class RoutingDomain:
             wall_time=time.monotonic() - t_start,
         )
         self._last_decision = decision
+
+        # Cache reliability (safe here — we're in the sync request handler)
+        try:
+            self._cached_reliability = self._compute_reliability()
+        except Exception:
+            pass
+
         return decision
 
     def report_outcome(self, observation: Observation) -> None:
@@ -135,9 +143,8 @@ class RoutingDomain:
             float(quality),
         )
 
-    @property
-    def learned_reliability(self) -> dict[str, dict[str, float]]:
-        """Per-provider per-category expected reliability (for display)."""
+    def _compute_reliability(self) -> dict[str, dict[str, float]]:
+        """Compute per-provider per-category expected reliability from DSL state."""
         result: dict[str, dict[str, float]] = {}
         _extract = self._bridge.jl.seval("(s, i, j) -> s[i+1][j+1]")  # noqa: S307
         for i, name in enumerate(self._provider_names):
@@ -152,6 +159,11 @@ class RoutingDomain:
                 except Exception:
                     result[name][cat] = 0.5
         return result
+
+    @property
+    def learned_reliability(self) -> dict[str, dict[str, float]]:
+        """Per-provider per-category expected reliability (cached, safe for async)."""
+        return self._cached_reliability
 
     @property
     def provider_names(self) -> list[str]:
