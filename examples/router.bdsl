@@ -14,24 +14,42 @@
 
 ; ── Spaces ──
 (define quality-space (space :interval 0 1))
+(define concentration-space (space :positive-reals))
+(define hypothesis-space (space :product quality-space concentration-space))
+
+; ── Prior ──
+; Per-provider belief: joint (θ, k) where θ=reliability, k=concentration.
+; θ ~ Beta(1,1) (uniform), k ~ Gamma(2, 0.5) (broad, weakly informative).
+; The Gamma prior on k is a modelling assumption, not a fact.
+(define make-prior
+  (lambda ()
+    (product-measure
+      (measure quality-space :beta 1 1)
+      (measure concentration-space :gamma 2 0.5))))
 
 ; ── Observation model ──
-; Given reliability θ, quality q ~ Beta(θk, (1-θ)k), k=10.
+; Given (θ, k), quality q ~ Beta(θk, (1-θ)k).
 ; Generator returns a BetaMeasure — the DSL derives the density.
+; Both θ and k are learned from data.
 (define quality-kernel
-  (kernel quality-space quality-space
-    (lambda (theta)
-      (measure quality-space :beta (* theta 10.0) (* (- 1.0 theta) 10.0)))))
+  (kernel hypothesis-space quality-space
+    (lambda (h)
+      (let theta (first h)
+        (let k (second h)
+          (measure quality-space :beta (* theta k) (* (- 1.0 theta) k)))))))
 
 ; Binary observation model (for coverage: responded or not)
+; Operates on the θ component only.
 (define binary-kernel
-  (kernel quality-space (space :finite 0 1)
-    (lambda (theta)
-      (lambda (responded)
-        (if (= responded 1) (log theta) (log (- 1.0 theta)))))))
+  (kernel hypothesis-space (space :finite 0 1)
+    (lambda (h)
+      (let theta (first h)
+        (lambda (responded)
+          (if (= responded 1) (log theta) (log (- 1.0 theta))))))))
 
 ; ── Learning ──
 ; Update a belief from a quality observation. One line.
+; Learns both θ (reliability) and k (how noisy the judge is).
 (define learn
   (lambda (belief observation)
     (condition belief quality-kernel observation)))
@@ -42,9 +60,10 @@
     (condition belief binary-kernel observation)))
 
 ; ── Expected reliability ──
+; Belief is a joint (θ, k) measure. Extract E[θ].
 (define expected-reliability
   (lambda (belief)
-    (expect belief (lambda (theta) theta))))
+    (expect belief (lambda (h) (first h)))))
 
 ; ── List helper ──
 (define replace-at
@@ -94,11 +113,10 @@
         (replace-at state provider-idx updated-beliefs)))))
 
 ; ── State construction ──
-; Creates initial state: n-providers × n-categories uniform Beta(1,1) beliefs.
+; Creates initial state: n-providers × n-categories joint (θ,k) priors.
 (define make-router-state
   (lambda (n-providers n-categories)
     (map (lambda (i)
-           (map (lambda (c)
-                  (measure quality-space :beta 1 1))
+           (map (lambda (c) (make-prior))
                 (range n-categories)))
          (range n-providers))))
