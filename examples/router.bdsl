@@ -1,0 +1,105 @@
+; ============================================================
+; router.bdsl — Bayesian provider routing
+;
+; Routes requests to the best provider via EU maximisation.
+; Learns provider quality per category from continuous
+; quality observations.
+;
+; The host holds opaque state and calls:
+;   router-decide  — which provider to use
+;   router-observe — update beliefs from quality score
+;
+; Three types only. condition/expect/optimise do the work.
+; ============================================================
+
+; ── Spaces ──
+(define quality-space (space :interval 0 1))
+
+; ── Observation model ──
+; Given reliability θ, quality q peaks around θ.
+; Gaussian-like log-density: -k(q-θ)²
+(define quality-kernel
+  (kernel quality-space quality-space
+    (lambda (theta)
+      (lambda (q)
+        (* -10.0 (* (- q theta) (- q theta)))))))
+
+; Binary observation model (for coverage: responded or not)
+(define binary-kernel
+  (kernel quality-space (space :finite 0 1)
+    (lambda (theta)
+      (lambda (responded)
+        (if (= responded 1) (log theta) (log (- 1.0 theta)))))))
+
+; ── Learning ──
+; Update a belief from a quality observation. One line.
+(define learn
+  (lambda (belief observation)
+    (condition belief quality-kernel observation)))
+
+; Update from binary observation (coverage)
+(define learn-binary
+  (lambda (belief observation)
+    (condition belief binary-kernel observation)))
+
+; ── Expected reliability ──
+(define expected-reliability
+  (lambda (belief)
+    (expect belief (lambda (theta) theta))))
+
+; ── List helper ──
+(define replace-at
+  (lambda (lst idx new-val)
+    (map (lambda (i) (if (= i idx) new-val (nth lst i)))
+         (range (length lst)))))
+
+; ── Router decision ──
+; State: list of (list of beliefs per category), one per provider.
+; cat-weights: list of floats (probability per category).
+; costs: list of effective costs per provider.
+; reward: value of a quality point.
+; Returns: provider index (integer).
+(define router-decide
+  (lambda (state cat-weights costs reward)
+    (let n-providers (length state)
+      (let n-cats (length cat-weights)
+        (let provider-space (space :finite 0 1 2 3 4)
+          ; Preference: EU of choosing provider i
+          (let preference
+            (lambda (unused provider-idx)
+              (if (> provider-idx (- n-providers 1))
+                -999.0
+                (- (* reward
+                      (fold + (map (lambda (c)
+                                     (* (nth cat-weights c)
+                                        (expected-reliability
+                                          (nth (nth state provider-idx) c))))
+                                   (range n-cats))))
+                   (nth costs provider-idx))))
+            (optimise (measure provider-space :uniform)
+                      provider-space
+                      preference)))))))
+
+; ── Router observation ──
+; Update beliefs for the provider that was used.
+; Categories with weight > 0.05 get updated.
+(define router-observe
+  (lambda (state provider-idx cat-weights observation)
+    (let provider-beliefs (nth state provider-idx)
+      (let updated-beliefs
+        (map (lambda (c)
+               (if (> (nth cat-weights c) 0.05)
+                 (learn (nth provider-beliefs c) observation)
+                 (nth provider-beliefs c)))
+             (range (length cat-weights)))
+        (replace-at state provider-idx updated-beliefs)))))
+
+; ── State construction ──
+; Creates initial state: n-providers × n-categories uniform Beta(1,1) beliefs.
+(define make-router-state
+  (lambda (n-providers n-categories)
+    (map (lambda (i)
+           (map (lambda (c)
+                  (measure quality-space :beta 1 1))
+                (range n-categories)))
+         (range n-providers))))
