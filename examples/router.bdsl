@@ -16,13 +16,12 @@
 (define quality-space (space :interval 0 1))
 
 ; ── Observation model ──
-; Given reliability θ, quality q peaks around θ.
-; Gaussian-like log-density: -k(q-θ)²
+; Given reliability θ, quality q ~ Beta(θk, (1-θ)k), k=10.
+; Generator returns a BetaMeasure — the DSL derives the density.
 (define quality-kernel
   (kernel quality-space quality-space
     (lambda (theta)
-      (lambda (q)
-        (* -10.0 (* (- q theta) (- q theta)))))))
+      (measure quality-space :beta (* theta 10.0) (* (- 1.0 theta) 10.0)))))
 
 ; Binary observation model (for coverage: responded or not)
 (define binary-kernel

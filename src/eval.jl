@@ -367,15 +367,16 @@ function _eval_kernel(args, env)
 end
 
 function _make_log_density(target::Finite, gen::Function)
-    # Generator returns a distribution spec. For finite targets,
-    # the spec should be callable: (observation) → log-probability
+    # Generator returns a distribution spec: either a function (observation → log-probability)
+    # or a Measure (the kernel maps h → Measure, and we derive log-density from it).
     function(h, o)
         dist_spec = gen(h)
-        # If gen returns a function, call it on o
         if dist_spec isa Function
             return dist_spec(o)
+        elseif dist_spec isa Measure
+            return log_density_at(dist_spec, o)
         else
-            error("kernel generator must return a function for finite target spaces")
+            error("kernel generator must return a function or Measure for finite target spaces")
         end
     end
 end
@@ -385,8 +386,10 @@ function _make_log_density(target::Interval, gen::Function)
         dist_spec = gen(h)
         if dist_spec isa Function
             return dist_spec(o)
+        elseif dist_spec isa Measure
+            return log_density_at(dist_spec, o)
         else
-            error("kernel generator must return a function for interval target spaces")
+            error("kernel generator must return a function or Measure for interval target spaces")
         end
     end
 end
@@ -396,8 +399,10 @@ function _make_log_density(target::Euclidean, gen::Function)
         dist_spec = gen(h)
         if dist_spec isa Function
             return dist_spec(o)
+        elseif dist_spec isa Measure
+            return log_density_at(dist_spec, o)
         else
-            error("kernel generator must return a function for Euclidean target spaces")
+            error("kernel generator must return a function or Measure for Euclidean target spaces")
         end
     end
 end
