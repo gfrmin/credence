@@ -85,12 +85,7 @@ def startup():
         except Exception as e:
             log.warning("Could not load search state: %s", e)
 
-    llm_state_path = Path(os.environ.get("CREDENCE_LLM_STATE_PATH", "credence-llm-state.json"))
-    if _llm_domain is not None and llm_state_path.exists():
-        try:
-            _llm_domain.load_state(llm_state_path)
-        except Exception as e:
-            log.warning("Could not load LLM state: %s", e)
+    # LLM state persistence: TODO — use Julia Serialization for opaque DSL state
 
     log.info(
         "Credence proxy started: search=%s, llm=%s",
@@ -110,7 +105,6 @@ def _init_llm_domain():
         log.info("No LLM API keys found — LLM routing disabled")
         return
 
-    from credence_agents.inference.voi import ScoringRule, ToolConfig
     from credence_agents.julia_bridge import CredenceBridge
 
     from credence_router.categories import LLM_CATEGORIES, make_llm_category_infer_fn
@@ -119,24 +113,17 @@ def _init_llm_domain():
     bridge = CredenceBridge()
 
     model_names = [m.name for m in models]
-    model_configs = [
-        ToolConfig(cost=model_cost(m), coverage_by_category=m.coverage)
-        for m in models
-    ]
+    costs = [model_cost(m) for m in models]
 
-    scoring = ScoringRule(
-        reward_correct=1.0,
-        penalty_wrong=-0.5,
-        reward_abstain=0.0,
-    )
+    reward = float(os.environ.get("CREDENCE_REWARD", "1.0"))
 
     _llm_domain = RoutingDomain(
         bridge=bridge,
-        providers=model_configs,
         provider_names=model_names,
+        costs=costs,
         categories=LLM_CATEGORIES,
         category_infer=make_llm_category_infer_fn(),
-        scoring=scoring,
+        reward=reward,
     )
     log.info("LLM domain initialised: models=%s", model_names)
 
@@ -289,11 +276,7 @@ async def proxy_chat_completions(request: Request):
                 "useful": observation.useful,
                 "forced": bool(forced),
             })
-            try:
-                llm_state = Path(os.environ.get("CREDENCE_LLM_STATE_PATH", "credence-llm-state.json"))
-                _llm_domain.save_state(llm_state)
-            except Exception as e:
-                log.debug("State save deferred: %s", e)
+            pass  # state lives in DSL — persistence via Julia Serialization (TODO)
 
     return StreamingResponse(
         generate(),
@@ -321,9 +304,7 @@ def report_outcome(req: OutcomeRequest, domain: str = "search"):
         )
     if _state_path:
         _search_router.save_state(_state_path)
-    if _llm_domain is not None:
-        llm_state = Path(os.environ.get("CREDENCE_LLM_STATE_PATH", "credence-llm-state.json"))
-        _llm_domain.save_state(llm_state)
+    # LLM state persistence: TODO
     return {"status": "updated", "domain": domain}
 
 

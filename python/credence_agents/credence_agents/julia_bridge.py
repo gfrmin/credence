@@ -24,6 +24,7 @@ class CredenceBridge:
     ):
         self._jl = None
         self._env = None
+        self._router_env = None
         self._dsl_path = str(Path(dsl_path).resolve()) if dsl_path else None
         self._credence_src = str(Path(credence_src).resolve()) if credence_src else None
 
@@ -85,6 +86,26 @@ class CredenceBridge:
         if self._env is None:
             self._init()
         return self._env
+
+    @property
+    def router_env(self):
+        """Load the router DSL (examples/router.bdsl) on first use."""
+        if self._router_env is None:
+            jl = self.jl  # ensures Julia + Credence are loaded
+            monorepo = Path(__file__).resolve().parent.parent.parent.parent
+            router_path = monorepo / "examples" / "router.bdsl"
+            if not router_path.exists():
+                router_path = Path.home() / "git" / "credence" / "examples" / "router.bdsl"
+            if not router_path.exists():
+                raise FileNotFoundError("Cannot find router.bdsl")
+            source = jl.seval(f'read("{router_path}", String)')  # noqa: S307
+            self._router_env = jl.load_dsl(source)
+        return self._router_env
+
+    def call_router(self, fn_name: str, *args):
+        """Call a function from router.bdsl by name."""
+        fn = self.router_env[self.jl.Symbol(fn_name)]
+        return fn(*args)
 
     def _make_float_vector(self, values):
         """Convert Python iterable of numbers to Julia Float64 vector."""

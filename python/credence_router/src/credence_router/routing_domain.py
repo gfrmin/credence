@@ -1,26 +1,25 @@
-"""RoutingDomain: DSL-backed provider routing via BayesianSelector.
+"""RoutingDomain: provider routing via the DSL.
 
-Extends BayesianSelector to route requests to the best provider.
-Each provider is an "option" in the selector's vocabulary. Category
-inference maps query text to a distribution over categories. The
-selector's EU maximisation picks the best provider. Outcome observations
-update beliefs via the Julia DSL.
+The host holds one opaque state and calls three DSL functions:
+  router-decide  — which provider to use
+  router-observe — update beliefs from quality score
+  make-router-state — create initial beliefs
+
+All Bayesian mechanics (condition, expect, optimise) live in
+the DSL (examples/router.bdsl). The host knows nothing about
+BetaMeasure, MixtureMeasure, or any inference machinery.
 """
 
 from __future__ import annotations
 
-import json
 import logging
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
-from pathlib import Path
 
 import numpy as np
 from numpy.typing import NDArray
 
-from credence_agents.agents.bayesian_selector import BayesianSelector
-from credence_agents.inference.voi import ScoringRule, ToolConfig
 from credence_agents.julia_bridge import CredenceBridge
 
 log = logging.getLogger(__name__)
@@ -31,15 +30,15 @@ class Observation:
     """Outcome observation from a single routed request."""
 
     completed: bool
-    error_type: str | None = None  # rate_limit, server_error, auth, timeout
+    error_type: str | None = None
     ttft_seconds: float = 0.0
     total_seconds: float = 0.0
     input_tokens: int = 0
     output_tokens: int = 0
     truncated: bool = False
     cost_usd: float = 0.0
-    quality_score: float | None = None  # 0.0-1.0 continuous quality (from LLM judge)
-    response_text: str = ""  # buffered response for judging
+    quality_score: float | None = None  # 0.0-1.0 continuous quality
+    response_text: str = ""
 
     @property
     def useful(self) -> bool:
@@ -53,132 +52,105 @@ class RouteDecision:
     provider_idx: int
     provider_name: str
     category_weights: list[float]
-    reasoning: str
     wall_time: float = 0.0
 
 
 class RoutingDomain:
-    """DSL-backed provider routing via EU maximisation.
+    """Provider routing backed by the DSL.
 
-    Wraps BayesianSelector with:
-    - Named providers (not just indices)
-    - Category inference from query text
-    - Observation-based belief updates
-    - Introspection (learned reliability per provider per category)
+    The host holds one opaque DSL state and calls:
+    - router-decide(state, cat_weights, costs, reward) → provider index
+    - router-observe(state, provider_idx, cat_weights, quality) → new state
     """
 
     def __init__(
         self,
         bridge: CredenceBridge,
-        providers: list[ToolConfig],
         provider_names: list[str],
+        costs: list[float],
         categories: tuple[str, ...],
         category_infer: Callable[[str], NDArray[np.float64]],
-        scoring: ScoringRule | None = None,
+        reward: float = 1.0,
     ):
-        if scoring is None:
-            # For routing: reward=1 for useful result, penalty for useless, no abstain concept
-            scoring = ScoringRule(reward_correct=1.0, penalty_wrong=-0.5, reward_abstain=0.0)
-
-        self._selector = BayesianSelector(
-            bridge=bridge,
-            option_configs=providers,
-            categories=categories,
-            scoring=scoring,
-        )
+        self._bridge = bridge
         self._provider_names = provider_names
+        self._costs = bridge._make_float_vector(costs)
         self._categories = categories
         self._category_infer = category_infer
+        self._reward = reward
+
+        # Opaque DSL state — host doesn't know what's inside
+        self._state = bridge.call_router(
+            "make-router-state", len(provider_names), len(categories),
+        )
         self._last_decision: RouteDecision | None = None
 
     def route(self, text: str, category_hint: str | None = None) -> RouteDecision:
-        """Route a query to the best provider.
-
-        Args:
-            text: the query/message text
-            category_hint: optional explicit category
-
-        Returns:
-            RouteDecision with provider index, name, category weights, reasoning
-        """
+        """Route a query to the best provider."""
         t_start = time.monotonic()
 
-        # Infer category distribution
         if category_hint and category_hint in self._categories:
             cat_weights = [0.0] * len(self._categories)
             cat_weights[self._categories.index(category_hint)] = 1.0
         else:
             cat_weights = self._category_infer(text).tolist()
 
-        # EU maximise via DSL
-        provider_idx = self._selector.select(cat_weights)
-        provider_name = self._provider_names[provider_idx]
+        cat_w_jl = self._bridge._make_float_vector(cat_weights)
 
-        # Build reasoning trace
-        reliability = self._selector.learned_reliability
-        lines = [f"Selected: {provider_name}"]
-        for i, name in enumerate(self._provider_names):
-            rel = reliability.get(i, [])
-            marker = " <-" if i == provider_idx else ""
-            lines.append(f"  {name}: rel={rel}{marker}")
-        cat_str = ", ".join(
-            f"{c}={w:.2f}" for c, w in zip(self._categories, cat_weights) if w > 0.01
-        )
-        lines.append(f"Category: [{cat_str}]")
+        # One DSL call — the DSL does EU maximisation
+        provider_idx = int(self._bridge.call_router(
+            "router-decide", self._state, cat_w_jl, self._costs, self._reward,
+        ))
 
         decision = RouteDecision(
             provider_idx=provider_idx,
-            provider_name=provider_name,
+            provider_name=self._provider_names[provider_idx],
             category_weights=cat_weights,
-            reasoning="\n".join(lines),
             wall_time=time.monotonic() - t_start,
         )
         self._last_decision = decision
         return decision
 
     def report_outcome(self, observation: Observation) -> None:
-        """Update beliefs from an observed outcome.
-
-        Uses continuous quality_score when available (from LLM judge),
-        falls back to binary useful signal. The DSL's update_beta_state
-        accepts any float in [0, 1] for soft Beta updates.
-        """
+        """Update beliefs from an observed outcome."""
         if self._last_decision is None:
             return
 
-        idx = self._last_decision.provider_idx
-
+        # Determine quality signal
         if observation.quality_score is not None:
-            # Quantize to binary for Beta-Bernoulli conjugate update.
-            # The DSL's update_beta_state requires 0.0 or 1.0.
-            # Threshold at 0.7 (7/10): above = good, below = not good enough.
-            signal = 1.0 if observation.quality_score >= 0.7 else 0.0
+            quality = observation.quality_score  # continuous — DSL handles it
+        elif observation.useful:
+            quality = 0.8  # default "good" signal
         else:
-            signal = 1.0 if observation.useful else 0.0
+            quality = 0.2  # default "bad" signal
 
-        self._selector.update_reliability(idx, signal)
+        cat_w_jl = self._bridge._make_float_vector(self._last_decision.category_weights)
 
-        if observation.completed:
-            self._selector.update_coverage(idx, 1.0)
-        elif observation.error_type in ("timeout", "rate_limit"):
-            self._selector.update_coverage(idx, 0.0)
-
-        log.debug(
-            "Updated beliefs for %s: useful=%s, latency=%.2fs, cost=$%.4f",
-            self._provider_names[idx],
-            observation.useful,
-            observation.total_seconds,
-            observation.cost_usd,
+        # One DSL call — the DSL does conditioning
+        self._state = self._bridge.call_router(
+            "router-observe",
+            self._state,
+            self._last_decision.provider_idx,
+            cat_w_jl,
+            float(quality),
         )
 
     @property
     def learned_reliability(self) -> dict[str, dict[str, float]]:
-        """Per-provider per-category reliability means."""
-        raw = self._selector.learned_reliability
+        """Per-provider per-category expected reliability (for display)."""
         result: dict[str, dict[str, float]] = {}
+        _extract = self._bridge.jl.seval("(s, i, j) -> s[i+1][j+1]")  # noqa: S307
         for i, name in enumerate(self._provider_names):
-            rel = raw.get(i, [0.5] * len(self._categories))
-            result[name] = {cat: rel[j] for j, cat in enumerate(self._categories)}
+            result[name] = {}
+            for j, cat in enumerate(self._categories):
+                try:
+                    provider_beliefs = _extract(self._state, i, j)
+                    mean = float(self._bridge.call_router(
+                        "expected-reliability", provider_beliefs,
+                    ))
+                    result[name][cat] = mean
+                except Exception:
+                    result[name][cat] = 0.5
         return result
 
     @property
@@ -192,44 +164,3 @@ class RoutingDomain:
     @property
     def last_decision(self) -> RouteDecision | None:
         return self._last_decision
-
-    def save_state(self, path: str | Path) -> None:
-        """Persist learned state to disk.
-
-        Extracts full MixtureMeasure state (all components + log weights) from Julia.
-        """
-        bridge = self._selector.bridge
-        rel_data = {}
-        cov_data = {}
-        for i, name in enumerate(self._provider_names):
-            rel_data[name] = bridge.extract_mixture_state(self._selector.rel_states[i])
-            cov_data[name] = bridge.extract_mixture_state(self._selector.cov_states[i])
-
-        state = {
-            "provider_names": self._provider_names,
-            "categories": list(self._categories),
-            "rel_states": rel_data,
-            "cov_states": cov_data,
-        }
-        Path(path).write_text(json.dumps(state))
-        log.debug("Saved RoutingDomain state to %s", path)
-
-    def load_state(self, path: str | Path) -> None:
-        """Restore learned state from disk.
-
-        Reconstructs full Julia MixtureMeasures from saved state.
-        """
-        state = json.loads(Path(path).read_text())
-        bridge = self._selector.bridge
-
-        for i, name in enumerate(self._provider_names):
-            if name in state.get("rel_states", {}):
-                self._selector.rel_states[i] = bridge.make_rel_state_from_mixture(
-                    state["rel_states"][name]
-                )
-            if name in state.get("cov_states", {}):
-                self._selector.cov_states[i] = bridge.make_rel_state_from_mixture(
-                    state["cov_states"][name]
-                )
-
-        log.info("Loaded RoutingDomain state from %s", path)

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 
-import numpy as np
 import pytest
 
 from credence_router.categories import LLM_CATEGORIES, make_llm_category_infer_fn
@@ -157,8 +156,6 @@ class TestLLMProvider:
 
 try:
     from credence_agents.julia_bridge import CredenceBridge
-    from credence_agents.inference.voi import ToolConfig
-
     _JULIA_AVAILABLE = True
 except ImportError:
     _JULIA_AVAILABLE = False
@@ -175,17 +172,10 @@ class TestRoutingDomainWithDSL:
     def _make_domain(self, bridge):
         from credence_router.routing_domain import RoutingDomain
 
-        providers = [
-            ToolConfig(cost=0.001, coverage_by_category=np.array([0.8, 0.3, 0.5, 0.7, 0.9])),
-            ToolConfig(cost=0.01, coverage_by_category=np.array([0.5, 0.9, 0.8, 0.4, 0.3])),
-            ToolConfig(cost=0.05, coverage_by_category=np.array([0.9, 0.9, 0.9, 0.6, 0.5])),
-        ]
-        names = ["cheap-fast", "medium", "expensive-good"]
-
         return RoutingDomain(
             bridge=bridge,
-            providers=providers,
-            provider_names=names,
+            provider_names=["cheap-fast", "medium", "expensive-good"],
+            costs=[0.001, 0.01, 0.05],
             categories=LLM_CATEGORIES,
             category_infer=make_llm_category_infer_fn(),
         )
