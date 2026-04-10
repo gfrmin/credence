@@ -329,6 +329,19 @@ function _make_measure(space::Interval, spec::Symbol, args, env)
     end
 end
 
+function _make_measure(space::PositiveReals, spec::Symbol, args, env)
+    if spec == :gamma
+        α = Float64(eval_dsl(args[1], env))
+        β = Float64(eval_dsl(args[2], env))
+        return GammaMeasure(space, α, β)
+    elseif spec == :exponential
+        rate = Float64(eval_dsl(args[1], env))
+        return ExponentialMeasure(rate)
+    else
+        error("unknown measure for PositiveReals space: $spec")
+    end
+end
+
 function _make_measure(space::Euclidean, spec::Symbol, args, env)
     if spec == :gaussian
         μ = Float64(eval_dsl(args[1], env))

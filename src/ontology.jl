@@ -15,7 +15,7 @@ Axiom-constrained functions (behaviour frozen, interface negotiable):
 module Ontology
 
 export Space, Finite, Interval, ProductSpace, Simplex, Euclidean, PositiveReals, support
-export Measure, CategoricalMeasure, BetaMeasure, TaggedBetaMeasure, GaussianMeasure, DirichletMeasure, NormalGammaMeasure, ProductMeasure, MixtureMeasure
+export Measure, CategoricalMeasure, BetaMeasure, TaggedBetaMeasure, GaussianMeasure, GammaMeasure, ExponentialMeasure, DirichletMeasure, NormalGammaMeasure, ProductMeasure, MixtureMeasure
 export Kernel, FactorSelector, kernel_source, kernel_target, kernel_params
 export condition, expect, push_measure, density, log_predictive, log_marginal
 export draw
@@ -143,6 +143,26 @@ end
 
 weights(m::DirichletMeasure) = m.alpha ./ sum(m.alpha)
 mean(m::DirichletMeasure) = weights(m)
+
+# ── Gamma: continuous on PositiveReals ──
+
+struct GammaMeasure <: Measure
+    space::PositiveReals
+    alpha::Float64  # shape
+    beta::Float64   # rate
+
+    function GammaMeasure(space::PositiveReals, alpha::Float64, beta::Float64)
+        alpha > 0 && beta > 0 || error("alpha and beta must be positive")
+        new(space, alpha, beta)
+    end
+end
+
+GammaMeasure(α::Float64, β::Float64) = GammaMeasure(PositiveReals(), α, β)
+
+mean(m::GammaMeasure) = m.alpha / m.beta
+
+# Exponential is Gamma(1, rate) — convenience constructor, not a separate type.
+ExponentialMeasure(rate::Float64) = GammaMeasure(1.0, rate)
 
 # ── Normal-Gamma: conjugate prior for Normal with unknown mean and variance ──
 
@@ -279,6 +299,19 @@ function expect(m::GaussianMeasure, f; n::Int=64)
     hi = m.mu + 4 * m.sigma
     grid = range(lo, hi, length=n)
     logw = [-0.5 * ((x - m.mu) / m.sigma)^2 for x in grid]
+    max_lw = maximum(logw)
+    w = exp.(logw .- max_lw)
+    w ./= sum(w)
+    sum(w[i] * f(grid[i]) for i in eachindex(w))
+end
+
+function expect(m::GammaMeasure, f; n::Int=64)
+    μ = m.alpha / m.beta
+    σ = sqrt(m.alpha) / m.beta
+    lo = max(1e-10, μ - 4σ)
+    hi = μ + 6σ
+    grid = range(lo, hi, length=n)
+    logw = [log_density_at(m, x) for x in grid]
     max_lw = maximum(logw)
     w = exp.(logw .- max_lw)
     w ./= sum(w)
@@ -430,6 +463,7 @@ function _condition_by_grid(m::GaussianMeasure, k::Kernel, observation; n::Int=6
 end
 
 log_density_at(m::BetaMeasure, x) = (m.alpha - 1) * log(x) + (m.beta - 1) * log(1 - x)
+log_density_at(m::GammaMeasure, x) = (m.alpha - 1) * log(x) - m.beta * x
 log_density_at(m::TaggedBetaMeasure, x) = log_density_at(m.beta, x)
 log_density_at(m::GaussianMeasure, x) = -0.5 * ((x - m.mu) / m.sigma)^2
 log_density_at(m::DirichletMeasure, x) = sum((m.alpha[i] - 1) * log(x[i]) for i in eachindex(m.alpha))
@@ -701,6 +735,8 @@ function draw(m::BetaMeasure)
 end
 
 draw(m::TaggedBetaMeasure) = draw(m.beta)
+
+draw(m::GammaMeasure) = _draw_gamma(m.alpha) / m.beta
 
 function draw(m::GaussianMeasure)
     m.mu + m.sigma * randn()
