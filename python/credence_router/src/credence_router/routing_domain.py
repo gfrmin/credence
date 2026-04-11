@@ -204,8 +204,9 @@ class RoutingDomain:
         """Persist opaque DSL state to disk via Julia Serialization."""
         path = Path(path)
         jl = self._bridge.jl
+        jl.seval("using Serialization")
         _serialize = jl.seval(
-            '(s, p) -> open(io -> (using Serialization; serialize(io, s)), p, "w")'
+            '(s, p) -> open(io -> Serialization.serialize(io, s), p, "w")'
         )
         _serialize(self._state, str(path))
 
@@ -225,8 +226,9 @@ class RoutingDomain:
         if not path.exists():
             return
         jl = self._bridge.jl
+        jl.seval("using Serialization")
         _deserialize = jl.seval(
-            'p -> open(io -> (using Serialization; deserialize(io)), p, "r")'
+            'p -> open(io -> Serialization.deserialize(io), p, "r")'
         )
         self._state = _deserialize(str(path))
 
