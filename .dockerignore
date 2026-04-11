@@ -1,0 +1,38 @@
+# Git
+.git/
+.gitignore
+
+# Python build artifacts
+.venv/
+__pycache__/
+*.egg-info/
+dist/
+*.pyc
+
+# Julia artifacts
+Manifest.toml
+*.jl.cov
+*.jl.mem
+
+# IDE / tools
+.claude/
+.serena/
+.ruff_cache/
+.pytest_cache/
+
+# Papers and docs (not needed in image)
+papers/
+
+# Eval data files
+*eval*.json
+credence-llm-state.json
+credence-state.json
+*.bin
+
+# Domains and tests not needed for proxy
+domains/
+test/
+julia/pomdp_agent/
+
+# Bayesian IF (separate application)
+python/bayesian_if/

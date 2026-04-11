@@ -1,178 +1,230 @@
-# credence-router
+# credence-proxy
 
-Transparent, cost-optimal tool routing via expected-utility maximisation.
+Bayesian AI gateway that routes LLM and search requests to the best provider for each query. Drop-in replacement for direct API calls — same OpenAI format in, better results out.
 
-Instead of asking an LLM to pick the right tool (and paying for that routing call),
-credence-router uses Bayesian decision theory to route questions to the cheapest
-reliable tool — with zero routing cost and sub-millisecond routing latency.
+Instead of always calling the same model, credence-proxy learns which model works best for each type of query and routes automatically. It uses Bayesian expected utility maximisation, not heuristics or LLM-based routing.
 
-## Benchmark (50 questions, simulated tools)
+**Eval results (OpenClaw agent framework):**
 
-| Agent | Accuracy | Cost | Tools/Q |
-|-------|----------|------|---------|
-| **credence-router** | **79.3%** | **$0.005** | **1.06** |
-| langgraph-react | 60.9% | $0.312 | 1.96 |
-| always-best | 74.0% | $0.250 | 1.00 |
-| always-cheapest | 44.0% | $0.000 | 1.00 |
-| random | 56.0% | $0.078 | 1.00 |
-
-credence-router achieves higher accuracy than LangGraph at **1.6% of the cost**,
-because it learns which tools are reliable for which question categories
-and only queries expensive tools when the expected value of information justifies it.
-
-## Installation
-
-```bash
-pip install credence-router
-```
-
-With optional API backends:
-
-```bash
-pip install credence-router[anthropic]     # Claude (Haiku/Sonnet)
-pip install credence-router[perplexity]    # Perplexity web search
-pip install credence-router[all]           # everything
-```
+| Metric | Always Sonnet | Credence routing | Change |
+|--------|--------------|-----------------|--------|
+| Quality (0-10) | 6.56 | 7.80 | **+1.24** |
+| Avg latency | 8.4s | 4.0s | **-52%** |
+| Avg cost/request | $0.024 | $0.001 | **-96%** |
 
 ## Quick start
 
-```python
-from credence_router import Router
-from credence_router.tools.calculator import CalculatorTool
-from credence_router.tools.claude import ClaudeTool
-
-# Define your tool palette — the router learns which to use
-router = Router(tools=[
-    CalculatorTool(),           # free, instant, numerical only
-    ClaudeTool("haiku"),        # $0.0003/query, general-purpose
-    ClaudeTool("sonnet"),       # $0.001/query, higher accuracy
-])
-
-# Route a question — returns Answer with choice, confidence, cost, trace
-answer = router.solve(
-    question="What is 15% of 240?",
-    candidates=("32", "36", "40", "44"),
-)
-print(answer.choice_text)    # "36"
-print(answer.tools_used)     # ("calculator",)
-print(answer.monetary_cost)  # 0.0
-
-# Report ground truth so the router learns
-router.report_outcome(correct=True)
-
-# Save/load learned reliability across sessions
-router.save_state("router_state.json")
+```bash
+docker run -p 8377:8377 \
+  -e ANTHROPIC_API_KEY=sk-ant-... \
+  -e OPENAI_API_KEY=sk-... \
+  -v credence-data:/data \
+  credence-proxy
 ```
+
+Then point any OpenAI-compatible client at `http://localhost:8377/v1`:
+
+```bash
+curl http://localhost:8377/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "auto",
+    "messages": [{"role": "user", "content": "Explain quicksort"}],
+    "stream": true
+  }'
+```
+
+The proxy picks the best model, streams the response, and updates its beliefs from the outcome.
 
 ## How it works
 
-Each question goes through a Value of Information (VOI) loop:
+All inference runs in a Bayesian DSL ([Credence](https://github.com/gfrmin/credence)). The proxy holds one opaque state and calls three DSL functions:
 
-1. **Classify** the question into a category (factual, numerical, reasoning, ...)
-2. **Calculate** the expected utility of submitting now vs. querying each tool
-3. **Query** the tool with highest net VOI (if any tool's VOI exceeds its cost)
-4. **Update** beliefs with the tool's response, repeat from step 2
-5. **Submit** when no tool's VOI justifies its cost
+1. **Classify** the query into categories (code, reasoning, creative, factual, chat)
+2. **Decide** which model maximises expected utility: `EU = P(quality | model, category) * reward - cost`
+3. **Observe** the outcome and update beliefs via Bayesian conditioning
 
-The router maintains a reliability table — P(correct | tool, category) — learned
-from outcome feedback. It starts with prior coverage estimates and refines them
-with every `report_outcome()` call.
+The proxy learns a per-model, per-category quality distribution from continuous quality scores (0-10, judged asynchronously by a fast model). Both the reliability and the noise level of the judge are learned jointly.
 
-## CLI
+There are no exploration bonuses, no epsilon-greedy, no heuristics. Only EU maximisation — which naturally explores when uncertainty is high, because the value of information is positive.
 
-### Benchmark
+## Available models
+
+The proxy routes across all models whose API key is provided:
+
+| Model | Provider | Key |
+|-------|----------|-----|
+| claude-haiku-4-5 | Anthropic | `ANTHROPIC_API_KEY` |
+| claude-sonnet-4-6 | Anthropic | `ANTHROPIC_API_KEY` |
+| claude-opus-4-6 | Anthropic | `ANTHROPIC_API_KEY` |
+| gpt-4o-mini | OpenAI | `OPENAI_API_KEY` |
+| gpt-4o | OpenAI | `OPENAI_API_KEY` |
+
+Set at least one provider key. The proxy only routes to models with available keys.
+
+## Search routing
+
+The proxy also routes web searches across providers:
 
 ```bash
-# Run full benchmark with simulated tools
-credence-router bench --run --simulate
-
-# Explain specific questions (1-indexed)
-credence-router bench --run --simulate --explain 1,5,10
-
-# Show learned reliability table
-credence-router bench --run --simulate --show-reliability
+curl -X POST http://localhost:8377/search \
+  -H "Content-Type: application/json" \
+  -d '{"query": "latest rust compiler release"}'
 ```
 
-### Route a single question
+| Provider | Key | Always available |
+|----------|-----|-----------------|
+| DuckDuckGo | none | yes |
+| Brave | `BRAVE_API_KEY` | no |
+| Perplexity | `PERPLEXITY_API_KEY` | no |
+| Tavily | `TAVILY_API_KEY` | no |
+
+## Configuration
+
+All configuration is via environment variables:
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `ANTHROPIC_API_KEY` | — | Anthropic API key (enables Claude models + quality judge) |
+| `OPENAI_API_KEY` | — | OpenAI API key (enables GPT models) |
+| `BRAVE_API_KEY` | — | Brave Search API key |
+| `PERPLEXITY_API_KEY` | — | Perplexity API key |
+| `TAVILY_API_KEY` | — | Tavily API key |
+| `CREDENCE_REWARD` | `1.0` | Value of a quality point (higher = prefer quality over cost) |
+| `CREDENCE_LATENCY_WEIGHT` | `0.01` | Cost per second of latency (higher = prefer faster models) |
+| `CREDENCE_FORCE_MODEL` | — | Bypass routing: always use this model (for A/B testing) |
+| `CREDENCE_STATE_PATH` | `/data/credence-state.json` | Search state file |
+| `CREDENCE_LLM_STATE_PATH` | `/data/credence-llm-state.bin` | LLM state file |
+
+## Endpoints
+
+| Method | Path | Description |
+|--------|------|-------------|
+| POST | `/v1/chat/completions` | OpenAI-compatible LLM proxy (streams SSE) |
+| POST | `/search` | Search routing |
+| GET | `/state` | Learned reliability per model per category |
+| GET | `/metrics` | Per-request log (model, tokens, cost, latency) |
+| POST | `/metrics/clear` | Reset request log |
+| POST | `/outcome` | Manual outcome feedback |
+| GET | `/health` | Liveness check |
+| GET | `/ready` | Readiness check (validates Julia is loaded) |
+
+The `X-Credence-Model` response header tells you which model was selected.
+
+## Using with docker-compose
+
+Create a `.env` file:
 
 ```bash
-# With real tools (needs ANTHROPIC_API_KEY)
-credence-router route "What is the capital of France?" -o "London" "Paris" "Berlin" "Madrid"
-
-# Force simulated tools
-credence-router route "What is 2+2?" -o "3" "4" "5" "6" --simulate
+ANTHROPIC_API_KEY=sk-ant-...
+OPENAI_API_KEY=sk-...
 ```
 
-## API
+Then:
 
-### `Router(tools, categories=..., scoring=..., latency_weight=...)`
+```bash
+docker-compose up -d
+```
 
-The main entry point. Takes a list of `Tool` instances and routes questions optimally.
+Learned state is persisted in a Docker volume (`credence-data`). It survives container restarts.
 
-- **`tools`**: List of objects implementing the `Tool` protocol
-- **`categories`**: Tuple of category names (default: 5 built-in categories)
-- **`scoring`**: `ScoringRule(reward_correct, penalty_wrong, reward_abstain)`
-- **`latency_weight`**: Cost per second of latency (default: 0.0)
+## Using with OpenClaw
 
-### `Tool` protocol
+Add a custom provider to `~/.openclaw-dev/openclaw.json`:
+
+```json
+{
+  "models": {
+    "mode": "merge",
+    "providers": {
+      "credence": {
+        "baseUrl": "http://localhost:8377/v1",
+        "apiKey": "not-needed",
+        "api": "openai-completions",
+        "models": [
+          {"id": "claude-sonnet-4-6", "name": "Claude Sonnet (via Credence)"}
+        ]
+      }
+    }
+  },
+  "agents": {
+    "defaults": {
+      "model": {"primary": "credence/claude-sonnet-4-6"}
+    }
+  }
+}
+```
+
+The `model` field in the config is cosmetic — the proxy ignores it and routes to whichever model maximises expected utility. You can use any model ID from the available models table.
+
+## Using with any OpenAI-compatible client
+
+Any client that supports a custom base URL works:
 
 ```python
-class Tool(Protocol):
-    name: str
-    cost: float       # $/query
-    latency: float    # seconds
-
-    def query(self, question: str, candidates: tuple[str, ...]) -> int | None: ...
-    def coverage(self, categories: tuple[str, ...]) -> NDArray[np.float64]: ...
+# Python (openai SDK)
+from openai import OpenAI
+client = OpenAI(base_url="http://localhost:8377/v1", api_key="not-needed")
+response = client.chat.completions.create(
+    model="auto",
+    messages=[{"role": "user", "content": "Hello"}],
+)
 ```
 
-### `Answer`
+```typescript
+// TypeScript (openai SDK)
+const client = new OpenAI({
+  baseURL: "http://localhost:8377/v1",
+  apiKey: "not-needed",
+});
+```
 
-Returned by `router.solve()`:
+## Monitoring
 
-- `choice`: candidate index (or `None` if abstained)
-- `choice_text`: the answer string
-- `confidence`: posterior probability
-- `tools_used`: tuple of tool names queried
-- `monetary_cost` / `effective_cost`: cost breakdown
-- `reasoning`: human-readable VOI trace
-
-## Try it: LangGraph vs credence-router (Ollama)
-
-Run a side-by-side comparison locally with zero API costs:
+Check what the proxy has learned:
 
 ```bash
-uv sync --extra demo
-ollama pull llama3.1
-uv run python examples/langgraph_comparison.py
+# Per-model, per-category reliability
+curl http://localhost:8377/state | python -m json.tool
+
+# Request log with model selection, tokens, cost, latency
+curl http://localhost:8377/metrics | python -m json.tool
 ```
 
-This runs 8 questions through both LangGraph's ReAct agent (LLM-based routing)
-and credence-router's drop-in replacement (VOI-based routing), using `llama3.1`
-via Ollama. The output shows LLM calls saved and wall-clock speedup per question.
+## Building from source
 
-The only code change:
-
-```diff
-- from langgraph.prebuilt import create_react_agent
-+ from credence_router.compat import create_react_agent
+```bash
+docker build -t credence-proxy .
 ```
 
-## Why not LangGraph?
+Or without Docker (requires Julia 1.9+):
 
-LangGraph uses an LLM to decide which tool to call. This means:
+```bash
+cd /path/to/credence
+uv sync
+PYTHON_JULIACALL_HANDLE_SIGNALS=yes credence-router serve
+```
 
-- **You pay for routing.** Every question costs an LLM call just to pick the tool.
-- **Routing is opaque.** The LLM's tool selection can't be inspected or debugged.
-- **No learning.** The router doesn't improve with feedback.
-- **Over-querying.** ReAct agents call ~2 tools per question on average.
+## Architecture
 
-credence-router replaces the routing LLM with a closed-form VOI calculation:
+```
+Client (OpenClaw, curl, any OpenAI client)
+  │
+  ▼
+credence-proxy (FastAPI, port 8377)
+  │
+  ├── Classify query → category weights
+  ├── EU maximise → pick best model (Julia DSL)
+  ├── Forward to provider (Anthropic/OpenAI)
+  ├── Stream response back to client
+  ├── Async quality judge (Claude Haiku)
+  └── Update beliefs via Bayesian conditioning (Julia DSL)
+  │
+  ▼
+Anthropic API / OpenAI API
+```
 
-- **Zero routing cost.** Tool selection is a matrix multiply, not an API call.
-- **Fully transparent.** Every decision comes with a VOI trace you can inspect.
-- **Learns from feedback.** Reliability estimates improve with every outcome.
-- **Minimal tool calls.** Only queries tools when the expected value justifies the cost.
+The Bayesian model (defined in `examples/router.bdsl`) maintains a joint distribution over reliability and judge concentration per model per category. Learning is Bayesian conditioning — no hyperparameters to tune, no exploration schedule, no decay.
 
 ## License
 

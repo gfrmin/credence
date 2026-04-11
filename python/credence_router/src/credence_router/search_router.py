@@ -3,8 +3,7 @@
 Provider selection is a direct EU maximisation over learned reliability:
 for each provider, EU = P(useful | category) * reward - cost. The category
 belief comes from keyword inference. Reliability is updated from outcome
-feedback via Beta conjugate updating, using the same Julia-backed
-BayesianAgent infrastructure as the MCQ Router.
+feedback via Beta conjugate updating (numpy).
 """
 
 from __future__ import annotations
@@ -17,7 +16,6 @@ from pathlib import Path
 import numpy as np
 from numpy.typing import NDArray
 
-from credence_agents.julia_bridge import CredenceBridge
 from credence_router.categories import make_keyword_category_infer_fn
 from credence_router.tool import SearchResult, SearchTool
 

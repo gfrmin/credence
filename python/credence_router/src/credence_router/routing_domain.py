@@ -12,10 +12,13 @@ BetaMeasure, MixtureMeasure, or any inference machinery.
 
 from __future__ import annotations
 
+import json
 import logging
 import time
+from collections import deque
 from collections.abc import Callable
 from dataclasses import dataclass
+from pathlib import Path
 
 import numpy as np
 from numpy.typing import NDArray
@@ -86,9 +89,17 @@ class RoutingDomain:
         self._last_decision: RouteDecision | None = None
         self._cached_reliability: dict[str, dict[str, float]] = {}
 
+        # Outcome queue: async judge appends here, route() drains synchronously.
+        # This avoids calling Julia from async context (single-threaded deadlock).
+        self._pending_outcomes: deque[tuple[Observation, RouteDecision]] = deque()
+
     def route(self, text: str, category_hint: str | None = None) -> RouteDecision:
         """Route a query to the best provider."""
         t_start = time.monotonic()
+
+        # Drain pending outcomes (from async judge) before deciding.
+        # All Julia calls happen here, in the sync request handler.
+        self._drain_outcomes()
 
         if category_hint and category_hint in self._categories:
             cat_weights = [0.0] * len(self._categories)
@@ -119,26 +130,36 @@ class RoutingDomain:
 
         return decision
 
-    def report_outcome(self, observation: Observation) -> None:
-        """Update beliefs from an observed outcome."""
+    def queue_outcome(self, observation: Observation) -> None:
+        """Queue an outcome for processing on the next route() call.
+
+        Thread-safe: appends to a deque. No Julia calls — safe from async context.
+        """
         if self._last_decision is None:
             return
+        self._pending_outcomes.append((observation, self._last_decision))
 
-        # Determine quality signal
+    def _drain_outcomes(self) -> None:
+        """Process all queued outcomes synchronously. Called from route()."""
+        while self._pending_outcomes:
+            observation, decision = self._pending_outcomes.popleft()
+            self._apply_outcome(observation, decision)
+
+    def _apply_outcome(self, observation: Observation, decision: RouteDecision) -> None:
+        """Update beliefs from an observed outcome. Calls Julia — must be sync."""
         if observation.quality_score is not None:
-            quality = observation.quality_score  # continuous — DSL handles it
+            quality = observation.quality_score
         elif observation.useful:
-            quality = 0.8  # default "good" signal
+            quality = 0.8
         else:
-            quality = 0.2  # default "bad" signal
+            quality = 0.2
 
-        cat_w_jl = self._bridge._make_float_vector(self._last_decision.category_weights)
+        cat_w_jl = self._bridge._make_float_vector(decision.category_weights)
 
-        # One DSL call — the DSL does conditioning
         self._state = self._bridge.call_router(
             "router-observe",
             self._state,
-            self._last_decision.provider_idx,
+            decision.provider_idx,
             cat_w_jl,
             float(quality),
         )
@@ -176,3 +197,46 @@ class RoutingDomain:
     @property
     def last_decision(self) -> RouteDecision | None:
         return self._last_decision
+
+    # --- State persistence ---
+
+    def save_state(self, path: str | Path) -> None:
+        """Persist opaque DSL state to disk via Julia Serialization."""
+        path = Path(path)
+        jl = self._bridge.jl
+        _serialize = jl.seval(
+            '(s, p) -> open(io -> (using Serialization; serialize(io, s)), p, "w")'
+        )
+        _serialize(self._state, str(path))
+
+        # Sidecar: last decision (needed to attribute queued outcomes on reload)
+        if self._last_decision is not None:
+            sidecar = path.with_suffix(".json")
+            sidecar.write_text(json.dumps({
+                "provider_idx": self._last_decision.provider_idx,
+                "provider_name": self._last_decision.provider_name,
+                "category_weights": self._last_decision.category_weights,
+            }))
+        log.info("LLM state saved to %s", path)
+
+    def load_state(self, path: str | Path) -> None:
+        """Restore opaque DSL state from disk via Julia Serialization."""
+        path = Path(path)
+        if not path.exists():
+            return
+        jl = self._bridge.jl
+        _deserialize = jl.seval(
+            'p -> open(io -> (using Serialization; deserialize(io)), p, "r")'
+        )
+        self._state = _deserialize(str(path))
+
+        # Restore last decision from sidecar
+        sidecar = path.with_suffix(".json")
+        if sidecar.exists():
+            data = json.loads(sidecar.read_text())
+            self._last_decision = RouteDecision(
+                provider_idx=data["provider_idx"],
+                provider_name=data["provider_name"],
+                category_weights=data["category_weights"],
+            )
+        log.info("LLM state restored from %s", path)

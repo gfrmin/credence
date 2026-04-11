@@ -28,6 +28,7 @@ app = FastAPI(title="credence-proxy", version="0.2.0")
 _search_router = None
 _llm_domain = None
 _state_path: Path | None = None
+_llm_state_path: Path | None = None
 _request_log: list[dict] = []
 
 
@@ -48,7 +49,7 @@ class OutcomeRequest(BaseModel):
 
 @app.on_event("startup")
 def startup():
-    global _search_router, _llm_domain, _state_path
+    global _search_router, _llm_domain, _state_path, _llm_state_path
 
     # --- Search domain ---
     from credence_router.search_router import SearchRouter
@@ -85,7 +86,12 @@ def startup():
         except Exception as e:
             log.warning("Could not load search state: %s", e)
 
-    # LLM state persistence: TODO — use Julia Serialization for opaque DSL state
+    _llm_state_path = Path(os.environ.get("CREDENCE_LLM_STATE_PATH", "credence-llm-state.bin"))
+    if _llm_domain is not None and _llm_state_path.exists():
+        try:
+            _llm_domain.load_state(_llm_state_path)
+        except Exception as e:
+            log.warning("Could not load LLM state: %s", e)
 
     log.info(
         "Credence proxy started: search=%s, llm=%s",
@@ -194,7 +200,7 @@ async def _judge_and_update(
 
             log.info("Quality judge: %s → %.1f/10 for '%s...'", model, score, user_message[:30])
 
-            # Update with continuous quality signal
+            # Queue continuous quality signal — processed on next route() call
             obs_with_quality = Observation(
                 completed=observation.completed,
                 error_type=observation.error_type,
@@ -207,15 +213,12 @@ async def _judge_and_update(
                 quality_score=normalised,
                 response_text=response_text,
             )
-            _llm_domain.report_outcome(obs_with_quality)
+            _llm_domain.queue_outcome(obs_with_quality)
 
     except Exception as e:
         log.error("Quality judge failed: %s", e)
         # Fall back to binary signal
-        try:
-            _llm_domain.report_outcome(observation)
-        except Exception as e2:
-            log.error("Fallback outcome update also failed: %s", e2)
+        _llm_domain.queue_outcome(observation)
 
 
 # ---------------------------------------------------------------------------
@@ -264,7 +267,7 @@ async def proxy_chat_completions(request: Request):
                 )
             elif not forced:
                 # No judge available — fall back to binary signal
-                _llm_domain.report_outcome(observation)
+                _llm_domain.queue_outcome(observation)
             _request_log.append({
                 "user_message": user_message[:100],
                 "model_selected": model,
@@ -276,7 +279,12 @@ async def proxy_chat_completions(request: Request):
                 "useful": observation.useful,
                 "forced": bool(forced),
             })
-            pass  # state lives in DSL — persistence via Julia Serialization (TODO)
+            # Persist LLM state after each request
+            if _llm_state_path and not forced:
+                try:
+                    _llm_domain.save_state(_llm_state_path)
+                except Exception as e:
+                    log.warning("Could not save LLM state: %s", e)
 
     return StreamingResponse(
         generate(),
@@ -299,12 +307,16 @@ def report_outcome(req: OutcomeRequest, domain: str = "search"):
         _search_router.report_outcome(req.useful)
     elif domain == "llm" and _llm_domain is not None:
         from credence_router.routing_domain import Observation
-        _llm_domain.report_outcome(
+        _llm_domain.queue_outcome(
             Observation(completed=True, error_type=None if req.useful else "user_reported")
         )
     if _state_path:
         _search_router.save_state(_state_path)
-    # LLM state persistence: TODO
+    if _llm_state_path and _llm_domain is not None:
+        try:
+            _llm_domain.save_state(_llm_state_path)
+        except Exception as e:
+            log.warning("Could not save LLM state: %s", e)
     return {"status": "updated", "domain": domain}
 
 
@@ -338,6 +350,17 @@ def health():
     if _llm_domain is not None:
         providers["llm"] = _llm_domain.provider_names
     return {"status": "ok", "providers": providers}
+
+
+@app.get("/ready")
+def readiness():
+    """Readiness probe — validates Julia is responsive (for Docker/k8s)."""
+    if _llm_domain is not None:
+        try:
+            _llm_domain._bridge.jl.seval("1+1")
+        except Exception as e:
+            return {"status": "not_ready", "error": str(e)}, 503
+    return {"status": "ready"}
 
 
 def serve(host: str = "0.0.0.0", port: int = 8377):

@@ -148,7 +148,12 @@ async def forward_streaming(
         yield b"", Observation(completed=False, error_type="unknown_provider")
         return
 
-    api_key = os.environ.get(endpoint["env_var"], "")
+    api_key = os.environ.get(endpoint["env_var"], "").strip()
+    if not api_key:
+        log.error("Missing API key for %s: %s not set", spec.provider, endpoint["env_var"])
+        yield b"", Observation(completed=False, error_type="missing_api_key")
+        return
+
     base_url = endpoint["base_url"]
     auth_value = endpoint["auth_prefix"] + api_key
 
