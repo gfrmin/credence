@@ -549,19 +549,66 @@ Example with state references:
 
 ### Function specs (for expect)
 
+Function specs are serialised `Functional` types. The brain's `expect`
+dispatches on the Functional subtype to select the optimal computation
+(closed-form for leaf measures, recursive decomposition for ProductMeasure,
+weighted sums for CategoricalMeasure, Monte Carlo fallback for
+`opaque_bdsl`). Structure enables fast paths — bare closures forfeit them.
+
 | Type | Params | Description |
 |------|--------|-------------|
-| `identity` | -- | f(x) = x |
-| `project` | `index` | f(x) = x[index]. For product measures. |
-| `tabular` | `values` | f(x_i) = values[i]. For finite spaces. |
-| `bdsl` | `env_id`, `expr` | Evaluate DSL lambda. |
+| `identity` | -- | `f(x) = x`. Closed-form on Beta/Gamma/Gaussian leaves. |
+| `projection` | `index` (0-based) | `f(x) = x[index]`. Decomposes on ProductMeasure. `project` accepted as alias for back-compat. |
+| `nested_projection` | `indices: [Int]` (0-based) | Recursive navigation through nested ProductMeasures. |
+| `tabular` | `values: [Float]` | Weighted sum over CategoricalMeasure atoms. |
+| `linear_combination` | `terms: [[coeff, sub_fn_spec]]`, `offset?` | Linearity of expectation: sum of (coeff · sub-functional expectations) + offset. Sub-specs are recursive function specs. |
+| `opaque_bdsl` | `env_id`, `expr` | DSL lambda; falls back to the measure's bare-function expect (quadrature for leaves, Monte Carlo for products). `bdsl` accepted as alias. |
+
+Example — router preference for provider 0 over 2 categories:
+```json
+{"type": "linear_combination",
+ "terms": [
+   [0.5, {"type": "nested_projection", "indices": [0, 0, 0]}],
+   [0.5, {"type": "nested_projection", "indices": [0, 1, 0]}]
+ ],
+ "offset": -0.01}
+```
 
 ### Preference specs (for optimise/value)
 
 | Type | Params | Description |
 |------|--------|-------------|
-| `tabular_2d` | `matrix` | pref(h_i, a_j) = matrix[i][j] |
-| `bdsl` | `env_id`, `expr` | DSL lambda (hypothesis, action) -> utility |
+| `functional_per_action` | `actions: {"0": fn_spec, "1": fn_spec, ...}` | Maps each action (as a string key) to an arbitrary Functional spec. `optimise` picks the argmax; `value` returns the max EU. Orthogonal to the Functional hierarchy — any function spec type can be used per action. |
+| `tabular_2d` | `matrix` | `pref(h_i, a_j) = matrix[i][j]`. Legacy; use `functional_per_action` with `tabular` specs instead. |
+| `bdsl` | `env_id`, `expr` | DSL lambda `(h, a) -> utility`. Legacy. |
+
+### State manipulation for ProductMeasure
+
+These enable a body to decompose nested ProductMeasures, condition a
+specific leaf, and reassemble — without any DSL wrapper.
+
+`factor`:
+```json
+{"method": "factor", "params": {"state_id": "s_1", "index": 0}}
+-> {"result": {"state_id": "s_5"}}
+```
+Register factor `index` (0-based) as a new state. The original state is
+unchanged; the factor is referenced by a new id.
+
+`replace_factor`:
+```json
+{"method": "replace_factor", "params": {"state_id": "s_1", "index": 0, "new_factor_id": "s_5"}}
+-> {"result": {"state_id": "s_6"}}
+```
+Build a new ProductMeasure with factor `index` replaced by the measure
+referenced by `new_factor_id`. Returns a new state id; the source states
+are unchanged.
+
+`n_factors`:
+```json
+{"method": "n_factors", "params": {"state_id": "s_1"}}
+-> {"result": {"n_factors": 3}}
+```
 
 ### Grammar specs (for enumerate)
 

@@ -90,8 +90,68 @@ def test_categorical():
         brain.shutdown()
 
 
-def test_dsl_call():
-    """Test calling DSL functions (router.bdsl)."""
+def _make_router_state(brain, n_providers: int, n_categories: int) -> str:
+    """Build nested ProductMeasure: providers x categories x (Beta, Gamma).
+
+    Shape: ProductMeasure of n_providers providers, each a ProductMeasure
+    of n_categories joint (theta, k) beliefs.
+    """
+    prior = {
+        "type": "product",
+        "factors": [
+            {"type": "beta", "alpha": 1.0, "beta": 1.0},
+            {"type": "gamma", "alpha": 2.0, "beta": 0.5},
+        ],
+    }
+    provider = {
+        "type": "product",
+        "factors": [prior for _ in range(n_categories)],
+    }
+    state = {
+        "type": "product",
+        "factors": [provider for _ in range(n_providers)],
+    }
+    return brain.create_state(**state)
+
+
+def _router_preference(
+    n_providers: int,
+    n_categories: int,
+    cat_weights: list[float],
+    costs: list[float],
+    reward: float,
+) -> dict:
+    """Build a functional_per_action preference spec for router decide.
+
+    EU(provider a) = reward * sum_c cat_weights[c] * E[theta_{a,c}] - costs[a]
+
+    Each action's functional is a LinearCombination of NestedProjections.
+    NestedProjection([a, c, 0]) navigates: state -> providers[a] -> categories[c]
+    -> (theta, k)[0] = theta factor. Identity() at the leaf yields mean(Beta).
+    """
+    actions = {}
+    for a in range(n_providers):
+        terms = []
+        for c in range(n_categories):
+            terms.append([
+                reward * cat_weights[c],
+                {"type": "nested_projection", "indices": [a, c, 0]},
+            ])
+        actions[str(a)] = {
+            "type": "linear_combination",
+            "terms": terms,
+            "offset": -costs[a],
+        }
+    return {"type": "functional_per_action", "actions": actions}
+
+
+def test_router_roundtrip():
+    """Router decide + observe using only brain protocol primitives.
+
+    No DSL wrappers. State is a nested ProductMeasure. Preference is a
+    functional_per_action spec with LinearCombination of NestedProjections.
+    Learning is factor -> condition -> replace_factor chain.
+    """
     brain = BrainClient()
     repo_root = Path(__file__).parent.parent
 
@@ -101,37 +161,73 @@ def test_dsl_call():
         return
 
     try:
+        # Load router.bdsl — gives us a DSL env for the quality kernel.
         brain.initialize(dsl_files={"router": str(router_path)})
 
-        # Create router state: 2 providers, 3 categories
-        # Returns an opaque state (nested list of measures)
-        state_id = brain.call_dsl("router", "make-router-state", [2, 3])
-        print(f"Router state: {state_id}")
-        assert isinstance(state_id, str), f"Expected state_id string, got {type(state_id)}"
-
-        # Make a routing decision
-        cat_weights = [0.5, 0.3, 0.2]
-        costs = [0.01, 0.02]
+        n_providers, n_categories = 3, 5
+        cat_weights = [0.2, 0.2, 0.2, 0.2, 0.2]
+        costs = [0.01, 0.02, 0.005]
         reward = 1.0
-        provider = brain.call_dsl(
-            "router",
-            "router-decide",
-            [{"ref": state_id}, cat_weights, costs, reward],
-        )
-        print(f"Router decision: provider {provider}")
-        # With uniform priors and lower cost, should prefer provider 0
-        assert provider == 0, f"Expected provider 0, got {provider}"
 
-        # Observe quality from provider 0
-        new_state_id = brain.call_dsl(
-            "router",
-            "router-observe",
-            [{"ref": state_id}, 0, cat_weights, 0.9],
-        )
-        print(f"Updated state: {new_state_id}")
-        assert isinstance(new_state_id, str)
+        state_id = _make_router_state(brain, n_providers, n_categories)
+        print(f"Router state: {state_id}")
 
-        print("PASS: DSL call")
+        # With uniform Beta(1,1) priors, all E[theta] = 0.5.
+        # EU(a) = 1.0 * 5 * 0.2 * 0.5 - costs[a] = 0.5 - costs[a]
+        # Provider 2 (cost 0.005) has highest EU; provider 1 (cost 0.02) lowest.
+        expected_eu = [0.5 - c for c in costs]
+
+        pref = _router_preference(n_providers, n_categories, cat_weights, costs, reward)
+        actions_spec = {"type": "finite", "values": list(range(n_providers))}
+
+        action, eu = brain.optimise(state_id, actions_spec, pref)
+        print(f"Decide: action={action}, eu={eu}")
+
+        # Closed-form EU must match exactly (no Monte Carlo noise).
+        best_expected = max(expected_eu)
+        best_action = expected_eu.index(best_expected)
+        assert action == best_action, f"Expected action {best_action}, got {action}"
+        assert abs(eu - best_expected) < 1e-10, f"Expected EU {best_expected}, got {eu} (non-closed-form?)"
+        print(f"PASS: closed-form EU matches (action={action}, eu={eu:.12f})")
+
+        # Seed-invariance: calling optimise again gives the exact same EU.
+        action2, eu2 = brain.optimise(state_id, actions_spec, pref)
+        assert abs(eu - eu2) < 1e-15, f"EU not seed-invariant: {eu} vs {eu2}"
+        print("PASS: seed-invariant (no Monte Carlo invoked)")
+
+        # Observe high quality for provider `action`, category 2.
+        # Chain: factor(state, action) -> factor(provider, 2) -> condition -> replace back.
+        provider_id = brain.factor(state_id, action)
+        category_id = brain.factor(provider_id, 2)
+        brain.condition(category_id, kernel={"type": "quality"}, observation=0.9)
+        provider_updated = brain.replace_factor(provider_id, 2, category_id)
+        state_updated = brain.replace_factor(state_id, action, provider_updated)
+        print(f"Updated state: {state_updated}")
+
+        # E[theta_{action, 2}] should have shifted above 0.5 after observing 0.9.
+        new_theta = brain.expect(
+            brain.factor(brain.factor(state_updated, action), 2),
+            function={"type": "projection", "index": 0},
+        )
+        print(f"E[theta_{{{action},2}}] after obs=0.9: {new_theta:.4f}")
+        assert new_theta > 0.5, f"Expected theta mean > 0.5 after obs 0.9, got {new_theta}"
+
+        # Other factors unchanged — verify one.
+        other_theta = brain.expect(
+            brain.factor(brain.factor(state_updated, (action + 1) % n_providers), 0),
+            function={"type": "projection", "index": 0},
+        )
+        assert abs(other_theta - 0.5) < 1e-10, f"Other factor should be unchanged at 0.5, got {other_theta}"
+        print("PASS: only the targeted factor was updated")
+
+        # Re-decide: EU for the updated provider should have shifted up.
+        action3, eu3 = brain.optimise(state_updated, actions_spec, pref)
+        # updated EU for `action` = reward * (4*0.2*0.5 + 0.2*new_theta) - costs[action]
+        updated_eu_for_action = reward * (4 * 0.2 * 0.5 + 0.2 * new_theta) - costs[action]
+        assert abs(eu3 - max(updated_eu_for_action, *(expected_eu[i] for i in range(n_providers) if i != action))) < 1e-10
+        print(f"Re-decide: action={action3}, eu={eu3:.12f} (provider {action} shifted)")
+
+        print("PASS: router roundtrip")
     finally:
         brain.shutdown()
 
@@ -171,7 +267,7 @@ if __name__ == "__main__":
     print()
     test_categorical()
     print()
-    test_dsl_call()
+    test_router_roundtrip()
     print()
     test_snapshot_restore()
     print()

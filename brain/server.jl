@@ -19,6 +19,8 @@ using Credence: GaussianMeasure, GammaMeasure, DirichletMeasure
 using Credence: NormalGammaMeasure, ProductMeasure, MixtureMeasure
 using Credence: Finite, Interval, ProductSpace, Euclidean, PositiveReals, Simplex
 using Credence: Kernel, FactorSelector, support
+using Credence: Functional, Identity, Projection, NestedProjection, Tabular, LinearCombination, Composition, OpaqueClosure
+using Credence: factor, replace_factor
 using Credence: AgentState, sync_prune!, sync_truncate!
 using Credence: Grammar, Program, CompiledKernel, ProductionRule
 using Credence: enumerate_programs, compile_kernel
@@ -262,34 +264,37 @@ end
 # Function specs (for expect)
 # ═══════════════════════════════════════
 
-function build_function(spec)
+# Builds a Functional from a protocol function spec. Recursive: nested
+# functionals (e.g. terms in a LinearCombination) are built by recursing
+# into sub-specs. Type dispatch in ontology's expect() selects the
+# computation based on the Functional subtype.
+function build_function(spec)::Functional
     t = spec["type"]
     if t == "identity"
-        identity
-    elseif t == "project"
-        idx = Int(spec["index"]) + 1  # JSON 0-based → Julia 1-based
-        x -> x[idx]
+        Identity()
+    elseif t == "projection" || t == "project"  # "project" kept for compat
+        Projection(Int(spec["index"]) + 1)  # 0-based → 1-based
+    elseif t == "nested_projection"
+        NestedProjection(Int[Int(i) + 1 for i in spec["indices"]])
     elseif t == "tabular"
-        values = collect(Float64, spec["values"])
-        function(x)
-            # Find x in the measure's space and return the tabulated value
-            # This works for finite spaces where x is a space value
-            if x isa Number
-                idx = round(Int, x) + 1  # 0-based values → 1-based index
-                1 <= idx <= length(values) ? values[idx] : error("tabular index out of range: $x")
-            else
-                error("tabular function requires numeric input, got: $(typeof(x))")
-            end
-        end
-    elseif t == "bdsl"
+        Tabular(collect(Float64, spec["values"]))
+    elseif t == "linear_combination"
+        terms = Tuple{Float64, Functional}[
+            (Float64(pair[1]), build_function(pair[2]))
+            for pair in spec["terms"]
+        ]
+        offset = Float64(get(spec, "offset", 0.0))
+        LinearCombination(terms, offset)
+    elseif t == "opaque_bdsl" || t == "bdsl"
         env_id = spec["env_id"]
         env = get(DSL_ENVS, env_id, nothing)
         env !== nothing || error("DSL environment not found: $env_id")
         expr_str = spec["expr"]
-        # Parse and evaluate the expression to get a closure
         parsed = Credence.parse_all(expr_str)
         length(parsed) == 1 || error("expected single expression, got $(length(parsed))")
-        Credence.Eval.eval_dsl(parsed[1], env)
+        f = Credence.Eval.eval_dsl(parsed[1], env)
+        f isa Function || error("opaque_bdsl must evaluate to a function, got $(typeof(f))")
+        OpaqueClosure(f)
     else
         error("unknown function type: $t")
     end
@@ -433,6 +438,12 @@ function handle_request(method::String, params, id)
         handle_eu_interact(params)
     elseif method == "call_dsl"
         handle_call_dsl(params)
+    elseif method == "factor"
+        handle_factor(params)
+    elseif method == "replace_factor"
+        handle_replace_factor(params)
+    elseif method == "n_factors"
+        handle_n_factors(params)
     else
         throw(ErrorException("method not found: $method"))
     end
@@ -555,6 +566,37 @@ function handle_restore_state(params)
     Dict("state_id" => id)
 end
 
+function handle_factor(params)
+    id = string(params["state_id"])
+    state = get_state(id)
+    state isa ProductMeasure || error("factor requires a ProductMeasure, got $(typeof(state))")
+    idx = Int(params["index"]) + 1  # 0-based → 1-based
+    1 <= idx <= length(state.factors) || error("factor index out of range: $(idx-1)")
+    new_id = register_state(factor(state, idx))
+    Dict("state_id" => new_id)
+end
+
+function handle_replace_factor(params)
+    id = string(params["state_id"])
+    state = get_state(id)
+    state isa ProductMeasure || error("replace_factor requires a ProductMeasure, got $(typeof(state))")
+    idx = Int(params["index"]) + 1
+    1 <= idx <= length(state.factors) || error("replace_factor index out of range: $(idx-1)")
+    new_factor_id = string(params["new_factor_id"])
+    new_factor = get_state(new_factor_id)
+    new_factor isa Measure || error("replace_factor new factor must be a Measure, got $(typeof(new_factor))")
+    new_state = replace_factor(state, idx, new_factor)
+    new_id = register_state(new_state)
+    Dict("state_id" => new_id)
+end
+
+function handle_n_factors(params)
+    id = string(params["state_id"])
+    state = get_state(id)
+    state isa ProductMeasure || error("n_factors requires a ProductMeasure, got $(typeof(state))")
+    Dict("n_factors" => length(state.factors))
+end
+
 function handle_condition(params)
     id = string(params["state_id"])
     state = get_state(id)
@@ -603,10 +645,28 @@ end
 function handle_optimise(params)
     id = string(params["state_id"])
     state = get_state(id)
-    actions = build_space(params["actions"])
-    pref = build_preference(params["preference"])
+    pref_spec = params["preference"]
 
-    # Use the stdlib optimise: argmax over actions of E[pref(h, a)]
+    # functional_per_action: explicit Functional per action, dispatched through
+    # expect's type table. Enables closed-form EU via Projection/LinearCombination.
+    if pref_spec["type"] == "functional_per_action"
+        best_action = nothing
+        best_eu = -Inf
+        for (action_str, fn_spec) in pref_spec["actions"]
+            φ = build_function(fn_spec)
+            eu = Float64(expect(state, φ))
+            if eu > best_eu
+                best_eu = eu
+                best_action = tryparse(Int, string(action_str))
+                best_action === nothing && (best_action = string(action_str))
+            end
+        end
+        return Dict("action" => best_action, "eu" => best_eu)
+    end
+
+    # Legacy path for tabular_2d / bdsl preferences
+    actions = build_space(params["actions"])
+    pref = build_preference(pref_spec)
     best_action = nothing
     best_eu = -Inf
     for a in support(actions)
@@ -622,9 +682,20 @@ end
 function handle_value(params)
     id = string(params["state_id"])
     state = get_state(id)
-    actions = build_space(params["actions"])
-    pref = build_preference(params["preference"])
+    pref_spec = params["preference"]
 
+    if pref_spec["type"] == "functional_per_action"
+        best_eu = -Inf
+        for (_, fn_spec) in pref_spec["actions"]
+            φ = build_function(fn_spec)
+            eu = Float64(expect(state, φ))
+            best_eu = max(best_eu, eu)
+        end
+        return Dict("value" => best_eu)
+    end
+
+    actions = build_space(params["actions"])
+    pref = build_preference(pref_spec)
     best_eu = -Inf
     for a in support(actions)
         eu = expect(state, h -> pref(h, a))

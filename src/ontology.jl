@@ -17,6 +17,8 @@ module Ontology
 export Space, Finite, Interval, ProductSpace, Simplex, Euclidean, PositiveReals, support
 export Measure, CategoricalMeasure, BetaMeasure, TaggedBetaMeasure, GaussianMeasure, GammaMeasure, ExponentialMeasure, DirichletMeasure, NormalGammaMeasure, ProductMeasure, MixtureMeasure
 export Kernel, FactorSelector, kernel_source, kernel_target, kernel_params
+export Functional, Identity, Projection, NestedProjection, Tabular, LinearCombination, Composition, OpaqueClosure
+export factor, replace_factor
 export condition, expect, push_measure, density, log_predictive, log_marginal
 export draw
 export weights, mean, variance, log_density_at, prune, truncate, logsumexp
@@ -201,6 +203,17 @@ end
 ProductMeasure(factors::Vector{<:Measure}) =
     ProductMeasure(ProductSpace(Space[f.space for f in factors]), factors)
 
+"""Return the i-th factor (1-based) of a ProductMeasure."""
+factor(m::ProductMeasure, i::Int) = m.factors[i]
+
+"""Return a new ProductMeasure with factor i (1-based) replaced. Space
+is recomputed from the new factors."""
+function replace_factor(m::ProductMeasure, i::Int, new_factor::Measure)
+    new_factors = Measure[f for f in m.factors]
+    new_factors[i] = new_factor
+    ProductMeasure(new_factors)
+end
+
 # ── Mixture: weighted combination ──
 
 struct MixtureMeasure <: Measure
@@ -278,12 +291,12 @@ density(k::Kernel, h, o) = k.log_density(h, o)
 # Integration against a measure: E_m[f]
 # This is what a measure IS.
 
-function expect(m::CategoricalMeasure, f)
+function expect(m::CategoricalMeasure, f::Function)
     w = weights(m)
     sum(w[i] * f(m.space.values[i]) for i in eachindex(w))
 end
 
-function expect(m::BetaMeasure, f; n::Int=64)
+function expect(m::BetaMeasure, f::Function; n::Int=64)
     grid = range(1/(2n), 1-1/(2n), length=n)
     logw = [log_density_at(m, x) for x in grid]
     max_lw = maximum(logw)
@@ -292,9 +305,9 @@ function expect(m::BetaMeasure, f; n::Int=64)
     sum(w[i] * f(grid[i]) for i in eachindex(w))
 end
 
-expect(m::TaggedBetaMeasure, f; kwargs...) = expect(m.beta, f; kwargs...)
+expect(m::TaggedBetaMeasure, f::Function; kwargs...) = expect(m.beta, f; kwargs...)
 
-function expect(m::GaussianMeasure, f; n::Int=64)
+function expect(m::GaussianMeasure, f::Function; n::Int=64)
     lo = m.mu - 4 * m.sigma
     hi = m.mu + 4 * m.sigma
     grid = range(lo, hi, length=n)
@@ -305,7 +318,7 @@ function expect(m::GaussianMeasure, f; n::Int=64)
     sum(w[i] * f(grid[i]) for i in eachindex(w))
 end
 
-function expect(m::GammaMeasure, f; n::Int=64)
+function expect(m::GammaMeasure, f::Function; n::Int=64)
     μ = m.alpha / m.beta
     σ = sqrt(m.alpha) / m.beta
     lo = max(1e-10, μ - 4σ)
@@ -318,7 +331,7 @@ function expect(m::GammaMeasure, f; n::Int=64)
     sum(w[i] * f(grid[i]) for i in eachindex(w))
 end
 
-function expect(m::DirichletMeasure, f; n_samples::Int=1000)
+function expect(m::DirichletMeasure, f::Function; n_samples::Int=1000)
     total = 0.0
     for _ in 1:n_samples
         θ = draw(m)
@@ -327,7 +340,7 @@ function expect(m::DirichletMeasure, f; n_samples::Int=1000)
     total / n_samples
 end
 
-function expect(m::NormalGammaMeasure, f; n_samples::Int=1000)
+function expect(m::NormalGammaMeasure, f::Function; n_samples::Int=1000)
     total = 0.0
     for _ in 1:n_samples
         total += f(draw(m))
@@ -335,7 +348,7 @@ function expect(m::NormalGammaMeasure, f; n_samples::Int=1000)
     total / n_samples
 end
 
-function expect(m::ProductMeasure, f; n_samples::Int=1000)
+function expect(m::ProductMeasure, f::Function; n_samples::Int=1000)
     total = 0.0
     for _ in 1:n_samples
         total += f(draw(m))
@@ -343,10 +356,127 @@ function expect(m::ProductMeasure, f; n_samples::Int=1000)
     total / n_samples
 end
 
-function expect(m::MixtureMeasure, f)
+function expect(m::MixtureMeasure, f::Function)
     w = weights(m)
     sum(w[i] * expect(m.components[i], f) for i in eachindex(w))
 end
+
+# ================================================================
+# Functional: structured integrands for expect
+# ================================================================
+# A Functional declares the algebraic structure of the function being
+# integrated, so expect can dispatch to closed-form computation. Same
+# principle as Kernel for condition: structure enables dispatch.
+# OpaqueClosure is the fallback that forfeits fast paths.
+
+abstract type Functional end
+
+struct Identity <: Functional end
+
+struct Projection <: Functional
+    index::Int  # 1-based index into ProductMeasure factors
+end
+
+# Recursively navigates nested ProductMeasures. indices[1] picks the top
+# level, indices[2] the next, and so on. Terminating at a leaf yields
+# Identity() on that leaf.
+struct NestedProjection <: Functional
+    indices::Vector{Int}  # 1-based
+end
+
+struct Tabular <: Functional
+    values::Vector{Float64}
+end
+
+# terms is (coefficient, sub_functional) pairs. Sub-functionals carry the
+# structural information needed to reach their target — no implicit
+# flat-index convention. LinearCombination is algebra-only.
+struct LinearCombination <: Functional
+    terms::Vector{Tuple{Float64, Functional}}
+    offset::Float64
+end
+
+struct Composition <: Functional
+    outer::Functional
+    inner::Functional
+end
+
+# Fallback wrapping a bare Julia function. Works but forfeits fast paths.
+struct OpaqueClosure <: Functional
+    f::Function
+end
+
+# ── Dispatch: closed-form cases on leaf measures ──
+expect(m::BetaMeasure, ::Identity)     = m.alpha / (m.alpha + m.beta)
+expect(m::TaggedBetaMeasure, ::Identity) = expect(m.beta, Identity())
+expect(m::GammaMeasure, ::Identity)    = m.alpha / m.beta
+expect(m::GaussianMeasure, ::Identity) = m.mu
+
+function expect(m::CategoricalMeasure, ::Identity)
+    w = weights(m)
+    sum(w[i] * m.space.values[i] for i in eachindex(w))
+end
+
+# ── Dispatch: structural decomposition on ProductMeasure ──
+expect(m::ProductMeasure, p::Projection) = expect(m.factors[p.index], Identity())
+
+function expect(m::ProductMeasure, np::NestedProjection)
+    length(np.indices) >= 1 || error("NestedProjection requires at least one index")
+    if length(np.indices) == 1
+        expect(m.factors[np.indices[1]], Identity())
+    else
+        expect(m.factors[np.indices[1]], NestedProjection(np.indices[2:end]))
+    end
+end
+
+# ── Dispatch: CategoricalMeasure projection (vector-valued atoms) ──
+function expect(m::CategoricalMeasure, p::Projection)
+    w = weights(m)
+    sum(w[i] * m.space.values[i][p.index] for i in eachindex(w))
+end
+
+# NestedProjection on CategoricalMeasure: descent reached a particle-cloud
+# leaf. Remaining indices select nested elements within each atom.
+function expect(m::CategoricalMeasure, np::NestedProjection)
+    length(np.indices) >= 1 || error("NestedProjection requires at least one index")
+    w = weights(m)
+    total = 0.0
+    for i in eachindex(w)
+        v = m.space.values[i]
+        for idx in np.indices
+            v = v[idx]
+        end
+        total += w[i] * v
+    end
+    total
+end
+
+expect(m::CategoricalMeasure, t::Tabular) =
+    sum(weights(m)[i] * t.values[i] for i in eachindex(t.values))
+
+# ── Dispatch: algebraic combination (linearity of expectation) ──
+function expect(m::Measure, lc::LinearCombination)
+    total = lc.offset
+    for (c, f) in lc.terms
+        total += c * expect(m, f)
+    end
+    total
+end
+
+# ── Dispatch: mixture recursion for any Functional ──
+function expect(m::MixtureMeasure, φ::Functional)
+    w = weights(m)
+    sum(w[i] * expect(m.components[i], φ) for i in eachindex(w))
+end
+
+# ── Dispatch: Composition — domain-specific, no generic rule ──
+expect(m::Measure, c::Composition) =
+    error("Composition dispatch requires a measure-specific rule; none defined")
+
+# ── Fallback: OpaqueClosure delegates to the bare-function method ──
+# Dispatches to whatever expect(m, f::Any) method exists for this measure
+# type (quadrature for leaves, Monte Carlo for ProductMeasure, etc.).
+expect(m::Measure, o::OpaqueClosure; kwargs...) = expect(m, o.f; kwargs...)
 
 # ================================================================
 # AXIOM-CONSTRAINED FUNCTION: condition

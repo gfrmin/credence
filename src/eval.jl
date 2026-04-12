@@ -206,8 +206,36 @@ function eval_dsl(expr::SList, env::Env)
             return support(eval_dsl(args[1], env))
         end
         if sym == Symbol("product-measure")
+            # Single argument: may be a list of measures.
+            if length(args) == 1
+                val = eval_dsl(args[1], env)
+                if val isa AbstractVector
+                    return ProductMeasure(Measure[v for v in val])
+                else
+                    return ProductMeasure(Measure[val])
+                end
+            end
             factors = Measure[eval_dsl(a, env) for a in args]
             return ProductMeasure(factors)
+        end
+        if sym == :factor
+            m = eval_dsl(args[1], env)
+            i = Int(eval_dsl(args[2], env))
+            m isa ProductMeasure || error("factor requires a ProductMeasure, got $(typeof(m))")
+            return factor(m, i + 1)  # 0-based DSL → 1-based Julia
+        end
+        if sym == Symbol("replace-factor")
+            m = eval_dsl(args[1], env)
+            i = Int(eval_dsl(args[2], env))
+            new_factor = eval_dsl(args[3], env)
+            m isa ProductMeasure || error("replace-factor requires a ProductMeasure, got $(typeof(m))")
+            new_factor isa Measure || error("replace-factor requires a Measure as new factor, got $(typeof(new_factor))")
+            return replace_factor(m, i + 1, new_factor)
+        end
+        if sym == Symbol("n-factors")
+            m = eval_dsl(args[1], env)
+            m isa ProductMeasure || error("n-factors requires a ProductMeasure, got $(typeof(m))")
+            return length(m.factors)
         end
         if sym == Symbol("mixture-measure")
             components = Measure[]

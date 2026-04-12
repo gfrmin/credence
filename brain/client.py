@@ -217,6 +217,27 @@ class BrainClient:
         result = self._call("draw", {"state_id": state_id})
         return result["value"]
 
+    # ── ProductMeasure decomposition ──
+
+    def factor(self, state_id: str, index: int) -> str:
+        """Extract factor `index` (0-based) of a ProductMeasure as a new state."""
+        result = self._call("factor", {"state_id": state_id, "index": index})
+        return result["state_id"]
+
+    def replace_factor(self, state_id: str, index: int, new_factor_id: str) -> str:
+        """Return a new state with factor `index` replaced by new_factor_id."""
+        result = self._call("replace_factor", {
+            "state_id": state_id,
+            "index": index,
+            "new_factor_id": new_factor_id,
+        })
+        return result["state_id"]
+
+    def n_factors(self, state_id: str) -> int:
+        """Number of factors in a ProductMeasure state."""
+        result = self._call("n_factors", {"state_id": state_id})
+        return result["n_factors"]
+
     # ── Program-space operations (Tier 2) ──
 
     def enumerate(

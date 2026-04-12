@@ -179,6 +179,31 @@ enables the compiler to select computational backends and detect
 conjugate structure. (lambda (h o) ...) as a likelihood is a
 v1 pattern that should not appear.
 
+### No opaque functions passed to expect
+Functions passed to expect are Functionals, not bare lambdas. A
+Functional declares its algebraic structure (Identity, Projection,
+NestedProjection, Tabular, LinearCombination, Composition) so expect
+can dispatch to the optimal computation. This is the same principle
+as Kernels for condition: structure enables dispatch. OpaqueClosure
+is the fallback — it works but forfeits fast paths.
+
+Functional types must compose. LinearCombination carries
+Vector{Tuple{Float64, Functional}}, not flat coefficient arrays.
+Each sub-functional navigates its own structure. Flat indexing
+schemes encode stride conventions that are invisible to the type
+system and forbidden.
+
+### No DSL wrappers around axiom-constrained operations
+A domain DSL file contains data (spaces, kernels, priors). It must
+not define functions that are thin wrappers around optimise, condition,
+expect, or push with domain-specific list navigation. Those wrappers
+exist only because state was a list needing navigation; with
+ProductMeasure state + factor/replace-factor, they disappear. Preferences
+are protocol-level Functional specs (functional_per_action with
+LinearCombination of NestedProjections), not DSL lambdas. Wrapping an
+axiom-constrained operation in a DSL function forces its arguments
+through an opaque closure bottleneck that defeats Functional dispatch.
+
 ### Indifference implies exploration
 When EU of interacting equals EU of waiting (both 0), interact.
 Indifference means VOI from the interaction outcome is positive.

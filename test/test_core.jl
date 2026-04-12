@@ -986,6 +986,201 @@ result = run_dsl("(map (lambda (i) (* i i)) (range 5))")
 println("PASSED: (map square (range 5)) = ", result)
 println()
 
+# ==================================================
+# Phase 0 — Functional type hierarchy
+# ==================================================
+
+println("=" ^ 60)
+println("TEST 44: Identity on leaf measures — closed form")
+println("=" ^ 60)
+
+v = expect(BetaMeasure(3.0, 2.0), Identity())
+@assert abs(v - 0.6) < 1e-12  "Beta(3,2) Identity should be 0.6, got $v"
+println("PASSED: expect(Beta(3,2), Identity()) = ", v)
+
+v = expect(GammaMeasure(4.0, 2.0), Identity())
+@assert abs(v - 2.0) < 1e-12  "Gamma(4,2) Identity should be 2.0, got $v"
+println("PASSED: expect(Gamma(4,2), Identity()) = ", v)
+
+v = expect(GaussianMeasure(Euclidean(1), -1.5, 2.0), Identity())
+@assert abs(v - (-1.5)) < 1e-12  "Gaussian(-1.5,2) Identity should be -1.5, got $v"
+println("PASSED: expect(Gaussian(-1.5,2), Identity()) = ", v)
+println()
+
+println("=" ^ 60)
+println("TEST 45: Projection on flat ProductMeasure")
+println("=" ^ 60)
+
+pm_flat = ProductMeasure(Measure[BetaMeasure(3.0, 2.0), BetaMeasure(1.0, 1.0)])
+v = expect(pm_flat, Projection(1))
+@assert abs(v - 0.6) < 1e-12  "Projection(1) should give mean of first factor 0.6, got $v"
+println("PASSED: expect(PM[Beta(3,2), Beta(1,1)], Projection(1)) = ", v)
+
+v = expect(pm_flat, Projection(2))
+@assert abs(v - 0.5) < 1e-12  "Projection(2) should give mean of second factor 0.5, got $v"
+println("PASSED: expect(PM[Beta(3,2), Beta(1,1)], Projection(2)) = ", v)
+println()
+
+println("=" ^ 60)
+println("TEST 46: NestedProjection through nested ProductMeasure")
+println("=" ^ 60)
+
+inner_a = ProductMeasure(Measure[BetaMeasure(3.0, 2.0), GammaMeasure(2.0, 0.5)])
+inner_b = ProductMeasure(Measure[BetaMeasure(1.0, 1.0), GammaMeasure(2.0, 0.5)])
+pm_nested = ProductMeasure(Measure[inner_a, inner_b])
+
+v = expect(pm_nested, NestedProjection([1, 1]))
+@assert abs(v - 0.6) < 1e-12  "NestedProjection([1,1]) should be 0.6, got $v"
+println("PASSED: expect(PM[PM[Beta(3,2),Gamma], PM[Beta(1,1),Gamma]], NestedProjection([1,1])) = ", v)
+
+v = expect(pm_nested, NestedProjection([2, 1]))
+@assert abs(v - 0.5) < 1e-12  "NestedProjection([2,1]) should be 0.5, got $v"
+println("PASSED: expect(..., NestedProjection([2,1])) = ", v)
+
+# Single-element NestedProjection
+v = expect(pm_flat, NestedProjection([1]))
+@assert abs(v - 0.6) < 1e-12  "NestedProjection([1]) on flat PM should be 0.6, got $v"
+println("PASSED: expect(flat PM, NestedProjection([1])) = ", v)
+println()
+
+println("=" ^ 60)
+println("TEST 47: LinearCombination of NestedProjections (router preference)")
+println("=" ^ 60)
+
+# Router EU style: reward * sum_c w_c * E[theta_{a,c}] - cost_a
+# Provider 0 has two categories: Beta(3,2) and Beta(1,1)
+# EU = 1.0 * (0.6 * 0.6 + 0.4 * 0.5) - 0.01 = 0.55
+lc = LinearCombination(
+    Tuple{Float64, Functional}[
+        (0.6, NestedProjection([1, 1])),
+        (0.4, NestedProjection([2, 1])),
+    ],
+    -0.01,
+)
+v = expect(pm_nested, lc)
+expected = 0.6 * 0.6 + 0.4 * 0.5 - 0.01
+@assert abs(v - expected) < 1e-12  "LC of NestedProjections should be $expected, got $v"
+println("PASSED: LinearCombination of NestedProjections = ", v, " (expected ", expected, ")")
+
+# Offset works without terms
+lc_offset_only = LinearCombination(Tuple{Float64, Functional}[], 0.42)
+v = expect(pm_nested, lc_offset_only)
+@assert abs(v - 0.42) < 1e-12  "empty LC with offset should return offset"
+println("PASSED: empty LinearCombination returns offset = ", v)
+println()
+
+println("=" ^ 60)
+println("TEST 48: MixtureMeasure recursion for any Functional")
+println("=" ^ 60)
+
+mix = MixtureMeasure(pm_flat.space,
+    Measure[ProductMeasure(Measure[BetaMeasure(3.0, 2.0), BetaMeasure(1.0, 1.0)]),
+            ProductMeasure(Measure[BetaMeasure(1.0, 1.0), BetaMeasure(3.0, 2.0)])],
+    [log(0.75), log(0.25)])
+v = expect(mix, Projection(1))
+# 0.75 * 0.6 + 0.25 * 0.5 = 0.575
+@assert abs(v - 0.575) < 1e-12  "Mixture + Projection should be 0.575, got $v"
+println("PASSED: expect(Mixture[PM, PM], Projection(1)) = ", v, " (expected 0.575)")
+println()
+
+println("=" ^ 60)
+println("TEST 49: CategoricalMeasure — Projection and Tabular")
+println("=" ^ 60)
+
+# Categorical over vector-valued atoms (simulates particle cloud)
+cat_vec = CategoricalMeasure{Vector{Float64}}(
+    Finite([[0.7, 2.0], [0.3, 1.5], [0.5, 3.0]]),
+    [log(0.5), log(0.3), log(0.2)])
+v = expect(cat_vec, Projection(1))
+expected = 0.5 * 0.7 + 0.3 * 0.3 + 0.2 * 0.5
+@assert abs(v - expected) < 1e-12  "Categorical projection mismatch: got $v, expected $expected"
+println("PASSED: expect(Categorical of vectors, Projection(1)) = ", v)
+
+# Tabular on categorical over integer atoms
+cat_scalar = CategoricalMeasure(Finite([0, 1, 2]), [log(0.2), log(0.5), log(0.3)])
+v = expect(cat_scalar, Tabular([10.0, 20.0, 30.0]))
+expected = 0.2 * 10.0 + 0.5 * 20.0 + 0.3 * 30.0  # 21.0
+@assert abs(v - expected) < 1e-12  "Categorical tabular mismatch: got $v, expected $expected"
+println("PASSED: expect(Categorical, Tabular) = ", v)
+println()
+
+println("=" ^ 60)
+println("TEST 49b: DSL (factor), (replace-factor), (n-factors)")
+println("=" ^ 60)
+
+# Construct ProductMeasure of two Betas in the DSL, access factors
+pm_dsl = run_dsl("""
+(product-measure
+  (measure (space :interval 0 1) :beta 3 2)
+  (measure (space :interval 0 1) :beta 1 1))
+""")
+@assert pm_dsl isa ProductMeasure  "(product-measure ...) should return a ProductMeasure"
+@assert length(pm_dsl.factors) == 2
+println("PASSED: (product-measure ...) returns ProductMeasure with 2 factors")
+
+# (factor m 0) — 0-based index in DSL
+code = """
+(let pm (product-measure
+          (measure (space :interval 0 1) :beta 3 2)
+          (measure (space :interval 0 1) :beta 1 1))
+  (factor pm 0))
+"""
+f0 = run_dsl(code)
+@assert f0 isa BetaMeasure && f0.alpha == 3.0 && f0.beta == 2.0
+println("PASSED: (factor pm 0) returns Beta(3,2)")
+
+# (replace-factor m 1 new) — replace second factor
+code = """
+(let pm (product-measure
+          (measure (space :interval 0 1) :beta 3 2)
+          (measure (space :interval 0 1) :beta 1 1))
+  (let new (measure (space :interval 0 1) :beta 7 3)
+    (factor (replace-factor pm 1 new) 1)))
+"""
+f1 = run_dsl(code)
+@assert f1 isa BetaMeasure && f1.alpha == 7.0 && f1.beta == 3.0
+println("PASSED: (replace-factor pm 1 new) replaces factor at index 1")
+
+# (n-factors m)
+code = """
+(n-factors (product-measure
+  (measure (space :interval 0 1) :beta 1 1)
+  (measure (space :interval 0 1) :beta 1 1)
+  (measure (space :interval 0 1) :beta 1 1)))
+"""
+nf = run_dsl(code)
+@assert nf == 3
+println("PASSED: (n-factors ...) = ", nf)
+
+# (product-measure lst) variant — single list argument
+code = """
+(product-measure
+  (map (lambda (i) (measure (space :interval 0 1) :beta 1 1)) (range 4)))
+"""
+pm_from_list = run_dsl(code)
+@assert pm_from_list isa ProductMeasure && length(pm_from_list.factors) == 4
+println("PASSED: (product-measure lst) builds ProductMeasure from list argument")
+println()
+
+println("=" ^ 60)
+println("TEST 50: OpaqueClosure fallback delegates to bare-function method")
+println("=" ^ 60)
+
+# On BetaMeasure: OpaqueClosure should give same result as bare lambda (quadrature)
+bare_v = expect(BetaMeasure(3.0, 2.0), x -> x * x)
+wrap_v = expect(BetaMeasure(3.0, 2.0), OpaqueClosure(x -> x * x))
+@assert abs(bare_v - wrap_v) < 1e-12  "OpaqueClosure should match bare function: $bare_v vs $wrap_v"
+println("PASSED: OpaqueClosure on BetaMeasure matches bare function: ", wrap_v)
+
+# On ProductMeasure: OpaqueClosure falls through to Monte Carlo fallback
+using Random; Random.seed!(42)
+mc1 = expect(pm_flat, h -> h[1])
+Random.seed!(42)
+mc2 = expect(pm_flat, OpaqueClosure(h -> h[1]))
+@assert abs(mc1 - mc2) < 1e-12  "OpaqueClosure on PM should match bare function (same seed)"
+println("PASSED: OpaqueClosure on ProductMeasure matches bare function under seed")
+println()
+
 println("=" ^ 60)
 println("ALL TESTS PASSED")
 println("=" ^ 60)
