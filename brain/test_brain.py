@@ -183,17 +183,18 @@ def test_router_roundtrip():
         action, eu = brain.optimise(state_id, actions_spec, pref)
         print(f"Decide: action={action}, eu={eu}")
 
-        # Closed-form EU must match exactly (no Monte Carlo noise).
+        # EU must hit the closed-form expect(BetaMeasure, Identity) dispatch
+        # path — no fallback to Monte Carlo / quadrature.
         best_expected = max(expected_eu)
         best_action = expected_eu.index(best_expected)
         assert action == best_action, f"Expected action {best_action}, got {action}"
         assert abs(eu - best_expected) < 1e-10, f"Expected EU {best_expected}, got {eu} (non-closed-form?)"
         print(f"PASS: closed-form EU matches (action={action}, eu={eu:.12f})")
 
-        # Seed-invariance: calling optimise again gives the exact same EU.
+        # Determinism: calling optimise again gives the bit-identical EU.
         action2, eu2 = brain.optimise(state_id, actions_spec, pref)
-        assert abs(eu - eu2) < 1e-15, f"EU not seed-invariant: {eu} vs {eu2}"
-        print("PASS: seed-invariant (no Monte Carlo invoked)")
+        assert abs(eu - eu2) < 1e-15, f"EU not deterministic: {eu} vs {eu2}"
+        print("PASS: deterministic dispatch (closed-form only)")
 
         # Observe high quality for provider `action`, category 2.
         # Chain: factor(state, action) -> factor(provider, 2) -> condition -> replace back.

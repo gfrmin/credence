@@ -111,6 +111,13 @@ function build_read_kernel(
     fire_chosen_cache = Dict{Int, Bool}()
     fire_counts_cache = Dict{Int, Int}()  # how many articles this program fires on
 
+    # TODO(followup): this is semantically FiringByTag(fires_chosen_set,
+    # BetaBernoulli(), Flat()) — non-firing programs contribute a constant
+    # log(0.5) to the numerator, meaning the observation carries no evidence
+    # about their θ. Declaring BetaBernoulli() preserves legacy behaviour
+    # (every program's α updates on a read) but the per-θ update for
+    # non-firing programs is strictly wrong. Switching to FiringByTag would
+    # require eagerly computing the firing set at construction time.
     Kernel(Interval(0.0, 1.0), obs_space,
         _ -> error("generate not used"),
         (m_or_θ, obs) -> begin
@@ -143,8 +150,8 @@ function build_read_kernel(
                 # m_or_θ is a scalar in [0, 1] representing the Beta parameter
                 log(max(m_or_θ, 1e-300)) - log(max(n_articles * 0.5, 1e-300))
             end
-        end,
-        nothing, nothing)
+        end;
+        likelihood_family = BetaBernoulli())
 end
 
 """
@@ -163,6 +170,9 @@ function build_dismiss_kernel(
     obs_space = Finite([0.0, 1.0])
     fire_cache = Dict{Int, Bool}()
 
+    # TODO(followup): semantically FiringByTag(fires_set, BetaBernoulli(), Flat()).
+    # Declaring BetaBernoulli() preserves legacy behaviour; see read-kernel
+    # TODO above for the same reasoning.
     Kernel(Interval(0.0, 1.0), obs_space,
         _ -> error("generate not used"),
         (m_or_θ, obs) -> begin
@@ -179,8 +189,8 @@ function build_dismiss_kernel(
                 # Scalar fallback
                 log(max(1.0 - m_or_θ, 1e-300))
             end
-        end,
-        nothing, nothing)
+        end;
+        likelihood_family = BetaBernoulli())
 end
 
 # ═══════════════════════════════════════

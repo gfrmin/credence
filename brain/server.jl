@@ -19,7 +19,7 @@ using Credence: GaussianMeasure, GammaMeasure, DirichletMeasure
 using Credence: NormalGammaMeasure, ProductMeasure, MixtureMeasure
 using Credence: Finite, Interval, ProductSpace, Euclidean, PositiveReals, Simplex
 using Credence: Kernel, FactorSelector, support
-using Credence: Functional, Identity, Projection, NestedProjection, Tabular, LinearCombination, Composition, OpaqueClosure
+using Credence: Functional, Identity, Projection, NestedProjection, Tabular, LinearCombination, OpaqueClosure
 using Credence: factor, replace_factor
 using Credence: AgentState, sync_prune!, sync_truncate!
 using Credence: Grammar, Program, CompiledKernel, ProductionRule
@@ -65,12 +65,8 @@ struct StateNotFound <: Exception
     id::String
 end
 
-struct InferenceError <: Exception
-    msg::String
-end
-
-struct DSLError <: Exception
-    msg::String
+struct MethodNotFound <: Exception
+    method::String
 end
 
 # ═══════════════════════════════════════
@@ -227,9 +223,9 @@ function build_kernel(spec, state_id::Union{String, Nothing}=nothing)
                 else
                     obs == 1.0 ? log(max(m_or_θ, 1e-300)) : log(max(1.0 - m_or_θ, 1e-300))
                 end
-            end,
-            nothing,
-            Dict{Symbol, Any}(:correct_cache => correct_cache))
+            end;
+            params = Dict{Symbol, Any}(:correct_cache => correct_cache),
+            likelihood_family = BetaBernoulli())
 
     elseif t == "tabular_log_density"
         source_vals = collect(Float64, spec["source_vals"])
@@ -272,7 +268,7 @@ function build_function(spec)::Functional
     t = spec["type"]
     if t == "identity"
         Identity()
-    elseif t == "projection" || t == "project"  # "project" kept for compat
+    elseif t == "projection" || t == "project"
         Projection(Int(spec["index"]) + 1)  # 0-based → 1-based
     elseif t == "nested_projection"
         NestedProjection(Int[Int(i) + 1 for i in spec["indices"]])
@@ -445,7 +441,7 @@ function handle_request(method::String, params, id)
     elseif method == "n_factors"
         handle_n_factors(params)
     else
-        throw(ErrorException("method not found: $method"))
+        throw(MethodNotFound(string(method)))
     end
 end
 
@@ -642,6 +638,21 @@ function handle_expect(params)
     Dict("value" => Float64(expect(state, f)))
 end
 
+# Deterministic action iteration: sort keys of functional_per_action's
+# actions dict. JSON3 dicts don't guarantee iteration order, and strict
+# `>` tie-breaking would otherwise make the winning action host-dependent.
+# Returns keys sorted: numeric keys first (by parsed value), then
+# non-numeric keys lexicographically. Tuples share element types to keep
+# Julia's isless dispatch happy.
+function _sorted_action_keys(actions)
+    ks = collect(keys(actions))
+    sort(ks; by = k -> begin
+        s = string(k)
+        parsed = tryparse(Int, s)
+        parsed === nothing ? (1, 0, s) : (0, parsed, "")
+    end)
+end
+
 function handle_optimise(params)
     id = string(params["state_id"])
     state = get_state(id)
@@ -652,7 +663,8 @@ function handle_optimise(params)
     if pref_spec["type"] == "functional_per_action"
         best_action = nothing
         best_eu = -Inf
-        for (action_str, fn_spec) in pref_spec["actions"]
+        for action_str in _sorted_action_keys(pref_spec["actions"])
+            fn_spec = pref_spec["actions"][action_str]
             φ = build_function(fn_spec)
             eu = Float64(expect(state, φ))
             if eu > best_eu
@@ -809,7 +821,12 @@ function handle_belief_summary(params)
     for i in 1:top_n
         idx = perm[i]
         gi, pi = state.metadata[idx]
-        expr_str = try show_expr(state.all_programs[idx].expr) catch; "?" end
+        expr_str = try
+            show_expr(state.all_programs[idx].expr)
+        catch e
+            log_msg("show_expr failed on program $idx: $(sprint(showerror, e))")
+            "?"
+        end
         push!(top_progs, Dict(
             "index" => idx - 1,  # 0-based for host
             "weight" => w[idx],
@@ -834,7 +851,12 @@ function handle_condition_and_prune(params)
     threshold = Float64(get(params, "prune_threshold", -30.0))
     max_comp = Int(get(params, "max_components", 2000))
 
-    log_marg = try log_predictive(state.belief, kernel, obs) catch; nothing end
+    log_marg = try
+        log_predictive(state.belief, kernel, obs)
+    catch e
+        log_msg("log_predictive failed (state=$id, obs=$obs): $(sprint(showerror, e))")
+        nothing
+    end
 
     state.belief = condition(state.belief, kernel, obs)
     sync_prune!(state; threshold=threshold)
@@ -852,6 +874,13 @@ function handle_eu_interact(params)
                                       for (k, v) in params["features"])
     rewards = Dict{Symbol, Float64}(Symbol(k) => Float64(v)
                                      for (k, v) in params["rewards"])
+    # The mean_j / (1 - mean_j) split below assumes exactly two outcome
+    # labels (correct-recommendation vs the single complement). Multi-
+    # label support requires per-component categorical beliefs, not a
+    # scalar Beta mean.
+    length(rewards) == 2 || error(
+        "handle_eu_interact currently supports only binary outcomes; " *
+        "got $(length(rewards)) labels")
     temporal_state = Dict{Symbol, Any}()
 
     w = weights(state.belief)
@@ -936,14 +965,10 @@ function main()
         catch e
             code = if e isa StateNotFound
                 -32000
-            elseif e isa InferenceError
-                -32001
-            elseif e isa DSLError
-                -32002
-            elseif occursin("method not found", sprint(showerror, e))
+            elseif e isa MethodNotFound
                 -32601
             else
-                -32602
+                -32603  # generic internal error; use narrower codes by wrapping at the throw site
             end
             msg = sprint(showerror, e)
             log_msg("Error handling $method: $msg")

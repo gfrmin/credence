@@ -17,8 +17,8 @@ module Ontology
 export Space, Finite, Interval, ProductSpace, Simplex, Euclidean, PositiveReals, support
 export Measure, CategoricalMeasure, BetaMeasure, TaggedBetaMeasure, GaussianMeasure, GammaMeasure, ExponentialMeasure, DirichletMeasure, NormalGammaMeasure, ProductMeasure, MixtureMeasure
 export Kernel, FactorSelector, kernel_source, kernel_target, kernel_params
-export LikelihoodFamily, BetaBernoulli, Flat, GaussianKnownVar, FiringByTag, DispatchByComponent
-export Functional, Identity, Projection, NestedProjection, Tabular, LinearCombination, Composition, OpaqueClosure
+export LikelihoodFamily, BetaBernoulli, Flat, FiringByTag, DispatchByComponent
+export Functional, Identity, Projection, NestedProjection, Tabular, LinearCombination, OpaqueClosure
 export factor, replace_factor
 export condition, expect, push_measure, density, log_predictive, log_marginal
 export draw
@@ -262,15 +262,15 @@ end
 # LikelihoodFamily: declared per-θ algebraic form of a kernel's likelihood
 # ─────────────────────────────────────────────────────────────────────
 # A Kernel's log_density closure is opaque to the type system. Dispatch
-# needs to know the likelihood's algebraic form (Beta-Bernoulli, flat,
-# Gaussian-known-var, …) to pick the right computation — closed-form
-# conjugate, grid quadrature, no-op for flat, etc. Declaring the family
-# at construction is the same principle as Functional for expect.
+# needs to know the likelihood's algebraic form (Beta-Bernoulli, flat, …)
+# to pick the right computation — closed-form conjugate, no-op for flat,
+# etc. Declaring the family at construction is the same principle as
+# Functional for expect.
 #
-# Undeclared (likelihood_family = nothing) preserves legacy behaviour:
-# conjugate measures assume Beta-Bernoulli. New Kernel construction
-# sites should declare explicitly. Eventually the nothing case can be
-# tightened to an error.
+# Every Kernel used to condition a TaggedBetaMeasure must declare a
+# likelihood_family — condition() errors on `nothing`. Kernels used only
+# with push/expect, or against measures whose condition method does not
+# dispatch on family, may leave it unset.
 abstract type LikelihoodFamily end
 
 # p(obs|θ) = θ^obs · (1−θ)^(1−obs). Conjugate with Beta priors.
@@ -280,28 +280,27 @@ struct BetaBernoulli <: LikelihoodFamily end
 # Bayesian posterior = prior.
 struct Flat <: LikelihoodFamily end
 
-# p(obs|μ) = N(μ, σ²_obs). Conjugate with Gaussian priors when σ²_obs known.
-struct GaussianKnownVar <: LikelihoodFamily
-    sigma_obs::Float64
-end
-
 # Fire/not-fire routing by component tag. Tags in `fires` use
 # `when_fires`; all other tags use `when_not`. This is the declarative
 # capture of the dominant per-component routing pattern in program-space
 # mixtures — "some predicates fire on this observation, some don't".
 # Prefer this over DispatchByComponent when the routing is tag-based.
+#
+# The branch fields are restricted to leaf families (BetaBernoulli / Flat)
+# so nesting is impossible by construction. The condition() dispatch loop
+# still guards against runtime misuse from DispatchByComponent.
 struct FiringByTag <: LikelihoodFamily
     fires::Set{Int}
-    when_fires::LikelihoodFamily
-    when_not::LikelihoodFamily
+    when_fires::Union{BetaBernoulli, Flat}
+    when_not::Union{BetaBernoulli, Flat}
 end
 
 # Explicit escape hatch — the LikelihoodFamily analogue of OpaqueClosure.
 # Takes a `classify(m) → LikelihoodFamily` closure called at dispatch
-# time. The return type is constrained so routing is typed, but the
-# closure body itself is opaque. Reach for this only when no declarative
-# subtype (FiringByTag, …) fits the routing pattern. Adding a new
-# declarative subtype is preferred over reaching for this one.
+# time. The closure must return a leaf family (BetaBernoulli or Flat).
+# Returning another DispatchByComponent is caught by the depth cap in
+# condition(). Reach for this only when no declarative subtype
+# (FiringByTag, …) fits the routing pattern.
 struct DispatchByComponent <: LikelihoodFamily
     classify::Function  # Measure → LikelihoodFamily
 end
@@ -435,6 +434,10 @@ struct Identity <: Functional end
 
 struct Projection <: Functional
     index::Int  # 1-based index into ProductMeasure factors
+    function Projection(index::Int)
+        index >= 1 || throw(ArgumentError("Projection.index must be >= 1, got $index"))
+        new(index)
+    end
 end
 
 # Recursively navigates nested ProductMeasures. indices[1] picks the top
@@ -442,10 +445,20 @@ end
 # Identity() on that leaf.
 struct NestedProjection <: Functional
     indices::Vector{Int}  # 1-based
+    function NestedProjection(indices::Vector{Int})
+        isempty(indices) && throw(ArgumentError("NestedProjection requires at least one index"))
+        all(i -> i >= 1, indices) ||
+            throw(ArgumentError("NestedProjection.indices must all be >= 1, got $indices"))
+        new(indices)
+    end
 end
 
 struct Tabular <: Functional
     values::Vector{Float64}
+    function Tabular(values::Vector{Float64})
+        isempty(values) && throw(ArgumentError("Tabular requires non-empty values"))
+        new(values)
+    end
 end
 
 # terms is (coefficient, sub_functional) pairs. Sub-functionals carry the
@@ -454,11 +467,6 @@ end
 struct LinearCombination <: Functional
     terms::Vector{Tuple{Float64, Functional}}
     offset::Float64
-end
-
-struct Composition <: Functional
-    outer::Functional
-    inner::Functional
 end
 
 # Fallback wrapping a bare Julia function. Works but forfeits fast paths.
@@ -529,14 +537,14 @@ function expect(m::MixtureMeasure, φ::Functional)
     sum(w[i] * expect(m.components[i], φ) for i in eachindex(w))
 end
 
-# ── Dispatch: Composition — domain-specific, no generic rule ──
-expect(m::Measure, c::Composition) =
-    error("Composition dispatch requires a measure-specific rule; none defined")
-
 # ── Fallback: OpaqueClosure delegates to the bare-function method ──
 # Dispatches to whatever expect(m, f::Any) method exists for this measure
 # type (quadrature for leaves, Monte Carlo for ProductMeasure, etc.).
 expect(m::Measure, o::OpaqueClosure; kwargs...) = expect(m, o.f; kwargs...)
+
+# Explicit MixtureMeasure overload to resolve dispatch ambiguity between
+# expect(::MixtureMeasure, ::Functional) and expect(::Measure, ::OpaqueClosure).
+expect(m::MixtureMeasure, o::OpaqueClosure; kwargs...) = expect(m, o.f; kwargs...)
 
 # ================================================================
 # AXIOM-CONSTRAINED FUNCTION: condition
@@ -571,15 +579,22 @@ function condition(m::BetaMeasure, k::Kernel, observation)
 end
 
 function condition(m::TaggedBetaMeasure, k::Kernel, observation)
-    # Resolve the kernel's declared likelihood family. Declarative routing
-    # subtypes (FiringByTag) are unwrapped first; DispatchByComponent is
-    # the opaque escape hatch. An undeclared family (nothing) falls back
-    # to BetaBernoulli for backward compatibility — matches the legacy
-    # behaviour of every pre-existing caller.
+    # See LikelihoodFamily declaration for the routing vocabulary.
     fam = k.likelihood_family
-    fam isa FiringByTag && (fam = m.tag in fam.fires ? fam.when_fires : fam.when_not)
-    fam isa DispatchByComponent && (fam = fam.classify(m))
-    fam === nothing && (fam = BetaBernoulli())
+    for _ in 1:8  # depth cap — catches accidental self-referential DispatchByComponent
+        if fam isa FiringByTag
+            fam = m.tag in fam.fires ? fam.when_fires : fam.when_not
+        elseif fam isa DispatchByComponent
+            fam = fam.classify(m)
+        else
+            break
+        end
+    end
+    (fam isa FiringByTag || fam isa DispatchByComponent) &&
+        error("LikelihoodFamily unwrap did not reach a leaf within depth cap")
+    fam === nothing && error(
+        "condition(::TaggedBetaMeasure, …): kernel has no likelihood_family. " *
+        "Declare one at Kernel construction (e.g. likelihood_family=BetaBernoulli()).")
 
     # Run the kernel for its side effects. Production program_observation
     # kernels use this call to populate per-tag caches in k.params

@@ -180,16 +180,16 @@ conjugate structure. (lambda (h o) ...) as a likelihood is a
 v1 pattern that should not appear.
 
 ### Declare kernel structure at construction, not at dispatch
-A kernel's per-θ algebraic form (BetaBernoulli, Flat, GaussianKnownVar,
-etc.) is declared via the likelihood_family field at Kernel construction,
-not inferred at dispatch by probing log-density values or return types.
+A kernel's per-θ algebraic form (BetaBernoulli, Flat, etc.) is
+declared via the likelihood_family field at Kernel construction, not
+inferred at dispatch by probing log-density values or return types.
 This is the condition-side analogue of the Functional hierarchy for
-expect: structure enables dispatch, declaration is the mechanism. A
-missing declaration means "apply the legacy conjugate default"; new
-kernels should declare explicitly. Probing a kernel's output at chosen
-inputs to infer structure (e.g. treating log_density == 0.0 as "flat")
-is forbidden — it misfires on legitimate edge cases and hides the
-assumption from the type system.
+expect: structure enables dispatch, declaration is the mechanism.
+Every kernel used to condition a TaggedBetaMeasure must declare a
+family; condition() errors on a missing declaration. Probing a
+kernel's output at chosen inputs to infer structure (e.g. treating
+log_density == 0.0 as "flat") is forbidden — it misfires on
+legitimate edge cases and hides the assumption from the type system.
 
 Per-component routing in mixtures has a declarative vocabulary:
 FiringByTag(fires::Set{Int}, when_fires, when_not) for the dominant
@@ -202,10 +202,10 @@ subtype is preferred over reaching for DispatchByComponent.
 ### No opaque functions passed to expect
 Functions passed to expect are Functionals, not bare lambdas. A
 Functional declares its algebraic structure (Identity, Projection,
-NestedProjection, Tabular, LinearCombination, Composition) so expect
-can dispatch to the optimal computation. This is the same principle
-as Kernels for condition: structure enables dispatch. OpaqueClosure
-is the fallback — it works but forfeits fast paths.
+NestedProjection, Tabular, LinearCombination) so expect can dispatch
+to the optimal computation. This is the same principle as Kernels
+for condition: structure enables dispatch. OpaqueClosure is the
+fallback — it works but forfeits fast paths.
 
 Functional types must compose. LinearCombination carries
 Vector{Tuple{Float64, Functional}}, not flat coefficient arrays.

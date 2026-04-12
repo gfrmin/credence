@@ -558,11 +558,11 @@ weighted sums for CategoricalMeasure, Monte Carlo fallback for
 | Type | Params | Description |
 |------|--------|-------------|
 | `identity` | -- | `f(x) = x`. Closed-form on Beta/Gamma/Gaussian leaves. |
-| `projection` | `index` (0-based) | `f(x) = x[index]`. Decomposes on ProductMeasure. `project` accepted as alias for back-compat. |
+| `projection` | `index` (0-based) | `f(x) = x[index]`. Decomposes on ProductMeasure. `project` accepted as alias. |
 | `nested_projection` | `indices: [Int]` (0-based) | Recursive navigation through nested ProductMeasures. |
 | `tabular` | `values: [Float]` | Weighted sum over CategoricalMeasure atoms. |
 | `linear_combination` | `terms: [[coeff, sub_fn_spec]]`, `offset?` | Linearity of expectation: sum of (coeff · sub-functional expectations) + offset. Sub-specs are recursive function specs. |
-| `opaque_bdsl` | `env_id`, `expr` | DSL lambda; falls back to the measure's bare-function expect (quadrature for leaves, Monte Carlo for products). `bdsl` accepted as alias. |
+| `opaque_bdsl` | `env_id`, `expr` | DSL lambda; delegates to the bare-function `expect` method for the measure type (closed-form / quadrature / Monte Carlo depending on measure). `bdsl` accepted as alias. |
 
 Example — router preference for provider 0 over 2 categories:
 ```json
@@ -638,7 +638,5 @@ Standard JSON-RPC 2.0 error responses:
 | -32700 | Parse error (malformed JSON) |
 | -32600 | Invalid request (missing method/id) |
 | -32601 | Method not found |
-| -32602 | Invalid params |
+| -32603 | Internal error (uncategorised handler failure) |
 | -32000 | State not found |
-| -32001 | Inference error (e.g. all hypotheses impossible) |
-| -32002 | DSL error (parse/eval failure) |

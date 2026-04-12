@@ -1182,5 +1182,194 @@ println("PASSED: OpaqueClosure on ProductMeasure matches bare function under see
 println()
 
 println("=" ^ 60)
+println("TEST 51: LikelihoodFamily dispatch — BetaBernoulli explicit")
+println("=" ^ 60)
+let
+    tbm = TaggedBetaMeasure(Interval(0.0, 1.0), 7, BetaMeasure(2.0, 3.0))
+    k = Kernel(Interval(0.0, 1.0), Finite([0.0, 1.0]),
+        _ -> error("not used"),
+        (h, o) -> o == 1.0 ? log(max(h isa TaggedBetaMeasure ? mean(h.beta) : h, 1e-300)) :
+                              log(max(1 - (h isa TaggedBetaMeasure ? mean(h.beta) : h), 1e-300));
+        likelihood_family = BetaBernoulli())
+    post1 = condition(tbm, k, 1.0)
+    @assert post1.tag == 7
+    @assert post1.beta.alpha == 3.0 "Expected α=3.0 after obs=1, got $(post1.beta.alpha)"
+    @assert post1.beta.beta == 3.0 "Expected β=3.0 unchanged, got $(post1.beta.beta)"
+
+    post0 = condition(tbm, k, 0.0)
+    @assert post0.beta.alpha == 2.0
+    @assert post0.beta.beta == 4.0
+    println("PASSED: explicit BetaBernoulli conjugate update exact")
+end
+println()
+
+println("=" ^ 60)
+println("TEST 52: LikelihoodFamily dispatch — Flat explicit")
+println("=" ^ 60)
+let
+    tbm = TaggedBetaMeasure(Interval(0.0, 1.0), 42, BetaMeasure(4.0, 6.0))
+    k = Kernel(Interval(0.0, 1.0), Finite([0.0, 1.0]),
+        _ -> error("not used"),
+        (h, o) -> log(0.5);
+        likelihood_family = Flat())
+    post = condition(tbm, k, 1.0)
+    @assert post.tag == 42 "tag preserved"
+    @assert post.beta.alpha == 4.0 "Flat: α unchanged"
+    @assert post.beta.beta == 6.0 "Flat: β unchanged"
+    @assert post === tbm "Flat posterior is identical object to prior"
+    println("PASSED: Flat likelihood leaves posterior ≡ prior")
+end
+println()
+
+println("=" ^ 60)
+println("TEST 53: LikelihoodFamily dispatch — DispatchByComponent classify")
+println("=" ^ 60)
+let
+    # Even tags → BetaBernoulli, odd → Flat
+    classify(m) = iseven(m.tag) ? BetaBernoulli() : Flat()
+    k = Kernel(Interval(0.0, 1.0), Finite([0.0, 1.0]),
+        _ -> error("not used"),
+        (h, o) -> o == 1.0 ? log(max(h isa TaggedBetaMeasure ? mean(h.beta) : h, 1e-300)) :
+                              log(max(1 - (h isa TaggedBetaMeasure ? mean(h.beta) : h), 1e-300));
+        likelihood_family = DispatchByComponent(classify))
+
+    tbm_even = TaggedBetaMeasure(Interval(0.0, 1.0), 2, BetaMeasure(1.0, 1.0))
+    tbm_odd  = TaggedBetaMeasure(Interval(0.0, 1.0), 3, BetaMeasure(1.0, 1.0))
+
+    post_even = condition(tbm_even, k, 1.0)
+    post_odd  = condition(tbm_odd,  k, 1.0)
+
+    @assert post_even.beta.alpha == 2.0  "Even tag: BetaBernoulli update expected"
+    @assert post_even.beta.beta  == 1.0
+    @assert post_odd.beta.alpha  == 1.0  "Odd tag: Flat → prior unchanged"
+    @assert post_odd.beta.beta   == 1.0
+    println("PASSED: DispatchByComponent routes to leaf families")
+end
+println()
+
+println("=" ^ 60)
+println("TEST 54: Error pin — nothing likelihood_family errors at condition")
+println("=" ^ 60)
+let
+    tbm = TaggedBetaMeasure(Interval(0.0, 1.0), 1, BetaMeasure(1.0, 1.0))
+    k = Kernel(Interval(0.0, 1.0), Finite([0.0, 1.0]),
+        _ -> error("not used"),
+        (h, o) -> 0.0)  # no likelihood_family
+    caught = false
+    try
+        condition(tbm, k, 1.0)
+    catch e
+        caught = true
+        @assert occursin("likelihood_family", sprint(showerror, e))
+    end
+    @assert caught "Expected error for undeclared likelihood_family"
+    println("PASSED: undeclared likelihood_family → error")
+end
+println()
+
+println("=" ^ 60)
+println("TEST 55: Error pin — DispatchByComponent self-reference hits depth cap")
+println("=" ^ 60)
+let
+    # classify returns another DispatchByComponent → self-reference loop
+    local k_ref
+    classify(m) = k_ref.likelihood_family
+    tbm = TaggedBetaMeasure(Interval(0.0, 1.0), 1, BetaMeasure(1.0, 1.0))
+    k_ref = Kernel(Interval(0.0, 1.0), Finite([0.0, 1.0]),
+        _ -> error("not used"),
+        (h, o) -> 0.0;
+        likelihood_family = DispatchByComponent(classify))
+    caught = false
+    try
+        condition(tbm, k_ref, 1.0)
+    catch e
+        caught = true
+        @assert occursin("depth cap", sprint(showerror, e))
+    end
+    @assert caught "Expected depth-cap error for self-referential classify"
+    println("PASSED: classify self-reference → depth-cap error")
+end
+println()
+
+println("=" ^ 60)
+println("TEST 56: Functional dispatch — MixtureMeasure × OpaqueClosure")
+println("=" ^ 60)
+let
+    # Regression guard: without the explicit overload, dispatch was ambiguous
+    # between expect(::MixtureMeasure, ::Functional) and expect(::Measure, ::OpaqueClosure).
+    b1 = BetaMeasure(3.0, 1.0)  # mean 0.75
+    b2 = BetaMeasure(1.0, 3.0)  # mean 0.25
+    mix = MixtureMeasure(Interval(0.0, 1.0), Measure[b1, b2], [log(0.6), log(0.4)])
+
+    f = θ -> θ^2
+    bare = expect(mix, f)
+    wrapped = expect(mix, OpaqueClosure(f))
+    @assert abs(bare - wrapped) < 1e-12 "OpaqueClosure on mixture must match bare function"
+    println("PASSED: OpaqueClosure dispatches cleanly on MixtureMeasure")
+end
+println()
+
+println("=" ^ 60)
+println("TEST 57: Functional — nested LinearCombination offset arithmetic")
+println("=" ^ 60)
+let
+    # inner = 2·Identity + 3, outer = 5·inner + 1
+    # For Beta(2,4), E[Identity] = 2/6 = 1/3
+    # inner EU = 2·(1/3) + 3 = 11/3
+    # outer EU = 5·(11/3) + 1 = 58/3
+    b = BetaMeasure(2.0, 4.0)
+    inner = LinearCombination(Tuple{Float64, Functional}[(2.0, Identity())], 3.0)
+    outer = LinearCombination(Tuple{Float64, Functional}[(5.0, inner)], 1.0)
+    got = expect(b, outer)
+    expected = 58 / 3
+    @assert abs(got - expected) < 1e-12 "Nested LC: expected $expected, got $got"
+    println("PASSED: nested LinearCombination offset composes correctly: $(round(got, digits=6))")
+end
+println()
+
+println("=" ^ 60)
+println("TEST 58: Construction-time validation — Projection/NestedProjection/Tabular")
+println("=" ^ 60)
+let
+    @assert try; Projection(0);           false catch ArgumentError; true end  "Projection(0) must error"
+    @assert try; Projection(-1);          false catch ArgumentError; true end  "Projection(-1) must error"
+    @assert try; NestedProjection(Int[]); false catch ArgumentError; true end  "empty NestedProjection must error"
+    @assert try; NestedProjection([1, 0, 2]); false catch ArgumentError; true end  "NP with 0 must error"
+    @assert try; Tabular(Float64[]);      false catch ArgumentError; true end  "empty Tabular must error"
+    # Valid constructions still work
+    Projection(1); NestedProjection([1, 2]); Tabular([1.0, 2.0])
+    println("PASSED: invalid constructions rejected; valid ones accepted")
+end
+println()
+
+println("=" ^ 60)
+println("TEST 59: ProductMeasure factor / replace_factor round-trip (Julia level)")
+println("=" ^ 60)
+let
+    b1 = BetaMeasure(3.0, 2.0)
+    b2 = BetaMeasure(1.0, 4.0)
+    b3 = BetaMeasure(5.0, 5.0)
+    pm = ProductMeasure(Measure[b1, b2, b3])
+
+    @assert factor(pm, 1) === b1 "factor returns same object (identity)"
+    @assert factor(pm, 2) === b2
+    @assert factor(pm, 3) === b3
+
+    replacement = BetaMeasure(9.0, 1.0)
+    pm2 = replace_factor(pm, 2, replacement)
+    @assert pm2 !== pm "replace_factor returns a new ProductMeasure"
+    @assert factor(pm2, 2) === replacement
+    @assert factor(pm2, 1) === b1 "unreplaced factors carry through"
+    @assert factor(pm2, 3) === b3
+    @assert factor(pm, 2) === b2 "original unchanged at field level"
+
+    @assert try; replace_factor(pm, 0, replacement); false catch; true end "out-of-range (0) errors"
+    @assert try; replace_factor(pm, 4, replacement); false catch; true end "out-of-range (4) errors"
+
+    println("PASSED: factor/replace_factor round-trip exact")
+end
+println()
+
+println("=" ^ 60)
 println("ALL TESTS PASSED")
 println("=" ^ 60)
