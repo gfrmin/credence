@@ -6,6 +6,7 @@ Manifest.toml
 
 # Agent state files
 .credence_state.bin
+credence-llm-state.json
 
 # Python
 __pycache__/
