@@ -191,12 +191,13 @@ inputs to infer structure (e.g. treating log_density == 0.0 as "flat")
 is forbidden — it misfires on legitimate edge cases and hides the
 assumption from the type system.
 
-DispatchByComponent takes a classify(measure) -> LikelihoodFamily
-function for per-tag routing in mixture conditioning. The classify
-function IS a closure, but its return type is constrained to
-LikelihoodFamily — so the routing is typed, not opaque. Even so, prefer
-declarative forms when the routing pattern is simple (e.g. a
-tag-to-family map).
+Per-component routing in mixtures has a declarative vocabulary:
+FiringByTag(fires::Set{Int}, when_fires, when_not) for the dominant
+"some predicates fire, some don't" pattern. DispatchByComponent takes
+a classify(measure) -> LikelihoodFamily closure; it is the typed-return
+escape hatch (analogous to OpaqueClosure for Functional) and should
+only be used when no declarative subtype fits. Adding a new declarative
+subtype is preferred over reaching for DispatchByComponent.
 
 ### No opaque functions passed to expect
 Functions passed to expect are Functionals, not bare lambdas. A

@@ -307,8 +307,7 @@ let
                 obs == 1.0 ? log(max(m_or_θ, 1e-300)) : log(max(1 - m_or_θ, 1e-300))
             end
         end;
-        likelihood_family = DispatchByComponent(m ->
-            m isa TaggedBetaMeasure && m.tag in fires ? BetaBernoulli() : Flat()))
+        likelihood_family = FiringByTag(fires, BetaBernoulli(), Flat()))
 
     # Condition on enemy (1.0) — 5 times
     posterior = belief

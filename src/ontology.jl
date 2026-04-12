@@ -17,7 +17,7 @@ module Ontology
 export Space, Finite, Interval, ProductSpace, Simplex, Euclidean, PositiveReals, support
 export Measure, CategoricalMeasure, BetaMeasure, TaggedBetaMeasure, GaussianMeasure, GammaMeasure, ExponentialMeasure, DirichletMeasure, NormalGammaMeasure, ProductMeasure, MixtureMeasure
 export Kernel, FactorSelector, kernel_source, kernel_target, kernel_params
-export LikelihoodFamily, BetaBernoulli, Flat, GaussianKnownVar, DispatchByComponent
+export LikelihoodFamily, BetaBernoulli, Flat, GaussianKnownVar, FiringByTag, DispatchByComponent
 export Functional, Identity, Projection, NestedProjection, Tabular, LinearCombination, Composition, OpaqueClosure
 export factor, replace_factor
 export condition, expect, push_measure, density, log_predictive, log_marginal
@@ -285,11 +285,23 @@ struct GaussianKnownVar <: LikelihoodFamily
     sigma_obs::Float64
 end
 
-# Family depends on which component of a mixture the kernel is evaluated
-# at. `classify(m) → LikelihoodFamily` is called at dispatch time with
-# the component measure to determine the appropriate family. The return
-# type is constrained to LikelihoodFamily, so dispatch is typed — this
-# is declared routing, not probing.
+# Fire/not-fire routing by component tag. Tags in `fires` use
+# `when_fires`; all other tags use `when_not`. This is the declarative
+# capture of the dominant per-component routing pattern in program-space
+# mixtures — "some predicates fire on this observation, some don't".
+# Prefer this over DispatchByComponent when the routing is tag-based.
+struct FiringByTag <: LikelihoodFamily
+    fires::Set{Int}
+    when_fires::LikelihoodFamily
+    when_not::LikelihoodFamily
+end
+
+# Explicit escape hatch — the LikelihoodFamily analogue of OpaqueClosure.
+# Takes a `classify(m) → LikelihoodFamily` closure called at dispatch
+# time. The return type is constrained so routing is typed, but the
+# closure body itself is opaque. Reach for this only when no declarative
+# subtype (FiringByTag, …) fits the routing pattern. Adding a new
+# declarative subtype is preferred over reaching for this one.
 struct DispatchByComponent <: LikelihoodFamily
     classify::Function  # Measure → LikelihoodFamily
 end
@@ -559,12 +571,13 @@ function condition(m::BetaMeasure, k::Kernel, observation)
 end
 
 function condition(m::TaggedBetaMeasure, k::Kernel, observation)
-    # Resolve the kernel's declared likelihood family. DispatchByComponent
-    # is resolved at this level: its classify(m) returns the concrete family
-    # for THIS component. An undeclared family (nothing) falls back to
-    # BetaBernoulli for backward compatibility — this matches the legacy
-    # behaviour of every pre-existing caller (see plan for migration path).
+    # Resolve the kernel's declared likelihood family. Declarative routing
+    # subtypes (FiringByTag) are unwrapped first; DispatchByComponent is
+    # the opaque escape hatch. An undeclared family (nothing) falls back
+    # to BetaBernoulli for backward compatibility — matches the legacy
+    # behaviour of every pre-existing caller.
     fam = k.likelihood_family
+    fam isa FiringByTag && (fam = m.tag in fam.fires ? fam.when_fires : fam.when_not)
     fam isa DispatchByComponent && (fam = fam.classify(m))
     fam === nothing && (fam = BetaBernoulli())
 
