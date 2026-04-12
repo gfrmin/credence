@@ -179,6 +179,25 @@ enables the compiler to select computational backends and detect
 conjugate structure. (lambda (h o) ...) as a likelihood is a
 v1 pattern that should not appear.
 
+### Declare kernel structure at construction, not at dispatch
+A kernel's per-θ algebraic form (BetaBernoulli, Flat, GaussianKnownVar,
+etc.) is declared via the likelihood_family field at Kernel construction,
+not inferred at dispatch by probing log-density values or return types.
+This is the condition-side analogue of the Functional hierarchy for
+expect: structure enables dispatch, declaration is the mechanism. A
+missing declaration means "apply the legacy conjugate default"; new
+kernels should declare explicitly. Probing a kernel's output at chosen
+inputs to infer structure (e.g. treating log_density == 0.0 as "flat")
+is forbidden — it misfires on legitimate edge cases and hides the
+assumption from the type system.
+
+DispatchByComponent takes a classify(measure) -> LikelihoodFamily
+function for per-tag routing in mixture conditioning. The classify
+function IS a closure, but its return type is constrained to
+LikelihoodFamily — so the routing is typed, not opaque. Even so, prefer
+declarative forms when the routing pattern is simple (e.g. a
+tag-to-family map).
+
 ### No opaque functions passed to expect
 Functions passed to expect are Functionals, not bare lambdas. A
 Functional declares its algebraic structure (Identity, Projection,

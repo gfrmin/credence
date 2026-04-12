@@ -282,7 +282,16 @@ let
     ]
     belief = MixtureMeasure(Interval(0.0, 1.0), comps, fill(0.0, 4))
 
-    # Kernel: tags 1,2 fire (Beta-Bernoulli ll), tags 3,4 don't (flat)
+    # Kernel: tags 1,2 fire (Beta-Bernoulli likelihood, log(mean) at the
+    # measure level); tags 3,4 don't (predict the base rate log(0.5) per
+    # CLAUDE.md's "non-firing predicates predict the base rate" rule).
+    # Two orthogonal concerns, decoupled:
+    #   * Mixture weight (via _predictive_ll): uses the log_density return.
+    #     Firing components return log(p), non-firing return log(0.5) — firing
+    #     components that predict correctly eventually outweigh non-firing.
+    #   * Per-component Beta update (via condition): uses the declared
+    #     likelihood_family, not the return value. Firing → BetaBernoulli →
+    #     conjugate α++ update; non-firing → Flat → posterior = prior.
     fires = Set([1, 2])
     k = Kernel(Interval(0.0, 1.0), Finite([0.0, 1.0]),
         _ -> error("not used"),
@@ -292,12 +301,14 @@ let
                     p = mean(m_or_θ.beta)
                     obs == 1.0 ? log(max(p, 1e-300)) : log(max(1 - p, 1e-300))
                 else
-                    0.0
+                    log(0.5)  # non-firing predicts base rate
                 end
             else
                 obs == 1.0 ? log(max(m_or_θ, 1e-300)) : log(max(1 - m_or_θ, 1e-300))
             end
-        end)
+        end;
+        likelihood_family = DispatchByComponent(m ->
+            m isa TaggedBetaMeasure && m.tag in fires ? BetaBernoulli() : Flat()))
 
     # Condition on enemy (1.0) — 5 times
     posterior = belief

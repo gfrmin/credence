@@ -17,6 +17,7 @@ module Ontology
 export Space, Finite, Interval, ProductSpace, Simplex, Euclidean, PositiveReals, support
 export Measure, CategoricalMeasure, BetaMeasure, TaggedBetaMeasure, GaussianMeasure, GammaMeasure, ExponentialMeasure, DirichletMeasure, NormalGammaMeasure, ProductMeasure, MixtureMeasure
 export Kernel, FactorSelector, kernel_source, kernel_target, kernel_params
+export LikelihoodFamily, BetaBernoulli, Flat, GaussianKnownVar, DispatchByComponent
 export Functional, Identity, Projection, NestedProjection, Tabular, LinearCombination, Composition, OpaqueClosure
 export factor, replace_factor
 export condition, expect, push_measure, density, log_predictive, log_marginal
@@ -257,6 +258,42 @@ struct FactorSelector
     active::Function          # selector_value → Vector{Int} of factors to condition
 end
 
+# ─────────────────────────────────────────────────────────────────────
+# LikelihoodFamily: declared per-θ algebraic form of a kernel's likelihood
+# ─────────────────────────────────────────────────────────────────────
+# A Kernel's log_density closure is opaque to the type system. Dispatch
+# needs to know the likelihood's algebraic form (Beta-Bernoulli, flat,
+# Gaussian-known-var, …) to pick the right computation — closed-form
+# conjugate, grid quadrature, no-op for flat, etc. Declaring the family
+# at construction is the same principle as Functional for expect.
+#
+# Undeclared (likelihood_family = nothing) preserves legacy behaviour:
+# conjugate measures assume Beta-Bernoulli. New Kernel construction
+# sites should declare explicitly. Eventually the nothing case can be
+# tightened to an error.
+abstract type LikelihoodFamily end
+
+# p(obs|θ) = θ^obs · (1−θ)^(1−obs). Conjugate with Beta priors.
+struct BetaBernoulli <: LikelihoodFamily end
+
+# p(obs|θ) constant in θ. The observation provides no evidence about θ.
+# Bayesian posterior = prior.
+struct Flat <: LikelihoodFamily end
+
+# p(obs|μ) = N(μ, σ²_obs). Conjugate with Gaussian priors when σ²_obs known.
+struct GaussianKnownVar <: LikelihoodFamily
+    sigma_obs::Float64
+end
+
+# Family depends on which component of a mixture the kernel is evaluated
+# at. `classify(m) → LikelihoodFamily` is called at dispatch time with
+# the component measure to determine the appropriate family. The return
+# type is constrained to LikelihoodFamily, so dispatch is typed — this
+# is declared routing, not probing.
+struct DispatchByComponent <: LikelihoodFamily
+    classify::Function  # Measure → LikelihoodFamily
+end
+
 struct Kernel
     source::Space       # H
     target::Space       # O
@@ -264,14 +301,25 @@ struct Kernel
     log_density::Function  # (h, o) → log p(o|h) (for condition)
     factor_selector::Union{Nothing, FactorSelector}
     params::Union{Nothing, Dict{Symbol,Any}}
+    likelihood_family::Union{Nothing, LikelihoodFamily}
 end
 
 Kernel(source::Space, target::Space, gen::Function, ld::Function,
-       fs::Union{Nothing, FactorSelector}) =
-    Kernel(source, target, gen, ld, fs, nothing)
+       fs::Union{Nothing, FactorSelector}, params) =
+    Kernel(source, target, gen, ld, fs, params, nothing)
 
-Kernel(source::Space, target::Space, gen::Function, ld::Function) =
-    Kernel(source, target, gen, ld, nothing, nothing)
+Kernel(source::Space, target::Space, gen::Function, ld::Function,
+       fs::Union{Nothing, FactorSelector}) =
+    Kernel(source, target, gen, ld, fs, nothing, nothing)
+
+# 4-positional constructor accepts keyword forms. Preferred for new
+# construction sites — makes likelihood_family (and the other optional
+# fields) visible in the call signature.
+Kernel(source::Space, target::Space, gen::Function, ld::Function;
+       factor_selector::Union{Nothing, FactorSelector}=nothing,
+       params::Union{Nothing, Dict{Symbol,Any}}=nothing,
+       likelihood_family::Union{Nothing, LikelihoodFamily}=nothing) =
+    Kernel(source, target, gen, ld, factor_selector, params, likelihood_family)
 
 kernel_source(k::Kernel) = k.source
 kernel_target(k::Kernel) = k.target
@@ -511,17 +559,37 @@ function condition(m::BetaMeasure, k::Kernel, observation)
 end
 
 function condition(m::TaggedBetaMeasure, k::Kernel, observation)
-    k.log_density(m, observation)  # evaluate kernel (populates caches, computes likelihood)
-    # Conjugate Beta-Bernoulli update: observation determines update direction.
-    # Weight differentiation comes from the per-component likelihood (via _predictive_ll),
-    # not from the conjugate update direction. Programs whose recommendations match
-    # the observed action get log(p) likelihood; those that don't get log(1-p).
-    # With obs=1.0 (alpha++), correct programs' p increases → log(p) improves → weight rises.
-    # Incorrect programs' p also increases → log(1-p) worsens → weight crashes.
-    if observation == 1 || observation == 1.0 || observation == true
-        TaggedBetaMeasure(m.space, m.tag, BetaMeasure(m.beta.space, m.beta.alpha + 1.0, m.beta.beta))
+    # Resolve the kernel's declared likelihood family. DispatchByComponent
+    # is resolved at this level: its classify(m) returns the concrete family
+    # for THIS component. An undeclared family (nothing) falls back to
+    # BetaBernoulli for backward compatibility — this matches the legacy
+    # behaviour of every pre-existing caller (see plan for migration path).
+    fam = k.likelihood_family
+    fam isa DispatchByComponent && (fam = fam.classify(m))
+    fam === nothing && (fam = BetaBernoulli())
+
+    # Run the kernel for its side effects. Production program_observation
+    # kernels use this call to populate per-tag caches in k.params
+    # (recommendation_cache, correct_cache). The return value is not used
+    # for dispatch — the family declaration is. Weight differentiation
+    # between components still happens at the mixture level via
+    # _predictive_ll, which reads the kernel's return value directly.
+    k.log_density(m, observation)
+
+    if fam isa BetaBernoulli
+        # Conjugate Beta-Bernoulli update: observation determines direction.
+        # Correct programs: log(p) improves as α grows → weight rises.
+        # Incorrect programs: log(1-p) worsens as α grows → weight crashes.
+        if observation == 1 || observation == 1.0 || observation == true
+            TaggedBetaMeasure(m.space, m.tag, BetaMeasure(m.beta.space, m.beta.alpha + 1.0, m.beta.beta))
+        else
+            TaggedBetaMeasure(m.space, m.tag, BetaMeasure(m.beta.space, m.beta.alpha, m.beta.beta + 1.0))
+        end
+    elseif fam isa Flat
+        # Flat likelihood: p(obs|θ) is constant in θ. Posterior = prior.
+        m
     else
-        TaggedBetaMeasure(m.space, m.tag, BetaMeasure(m.beta.space, m.beta.alpha, m.beta.beta + 1.0))
+        error("condition(::TaggedBetaMeasure, k, obs): unsupported likelihood_family $(typeof(fam))")
     end
 end
 
