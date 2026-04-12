@@ -19,16 +19,38 @@ class _Bridge:
             return
         from juliacall import Main as jl
 
+        # Resolve Credence src path — monorepo layout first, then ~/git/credence
+        # fallback for standalone installs. Matches credence_agents/julia_bridge.py.
+        monorepo = Path(__file__).resolve().parents[3]
+        candidate = monorepo / "src"
+        if candidate.exists():
+            src_path = candidate
+        else:
+            fallback = Path.home() / "git" / "credence" / "src"
+            if not fallback.exists():
+                raise FileNotFoundError(
+                    f"Cannot find credence/src/. Expected at {candidate} or {fallback}."
+                )
+            src_path = fallback
+
         # juliacall.seval is the standard Julia interop API (not Python eval)
-        src_path = Path(__file__).resolve().parent.parent.parent / "src"
         jl.seval(f'push!(LOAD_PATH, "{src_path}")')
         jl.seval("using Credence")
+        # Adapter that wraps a Python callable as a Julia Function. Needed
+        # because Credence.expect / Credence.optimise declare `f::Function`
+        # and Python lambdas arrive as `Py`, not `Function`.
+        self._py_to_julia_fn = jl.seval("pf -> (x -> pf(x))")
         self._jl = jl
 
     @property
     def jl(self):
         self._ensure_loaded()
         return self._jl
+
+    def wrap_callable(self, f):
+        """Wrap a Python callable as a Julia Function for dispatch."""
+        self._ensure_loaded()
+        return self._py_to_julia_fn(f)
 
     def make_float_vector(self, values):
         """Convert Python iterable of numbers to Julia Float64 vector."""

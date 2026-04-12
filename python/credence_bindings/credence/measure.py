@@ -100,7 +100,8 @@ class Measure:
         return Measure(_get_bridge().jl.condition(self._jl, kernel._jl, observation))
 
     def expect(self, f: Callable) -> float:
-        return float(_get_bridge().jl.expect(self._jl, f))
+        bridge = _get_bridge()
+        return float(bridge.jl.expect(self._jl, bridge.wrap_callable(f)))
 
     def push(self, kernel: Kernel) -> Measure:
         return Measure(_get_bridge().jl.push_measure(self._jl, kernel._jl))
@@ -111,7 +112,8 @@ class Measure:
         return _get_bridge().jl.draw(self._jl)
 
     def optimise(self, actions: Space, pref: Callable):
-        return _get_bridge().jl.optimise(self._jl, actions._jl, pref)
+        bridge = _get_bridge()
+        return bridge.jl.optimise(self._jl, actions._jl, bridge.wrap_callable(pref))
 
     def value(self, actions: Space, pref: Callable) -> float:
         return float(_get_bridge().jl.value(self._jl, actions._jl, pref))

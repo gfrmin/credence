@@ -158,7 +158,7 @@ def test_mixture_measure():
 # ── DSL interop ──
 
 def test_run_dsl_coin():
-    coin_path = Path(__file__).resolve().parent.parent.parent / "examples" / "coin.bdsl"
+    coin_path = Path(__file__).resolve().parents[3] / "examples" / "coin.bdsl"
     source = coin_path.read_text()
     # coin.bdsl's final expression is (voi ...) which returns a number
     result = run_dsl(source)
