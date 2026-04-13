@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 
@@ -19,21 +20,32 @@ class _Bridge:
             return
         from juliacall import Main as jl
 
-        # Resolve Credence src path: monorepo layout first, then ~/git/credence
-        # fallback for standalone installs.
-        # NOTE: the ~/git/credence fallback is machine-specific; fails for users
-        # whose checkout is elsewhere. Consider making it configurable via env var.
-        monorepo = Path(__file__).resolve().parents[3]
-        candidate = monorepo / "src"
-        if candidate.exists():
-            src_path = candidate
+        # Resolve Credence repo root via (1) CREDENCE_SRC env var (explicit user
+        # intent) or (2) monorepo layout. The env var is interpreted as the repo
+        # root, not the src/ directory — we append src/ ourselves so a stable
+        # marker file (src/Credence.jl) can be checked.
+        env_root = os.environ.get("CREDENCE_SRC")
+        monorepo_root = Path(__file__).resolve().parents[3]
+        if env_root is not None:
+            repo_root = Path(env_root)
+            origin = f"CREDENCE_SRC={env_root}"
+        elif (monorepo_root / "src" / "Credence.jl").exists():
+            repo_root = monorepo_root
+            origin = f"monorepo layout at {monorepo_root}"
         else:
-            fallback = Path.home() / "git" / "credence" / "src"
-            if not fallback.exists():
-                raise FileNotFoundError(
-                    f"Cannot find credence/src/. Expected at {candidate} or {fallback}."
-                )
-            src_path = fallback
+            raise FileNotFoundError(
+                "Cannot locate the Credence repo root. Set the CREDENCE_SRC env "
+                "var to the repo root (e.g. /home/user/git/credence), or run "
+                f"from a monorepo checkout where {monorepo_root}/src/Credence.jl exists."
+            )
+
+        src_path = repo_root / "src"
+        if not (src_path / "Credence.jl").exists():
+            raise FileNotFoundError(
+                f"{origin} does not contain src/Credence.jl — expected the repo "
+                f"root (e.g. /home/user/git/credence), not a subdirectory. "
+                f"Looked for {src_path / 'Credence.jl'}."
+            )
 
         # juliacall.seval is the standard Julia interop API (not Python eval)
         jl.seval(f'push!(LOAD_PATH, "{src_path}")')

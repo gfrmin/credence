@@ -356,6 +356,183 @@ let
 end
 println()
 
+# ─────────────────────────────────────────────────────────────────────────
+# FiringByTag tests with obs=0 + boundary fires sets. Pins the strict
+# ranking from CLAUDE.md: informed-and-right > uninformed > informed-and-wrong.
+# Non-firing components predict the base rate (log(0.5)) — so a firing
+# component whose predictions later turn out wrong is penalised below
+# the uninformed baseline.
+# ─────────────────────────────────────────────────────────────────────────
+
+println("=" ^ 60)
+println("FLAT MIXTURE TEST 7: FiringByTag obs=0 split — exact closed-form weights")
+println("=" ^ 60)
+
+let
+    # Same setup as TEST 6: tags 1,2 fire; tags 3,4 don't.
+    comps = Measure[
+        TaggedBetaMeasure(Interval(0.0, 1.0), 1, BetaMeasure(1.0, 1.0)),
+        TaggedBetaMeasure(Interval(0.0, 1.0), 2, BetaMeasure(1.0, 1.0)),
+        TaggedBetaMeasure(Interval(0.0, 1.0), 3, BetaMeasure(1.0, 1.0)),
+        TaggedBetaMeasure(Interval(0.0, 1.0), 4, BetaMeasure(1.0, 1.0)),
+    ]
+    belief = MixtureMeasure(Interval(0.0, 1.0), comps, fill(0.0, 4))
+
+    fires = Set([1, 2])
+    k = Kernel(Interval(0.0, 1.0), Finite([0.0, 1.0]),
+        _ -> error("not used"),
+        (m_or_θ, obs) -> begin
+            if m_or_θ isa TaggedBetaMeasure
+                if m_or_θ.tag in fires
+                    p = mean(m_or_θ.beta)
+                    obs == 1.0 ? log(max(p, 1e-300)) : log(max(1 - p, 1e-300))
+                else
+                    log(0.5)
+                end
+            else
+                obs == 1.0 ? log(max(m_or_θ, 1e-300)) : log(max(1 - m_or_θ, 1e-300))
+            end
+        end;
+        likelihood_family = FiringByTag(fires, BetaBernoulli(), Flat()))
+
+    # Five obs=1.0 followed by three obs=0.0.
+    posterior = belief
+    for _ in 1:5
+        posterior = condition(posterior, k, 1.0)
+    end
+    for _ in 1:3
+        posterior = condition(posterior, k, 0.0)
+    end
+
+    # ── Exact α/β: integer accumulation, == not ≈ ──
+    for i in 1:2
+        c = posterior.components[i]
+        @assert c.beta.alpha == 6.0 "Firing comp $i: expected α=6, got $(c.beta.alpha)"
+        @assert c.beta.beta  == 4.0 "Firing comp $i: expected β=4, got $(c.beta.beta)"
+        @assert c.tag == i
+    end
+    for i in 3:4
+        c = posterior.components[i]
+        @assert c.beta.alpha == 1.0 "Non-firing comp $i: expected α=1, got $(c.beta.alpha)"
+        @assert c.beta.beta  == 1.0 "Non-firing comp $i: expected β=1, got $(c.beta.beta)"
+        @assert c.tag == i
+    end
+
+    # ── Closed-form log-weight delta assertion ──
+    # Per-step, condition does: base_lw[i] = log_weights[i] + pred_ll[i], then
+    # MixtureMeasure normalises by subtracting logsumexp from each lw. The
+    # normalisation constant is the same scalar for every component, so in
+    # exact arithmetic it cancels in the delta (firing_lw − nonfiring_lw),
+    # leaving Σ(pred_ll_firing − pred_ll_nonfiring). In FP, the library
+    # interleaves adds and subtracts through 8 renormalisations, so the
+    # accumulation order differs from our single-pass sum by a few ULPs.
+    # rtol=1e-14 pins the quantity we care about (off-by-one accumulation
+    # would be log(p)-scale error, ~10 orders of magnitude larger) while
+    # tolerating FP reordering. The expected_delta walk mirrors the kernel's
+    # FP operations (log(p) and log(1 − p), NOT log(β/(α+β)) which differs
+    # by ULPs on its own).
+    expected_delta = 0.0
+    α, β = 1.0, 1.0
+    for _ in 1:5  # obs=1: firing returns log(p) where p = mean(beta)
+        p = α / (α + β)
+        expected_delta += log(p) - log(0.5)
+        α += 1.0
+    end
+    for _ in 1:3  # obs=0: firing returns log(1 − p) — mirror FP path exactly
+        p = α / (α + β)
+        expected_delta += log(1.0 - p) - log(0.5)
+        β += 1.0
+    end
+
+    actual_delta = posterior.log_weights[1] - posterior.log_weights[3]
+    @assert posterior.log_weights[1] == posterior.log_weights[2]
+    @assert posterior.log_weights[3] == posterior.log_weights[4]
+    @assert isapprox(actual_delta, expected_delta; rtol=1e-14) "log-weight delta: expected $expected_delta, got $actual_delta (rtol 1e-14)"
+
+    # ── Strict ranking from CLAUDE.md: uninformed > informed-and-wrong ──
+    w = weights(posterior)
+    @assert w[3] > w[1] "uninformed (non-firing) should outweigh informed-and-wrong " *
+                       "(firing): got non-firing=$(w[3]) vs firing=$(w[1])"
+    println("PASSED: log-weight delta matches exactly ($(round(expected_delta, digits=6))); " *
+            "strict ranking holds (non-firing=$(round(w[3], digits=4)) > firing=$(round(w[1], digits=4)))")
+end
+println()
+
+println("=" ^ 60)
+println("FLAT MIXTURE TEST 8: FiringByTag with empty fires set")
+println("=" ^ 60)
+
+let
+    comps = Measure[
+        TaggedBetaMeasure(Interval(0.0, 1.0), i, BetaMeasure(1.0, 1.0)) for i in 1:4
+    ]
+    belief = MixtureMeasure(Interval(0.0, 1.0), comps, fill(0.0, 4))
+
+    # Empty fires set — every tag routes to Flat.
+    k = Kernel(Interval(0.0, 1.0), Finite([0.0, 1.0]),
+        _ -> error("not used"),
+        (_, _) -> log(0.5);  # all components return base rate
+        likelihood_family = FiringByTag(Set{Int}(), BetaBernoulli(), Flat()))
+
+    posterior = belief
+    for _ in 1:5
+        posterior = condition(posterior, k, 1.0)
+    end
+
+    for i in 1:4
+        c = posterior.components[i]
+        @assert c.beta.alpha == 1.0 "comp $i: expected α=1 (Flat is no-op), got $(c.beta.alpha)"
+        @assert c.beta.beta  == 1.0 "comp $i: expected β=1 (Flat is no-op), got $(c.beta.beta)"
+        @assert c.tag == i "tag mismatch on comp $i"
+    end
+
+    # All log_density returns are equal → weights stay uniform.
+    w = weights(posterior)
+    for i in 1:4
+        @assert w[i] == 0.25 "comp $i: expected uniform weight 0.25, got $(w[i])"
+    end
+    println("PASSED: empty fires routes all components to Flat; weights stay uniform")
+end
+println()
+
+println("=" ^ 60)
+println("FLAT MIXTURE TEST 9: FiringByTag with full fires set")
+println("=" ^ 60)
+
+let
+    comps = Measure[
+        TaggedBetaMeasure(Interval(0.0, 1.0), i, BetaMeasure(1.0, 1.0)) for i in 1:4
+    ]
+    belief = MixtureMeasure(Interval(0.0, 1.0), comps, fill(0.0, 4))
+
+    # Full fires set — every tag routes to BetaBernoulli.
+    k = Kernel(Interval(0.0, 1.0), Finite([0.0, 1.0]),
+        _ -> error("not used"),
+        (m_or_θ, obs) -> begin
+            if m_or_θ isa TaggedBetaMeasure
+                p = mean(m_or_θ.beta)
+                obs == 1.0 ? log(max(p, 1e-300)) : log(max(1 - p, 1e-300))
+            else
+                obs == 1.0 ? log(max(m_or_θ, 1e-300)) : log(max(1 - m_or_θ, 1e-300))
+            end
+        end;
+        likelihood_family = FiringByTag(Set([1, 2, 3, 4]), BetaBernoulli(), Flat()))
+
+    posterior = belief
+    for _ in 1:5
+        posterior = condition(posterior, k, 1.0)
+    end
+
+    for i in 1:4
+        c = posterior.components[i]
+        @assert c.beta.alpha == 6.0 "comp $i: expected α=6, got $(c.beta.alpha)"
+        @assert c.beta.beta  == 1.0 "comp $i: expected β=1, got $(c.beta.beta)"
+        @assert c.tag == i "tag mismatch on comp $i"
+    end
+    println("PASSED: full fires routes all components to BetaBernoulli; tags preserved")
+end
+println()
+
 println("=" ^ 60)
 println("ALL FLAT MIXTURE TESTS PASSED")
 println("=" ^ 60)

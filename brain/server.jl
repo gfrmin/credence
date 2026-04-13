@@ -760,7 +760,8 @@ function handle_value(params)
 
     if pref_spec["type"] == "functional_per_action"
         best_eu = -Inf
-        for (action_str, fn_spec) in pref_spec["actions"]
+        for action_str in _sorted_action_keys(pref_spec["actions"])
+            fn_spec = pref_spec["actions"][action_str]
             φ = try
                 build_function(fn_spec)
             catch e
@@ -895,12 +896,11 @@ function handle_belief_summary(params)
     for i in 1:top_n
         idx = perm[i]
         gi, pi = state.metadata[idx]
-        expr_str = try
-            show_expr(state.all_programs[idx].expr)
-        catch e
-            log_msg("show_expr failed on program $idx: $(sprint(showerror, e))")
-            "?"
-        end
+        # show_expr is verified total over the AST type hierarchy
+        # (src/program_space/types.jl — a method per *Expr subtype); any
+        # failure is a genuine bug and should surface with full context,
+        # not collapse to "?". Do not re-add a defensive catch here.
+        expr_str = show_expr(state.all_programs[idx].expr)
         push!(top_progs, Dict(
             "index" => idx - 1,  # 0-based for host
             "weight" => w[idx],

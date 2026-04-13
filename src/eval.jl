@@ -206,13 +206,19 @@ function eval_dsl(expr::SList, env::Env)
             return support(eval_dsl(args[1], env))
         end
         if sym == Symbol("product-measure")
-            # Single argument: may be a list of measures.
+            # Single argument: may be a list of measures or a single measure.
             if length(args) == 1
                 val = eval_dsl(args[1], env)
                 if val isa AbstractVector
+                    all(v -> v isa Measure, val) ||
+                        error("(product-measure …): vector argument must contain only Measures, " *
+                              "got element types $(unique(typeof.(val)))")
                     return ProductMeasure(Measure[v for v in val])
-                else
+                elseif val isa Measure
                     return ProductMeasure(Measure[val])
+                else
+                    error("(product-measure …): single argument must be a Measure or " *
+                          "Vector{Measure}, got $(typeof(val))")
                 end
             end
             factors = Measure[eval_dsl(a, env) for a in args]
@@ -394,23 +400,46 @@ function _make_measure(space::Simplex, spec::Symbol, args, env)
 end
 
 function _eval_kernel(args, env)
-    length(args) == 3 || error("kernel requires: source-space, target-space, generator")
+    length(args) >= 3 || error("kernel requires: source-space, target-space, generator")
     source = eval_dsl(args[1], env)
     target = eval_dsl(args[2], env)
     gen = eval_dsl(args[3], env)
 
-    # Build log_density from the generator and target space
-    # The generator returns a distribution spec for each hypothesis.
-    # The log_density evaluates that spec at a given observation.
-    log_dens = _make_log_density(target, gen)
+    # Parse optional trailing :family <value> pair. PushOnly by default — a
+    # kernel used only for push is family-agnostic; one used to condition a
+    # TaggedBetaMeasure must declare its leaf family at construction (see
+    # src/ontology.jl LikelihoodFamily). Router families (FiringByTag,
+    # DispatchByComponent) carry closures and stay Julia-only.
+    family = PushOnly()
+    family_set = false
+    i = 4
+    while i <= length(args)
+        kw = args[i]
+        (kw isa Atom && kw.value isa Symbol) ||
+            error("kernel: expected keyword symbol at position $i, got $(args[i])")
+        if kw.value == :family
+            family_set && error("kernel: duplicate :family keyword")
+            i + 1 <= length(args) ||
+                error(":family requires a value (one of: bernoulli, flat)")
+            fam_atom = args[i+1]
+            (fam_atom isa Atom && fam_atom.value isa Symbol) ||
+                error(":family value must be a symbol (one of: bernoulli, flat), got $(args[i+1])")
+            family = _parse_family_keyword(fam_atom.value)
+            family_set = true
+            i += 2
+        else
+            error("kernel: unknown keyword :$(kw.value) (accepted: :family)")
+        end
+    end
 
-    # NOTE: DSL has no syntax yet to declare likelihood_family; defaulting to
-    # BetaBernoulli matches the dominant pattern in current .bdsl files
-    # (binary-outcome kernels conditioning BetaMeasure, where family is
-    # space-shape-dispatched anyway). Extend the DSL form if non-Bernoulli
-    # DSL kernels condition TaggedBetaMeasure.
-    Kernel(source, target, gen, log_dens; likelihood_family = BetaBernoulli())
+    log_dens = _make_log_density(target, gen)
+    Kernel(source, target, gen, log_dens; likelihood_family = family)
 end
+
+_parse_family_keyword(s::Symbol) =
+    s === :bernoulli ? BetaBernoulli() :
+    s === :flat      ? Flat() :
+    error(":family value :$s unknown (one of: bernoulli, flat)")
 
 function _make_log_density(target::Finite, gen::Function)
     # Generator returns a distribution spec: either a function (observation → log-probability)

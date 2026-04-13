@@ -2,7 +2,8 @@
 
 from pathlib import Path
 
-from client import BrainClient
+import pytest
+from client import BrainClient, BrainError
 
 
 def test_basic_inference():
@@ -17,32 +18,33 @@ def test_basic_inference():
         sid = brain.create_state(type="beta", alpha=1.0, beta=1.0)
         print(f"Created state: {sid}")
 
-        # Mean should be 0.5
+        # Mean should be 0.5 — Beta(1,1) mean = 1/2 is bit-exact.
         m = brain.mean(sid)
         print(f"Prior mean: {m}")
-        assert abs(m - 0.5) < 0.01, f"Expected 0.5, got {m}"
+        assert m == 0.5, f"Expected 0.5 (exact), got {m}"
 
         # Condition on observation=1 (success)
         result = brain.condition(sid, kernel={"type": "bernoulli"}, observation=1.0)
         print(f"Condition result: {result}")
 
-        # Mean should now be 2/3 (Beta(2,1))
+        # Beta(2,1) mean = 2/3 — Python float division of integer-accumulated
+        # α,β is bit-exact, so == not abs() < tol.
         m = brain.mean(sid)
         print(f"Posterior mean after obs=1: {m}")
-        assert abs(m - 2 / 3) < 0.01, f"Expected 0.667, got {m}"
+        assert m == 2 / 3, f"Expected 2/3 (exact), got {m}"
 
         # Condition on another observation=1
         brain.condition(sid, kernel={"type": "bernoulli"}, observation=1.0)
         m = brain.mean(sid)
         print(f"Posterior mean after obs=1,1: {m}")
-        assert abs(m - 3 / 4) < 0.01, f"Expected 0.75, got {m}"
+        assert m == 3 / 4, f"Expected 3/4 (exact), got {m}"
 
         # Condition on observation=0 (failure)
         brain.condition(sid, kernel={"type": "bernoulli"}, observation=0.0)
         m = brain.mean(sid)
         print(f"Posterior mean after obs=1,1,0: {m}")
-        # Beta(3,2) → mean = 3/5 = 0.6
-        assert abs(m - 0.6) < 0.01, f"Expected 0.6, got {m}"
+        # Beta(3,2) → mean = 3/5.
+        assert m == 3 / 5, f"Expected 3/5 (exact), got {m}"
 
         brain.destroy_state(sid)
         print("PASS: basic inference")
@@ -64,7 +66,8 @@ def test_categorical():
         w = brain.weights(sid)
         print(f"Uniform weights: {w}")
         assert len(w) == 4
-        assert all(abs(wi - 0.25) < 0.01 for wi in w)
+        # Uniform normalisation of 4 equal log-weights is bit-exact.
+        assert all(wi == 0.25 for wi in w)
 
         # Optimise: identity preference (h == a → 1, else 0)
         action, eu = brain.optimise(
@@ -81,8 +84,8 @@ def test_categorical():
             },
         )
         print(f"Optimise: action={action}, eu={eu}")
-        # All actions are equally good under uniform prior
-        assert abs(eu - 0.25) < 0.01
+        # All actions are equally good under uniform prior: EU = 0.25 exactly.
+        assert eu == 0.25, f"Expected 0.25 (exact), got {eu}"
 
         brain.destroy_state(sid)
         print("PASS: categorical")
@@ -215,12 +218,12 @@ def test_router_roundtrip():
         print(f"E[theta_{{{action},2}}] after obs=0.9: {new_theta:.4f}")
         assert new_theta > 0.5, f"Expected theta mean > 0.5 after obs 0.9, got {new_theta}"
 
-        # Other factors unchanged — verify one.
+        # Other factors unchanged — Beta(1,1) mean is bit-exact 0.5.
         other_theta = brain.expect(
             brain.factor(brain.factor(state_updated, (action + 1) % n_providers), 0),
             function={"type": "projection", "index": 0},
         )
-        assert abs(other_theta - 0.5) < 1e-10, f"Other factor should be unchanged at 0.5, got {other_theta}"
+        assert other_theta == 0.5, f"Other factor should be unchanged at 0.5 (exact), got {other_theta}"
         print("PASS: only the targeted factor was updated")
 
         # Re-decide: EU for the updated provider should have shifted up.
@@ -256,11 +259,117 @@ def test_snapshot_restore():
         sid2 = brain.restore_state(data)
         m_after = brain.mean(sid2)
         print(f"Mean before: {m_before}, after restore: {m_after}")
-        assert abs(m_before - m_after) < 0.001
+        # Serialisation round-trip of a BetaMeasure must be bit-exact —
+        # any drift would mean precision loss in the snapshot encoder.
+        assert m_before == m_after, f"Snapshot round-trip drift: {m_before} vs {m_after}"
 
         brain.destroy_state(sid)
         brain.destroy_state(sid2)
         print("PASS: snapshot/restore")
+    finally:
+        brain.shutdown()
+
+
+def test_unknown_state_id():
+    """Operations on a never-registered state_id return StateNotFound (-32000)."""
+    brain = BrainClient()
+    try:
+        brain.initialize()
+        bogus = "state_99999"
+        with pytest.raises(BrainError) as info:
+            brain.mean(bogus)
+        assert info.value.code == -32000, f"Expected -32000 (StateNotFound), got {info.value.code}"
+        assert bogus in str(info.value), f"Error message should name the bogus id: {info.value}"
+
+        with pytest.raises(BrainError) as info:
+            brain.weights(bogus)
+        assert info.value.code == -32000
+
+        with pytest.raises(BrainError) as info:
+            brain.condition(bogus, kernel={"type": "bernoulli"}, observation=1.0)
+        assert info.value.code == -32000
+        print("PASS: unknown state_id surfaces StateNotFound (-32000)")
+    finally:
+        brain.shutdown()
+
+
+def test_unknown_method():
+    """Unknown JSON-RPC method returns MethodNotFound (-32601)."""
+    brain = BrainClient()
+    try:
+        brain.initialize()
+        with pytest.raises(BrainError) as info:
+            brain._call("nonexistent_method")
+        assert info.value.code == -32601, f"Expected -32601 (MethodNotFound), got {info.value.code}"
+        print("PASS: unknown method surfaces MethodNotFound (-32601)")
+    finally:
+        brain.shutdown()
+
+
+def test_factor_on_non_product_measure():
+    """factor on a plain BetaMeasure errors with an informative typed message."""
+    brain = BrainClient()
+    try:
+        brain.initialize()
+        sid = brain.create_state(type="beta", alpha=2.0, beta=3.0)
+        with pytest.raises(BrainError) as info:
+            brain.factor(sid, 0)
+        # Non-ProductMeasure triggers a bare error() at the handler site, which
+        # lands on the generic -32603 code today. The important invariant is
+        # that it is NOT a silent success, and that the message mentions the
+        # offending type so clients can diagnose.
+        assert "ProductMeasure" in str(info.value), \
+            f"Error message should name ProductMeasure: {info.value}"
+        brain.destroy_state(sid)
+        print("PASS: factor on non-ProductMeasure raises informative BrainError")
+    finally:
+        brain.shutdown()
+
+
+def test_replace_factor_identity_pin():
+    """replace_factor at index 1 leaves factors 0 and 2 bit-exact unchanged.
+
+    Tightest invariant: mean(factor(new, i)) == mean(factor(orig, i)) for i ≠ replaced.
+    Both sides are Python floats from α/(α+β) divisions on integer-accumulated
+    α,β — bit-exact under ==, no tolerance needed.
+    """
+    brain = BrainClient()
+    try:
+        brain.initialize()
+
+        # 3-factor ProductMeasure with distinct priors.
+        prior_spec = {
+            "type": "product",
+            "factors": [
+                {"type": "beta", "alpha": 2.0, "beta": 3.0},
+                {"type": "beta", "alpha": 4.0, "beta": 1.0},
+                {"type": "beta", "alpha": 1.0, "beta": 5.0},
+            ],
+        }
+        orig_id = brain.create_state(**prior_spec)
+
+        # Means pre-replace.
+        m0_orig = brain.mean(brain.factor(orig_id, 0))
+        m2_orig = brain.mean(brain.factor(orig_id, 2))
+        # Sanity: these are α/(α+β) exactly.
+        assert m0_orig == 2.0 / 5.0, f"m0_orig bit-exact check: {m0_orig}"
+        assert m2_orig == 1.0 / 6.0, f"m2_orig bit-exact check: {m2_orig}"
+
+        # Replace factor 1 with a fresh Beta(7,2).
+        new_f1 = brain.create_state(type="beta", alpha=7.0, beta=2.0)
+        new_id = brain.replace_factor(orig_id, 1, new_f1)
+
+        # Means of factors 0 and 2 in the new state must match orig exactly.
+        m0_new = brain.mean(brain.factor(new_id, 0))
+        m2_new = brain.mean(brain.factor(new_id, 2))
+        assert m0_new == m0_orig, f"factor 0 drifted: {m0_orig} → {m0_new}"
+        assert m2_new == m2_orig, f"factor 2 drifted: {m2_orig} → {m2_new}"
+
+        # Factor 1 reflects the replacement.
+        m1_new = brain.mean(brain.factor(new_id, 1))
+        assert m1_new == 7.0 / 9.0, f"factor 1 replacement: expected 7/9, got {m1_new}"
+
+        print("PASS: replace_factor preserves sibling factors bit-exactly")
     finally:
         brain.shutdown()
 
@@ -273,5 +382,13 @@ if __name__ == "__main__":
     test_router_roundtrip()
     print()
     test_snapshot_restore()
+    print()
+    test_unknown_state_id()
+    print()
+    test_unknown_method()
+    print()
+    test_factor_on_non_product_measure()
+    print()
+    test_replace_factor_identity_pin()
     print()
     print("All tests passed!")

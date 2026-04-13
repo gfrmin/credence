@@ -18,6 +18,15 @@
 ; ── Observation model: continuous quality ──
 ; Given (theta, k), quality q ~ Beta(theta*k, (1-theta)*k).
 ; Both theta and k are learned from data.
+;
+; No :family keyword — defaults to PushOnly, which is correct for this
+; push-only kernel (the host uses it to pushforward the prior, never to
+; condition a TaggedBetaMeasure). If a DSL-authored kernel is used to
+; condition a TaggedBetaMeasure, declare its leaf family:
+;   (kernel H O gen :family bernoulli)   ; Beta-Bernoulli conjugate
+;   (kernel H O gen :family flat)        ; no posterior update
+; Router families (FiringByTag, DispatchByComponent) carry closures and
+; must be constructed in Julia, not in the DSL.
 (define quality-kernel
   (kernel hypothesis-space quality-space
     (lambda (h)
