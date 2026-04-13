@@ -552,8 +552,9 @@ Example with state references:
 Function specs are serialised `Functional` types. The brain's `expect`
 dispatches on the Functional subtype to select the optimal computation
 (closed-form for leaf measures, recursive decomposition for ProductMeasure,
-weighted sums for CategoricalMeasure, Monte Carlo fallback for
-`opaque_bdsl`). Structure enables fast paths — bare closures forfeit them.
+weighted sums for CategoricalMeasure, quadrature or Monte Carlo fallback
+for `opaque_bdsl` depending on the measure). Structure enables fast paths
+— bare closures forfeit them.
 
 | Type | Params | Description |
 |------|--------|-------------|

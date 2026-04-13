@@ -185,8 +185,10 @@ declared via the likelihood_family field at Kernel construction, not
 inferred at dispatch by probing log-density values or return types.
 This is the condition-side analogue of the Functional hierarchy for
 expect: structure enables dispatch, declaration is the mechanism.
-Every kernel used to condition a TaggedBetaMeasure must declare a
-family; condition() errors on a missing declaration. Probing a
+Kernel construction requires a likelihood_family keyword argument —
+omission raises UndefKeywordError at construction time, not later.
+condition() additionally rejects PushOnly and any unrecognised family
+with a clear remediation error. Probing a
 kernel's output at chosen inputs to infer structure (e.g. treating
 log_density == 0.0 as "flat") is forbidden — it misfires on
 legitimate edge cases and hides the assumption from the type system.
