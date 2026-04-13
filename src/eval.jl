@@ -404,7 +404,12 @@ function _eval_kernel(args, env)
     # The log_density evaluates that spec at a given observation.
     log_dens = _make_log_density(target, gen)
 
-    Kernel(source, target, gen, log_dens)
+    # NOTE: DSL has no syntax yet to declare likelihood_family; defaulting to
+    # BetaBernoulli matches the dominant pattern in current .bdsl files
+    # (binary-outcome kernels conditioning BetaMeasure, where family is
+    # space-shape-dispatched anyway). Extend the DSL form if non-Bernoulli
+    # DSL kernels condition TaggedBetaMeasure.
+    Kernel(source, target, gen, log_dens; likelihood_family = BetaBernoulli())
 end
 
 function _make_log_density(target::Finite, gen::Function)

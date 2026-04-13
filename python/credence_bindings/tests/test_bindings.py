@@ -7,7 +7,7 @@ import pytest
 
 from credence import (
     Space, Measure, Kernel,
-    condition, expect, push, density, draw, optimise, value,
+    condition, expect, push, density, draw,
     run_dsl, load_dsl,
 )
 

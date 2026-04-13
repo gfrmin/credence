@@ -261,6 +261,44 @@ println("  Components: $initial_components → $(length(state3.belief.components
 println()
 
 println("=" ^ 60)
+println("TEST 7.5: Non-firing programs retain α=β=1 exactly after conditioning (FiringByTag)")
+println("=" ^ 60)
+
+# Fresh state: condition once on a read of article A. Any program that does not
+# fire on A's features must have α=β=1 unchanged — FiringByTag routes its branch
+# to Flat (no Beta update). Integer accumulation; exact equality is the bar.
+state_ft, _ = init_rss_agent(feeds=feeds, categories=cats, known_tags=tags,
+                              program_max_depth=2, verbose=false)
+
+# Find a program that does NOT fire on fa; record its pre-condition α/β.
+non_firing_idx = nothing
+for (j, ck) in enumerate(state_ft.compiled_kernels)
+    if ck.evaluate(fa, ts) != :match
+        global non_firing_idx = j
+        break
+    end
+end
+
+if non_firing_idx !== nothing
+    pre_component = state_ft.belief.components[non_firing_idx]
+    pre_alpha = pre_component.beta.alpha
+    pre_beta = pre_component.beta.beta
+
+    k_read_ft = build_read_kernel(state_ft.compiled_kernels, fa, [fa, fb, fc], ts)
+    state_ft.belief = condition(state_ft.belief, k_read_ft, 1.0)
+
+    post_component = state_ft.belief.components[non_firing_idx]
+    @check "non-firing program α unchanged (==)" post_component.beta.alpha == pre_alpha
+    @check "non-firing program β unchanged (==)" post_component.beta.beta == pre_beta
+    @check "non-firing program tag preserved" post_component.tag == non_firing_idx
+    println("  Non-firing program α: $pre_alpha → $(post_component.beta.alpha) (exact)")
+    println("  Non-firing program β: $pre_beta → $(post_component.beta.beta) (exact)")
+else
+    println("  WARNING: no non-firing program found — test inconclusive")
+end
+println()
+
+println("=" ^ 60)
 println("TEST 7: Posterior concentration")
 println("=" ^ 60)
 

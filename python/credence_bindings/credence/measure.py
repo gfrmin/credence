@@ -111,13 +111,6 @@ class Measure:
     def draw(self):
         return _get_bridge().jl.draw(self._jl)
 
-    def optimise(self, actions: Space, pref: Callable):
-        bridge = _get_bridge()
-        return bridge.jl.optimise(self._jl, actions._jl, bridge.wrap_callable(pref))
-
-    def value(self, actions: Space, pref: Callable) -> float:
-        return float(_get_bridge().jl.value(self._jl, actions._jl, pref))
-
     # ── Mixture maintenance ──
 
     def prune(self, threshold: float = -20.0) -> Measure:

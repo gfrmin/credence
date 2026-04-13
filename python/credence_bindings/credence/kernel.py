@@ -53,7 +53,7 @@ class Kernel:
             # Create Julia Function wrappers around Python callables
             # Float64() ensures Julia gets native Float64, not Py objects
             make_kernel = jl.seval(
-                "(src, tgt, py_gen, py_ld) -> Kernel(src, tgt, h -> py_gen(h), (h, o) -> pyconvert(Float64, py_ld(h, o)))"
+                "(src, tgt, py_gen, py_ld) -> Kernel(src, tgt, h -> py_gen(h), (h, o) -> pyconvert(Float64, py_ld(h, o)); likelihood_family = PushOnly())"
             )
             self._jl = make_kernel(source._jl, target_jl, py_gen, py_log_dens)
         else:
@@ -64,7 +64,7 @@ class Kernel:
                 return float(py_ld(h, o))
 
             make_kernel = jl.seval(
-                "(src, tgt, py_gen, py_ld) -> Kernel(src, tgt, h -> py_gen(h), (h, o) -> pyconvert(Float64, py_ld(h, o)))"
+                "(src, tgt, py_gen, py_ld) -> Kernel(src, tgt, h -> py_gen(h), (h, o) -> pyconvert(Float64, py_ld(h, o)); likelihood_family = PushOnly())"
             )
             self._jl = make_kernel(source._jl, target_jl, py_gen, py_log_dens)
 

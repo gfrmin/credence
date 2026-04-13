@@ -17,6 +17,7 @@ using Credence
 using Credence: expect, condition, draw, weights, mean, logsumexp
 using Credence: CategoricalMeasure, BetaMeasure, TaggedBetaMeasure, MixtureMeasure
 using Credence: Finite, Interval, Kernel, Measure
+using Credence: FiringByTag, BetaBernoulli, Flat
 using Credence: AgentState, sync_prune!, sync_truncate!
 using Credence: Grammar, Program, CompiledKernel, ProductionRule
 using Credence: enumerate_programs, compile_kernel
@@ -107,17 +108,16 @@ function build_read_kernel(
     obs_space = Finite([0.0, 1.0])
     n_articles = length(all_unread_features)
 
-    # Lazy caches: program tag → evaluation results (computed once, reused across mixture)
-    fire_chosen_cache = Dict{Int, Bool}()
-    fire_counts_cache = Dict{Int, Int}()  # how many articles this program fires on
+    # Eagerly compute firing set on the chosen article: programs whose predicate
+    # matches here are the ones whose θ is evidenced by this observation. Used
+    # both for the FiringByTag likelihood-family dispatch and for the
+    # Plackett-Luce numerator check in the generator.
+    fires_chosen_set = Set{Int}(
+        i for (i, ck) in enumerate(compiled_kernels)
+        if ck.evaluate(chosen_features, temporal_state) == :match
+    )
+    fire_counts_cache = Dict{Int, Int}()
 
-    # TODO(followup): this is semantically FiringByTag(fires_chosen_set,
-    # BetaBernoulli(), Flat()) — non-firing programs contribute a constant
-    # log(0.5) to the numerator, meaning the observation carries no evidence
-    # about their θ. Declaring BetaBernoulli() preserves legacy behaviour
-    # (every program's α updates on a read) but the per-θ update for
-    # non-firing programs is strictly wrong. Switching to FiringByTag would
-    # require eagerly computing the firing set at construction time.
     Kernel(Interval(0.0, 1.0), obs_space,
         _ -> error("generate not used"),
         (m_or_θ, obs) -> begin
@@ -126,18 +126,12 @@ function build_read_kernel(
                 p = mean(m_or_θ.beta)
                 ck = compiled_kernels[tag]
 
-                fires_chosen = get!(fire_chosen_cache, tag) do
-                    ck.evaluate(chosen_features, temporal_state) == :match
-                end
+                fires_chosen = tag in fires_chosen_set
 
                 n_fires = get!(fire_counts_cache, tag) do
                     count(f -> ck.evaluate(f, temporal_state) == :match, all_unread_features)
                 end
 
-                # Plackett-Luce: P(chosen | program, unread set)
-                # score = p for fired articles, 0.5 for non-fired
-                # Numerator: score of chosen article
-                # Denominator: sum of all scores
                 log_score_chosen = fires_chosen ? log(max(p, 1e-300)) : log(0.5)
                 log_denom = logsumexp([
                     n_fires > 0 ? log(max(p, 1e-300)) + log(n_fires) : -Inf,
@@ -146,12 +140,10 @@ function build_read_kernel(
 
                 log_score_chosen - log_denom
             else
-                # Scalar fallback (grid conditioning path)
-                # m_or_θ is a scalar in [0, 1] representing the Beta parameter
                 log(max(m_or_θ, 1e-300)) - log(max(n_articles * 0.5, 1e-300))
             end
         end;
-        likelihood_family = BetaBernoulli())
+        likelihood_family = FiringByTag(fires_chosen_set, BetaBernoulli(), Flat()))
 end
 
 """
@@ -168,29 +160,25 @@ function build_dismiss_kernel(
     temporal_state::Dict{Symbol, Any},
 )
     obs_space = Finite([0.0, 1.0])
-    fire_cache = Dict{Int, Bool}()
 
-    # TODO(followup): semantically FiringByTag(fires_set, BetaBernoulli(), Flat()).
-    # Declaring BetaBernoulli() preserves legacy behaviour; see read-kernel
-    # TODO above for the same reasoning.
+    fires_set = Set{Int}(
+        i for (i, ck) in enumerate(compiled_kernels)
+        if ck.evaluate(dismissed_features, temporal_state) == :match
+    )
+
     Kernel(Interval(0.0, 1.0), obs_space,
         _ -> error("generate not used"),
         (m_or_θ, obs) -> begin
             if m_or_θ isa TaggedBetaMeasure
                 tag = m_or_θ.tag
-                fires = get!(fire_cache, tag) do
-                    compiled_kernels[tag].evaluate(dismissed_features, temporal_state) == :match
-                end
+                fires = tag in fires_set
                 p = mean(m_or_θ.beta)
-                # Fired on dismissed article → wrong (log(1-p))
-                # Didn't fire → no opinion (log(0.5))
                 fires ? log(max(1.0 - p, 1e-300)) : log(0.5)
             else
-                # Scalar fallback
                 log(max(1.0 - m_or_θ, 1e-300))
             end
         end;
-        likelihood_family = BetaBernoulli())
+        likelihood_family = FiringByTag(fires_set, BetaBernoulli(), Flat()))
 end
 
 # ═══════════════════════════════════════

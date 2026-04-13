@@ -188,12 +188,14 @@ def test_router_roundtrip():
         best_expected = max(expected_eu)
         best_action = expected_eu.index(best_expected)
         assert action == best_action, f"Expected action {best_action}, got {action}"
-        assert abs(eu - best_expected) < 1e-10, f"Expected EU {best_expected}, got {eu} (non-closed-form?)"
-        print(f"PASS: closed-form EU matches (action={action}, eu={eu:.12f})")
+        # Safe: JSON3.write preserves full Float64 precision; stdlib json
+        # round-trips exactly. Re-verify if either encoder changes.
+        assert eu == best_expected, f"Expected EU {best_expected} (exact), got {eu} (non-closed-form?)"
+        print(f"PASS: closed-form EU matches exactly (action={action}, eu={eu:.12f})")
 
         # Determinism: calling optimise again gives the bit-identical EU.
         action2, eu2 = brain.optimise(state_id, actions_spec, pref)
-        assert abs(eu - eu2) < 1e-15, f"EU not deterministic: {eu} vs {eu2}"
+        assert eu == eu2, f"EU not deterministic: {eu} vs {eu2}"
         print("PASS: deterministic dispatch (closed-form only)")
 
         # Observe high quality for provider `action`, category 2.

@@ -17,7 +17,7 @@ module Ontology
 export Space, Finite, Interval, ProductSpace, Simplex, Euclidean, PositiveReals, support
 export Measure, CategoricalMeasure, BetaMeasure, TaggedBetaMeasure, GaussianMeasure, GammaMeasure, ExponentialMeasure, DirichletMeasure, NormalGammaMeasure, ProductMeasure, MixtureMeasure
 export Kernel, FactorSelector, kernel_source, kernel_target, kernel_params
-export LikelihoodFamily, BetaBernoulli, Flat, FiringByTag, DispatchByComponent
+export LikelihoodFamily, LeafFamily, PushOnly, BetaBernoulli, Flat, FiringByTag, DispatchByComponent, DepthCapExceeded
 export Functional, Identity, Projection, NestedProjection, Tabular, LinearCombination, OpaqueClosure
 export factor, replace_factor
 export condition, expect, push_measure, density, log_predictive, log_marginal
@@ -204,11 +204,8 @@ end
 ProductMeasure(factors::Vector{<:Measure}) =
     ProductMeasure(ProductSpace(Space[f.space for f in factors]), factors)
 
-"""Return the i-th factor (1-based) of a ProductMeasure."""
 factor(m::ProductMeasure, i::Int) = m.factors[i]
 
-"""Return a new ProductMeasure with factor i (1-based) replaced. Space
-is recomputed from the new factors."""
 function replace_factor(m::ProductMeasure, i::Int, new_factor::Measure)
     new_factors = Measure[f for f in m.factors]
     new_factors[i] = new_factor
@@ -267,18 +264,29 @@ end
 # etc. Declaring the family at construction is the same principle as
 # Functional for expect.
 #
-# Every Kernel used to condition a TaggedBetaMeasure must declare a
-# likelihood_family — condition() errors on `nothing`. Kernels used only
-# with push/expect, or against measures whose condition method does not
-# dispatch on family, may leave it unset.
+# Every Kernel must declare a likelihood_family — it is a required kwarg
+# at construction. Kernels used only with push/expect (not condition)
+# declare PushOnly(); condition() errors loudly if called on one.
 abstract type LikelihoodFamily end
 
+# Leaf families terminate the FiringByTag / DispatchByComponent routing
+# chain. Only these may appear in a condition() dispatch's final step.
+abstract type LeafFamily <: LikelihoodFamily end
+
 # p(obs|θ) = θ^obs · (1−θ)^(1−obs). Conjugate with Beta priors.
-struct BetaBernoulli <: LikelihoodFamily end
+struct BetaBernoulli <: LeafFamily end
 
 # p(obs|θ) constant in θ. The observation provides no evidence about θ.
 # Bayesian posterior = prior.
-struct Flat <: LikelihoodFamily end
+struct Flat <: LeafFamily end
+
+# Sentinel for kernels whose condition path does not dispatch on family —
+# either push/expect-only, or condition through space-shape dispatch
+# (e.g. Gaussian→Gaussian conjugate, Categorical→Categorical tabular).
+# `condition(::TaggedBetaMeasure, …)` with a PushOnly kernel raises a
+# clear error, since TaggedBetaMeasure conditioning requires a declared
+# leaf or routing family.
+struct PushOnly <: LikelihoodFamily end
 
 # Fire/not-fire routing by component tag. Tags in `fires` use
 # `when_fires`; all other tags use `when_not`. This is the declarative
@@ -286,21 +294,20 @@ struct Flat <: LikelihoodFamily end
 # mixtures — "some predicates fire on this observation, some don't".
 # Prefer this over DispatchByComponent when the routing is tag-based.
 #
-# The branch fields are restricted to leaf families (BetaBernoulli / Flat)
-# so nesting is impossible by construction. The condition() dispatch loop
-# still guards against runtime misuse from DispatchByComponent.
+# The branch fields are LeafFamily-typed so declared nesting is
+# statically impossible. The condition() dispatch loop still guards
+# against runtime misuse from DispatchByComponent returning a router.
 struct FiringByTag <: LikelihoodFamily
     fires::Set{Int}
-    when_fires::Union{BetaBernoulli, Flat}
-    when_not::Union{BetaBernoulli, Flat}
+    when_fires::LeafFamily
+    when_not::LeafFamily
 end
 
 # Explicit escape hatch — the LikelihoodFamily analogue of OpaqueClosure.
 # Takes a `classify(m) → LikelihoodFamily` closure called at dispatch
-# time. The closure must return a leaf family (BetaBernoulli or Flat).
-# Returning another DispatchByComponent is caught by the depth cap in
-# condition(). Reach for this only when no declarative subtype
-# (FiringByTag, …) fits the routing pattern.
+# time. The closure must eventually unwrap to a leaf family. Returning
+# another DispatchByComponent is caught by the depth cap in condition().
+# Reach for this only when no declarative subtype (FiringByTag, …) fits.
 struct DispatchByComponent <: LikelihoodFamily
     classify::Function  # Measure → LikelihoodFamily
 end
@@ -312,24 +319,15 @@ struct Kernel
     log_density::Function  # (h, o) → log p(o|h) (for condition)
     factor_selector::Union{Nothing, FactorSelector}
     params::Union{Nothing, Dict{Symbol,Any}}
-    likelihood_family::Union{Nothing, LikelihoodFamily}
+    likelihood_family::LikelihoodFamily
 end
 
-Kernel(source::Space, target::Space, gen::Function, ld::Function,
-       fs::Union{Nothing, FactorSelector}, params) =
-    Kernel(source, target, gen, ld, fs, params, nothing)
-
-Kernel(source::Space, target::Space, gen::Function, ld::Function,
-       fs::Union{Nothing, FactorSelector}) =
-    Kernel(source, target, gen, ld, fs, nothing, nothing)
-
-# 4-positional constructor accepts keyword forms. Preferred for new
-# construction sites — makes likelihood_family (and the other optional
-# fields) visible in the call signature.
+# Canonical constructor: likelihood_family is a required kwarg. Optional
+# factor_selector / params default to nothing.
 Kernel(source::Space, target::Space, gen::Function, ld::Function;
        factor_selector::Union{Nothing, FactorSelector}=nothing,
        params::Union{Nothing, Dict{Symbol,Any}}=nothing,
-       likelihood_family::Union{Nothing, LikelihoodFamily}=nothing) =
+       likelihood_family::LikelihoodFamily) =
     Kernel(source, target, gen, ld, factor_selector, params, likelihood_family)
 
 kernel_source(k::Kernel) = k.source
@@ -537,13 +535,10 @@ function expect(m::MixtureMeasure, φ::Functional)
     sum(w[i] * expect(m.components[i], φ) for i in eachindex(w))
 end
 
-# ── Fallback: OpaqueClosure delegates to the bare-function method ──
-# Dispatches to whatever expect(m, f::Any) method exists for this measure
-# type (quadrature for leaves, Monte Carlo for ProductMeasure, etc.).
 expect(m::Measure, o::OpaqueClosure; kwargs...) = expect(m, o.f; kwargs...)
 
-# Explicit MixtureMeasure overload to resolve dispatch ambiguity between
-# expect(::MixtureMeasure, ::Functional) and expect(::Measure, ::OpaqueClosure).
+# Resolves dispatch ambiguity between expect(::MixtureMeasure, ::Functional)
+# and expect(::Measure, ::OpaqueClosure).
 expect(m::MixtureMeasure, o::OpaqueClosure; kwargs...) = expect(m, o.f; kwargs...)
 
 # ================================================================
@@ -578,9 +573,18 @@ function condition(m::BetaMeasure, k::Kernel, observation)
     end
 end
 
+struct DepthCapExceeded <: Exception
+    msg::String
+end
+Base.showerror(io::IO, e::DepthCapExceeded) = print(io, "DepthCapExceeded: ", e.msg)
+
 function condition(m::TaggedBetaMeasure, k::Kernel, observation)
     # See LikelihoodFamily declaration for the routing vocabulary.
     fam = k.likelihood_family
+    fam isa PushOnly && error(
+        "condition called on a push-only kernel (likelihood_family = PushOnly()). " *
+        "Declare a leaf family (BetaBernoulli, Flat, or via FiringByTag/DispatchByComponent) " *
+        "at Kernel construction.")
     for _ in 1:8  # depth cap — catches accidental self-referential DispatchByComponent
         if fam isa FiringByTag
             fam = m.tag in fam.fires ? fam.when_fires : fam.when_not
@@ -591,30 +595,21 @@ function condition(m::TaggedBetaMeasure, k::Kernel, observation)
         end
     end
     (fam isa FiringByTag || fam isa DispatchByComponent) &&
-        error("LikelihoodFamily unwrap did not reach a leaf within depth cap")
-    fam === nothing && error(
-        "condition(::TaggedBetaMeasure, …): kernel has no likelihood_family. " *
-        "Declare one at Kernel construction (e.g. likelihood_family=BetaBernoulli()).")
+        throw(DepthCapExceeded(
+            "LikelihoodFamily unwrap did not reach a leaf within depth cap (got $(typeof(fam)))"))
 
-    # Run the kernel for its side effects. Production program_observation
-    # kernels use this call to populate per-tag caches in k.params
-    # (recommendation_cache, correct_cache). The return value is not used
-    # for dispatch — the family declaration is. Weight differentiation
-    # between components still happens at the mixture level via
-    # _predictive_ll, which reads the kernel's return value directly.
+    # Call for side effects: domain kernels populate per-tag caches in
+    # k.params. Return value is consumed later by _predictive_ll at the
+    # mixture level, not by dispatch here.
     k.log_density(m, observation)
 
     if fam isa BetaBernoulli
-        # Conjugate Beta-Bernoulli update: observation determines direction.
-        # Correct programs: log(p) improves as α grows → weight rises.
-        # Incorrect programs: log(1-p) worsens as α grows → weight crashes.
         if observation == 1 || observation == 1.0 || observation == true
             TaggedBetaMeasure(m.space, m.tag, BetaMeasure(m.beta.space, m.beta.alpha + 1.0, m.beta.beta))
         else
             TaggedBetaMeasure(m.space, m.tag, BetaMeasure(m.beta.space, m.beta.alpha, m.beta.beta + 1.0))
         end
     elseif fam isa Flat
-        # Flat likelihood: p(obs|θ) is constant in θ. Posterior = prior.
         m
     else
         error("condition(::TaggedBetaMeasure, k, obs): unsupported likelihood_family $(typeof(fam))")
@@ -829,7 +824,8 @@ function condition(m::ProductMeasure, k::Kernel, obs; kwargs...)
             k.log_density(full_h, o)
         end
         restricted_k = Kernel(factor_ai.space, k.target,
-            _ -> error("generate not used in condition"), restricted_ld)
+            _ -> error("generate not used in condition"), restricted_ld;
+            likelihood_family = k.likelihood_family)
 
         # Condition — hits conjugate fast-paths (e.g. Beta + Bernoulli)
         conditioned = condition(factor_ai, restricted_k, obs)

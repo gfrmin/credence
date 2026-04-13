@@ -24,8 +24,9 @@ let
     binary = Finite([0.0, 1.0])
     k = Kernel(prod.space, binary,
         _ -> error("not used"),
-        (h, o) -> let r = h[Int(h[1]) + 2]; o == 1.0 ? log(r) : log(1.0 - r) end,
-        FactorSelector(1, c -> [Int(c) + 2]))
+        (h, o) -> let r = h[Int(h[1]) + 2]; o == 1.0 ? log(r) : log(1.0 - r) end;
+        factor_selector = FactorSelector(1, c -> [Int(c) + 2]),
+        likelihood_family = BetaBernoulli())
 
     posterior = condition(prod, k, 1.0)
     @assert posterior isa MixtureMeasure
@@ -68,8 +69,9 @@ let
     binary = Finite([0.0, 1.0])
     k = Kernel(prod.space, binary,
         _ -> error("not used"),
-        (h, o) -> let r = h[Int(h[1]) + 2]; o == 1.0 ? log(r) : log(1.0 - r) end,
-        FactorSelector(1, c -> [Int(c) + 2]))
+        (h, o) -> let r = h[Int(h[1]) + 2]; o == 1.0 ? log(r) : log(1.0 - r) end;
+        factor_selector = FactorSelector(1, c -> [Int(c) + 2]),
+        likelihood_family = BetaBernoulli())
 
     posterior = condition(prod, k, 0.0)  # failure observation
     @assert posterior isa MixtureMeasure
@@ -107,7 +109,8 @@ let
     obs_space = Finite([0, 1])
     k = Kernel(pm.space, obs_space,
         h -> (o -> begin; t = h[2]; o == 1 ? log(t) : log(1.0 - t) end),
-        (h, o) -> begin; t = h[2]; o == 1 ? log(t) : log(1.0 - t) end)
+        (h, o) -> begin; t = h[2]; o == 1 ? log(t) : log(1.0 - t) end;
+        likelihood_family = BetaBernoulli())
 
     # No factor_selector → falls back to importance sampling
     posterior = condition(pm, k, 1; n_particles=5000)
@@ -169,8 +172,9 @@ let
     binary = Finite([0.0, 1.0])
     k = Kernel(prod.space, binary,
         _ -> error("not used"),
-        (h, o) -> let r = h[Int(h[1]) + 2]; o == 1.0 ? log(r) : log(1.0 - r) end,
-        FactorSelector(1, c -> [Int(c) + 2]))
+        (h, o) -> let r = h[Int(h[1]) + 2]; o == 1.0 ? log(r) : log(1.0 - r) end;
+        factor_selector = FactorSelector(1, c -> [Int(c) + 2]),
+        likelihood_family = BetaBernoulli())
 
     posterior = condition(joint, k, 1.0)
     @assert posterior isa MixtureMeasure
@@ -253,8 +257,9 @@ let
         binary = Finite([0.0, 1.0])
         k = Kernel(joint_space, binary,
             _ -> error("generate not used"),
-            (h, o) -> let r = h[Int(h[1]) + 2]; o == 1.0 ? log(r) : log(1.0 - r) end,
-            FactorSelector(1, c -> [Int(c) + 2]))
+            (h, o) -> let r = h[Int(h[1]) + 2]; o == 1.0 ? log(r) : log(1.0 - r) end;
+            factor_selector = FactorSelector(1, c -> [Int(c) + 2]),
+            likelihood_family = BetaBernoulli())
         posterior = condition(joint, k, obs)
 
         cat_log_post = fill(-Inf, n_cat)

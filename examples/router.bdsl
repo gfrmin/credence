@@ -1,15 +1,5 @@
-; ============================================================
-; router.bdsl — Bayesian provider routing (data definitions)
-;
-; State is a nested ProductMeasure: providers x categories x (theta, k).
-; The body orchestrates decide (optimise with functional_per_action
-; preference) and observe (factor / condition / replace_factor chain)
-; via the brain protocol — no DSL wrappers around axiom-constrained
-; operations.
-;
-; This file defines only domain objects: spaces, the prior constructor,
-; and the observation kernels. Everything else is brain primitives.
-; ============================================================
+; router.bdsl — Bayesian provider routing (data definitions).
+; Spaces, prior constructor, quality observation kernel.
 
 ; ── Spaces ──
 (define quality-space (space :interval 0 1))
@@ -34,12 +24,3 @@
       (let theta (first h)
         (let k (second h)
           (measure quality-space :beta (* theta k) (* (- 1.0 theta) k)))))))
-
-; ── Observation model: binary responded/not ──
-; Operates on the theta component only (coverage learning).
-(define binary-kernel
-  (kernel hypothesis-space (space :finite 0 1)
-    (lambda (h)
-      (let theta (first h)
-        (lambda (responded)
-          (if (= responded 1) (log theta) (log (- 1.0 theta))))))))

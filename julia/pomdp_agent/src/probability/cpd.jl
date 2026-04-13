@@ -41,7 +41,8 @@ mutable struct DirichletCategorical
         measure = DirichletMeasure(Simplex(k), cats, copy(alpha))
         kernel = Kernel(Simplex(k), cats,
             θ -> (o -> begin; idx = findfirst(==(o), cats.values); log(θ[idx]); end),
-            (θ, o) -> begin; idx = findfirst(==(o), cats.values); log(θ[idx]); end)
+            (θ, o) -> begin; idx = findfirst(==(o), cats.values); log(θ[idx]); end;
+            likelihood_family = PushOnly())
         new(domain, measure, kernel, copy(alpha))
     end
 end

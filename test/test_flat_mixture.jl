@@ -60,7 +60,8 @@ let
     # but vary the observation to simulate per-component behaviour
     k = Kernel(Interval(0.0, 1.0), obs_space,
         θ -> (o -> o == 1.0 ? log(θ) : log(1.0 - θ)),
-        (θ, o) -> o == 1.0 ? log(θ) : log(1.0 - θ))
+        (θ, o) -> o == 1.0 ? log(θ) : log(1.0 - θ);
+        likelihood_family = BetaBernoulli())
 
     # Condition on observing enemy (1.0)
     posterior = condition(belief, k, 1.0)
@@ -120,7 +121,8 @@ let
 
     k = Kernel(Interval(0.0, 1.0), Finite([0.0, 1.0]),
         θ -> (o -> o == 1.0 ? log(θ) : log(1.0 - θ)),
-        (θ, o) -> o == 1.0 ? log(θ) : log(1.0 - θ))
+        (θ, o) -> o == 1.0 ? log(θ) : log(1.0 - θ);
+        likelihood_family = BetaBernoulli())
 
     # Condition on enemy (1.0) — programs predicting enemy should gain weight
     posterior = condition(belief_diff, k, 1.0)
@@ -154,7 +156,8 @@ let
 
     k = Kernel(Interval(0.0, 1.0), Finite([0.0, 1.0]),
         θ -> (o -> o == 1.0 ? log(θ) : log(1.0 - θ)),
-        (θ, o) -> o == 1.0 ? log(θ) : log(1.0 - θ))
+        (θ, o) -> o == 1.0 ? log(θ) : log(1.0 - θ);
+        likelihood_family = BetaBernoulli())
 
     # Manually compute predictive likelihood
     # P(obs=1 | mix) = 0.6 * E_Beta(3,1)[θ] + 0.4 * E_Beta(1,3)[θ]
@@ -237,7 +240,8 @@ let
 
     k = Kernel(Interval(0.0, 1.0), Finite([0.0, 1.0]),
         θ -> (o -> o == 1.0 ? log(θ) : log(1.0 - θ)),
-        (θ, o) -> o == 1.0 ? log(θ) : log(1.0 - θ))
+        (θ, o) -> o == 1.0 ? log(θ) : log(1.0 - θ);
+        likelihood_family = BetaBernoulli())
 
     # Condition on 3 enemy observations
     posterior = belief
@@ -323,18 +327,19 @@ let
         @assert comp isa TaggedBetaMeasure "Expected TaggedBetaMeasure, got $(typeof(comp))"
     end
 
-    # Firing components (1,2) should have updated Betas: Beta(6,1) after 5 enemy obs
+    # Firing components (1,2) should have updated Betas: Beta(6,1) after 5 enemy obs.
+    # Integer accumulation; exact equality is the correct bar.
     for i in 1:2
         c = posterior.components[i]
-        @assert c.beta.alpha ≈ 6.0 "Firing comp $i: expected α=6, got $(c.beta.alpha)"
-        @assert c.beta.beta ≈ 1.0 "Firing comp $i: expected β=1, got $(c.beta.beta)"
+        @assert c.beta.alpha == 6.0 "Firing comp $i: expected α=6 (exact), got $(c.beta.alpha)"
+        @assert c.beta.beta == 1.0 "Firing comp $i: expected β=1 (exact), got $(c.beta.beta)"
     end
 
-    # Non-firing components (3,4) should be unchanged: Beta(1,1)
+    # Non-firing components (3,4) should be unchanged: Beta(1,1) exactly.
     for i in 3:4
         c = posterior.components[i]
-        @assert c.beta.alpha ≈ 1.0 "Non-firing comp $i: expected α=1, got $(c.beta.alpha)"
-        @assert c.beta.beta ≈ 1.0 "Non-firing comp $i: expected β=1, got $(c.beta.beta)"
+        @assert c.beta.alpha == 1.0 "Non-firing comp $i: expected α=1 (exact), got $(c.beta.alpha)"
+        @assert c.beta.beta == 1.0 "Non-firing comp $i: expected β=1 (exact), got $(c.beta.beta)"
     end
 
     # Firing components should gain weight relative to non-firing

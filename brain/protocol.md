@@ -640,3 +640,5 @@ Standard JSON-RPC 2.0 error responses:
 | -32601 | Method not found |
 | -32603 | Internal error (uncategorised handler failure) |
 | -32000 | State not found |
+| -32001 | DSL error (build_kernel / build_function failed) |
+| -32002 | Inference error (condition / expect / log_predictive failed) |

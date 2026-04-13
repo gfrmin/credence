@@ -19,8 +19,10 @@ class _Bridge:
             return
         from juliacall import Main as jl
 
-        # Resolve Credence src path — monorepo layout first, then ~/git/credence
-        # fallback for standalone installs. Matches credence_agents/julia_bridge.py.
+        # Resolve Credence src path: monorepo layout first, then ~/git/credence
+        # fallback for standalone installs.
+        # NOTE: the ~/git/credence fallback is machine-specific; fails for users
+        # whose checkout is elsewhere. Consider making it configurable via env var.
         monorepo = Path(__file__).resolve().parents[3]
         candidate = monorepo / "src"
         if candidate.exists():

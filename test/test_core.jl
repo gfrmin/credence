@@ -317,7 +317,8 @@ let
     m = DirichletMeasure(Simplex(3), cats, [1.0, 1.0, 1.0])
     k = Kernel(Simplex(3), cats,
         θ -> (o -> begin; idx = findfirst(==(o), cats.values); log(θ[idx]); end),
-        (θ, o) -> begin; idx = findfirst(==(o), cats.values); log(θ[idx]); end)
+        (θ, o) -> begin; idx = findfirst(==(o), cats.values); log(θ[idx]); end;
+        likelihood_family = PushOnly())
 
     m2 = condition(m, k, 1)
     w = weights(m2)
@@ -388,7 +389,8 @@ let
     d = DirichletMeasure(Simplex(3), cats, [2.0, 3.0, 5.0])
     k = Kernel(Simplex(3), cats,
         θ -> (o -> begin; idx = findfirst(==(o), cats.values); log(θ[idx]); end),
-        (θ, o) -> begin; idx = findfirst(==(o), cats.values); log(θ[idx]); end)
+        (θ, o) -> begin; idx = findfirst(==(o), cats.values); log(θ[idx]); end;
+        likelihood_family = PushOnly())
 
     pred = push_measure(d, k)
     @assert pred isa CategoricalMeasure
@@ -427,7 +429,8 @@ let
             elseif o == :mid; log(0.5)
             else; log(θ)
             end
-        end)
+        end;
+        likelihood_family = PushOnly())
 
     posterior = condition(m, k, :high; n_particles=5000)
     @assert posterior isa CategoricalMeasure
@@ -486,7 +489,8 @@ let
                    c = h[1]; t0 = h[2]; t1 = h[3]
                    θ = c == 0 ? t0 : t1
                    o == 1 ? log(θ) : log(1.0 - θ)
-               end)
+               end;
+               likelihood_family = PushOnly())
 
     posterior = condition(pm, k, 1; n_particles=5000)
     @assert posterior isa CategoricalMeasure
@@ -512,7 +516,8 @@ let
     obs_space = Finite([0, 1])
     k = Kernel(Interval(0.0, 1.0), obs_space,
         θ -> (o -> o == 1 ? log(θ) : log(1.0 - θ)),
-        (θ, o) -> o == 1 ? log(θ) : log(1.0 - θ))
+        (θ, o) -> o == 1 ? log(θ) : log(1.0 - θ);
+        likelihood_family = BetaBernoulli())
 
     posterior = condition(mix, k, 1)
     @assert posterior isa MixtureMeasure
@@ -608,7 +613,8 @@ let
             elseif o == :mid; log(0.5)
             else; log(θ)
             end
-        end)
+        end;
+        likelihood_family = PushOnly())
     post = condition(prior, k, :mid)
     @assert post isa CategoricalMeasure "Expected CategoricalMeasure fallback, got $(typeof(post))"
     println("PASSED: BetaMeasure + 3-outcome kernel → CategoricalMeasure (grid fallback)")
@@ -624,7 +630,8 @@ let
     obs_space = Finite([0.0, 1.0])
     k = Kernel(Interval(0.0, 1.0), obs_space,
         θ -> (o -> o == 1.0 ? log(θ) : log(1.0 - θ)),
-        (θ, o) -> o == 1.0 ? log(θ) : log(1.0 - θ))
+        (θ, o) -> o == 1.0 ? log(θ) : log(1.0 - θ);
+        likelihood_family = BetaBernoulli())
     post = condition(prior, k, 1.0)
     @assert post isa BetaMeasure "Expected BetaMeasure, got $(typeof(post))"
     @assert post.alpha ≈ 2.0 "Expected alpha=2.0, got $(post.alpha)"
@@ -643,8 +650,9 @@ let
     sigma_obs = 1.0
     k = Kernel(Euclidean(1), Euclidean(1),
         h -> (o -> -0.5 * ((o - h) / sigma_obs)^2),
-        (h, o) -> -0.5 * ((o - h) / sigma_obs)^2,
-        nothing, Dict(:sigma_obs => sigma_obs))
+        (h, o) -> -0.5 * ((o - h) / sigma_obs)^2;
+        params = Dict{Symbol,Any}(:sigma_obs => sigma_obs),
+        likelihood_family = PushOnly())
     post = condition(prior, k, 2.0)
     @assert post isa GaussianMeasure "Expected GaussianMeasure, got $(typeof(post))"
     @assert abs(post.mu - 1.0) < 1e-10 "Expected μ_post=1.0, got $(post.mu)"
@@ -663,8 +671,9 @@ let
     sigma_obs = 2.0
     k = Kernel(Euclidean(1), Euclidean(1),
         h -> (o -> -0.5 * ((o - h) / sigma_obs)^2),
-        (h, o) -> -0.5 * ((o - h) / sigma_obs)^2,
-        nothing, Dict(:sigma_obs => sigma_obs))
+        (h, o) -> -0.5 * ((o - h) / sigma_obs)^2;
+        params = Dict{Symbol,Any}(:sigma_obs => sigma_obs),
+        likelihood_family = PushOnly())
     post = condition(prior, k, 0.0)
     @assert post isa GaussianMeasure "Expected GaussianMeasure, got $(typeof(post))"
     # τ_prior = 4.0, τ_obs = 0.25, μ_post = (4*10 + 0.25*0) / 4.25 ≈ 9.412
@@ -684,8 +693,9 @@ let
         prior = GaussianMeasure(Euclidean(1), mu0, sig0)
         k = Kernel(Euclidean(1), Euclidean(1),
             h -> (o -> -0.5 * ((o - h) / sig_obs)^2),
-            (h, o) -> -0.5 * ((o - h) / sig_obs)^2,
-            nothing, Dict(:sigma_obs => sig_obs))
+            (h, o) -> -0.5 * ((o - h) / sig_obs)^2;
+            params = Dict{Symbol,Any}(:sigma_obs => sig_obs),
+            likelihood_family = PushOnly())
         post = condition(prior, k, x)
         @assert post isa GaussianMeasure "Expected GaussianMeasure"
         @assert post.sigma < sig0 "Variance must shrink: σ_post=$(post.sigma) ≥ σ_prior=$(sig0)"
@@ -704,7 +714,8 @@ let
     obs_space = Finite([:a, :b])
     k = Kernel(Euclidean(1), obs_space,
         h -> (o -> o == :a ? log(0.5 + 0.3 * tanh(h)) : log(0.5 - 0.3 * tanh(h))),
-        (h, o) -> o == :a ? log(0.5 + 0.3 * tanh(h)) : log(0.5 - 0.3 * tanh(h)))
+        (h, o) -> o == :a ? log(0.5 + 0.3 * tanh(h)) : log(0.5 - 0.3 * tanh(h));
+        likelihood_family = PushOnly())
     post = condition(prior, k, :a)
     @assert post isa CategoricalMeasure "Expected CategoricalMeasure fallback, got $(typeof(post))"
     println("PASSED: GaussianMeasure + Finite-target kernel → CategoricalMeasure (grid fallback)")
@@ -720,7 +731,8 @@ let
     prior = GaussianMeasure(Euclidean(1), 0.0, 1.0)
     k = Kernel(Euclidean(1), Euclidean(1),
         h -> (o -> -0.5 * ((o - h) / 1.0)^2),
-        (h, o) -> -0.5 * ((o - h) / 1.0)^2)
+        (h, o) -> -0.5 * ((o - h) / 1.0)^2;
+        likelihood_family = PushOnly())
     post = condition(prior, k, 1.0)
     @assert post isa CategoricalMeasure "Expected CategoricalMeasure (grid fallback), got $(typeof(post))"
     println("PASSED: Euclidean→Euclidean kernel without :sigma_obs param → grid fallback")
@@ -754,9 +766,9 @@ let
         ProductSpace(Space[Euclidean(1), PositiveReals()]),
         Euclidean(1),
         h -> error("generate not used"),
-        (h, o) -> -0.5 * log(2π * h[2]) - (o - h[1])^2 / (2.0 * h[2]),
-        nothing,
-        Dict(:normal_gamma => true))
+        (h, o) -> -0.5 * log(2π * h[2]) - (o - h[1])^2 / (2.0 * h[2]);
+        params = Dict{Symbol,Any}(:normal_gamma => true),
+        likelihood_family = PushOnly())
 
     # Observe r = 2.0
     m2 = condition(m, k, 2.0)
@@ -796,9 +808,9 @@ let
         ProductSpace(Space[Euclidean(1), PositiveReals()]),
         Euclidean(1),
         h -> error("generate not used"),
-        (h, o) -> -0.5 * log(2π * h[2]) - (o - h[1])^2 / (2.0 * h[2]),
-        nothing,
-        Dict(:normal_gamma => true))
+        (h, o) -> -0.5 * log(2π * h[2]) - (o - h[1])^2 / (2.0 * h[2]);
+        params = Dict{Symbol,Any}(:normal_gamma => true),
+        likelihood_family = PushOnly())
 
     # Observe several values near 3.0
     current = m
@@ -823,9 +835,9 @@ let
         ProductSpace(Space[Euclidean(1), PositiveReals()]),
         Euclidean(1),
         h -> error("generate not used"),
-        (h, o) -> -0.5 * log(2π * h[2]) - (o - h[1])^2 / (2.0 * h[2]),
-        nothing,
-        Dict(:normal_gamma => true))
+        (h, o) -> -0.5 * log(2π * h[2]) - (o - h[1])^2 / (2.0 * h[2]);
+        params = Dict{Symbol,Any}(:normal_gamma => true),
+        likelihood_family = PushOnly())
 
     m2 = condition(m, k, 0.0)
     # With κ=100, one observation at 0 barely shifts μ from 10
@@ -843,7 +855,8 @@ let
     d = DirichletMeasure(Simplex(3), cats, [2.0, 3.0, 5.0])
     k = Kernel(Simplex(3), cats,
         θ -> (o -> begin; idx = findfirst(==(o), cats.values); log(θ[idx]); end),
-        (θ, o) -> begin; idx = findfirst(==(o), cats.values); log(θ[idx]); end)
+        (θ, o) -> begin; idx = findfirst(==(o), cats.values); log(θ[idx]); end;
+        likelihood_family = PushOnly())
 
     # log P(obs=10 | Dir(2,3,5)) = log(2/10) = log(0.2)
     lp = log_predictive(d, k, 10)
@@ -867,7 +880,8 @@ let
     obs_space = Finite([0, 1])
     k = Kernel(H, obs_space,
         θ -> (o -> o == 1 ? log(θ) : log(1.0 - θ)),
-        (θ, o) -> o == 1 ? log(θ) : log(1.0 - θ))
+        (θ, o) -> o == 1 ? log(θ) : log(1.0 - θ);
+        likelihood_family = BetaBernoulli())
 
     # P(obs=1 | uniform{0.3, 0.7}) = 0.5*0.3 + 0.5*0.7 = 0.5
     lp = log_predictive(m, k, 1)
@@ -886,7 +900,8 @@ let
     d = DirichletMeasure(Simplex(3), cats, [1.0, 1.0, 1.0])
     k = Kernel(Simplex(3), cats,
         θ -> (o -> begin; idx = findfirst(==(o), cats.values); log(θ[idx]); end),
-        (θ, o) -> begin; idx = findfirst(==(o), cats.values); log(θ[idx]); end)
+        (θ, o) -> begin; idx = findfirst(==(o), cats.values); log(θ[idx]); end;
+        likelihood_family = PushOnly())
 
     # Observe :a, :a, :b — compute sequential log marginal
     data = [:a, :a, :b]
@@ -934,7 +949,8 @@ let
     d = DirichletMeasure(Simplex(2), cats, [0.1, 0.1])
     k = Kernel(Simplex(2), cats,
         θ -> (o -> begin; idx = findfirst(==(o), cats.values); log(θ[idx]); end),
-        (θ, o) -> begin; idx = findfirst(==(o), cats.values); log(θ[idx]); end)
+        (θ, o) -> begin; idx = findfirst(==(o), cats.values); log(θ[idx]); end;
+        likelihood_family = PushOnly())
 
     # Oracle 1: closed-form log_marginal
     lm = log_marginal(d, [10, 5])
@@ -1248,27 +1264,28 @@ end
 println()
 
 println("=" ^ 60)
-println("TEST 54: Error pin — nothing likelihood_family errors at condition")
+println("TEST 54: Error pin — PushOnly likelihood_family errors at condition")
 println("=" ^ 60)
 let
     tbm = TaggedBetaMeasure(Interval(0.0, 1.0), 1, BetaMeasure(1.0, 1.0))
     k = Kernel(Interval(0.0, 1.0), Finite([0.0, 1.0]),
         _ -> error("not used"),
-        (h, o) -> 0.0)  # no likelihood_family
+        (h, o) -> 0.0;
+        likelihood_family = PushOnly())
     caught = false
     try
         condition(tbm, k, 1.0)
     catch e
         caught = true
-        @assert occursin("likelihood_family", sprint(showerror, e))
+        @assert occursin("push-only kernel", sprint(showerror, e))
     end
-    @assert caught "Expected error for undeclared likelihood_family"
-    println("PASSED: undeclared likelihood_family → error")
+    @assert caught "Expected error for PushOnly kernel conditioning TaggedBetaMeasure"
+    println("PASSED: PushOnly kernel → loud error on condition(TaggedBetaMeasure, …)")
 end
 println()
 
 println("=" ^ 60)
-println("TEST 55: Error pin — DispatchByComponent self-reference hits depth cap")
+println("TEST 55: Error pin — DispatchByComponent self-reference hits DepthCapExceeded")
 println("=" ^ 60)
 let
     # classify returns another DispatchByComponent → self-reference loop
@@ -1279,15 +1296,59 @@ let
         _ -> error("not used"),
         (h, o) -> 0.0;
         likelihood_family = DispatchByComponent(classify))
+    @assert try; condition(tbm, k_ref, 1.0); false
+            catch e; e isa DepthCapExceeded end  "self-referential classify must raise DepthCapExceeded"
+    println("PASSED: classify self-reference → DepthCapExceeded (typed)")
+end
+println()
+
+println("=" ^ 60)
+println("TEST 55b: Error pin — DispatchByComponent returning FiringByTag hits DepthCapExceeded")
+println("=" ^ 60)
+let
+    # classify returns a FiringByTag (router, not a leaf) → depth-cap unwind cannot terminate
+    classify_to_firing(m) = FiringByTag(Set([1]), BetaBernoulli(), Flat())
+    # But FiringByTag resolves to a leaf on first unwrap. To force a depth-cap,
+    # have classify return another DispatchByComponent that returns a FiringByTag
+    # that routes to yet another DispatchByComponent — the mutual recursion.
+    local k_ref
+    classify(m) = DispatchByComponent(classify)
+    tbm = TaggedBetaMeasure(Interval(0.0, 1.0), 1, BetaMeasure(1.0, 1.0))
+    k_ref = Kernel(Interval(0.0, 1.0), Finite([0.0, 1.0]),
+        _ -> error("not used"),
+        (h, o) -> 0.0;
+        likelihood_family = DispatchByComponent(classify))
+    @assert try; condition(tbm, k_ref, 1.0); false
+            catch e; e isa DepthCapExceeded end  "nested DispatchByComponent must raise DepthCapExceeded"
+    println("PASSED: DispatchByComponent → DispatchByComponent loop → DepthCapExceeded")
+end
+println()
+
+println("=" ^ 60)
+println("TEST 55c: Construction pin — FiringByTag branches must be LeafFamily")
+println("=" ^ 60)
+let
+    # FiringByTag.when_fires / when_not are typed as LeafFamily.
+    # DispatchByComponent <: LikelihoodFamily but not <: LeafFamily — must error.
+    classify(m) = BetaBernoulli()
     caught = false
     try
-        condition(tbm, k_ref, 1.0)
+        FiringByTag(Set([1]), DispatchByComponent(classify), Flat())
     catch e
         caught = true
-        @assert occursin("depth cap", sprint(showerror, e))
     end
-    @assert caught "Expected depth-cap error for self-referential classify"
-    println("PASSED: classify self-reference → depth-cap error")
+    @assert caught "FiringByTag with non-LeafFamily branch must fail at construction"
+    # Same for when_not
+    caught2 = false
+    try
+        FiringByTag(Set([1]), BetaBernoulli(), DispatchByComponent(classify))
+    catch e
+        caught2 = true
+    end
+    @assert caught2 "FiringByTag with non-LeafFamily when_not must fail at construction"
+    # Valid construction with both leaves works
+    FiringByTag(Set([1]), BetaBernoulli(), Flat())
+    println("PASSED: FiringByTag LeafFamily branch constraint enforced at construction")
 end
 println()
 

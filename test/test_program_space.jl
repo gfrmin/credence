@@ -288,7 +288,8 @@ let
     obs_space = Finite([0.0, 1.0])
     k = Kernel(Interval(0.0, 1.0), obs_space,
         θ -> error("generate not used"),
-        (θ, obs) -> obs == 1.0 ? log(max(θ, 1e-300)) : log(max(1.0 - θ, 1e-300)))
+        (θ, obs) -> obs == 1.0 ? log(max(θ, 1e-300)) : log(max(1.0 - θ, 1e-300));
+        likelihood_family = BetaBernoulli())
 
     for _ in 1:5
         belief = condition(belief, k, 1.0)
@@ -436,7 +437,8 @@ let
 
     k = Kernel(Interval(0.0, 1.0), Finite([0.0, 1.0]),
         θ -> error("not used"),
-        (θ, obs) -> obs == 1.0 ? log(max(θ, 1e-300)) : log(max(1.0 - θ, 1e-300)))
+        (θ, obs) -> obs == 1.0 ? log(max(θ, 1e-300)) : log(max(1.0 - θ, 1e-300));
+        likelihood_family = BetaBernoulli())
 
     for i in 1:20
         obs = i % 3 == 0 ? 1.0 : 0.0
