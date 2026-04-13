@@ -12,7 +12,8 @@ const _BERNOULLI_KERNEL = Kernel(
     Interval(0.0, 1.0),
     Finite([true, false]),
     θ -> (o -> o == true ? log(θ) : log(1.0 - θ)),
-    (θ, o) -> o == true ? log(θ) : log(1.0 - θ))
+    (θ, o) -> o == true ? log(θ) : log(1.0 - θ);
+    likelihood_family = BetaBernoulli())
 
 """
     BinarySensor

@@ -505,9 +505,9 @@ function build_email_observation_kernel(
             else
                 obs == 1.0 ? log(max(m_or_θ, 1e-300)) : log(max(1.0 - m_or_θ, 1e-300))
             end
-        end,
-        nothing,
-        Dict{Symbol, Any}(:correct_cache => correct_cache))
+        end;
+        params = Dict{Symbol, Any}(:correct_cache => correct_cache),
+        likelihood_family = BetaBernoulli())
 end
 
 # ═══════════════════════════════════════
@@ -544,9 +544,9 @@ function build_step_kernel(
             else
                 obs == 1.0 ? log(max(m_or_θ, 1e-300)) : log(max(1.0 - m_or_θ, 1e-300))
             end
-        end,
-        nothing,
-        Dict{Symbol, Any}(:correct_cache => correct_cache))
+        end;
+        params = Dict{Symbol, Any}(:correct_cache => correct_cache),
+        likelihood_family = BetaBernoulli())
 end
 
 """

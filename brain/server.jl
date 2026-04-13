@@ -19,6 +19,8 @@ using Credence: GaussianMeasure, GammaMeasure, DirichletMeasure
 using Credence: NormalGammaMeasure, ProductMeasure, MixtureMeasure
 using Credence: Finite, Interval, ProductSpace, Euclidean, PositiveReals, Simplex
 using Credence: Kernel, FactorSelector, support
+using Credence: Functional, Identity, Projection, NestedProjection, Tabular, LinearCombination, OpaqueClosure
+using Credence: factor, replace_factor
 using Credence: AgentState, sync_prune!, sync_truncate!
 using Credence: Grammar, Program, CompiledKernel, ProductionRule
 using Credence: enumerate_programs, compile_kernel
@@ -63,13 +65,32 @@ struct StateNotFound <: Exception
     id::String
 end
 
-struct InferenceError <: Exception
-    msg::String
+struct MethodNotFound <: Exception
+    method::String
 end
 
+# Wrapping exceptions for narrower client-facing error codes. Thrown at
+# handler boundaries around build_kernel / build_function / condition /
+# expect call sites so that protocol errors (-32001) vs inference errors
+# (-32002) surface distinctly instead of collapsing to -32603.
 struct DSLError <: Exception
     msg::String
+    cause::Exception
 end
+Base.showerror(io::IO, e::DSLError) =
+    print(io, "DSLError: ", e.msg, "\n  cause: ", sprint(showerror, e.cause))
+
+struct InferenceError <: Exception
+    msg::String
+    cause::Exception
+end
+Base.showerror(io::IO, e::InferenceError) =
+    print(io, "InferenceError: ", e.msg, "\n  cause: ", sprint(showerror, e.cause))
+
+_wrap_dsl(msg) = e -> e isa StateNotFound || e isa MethodNotFound ? rethrow() :
+                      throw(DSLError(msg, e))
+_wrap_inf(msg) = e -> e isa StateNotFound || e isa MethodNotFound ? rethrow() :
+                      throw(InferenceError(msg, e))
 
 # ═══════════════════════════════════════
 # JSON-RPC helpers
@@ -171,7 +192,8 @@ function build_kernel(spec, state_id::Union{String, Nothing}=nothing)
         target = Finite([0.0, 1.0])
         Kernel(source, target,
             θ -> error("generate not used"),
-            (θ, o) -> o == 1.0 ? log(max(θ, 1e-300)) : log(max(1.0 - θ, 1e-300)))
+            (θ, o) -> o == 1.0 ? log(max(θ, 1e-300)) : log(max(1.0 - θ, 1e-300));
+            likelihood_family = BetaBernoulli())
 
     elseif t == "gaussian_known_var"
         variance = Float64(spec["variance"])
@@ -179,9 +201,9 @@ function build_kernel(spec, state_id::Union{String, Nothing}=nothing)
         target = Euclidean(1)
         Kernel(source, target,
             μ -> error("generate not used"),
-            (μ, o) -> -0.5 * (o - μ)^2 / variance,
-            nothing,
-            Dict{Symbol, Any}(:sigma_obs => sqrt(variance)))
+            (μ, o) -> -0.5 * (o - μ)^2 / variance;
+            params = Dict{Symbol, Any}(:sigma_obs => sqrt(variance)),
+            likelihood_family = PushOnly())
 
     elseif t == "quality"
         # (θ, k) → Beta(θk, (1-θ)k) continuous quality observation
@@ -194,7 +216,8 @@ function build_kernel(spec, state_id::Union{String, Nothing}=nothing)
                 a = max(θ * k, 1e-6)
                 b = max((1.0 - θ) * k, 1e-6)
                 (a - 1.0) * log(max(o, 1e-300)) + (b - 1.0) * log(max(1.0 - o, 1e-300))
-            end)
+            end;
+            likelihood_family = PushOnly())
 
     elseif t == "program_observation"
         # Per-component CompiledKernel dispatch
@@ -225,23 +248,34 @@ function build_kernel(spec, state_id::Union{String, Nothing}=nothing)
                 else
                     obs == 1.0 ? log(max(m_or_θ, 1e-300)) : log(max(1.0 - m_or_θ, 1e-300))
                 end
-            end,
-            nothing,
-            Dict{Symbol, Any}(:correct_cache => correct_cache))
+            end;
+            params = Dict{Symbol, Any}(:correct_cache => correct_cache),
+            likelihood_family = BetaBernoulli())
 
     elseif t == "tabular_log_density"
         source_vals = collect(Float64, spec["source_vals"])
         target_vals = collect(Float64, spec["target_vals"])
         densities = [collect(Float64, row) for row in spec["densities"]]
+        length(densities) == length(source_vals) ||
+            error("tabular kernel: densities has $(length(densities)) rows but source_vals has $(length(source_vals)) entries")
+        for (i, row) in enumerate(densities)
+            length(row) == length(target_vals) ||
+                error("tabular kernel: densities row $i has $(length(row)) entries but target_vals has $(length(target_vals)) entries")
+        end
         source = Finite(source_vals)
         target = Finite(target_vals)
         Kernel(source, target,
             _ -> error("generate not used"),
             (h, o) -> begin
                 si = findfirst(==(h), source_vals)
+                si !== nothing ||
+                    error("tabular kernel: hypothesis $h not in source_vals $source_vals — this should have been caught at construction")
                 ti = findfirst(==(o), target_vals)
-                (si !== nothing && ti !== nothing) ? densities[si][ti] : -Inf
-            end)
+                ti !== nothing ||
+                    error("tabular kernel: observation $o not in target_vals $target_vals — this should have been caught at construction")
+                densities[si][ti]
+            end;
+            likelihood_family = PushOnly())
 
     elseif t == "dsl"
         env_id = spec["env_id"]
@@ -262,34 +296,37 @@ end
 # Function specs (for expect)
 # ═══════════════════════════════════════
 
-function build_function(spec)
+# Builds a Functional from a protocol function spec. Recursive: nested
+# functionals (e.g. terms in a LinearCombination) are built by recursing
+# into sub-specs. Type dispatch in ontology's expect() selects the
+# computation based on the Functional subtype.
+function build_function(spec)::Functional
     t = spec["type"]
     if t == "identity"
-        identity
-    elseif t == "project"
-        idx = Int(spec["index"]) + 1  # JSON 0-based → Julia 1-based
-        x -> x[idx]
+        Identity()
+    elseif t == "projection" || t == "project"
+        Projection(Int(spec["index"]) + 1)  # 0-based → 1-based
+    elseif t == "nested_projection"
+        NestedProjection(Int[Int(i) + 1 for i in spec["indices"]])
     elseif t == "tabular"
-        values = collect(Float64, spec["values"])
-        function(x)
-            # Find x in the measure's space and return the tabulated value
-            # This works for finite spaces where x is a space value
-            if x isa Number
-                idx = round(Int, x) + 1  # 0-based values → 1-based index
-                1 <= idx <= length(values) ? values[idx] : error("tabular index out of range: $x")
-            else
-                error("tabular function requires numeric input, got: $(typeof(x))")
-            end
-        end
-    elseif t == "bdsl"
+        Tabular(collect(Float64, spec["values"]))
+    elseif t == "linear_combination"
+        terms = Tuple{Float64, Functional}[
+            (Float64(pair[1]), build_function(pair[2]))
+            for pair in spec["terms"]
+        ]
+        offset = Float64(get(spec, "offset", 0.0))
+        LinearCombination(terms, offset)
+    elseif t == "opaque_bdsl" || t == "bdsl"
         env_id = spec["env_id"]
         env = get(DSL_ENVS, env_id, nothing)
         env !== nothing || error("DSL environment not found: $env_id")
         expr_str = spec["expr"]
-        # Parse and evaluate the expression to get a closure
         parsed = Credence.parse_all(expr_str)
         length(parsed) == 1 || error("expected single expression, got $(length(parsed))")
-        Credence.Eval.eval_dsl(parsed[1], env)
+        f = Credence.Eval.eval_dsl(parsed[1], env)
+        f isa Function || error("opaque_bdsl must evaluate to a function, got $(typeof(f))")
+        OpaqueClosure(f)
     else
         error("unknown function type: $t")
     end
@@ -433,8 +470,14 @@ function handle_request(method::String, params, id)
         handle_eu_interact(params)
     elseif method == "call_dsl"
         handle_call_dsl(params)
+    elseif method == "factor"
+        handle_factor(params)
+    elseif method == "replace_factor"
+        handle_replace_factor(params)
+    elseif method == "n_factors"
+        handle_n_factors(params)
     else
-        throw(ErrorException("method not found: $method"))
+        throw(MethodNotFound(string(method)))
     end
 end
 
@@ -555,10 +598,45 @@ function handle_restore_state(params)
     Dict("state_id" => id)
 end
 
+function handle_factor(params)
+    id = string(params["state_id"])
+    state = get_state(id)
+    state isa ProductMeasure || error("factor requires a ProductMeasure, got $(typeof(state))")
+    idx = Int(params["index"]) + 1  # 0-based → 1-based
+    1 <= idx <= length(state.factors) || error("factor index out of range: $(idx-1)")
+    new_id = register_state(factor(state, idx))
+    Dict("state_id" => new_id)
+end
+
+function handle_replace_factor(params)
+    id = string(params["state_id"])
+    state = get_state(id)
+    state isa ProductMeasure || error("replace_factor requires a ProductMeasure, got $(typeof(state))")
+    idx = Int(params["index"]) + 1
+    1 <= idx <= length(state.factors) || error("replace_factor index out of range: $(idx-1)")
+    new_factor_id = string(params["new_factor_id"])
+    new_factor = get_state(new_factor_id)
+    new_factor isa Measure || error("replace_factor new factor must be a Measure, got $(typeof(new_factor))")
+    new_state = replace_factor(state, idx, new_factor)
+    new_id = register_state(new_state)
+    Dict("state_id" => new_id)
+end
+
+function handle_n_factors(params)
+    id = string(params["state_id"])
+    state = get_state(id)
+    state isa ProductMeasure || error("n_factors requires a ProductMeasure, got $(typeof(state))")
+    Dict("n_factors" => length(state.factors))
+end
+
 function handle_condition(params)
     id = string(params["state_id"])
     state = get_state(id)
-    kernel = build_kernel(params["kernel"], id)
+    kernel = try
+        build_kernel(params["kernel"], id)
+    catch e
+        _wrap_dsl("build_kernel failed")(e)
+    end
     obs = params["observation"]
     if obs isa AbstractString
         obs = Symbol(obs)
@@ -566,19 +644,20 @@ function handle_condition(params)
         obs = Float64(obs)
     end
 
-    new_state = condition(state, kernel, obs)
-    STATE_REGISTRY[id] = new_state
-
-    # Compute log marginal if possible
     log_marg = try
         log_predictive(state, kernel, obs)
-    catch
-        nothing
+    catch e
+        _wrap_inf("log_predictive failed")(e)
     end
 
-    result = Dict{String, Any}("state_id" => id)
-    log_marg !== nothing && (result["log_marginal"] = log_marg)
-    result
+    new_state = try
+        condition(state, kernel, obs)
+    catch e
+        _wrap_inf("condition failed")(e)
+    end
+    STATE_REGISTRY[id] = new_state
+
+    Dict{String, Any}("state_id" => id, "log_marginal" => log_marg)
 end
 
 function handle_weights(params)
@@ -596,21 +675,76 @@ end
 function handle_expect(params)
     id = string(params["state_id"])
     state = get_state(id)
-    f = build_function(params["function"])
-    Dict("value" => Float64(expect(state, f)))
+    f = try
+        build_function(params["function"])
+    catch e
+        _wrap_dsl("build_function failed")(e)
+    end
+    v = try
+        Float64(expect(state, f))
+    catch e
+        _wrap_inf("expect failed")(e)
+    end
+    Dict("value" => v)
+end
+
+# Deterministic action iteration: sort keys of functional_per_action's
+# actions dict. JSON3 dicts don't guarantee iteration order, and strict
+# `>` tie-breaking would otherwise make the winning action host-dependent.
+# Returns keys sorted: numeric keys first (by parsed value), then
+# non-numeric keys lexicographically. Tuples share element types to keep
+# Julia's isless dispatch happy.
+function _sorted_action_keys(actions)
+    ks = collect(keys(actions))
+    sort(ks; by = k -> begin
+        s = string(k)
+        parsed = tryparse(Int, s)
+        parsed === nothing ? (1, 0, s) : (0, parsed, "")
+    end)
 end
 
 function handle_optimise(params)
     id = string(params["state_id"])
     state = get_state(id)
-    actions = build_space(params["actions"])
-    pref = build_preference(params["preference"])
+    pref_spec = params["preference"]
 
-    # Use the stdlib optimise: argmax over actions of E[pref(h, a)]
+    # functional_per_action: explicit Functional per action, dispatched through
+    # expect's type table. Enables closed-form EU via Projection/LinearCombination.
+    if pref_spec["type"] == "functional_per_action"
+        best_action = nothing
+        best_eu = -Inf
+        for action_str in _sorted_action_keys(pref_spec["actions"])
+            fn_spec = pref_spec["actions"][action_str]
+            φ = try
+                build_function(fn_spec)
+            catch e
+                _wrap_dsl("build_function failed for action $action_str")(e)
+            end
+            eu = try
+                Float64(expect(state, φ))
+            catch e
+                _wrap_inf("expect failed for action $action_str")(e)
+            end
+            if eu > best_eu
+                best_eu = eu
+                best_action = tryparse(Int, string(action_str))
+                best_action === nothing && (best_action = string(action_str))
+            end
+        end
+        return Dict("action" => best_action, "eu" => best_eu)
+    end
+
+    # tabular_2d / bdsl preferences — no Functional spec, loop explicitly.
+    actions = build_space(params["actions"])
+    pref = build_preference(pref_spec)
     best_action = nothing
     best_eu = -Inf
     for a in support(actions)
-        eu = expect(state, h -> pref(h, a))
+        eu = try
+            expect(state, h -> pref(h, a))
+        catch e
+            _wrap_inf("expect failed for action $a")(e)
+        end
         if eu > best_eu
             best_eu = eu
             best_action = a
@@ -622,12 +756,36 @@ end
 function handle_value(params)
     id = string(params["state_id"])
     state = get_state(id)
-    actions = build_space(params["actions"])
-    pref = build_preference(params["preference"])
+    pref_spec = params["preference"]
 
+    if pref_spec["type"] == "functional_per_action"
+        best_eu = -Inf
+        for action_str in _sorted_action_keys(pref_spec["actions"])
+            fn_spec = pref_spec["actions"][action_str]
+            φ = try
+                build_function(fn_spec)
+            catch e
+                _wrap_dsl("build_function failed for action $action_str")(e)
+            end
+            eu = try
+                Float64(expect(state, φ))
+            catch e
+                _wrap_inf("expect failed for action $action_str")(e)
+            end
+            best_eu = max(best_eu, eu)
+        end
+        return Dict("value" => best_eu)
+    end
+
+    actions = build_space(params["actions"])
+    pref = build_preference(pref_spec)
     best_eu = -Inf
     for a in support(actions)
-        eu = expect(state, h -> pref(h, a))
+        eu = try
+            expect(state, h -> pref(h, a))
+        catch e
+            _wrap_inf("expect failed for action $a")(e)
+        end
         best_eu = max(best_eu, eu)
     end
     Dict("value" => best_eu)
@@ -738,7 +896,11 @@ function handle_belief_summary(params)
     for i in 1:top_n
         idx = perm[i]
         gi, pi = state.metadata[idx]
-        expr_str = try show_expr(state.all_programs[idx].expr) catch; "?" end
+        # show_expr is verified total over the AST type hierarchy
+        # (src/program_space/types.jl — a method per *Expr subtype); any
+        # failure is a genuine bug and should surface with full context,
+        # not collapse to "?". Do not re-add a defensive catch here.
+        expr_str = show_expr(state.all_programs[idx].expr)
         push!(top_progs, Dict(
             "index" => idx - 1,  # 0-based for host
             "weight" => w[idx],
@@ -758,20 +920,31 @@ end
 function handle_condition_and_prune(params)
     id = string(params["state_id"])
     state = get_state(id)::AgentState
-    kernel = build_kernel(params["kernel"], id)
+    kernel = try
+        build_kernel(params["kernel"], id)
+    catch e
+        _wrap_dsl("build_kernel failed")(e)
+    end
     obs = Float64(params["observation"])
     threshold = Float64(get(params, "prune_threshold", -30.0))
     max_comp = Int(get(params, "max_components", 2000))
 
-    log_marg = try log_predictive(state.belief, kernel, obs) catch; nothing end
+    log_marg = try
+        log_predictive(state.belief, kernel, obs)
+    catch e
+        _wrap_inf("log_predictive failed (state=$id, obs=$obs)")(e)
+    end
 
-    state.belief = condition(state.belief, kernel, obs)
+    state.belief = try
+        condition(state.belief, kernel, obs)
+    catch e
+        _wrap_inf("condition failed (state=$id, obs=$obs)")(e)
+    end
     sync_prune!(state; threshold=threshold)
     sync_truncate!(state; max_components=max_comp)
 
-    result = Dict{String, Any}("n_remaining" => length(state.belief.components))
-    log_marg !== nothing && (result["log_marginal"] = log_marg)
-    result
+    Dict{String, Any}("n_remaining" => length(state.belief.components),
+                      "log_marginal" => log_marg)
 end
 
 function handle_eu_interact(params)
@@ -781,6 +954,13 @@ function handle_eu_interact(params)
                                       for (k, v) in params["features"])
     rewards = Dict{Symbol, Float64}(Symbol(k) => Float64(v)
                                      for (k, v) in params["rewards"])
+    # The mean_j / (1 - mean_j) split below assumes exactly two outcome
+    # labels (correct-recommendation vs the single complement). Multi-
+    # label support requires per-component categorical beliefs, not a
+    # scalar Beta mean.
+    length(rewards) == 2 || error(
+        "handle_eu_interact currently supports only binary outcomes; " *
+        "got $(length(rewards)) labels")
     temporal_state = Dict{Symbol, Any}()
 
     w = weights(state.belief)
@@ -865,14 +1045,14 @@ function main()
         catch e
             code = if e isa StateNotFound
                 -32000
-            elseif e isa InferenceError
-                -32001
-            elseif e isa DSLError
-                -32002
-            elseif occursin("method not found", sprint(showerror, e))
+            elseif e isa MethodNotFound
                 -32601
+            elseif e isa DSLError
+                -32001
+            elseif e isa InferenceError
+                -32002
             else
-                -32602
+                -32603
             end
             msg = sprint(showerror, e)
             log_msg("Error handling $method: $msg")

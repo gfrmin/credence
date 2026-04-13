@@ -13,6 +13,7 @@ Expected cost in utility units:
 
 using Credence: NormalGammaMeasure, condition, Kernel
 using Credence: ProductSpace, Euclidean, PositiveReals, Space
+using Credence: PushOnly
 
 struct CostModel
     beliefs::Dict{Symbol, NormalGammaMeasure}
@@ -75,9 +76,9 @@ function observe_cost!(cm::CostModel, action::Symbol, elapsed_seconds::Float64)
         ProductSpace(Space[Euclidean(1), PositiveReals()]),
         Euclidean(1),
         _ -> error("generate not used for cost conditioning"),
-        (μτ, obs) -> -0.5 * μτ[2] * (obs - μτ[1])^2 + 0.5 * log(μτ[2]),
-        nothing,
-        Dict{Symbol, Any}(:normal_gamma => true)
+        (μτ, obs) -> -0.5 * μτ[2] * (obs - μτ[1])^2 + 0.5 * log(μτ[2]);
+        params = Dict{Symbol, Any}(:normal_gamma => true),
+        likelihood_family = PushOnly()
     )
     cm.beliefs[action] = condition(belief, k, log(elapsed_seconds))
 end

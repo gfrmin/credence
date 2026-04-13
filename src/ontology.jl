@@ -17,6 +17,9 @@ module Ontology
 export Space, Finite, Interval, ProductSpace, Simplex, Euclidean, PositiveReals, support
 export Measure, CategoricalMeasure, BetaMeasure, TaggedBetaMeasure, GaussianMeasure, GammaMeasure, ExponentialMeasure, DirichletMeasure, NormalGammaMeasure, ProductMeasure, MixtureMeasure
 export Kernel, FactorSelector, kernel_source, kernel_target, kernel_params
+export LikelihoodFamily, LeafFamily, PushOnly, BetaBernoulli, Flat, FiringByTag, DispatchByComponent, DepthCapExceeded
+export Functional, Identity, Projection, NestedProjection, Tabular, LinearCombination, OpaqueClosure
+export factor, replace_factor
 export condition, expect, push_measure, density, log_predictive, log_marginal
 export draw
 export weights, mean, variance, log_density_at, prune, truncate, logsumexp
@@ -201,6 +204,14 @@ end
 ProductMeasure(factors::Vector{<:Measure}) =
     ProductMeasure(ProductSpace(Space[f.space for f in factors]), factors)
 
+factor(m::ProductMeasure, i::Int) = m.factors[i]
+
+function replace_factor(m::ProductMeasure, i::Int, new_factor::Measure)
+    new_factors = Measure[f for f in m.factors]
+    new_factors[i] = new_factor
+    ProductMeasure(new_factors)
+end
+
 # ── Mixture: weighted combination ──
 
 struct MixtureMeasure <: Measure
@@ -244,6 +255,63 @@ struct FactorSelector
     active::Function          # selector_value → Vector{Int} of factors to condition
 end
 
+# ─────────────────────────────────────────────────────────────────────
+# LikelihoodFamily: declared per-θ algebraic form of a kernel's likelihood
+# ─────────────────────────────────────────────────────────────────────
+# A Kernel's log_density closure is opaque to the type system. Dispatch
+# needs to know the likelihood's algebraic form (Beta-Bernoulli, flat, …)
+# to pick the right computation — closed-form conjugate, no-op for flat,
+# etc. Declaring the family at construction is the same principle as
+# Functional for expect.
+#
+# Every Kernel must declare a likelihood_family — it is a required kwarg
+# at construction. Kernels used only with push/expect (not condition)
+# declare PushOnly(); condition() errors loudly if called on one.
+abstract type LikelihoodFamily end
+
+# Leaf families terminate the FiringByTag / DispatchByComponent routing
+# chain. Only these may appear in a condition() dispatch's final step.
+abstract type LeafFamily <: LikelihoodFamily end
+
+# p(obs|θ) = θ^obs · (1−θ)^(1−obs). Conjugate with Beta priors.
+struct BetaBernoulli <: LeafFamily end
+
+# p(obs|θ) constant in θ. The observation provides no evidence about θ.
+# Bayesian posterior = prior.
+struct Flat <: LeafFamily end
+
+# Sentinel for kernels whose condition path does not dispatch on family —
+# either push/expect-only, or condition through space-shape dispatch
+# (e.g. Gaussian→Gaussian conjugate, Categorical→Categorical tabular).
+# `condition(::TaggedBetaMeasure, …)` with a PushOnly kernel raises a
+# clear error, since TaggedBetaMeasure conditioning requires a declared
+# leaf or routing family.
+struct PushOnly <: LikelihoodFamily end
+
+# Fire/not-fire routing by component tag. Tags in `fires` use
+# `when_fires`; all other tags use `when_not`. This is the declarative
+# capture of the dominant per-component routing pattern in program-space
+# mixtures — "some predicates fire on this observation, some don't".
+# Prefer this over DispatchByComponent when the routing is tag-based.
+#
+# The branch fields are LeafFamily-typed so declared nesting is
+# statically impossible. The condition() dispatch loop still guards
+# against runtime misuse from DispatchByComponent returning a router.
+struct FiringByTag <: LikelihoodFamily
+    fires::Set{Int}
+    when_fires::LeafFamily
+    when_not::LeafFamily
+end
+
+# Explicit escape hatch — the LikelihoodFamily analogue of OpaqueClosure.
+# Takes a `classify(m) → LikelihoodFamily` closure called at dispatch
+# time. The closure must eventually unwrap to a leaf family. Returning
+# another DispatchByComponent is caught by the depth cap in condition().
+# Reach for this only when no declarative subtype (FiringByTag, …) fits.
+struct DispatchByComponent <: LikelihoodFamily
+    classify::Function  # Measure → LikelihoodFamily
+end
+
 struct Kernel
     source::Space       # H
     target::Space       # O
@@ -251,14 +319,16 @@ struct Kernel
     log_density::Function  # (h, o) → log p(o|h) (for condition)
     factor_selector::Union{Nothing, FactorSelector}
     params::Union{Nothing, Dict{Symbol,Any}}
+    likelihood_family::LikelihoodFamily
 end
 
-Kernel(source::Space, target::Space, gen::Function, ld::Function,
-       fs::Union{Nothing, FactorSelector}) =
-    Kernel(source, target, gen, ld, fs, nothing)
-
-Kernel(source::Space, target::Space, gen::Function, ld::Function) =
-    Kernel(source, target, gen, ld, nothing, nothing)
+# Canonical constructor: likelihood_family is a required kwarg. Optional
+# factor_selector / params default to nothing.
+Kernel(source::Space, target::Space, gen::Function, ld::Function;
+       factor_selector::Union{Nothing, FactorSelector}=nothing,
+       params::Union{Nothing, Dict{Symbol,Any}}=nothing,
+       likelihood_family::LikelihoodFamily) =
+    Kernel(source, target, gen, ld, factor_selector, params, likelihood_family)
 
 kernel_source(k::Kernel) = k.source
 kernel_target(k::Kernel) = k.target
@@ -278,12 +348,12 @@ density(k::Kernel, h, o) = k.log_density(h, o)
 # Integration against a measure: E_m[f]
 # This is what a measure IS.
 
-function expect(m::CategoricalMeasure, f)
+function expect(m::CategoricalMeasure, f::Function)
     w = weights(m)
     sum(w[i] * f(m.space.values[i]) for i in eachindex(w))
 end
 
-function expect(m::BetaMeasure, f; n::Int=64)
+function expect(m::BetaMeasure, f::Function; n::Int=64)
     grid = range(1/(2n), 1-1/(2n), length=n)
     logw = [log_density_at(m, x) for x in grid]
     max_lw = maximum(logw)
@@ -292,9 +362,9 @@ function expect(m::BetaMeasure, f; n::Int=64)
     sum(w[i] * f(grid[i]) for i in eachindex(w))
 end
 
-expect(m::TaggedBetaMeasure, f; kwargs...) = expect(m.beta, f; kwargs...)
+expect(m::TaggedBetaMeasure, f::Function; kwargs...) = expect(m.beta, f; kwargs...)
 
-function expect(m::GaussianMeasure, f; n::Int=64)
+function expect(m::GaussianMeasure, f::Function; n::Int=64)
     lo = m.mu - 4 * m.sigma
     hi = m.mu + 4 * m.sigma
     grid = range(lo, hi, length=n)
@@ -305,7 +375,7 @@ function expect(m::GaussianMeasure, f; n::Int=64)
     sum(w[i] * f(grid[i]) for i in eachindex(w))
 end
 
-function expect(m::GammaMeasure, f; n::Int=64)
+function expect(m::GammaMeasure, f::Function; n::Int=64)
     μ = m.alpha / m.beta
     σ = sqrt(m.alpha) / m.beta
     lo = max(1e-10, μ - 4σ)
@@ -318,7 +388,7 @@ function expect(m::GammaMeasure, f; n::Int=64)
     sum(w[i] * f(grid[i]) for i in eachindex(w))
 end
 
-function expect(m::DirichletMeasure, f; n_samples::Int=1000)
+function expect(m::DirichletMeasure, f::Function; n_samples::Int=1000)
     total = 0.0
     for _ in 1:n_samples
         θ = draw(m)
@@ -327,7 +397,7 @@ function expect(m::DirichletMeasure, f; n_samples::Int=1000)
     total / n_samples
 end
 
-function expect(m::NormalGammaMeasure, f; n_samples::Int=1000)
+function expect(m::NormalGammaMeasure, f::Function; n_samples::Int=1000)
     total = 0.0
     for _ in 1:n_samples
         total += f(draw(m))
@@ -335,7 +405,7 @@ function expect(m::NormalGammaMeasure, f; n_samples::Int=1000)
     total / n_samples
 end
 
-function expect(m::ProductMeasure, f; n_samples::Int=1000)
+function expect(m::ProductMeasure, f::Function; n_samples::Int=1000)
     total = 0.0
     for _ in 1:n_samples
         total += f(draw(m))
@@ -343,10 +413,133 @@ function expect(m::ProductMeasure, f; n_samples::Int=1000)
     total / n_samples
 end
 
-function expect(m::MixtureMeasure, f)
+function expect(m::MixtureMeasure, f::Function)
     w = weights(m)
     sum(w[i] * expect(m.components[i], f) for i in eachindex(w))
 end
+
+# ================================================================
+# Functional: structured integrands for expect
+# ================================================================
+# A Functional declares the algebraic structure of the function being
+# integrated, so expect can dispatch to closed-form computation. Same
+# principle as Kernel for condition: structure enables dispatch.
+# OpaqueClosure is the fallback that forfeits fast paths.
+
+abstract type Functional end
+
+struct Identity <: Functional end
+
+struct Projection <: Functional
+    index::Int  # 1-based index into ProductMeasure factors
+    function Projection(index::Int)
+        index >= 1 || throw(ArgumentError("Projection.index must be >= 1, got $index"))
+        new(index)
+    end
+end
+
+# Recursively navigates nested ProductMeasures. indices[1] picks the top
+# level, indices[2] the next, and so on. Terminating at a leaf yields
+# Identity() on that leaf.
+struct NestedProjection <: Functional
+    indices::Vector{Int}  # 1-based
+    function NestedProjection(indices::Vector{Int})
+        isempty(indices) && throw(ArgumentError("NestedProjection requires at least one index"))
+        all(i -> i >= 1, indices) ||
+            throw(ArgumentError("NestedProjection.indices must all be >= 1, got $indices"))
+        new(indices)
+    end
+end
+
+struct Tabular <: Functional
+    values::Vector{Float64}
+    function Tabular(values::Vector{Float64})
+        isempty(values) && throw(ArgumentError("Tabular requires non-empty values"))
+        new(values)
+    end
+end
+
+# terms is (coefficient, sub_functional) pairs. Sub-functionals carry the
+# structural information needed to reach their target — no implicit
+# flat-index convention. LinearCombination is algebra-only.
+struct LinearCombination <: Functional
+    terms::Vector{Tuple{Float64, Functional}}
+    offset::Float64
+end
+
+# Fallback wrapping a bare Julia function. Works but forfeits fast paths.
+struct OpaqueClosure <: Functional
+    f::Function
+end
+
+# ── Dispatch: closed-form cases on leaf measures ──
+expect(m::BetaMeasure, ::Identity)     = m.alpha / (m.alpha + m.beta)
+expect(m::TaggedBetaMeasure, ::Identity) = expect(m.beta, Identity())
+expect(m::GammaMeasure, ::Identity)    = m.alpha / m.beta
+expect(m::GaussianMeasure, ::Identity) = m.mu
+
+function expect(m::CategoricalMeasure, ::Identity)
+    w = weights(m)
+    sum(w[i] * m.space.values[i] for i in eachindex(w))
+end
+
+# ── Dispatch: structural decomposition on ProductMeasure ──
+expect(m::ProductMeasure, p::Projection) = expect(m.factors[p.index], Identity())
+
+function expect(m::ProductMeasure, np::NestedProjection)
+    length(np.indices) >= 1 || error("NestedProjection requires at least one index")
+    if length(np.indices) == 1
+        expect(m.factors[np.indices[1]], Identity())
+    else
+        expect(m.factors[np.indices[1]], NestedProjection(np.indices[2:end]))
+    end
+end
+
+# ── Dispatch: CategoricalMeasure projection (vector-valued atoms) ──
+function expect(m::CategoricalMeasure, p::Projection)
+    w = weights(m)
+    sum(w[i] * m.space.values[i][p.index] for i in eachindex(w))
+end
+
+# NestedProjection on CategoricalMeasure: descent reached a particle-cloud
+# leaf. Remaining indices select nested elements within each atom.
+function expect(m::CategoricalMeasure, np::NestedProjection)
+    length(np.indices) >= 1 || error("NestedProjection requires at least one index")
+    w = weights(m)
+    total = 0.0
+    for i in eachindex(w)
+        v = m.space.values[i]
+        for idx in np.indices
+            v = v[idx]
+        end
+        total += w[i] * v
+    end
+    total
+end
+
+expect(m::CategoricalMeasure, t::Tabular) =
+    sum(weights(m)[i] * t.values[i] for i in eachindex(t.values))
+
+# ── Dispatch: algebraic combination (linearity of expectation) ──
+function expect(m::Measure, lc::LinearCombination)
+    total = lc.offset
+    for (c, f) in lc.terms
+        total += c * expect(m, f)
+    end
+    total
+end
+
+# ── Dispatch: mixture recursion for any Functional ──
+function expect(m::MixtureMeasure, φ::Functional)
+    w = weights(m)
+    sum(w[i] * expect(m.components[i], φ) for i in eachindex(w))
+end
+
+expect(m::Measure, o::OpaqueClosure; kwargs...) = expect(m, o.f; kwargs...)
+
+# Resolves dispatch ambiguity between expect(::MixtureMeasure, ::Functional)
+# and expect(::Measure, ::OpaqueClosure).
+expect(m::MixtureMeasure, o::OpaqueClosure; kwargs...) = expect(m, o.f; kwargs...)
 
 # ================================================================
 # AXIOM-CONSTRAINED FUNCTION: condition
@@ -380,18 +573,46 @@ function condition(m::BetaMeasure, k::Kernel, observation)
     end
 end
 
+struct DepthCapExceeded <: Exception
+    msg::String
+end
+Base.showerror(io::IO, e::DepthCapExceeded) = print(io, "DepthCapExceeded: ", e.msg)
+
 function condition(m::TaggedBetaMeasure, k::Kernel, observation)
-    k.log_density(m, observation)  # evaluate kernel (populates caches, computes likelihood)
-    # Conjugate Beta-Bernoulli update: observation determines update direction.
-    # Weight differentiation comes from the per-component likelihood (via _predictive_ll),
-    # not from the conjugate update direction. Programs whose recommendations match
-    # the observed action get log(p) likelihood; those that don't get log(1-p).
-    # With obs=1.0 (alpha++), correct programs' p increases → log(p) improves → weight rises.
-    # Incorrect programs' p also increases → log(1-p) worsens → weight crashes.
-    if observation == 1 || observation == 1.0 || observation == true
-        TaggedBetaMeasure(m.space, m.tag, BetaMeasure(m.beta.space, m.beta.alpha + 1.0, m.beta.beta))
+    # See LikelihoodFamily declaration for the routing vocabulary.
+    fam = k.likelihood_family
+    fam isa PushOnly && error(
+        "condition called on a push-only kernel (likelihood_family = PushOnly()). " *
+        "Declare a leaf family (BetaBernoulli, Flat, or via FiringByTag/DispatchByComponent) " *
+        "at Kernel construction.")
+    for _ in 1:8  # depth cap — catches accidental self-referential DispatchByComponent
+        if fam isa FiringByTag
+            fam = m.tag in fam.fires ? fam.when_fires : fam.when_not
+        elseif fam isa DispatchByComponent
+            fam = fam.classify(m)
+        else
+            break
+        end
+    end
+    (fam isa FiringByTag || fam isa DispatchByComponent) &&
+        throw(DepthCapExceeded(
+            "LikelihoodFamily unwrap did not reach a leaf within depth cap (got $(typeof(fam)))"))
+
+    # Call for side effects: domain kernels populate per-tag caches in
+    # k.params. Return value is consumed later by _predictive_ll at the
+    # mixture level, not by dispatch here.
+    k.log_density(m, observation)
+
+    if fam isa BetaBernoulli
+        if observation == 1 || observation == 1.0 || observation == true
+            TaggedBetaMeasure(m.space, m.tag, BetaMeasure(m.beta.space, m.beta.alpha + 1.0, m.beta.beta))
+        else
+            TaggedBetaMeasure(m.space, m.tag, BetaMeasure(m.beta.space, m.beta.alpha, m.beta.beta + 1.0))
+        end
+    elseif fam isa Flat
+        m
     else
-        TaggedBetaMeasure(m.space, m.tag, BetaMeasure(m.beta.space, m.beta.alpha, m.beta.beta + 1.0))
+        error("condition(::TaggedBetaMeasure, k, obs): unsupported likelihood_family $(typeof(fam))")
     end
 end
 
@@ -603,7 +824,8 @@ function condition(m::ProductMeasure, k::Kernel, obs; kwargs...)
             k.log_density(full_h, o)
         end
         restricted_k = Kernel(factor_ai.space, k.target,
-            _ -> error("generate not used in condition"), restricted_ld)
+            _ -> error("generate not used in condition"), restricted_ld;
+            likelihood_family = k.likelihood_family)
 
         # Condition — hits conjugate fast-paths (e.g. Beta + Bernoulli)
         conditioned = condition(factor_ai, restricted_k, obs)

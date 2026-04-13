@@ -24,9 +24,9 @@ const _NORMAL_GAMMA_KERNEL = Kernel(
     ProductSpace(Space[Euclidean(1), PositiveReals()]),
     Euclidean(1),
     h -> error("generate not used"),
-    (h, o) -> -0.5 * log(2π * h[2]) - (o - h[1])^2 / (2.0 * h[2]),
-    nothing,
-    Dict(:normal_gamma => true))
+    (h, o) -> -0.5 * log(2π * h[2]) - (o - h[1])^2 / (2.0 * h[2]);
+    params = Dict{Symbol,Any}(:normal_gamma => true),
+    likelihood_family = PushOnly())
 
 """
     TabularWorldModel

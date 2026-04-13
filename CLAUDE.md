@@ -179,6 +179,53 @@ enables the compiler to select computational backends and detect
 conjugate structure. (lambda (h o) ...) as a likelihood is a
 v1 pattern that should not appear.
 
+### Declare kernel structure at construction, not at dispatch
+A kernel's per-θ algebraic form (BetaBernoulli, Flat, etc.) is
+declared via the likelihood_family field at Kernel construction, not
+inferred at dispatch by probing log-density values or return types.
+This is the condition-side analogue of the Functional hierarchy for
+expect: structure enables dispatch, declaration is the mechanism.
+Kernel construction requires a likelihood_family keyword argument —
+omission raises UndefKeywordError at construction time, not later.
+condition() additionally rejects PushOnly and any unrecognised family
+with a clear remediation error. Probing a
+kernel's output at chosen inputs to infer structure (e.g. treating
+log_density == 0.0 as "flat") is forbidden — it misfires on
+legitimate edge cases and hides the assumption from the type system.
+
+Per-component routing in mixtures has a declarative vocabulary:
+FiringByTag(fires::Set{Int}, when_fires, when_not) for the dominant
+"some predicates fire, some don't" pattern. DispatchByComponent takes
+a classify(measure) -> LikelihoodFamily closure; it is the typed-return
+escape hatch (analogous to OpaqueClosure for Functional) and should
+only be used when no declarative subtype fits. Adding a new declarative
+subtype is preferred over reaching for DispatchByComponent.
+
+### No opaque functions passed to expect
+Functions passed to expect are Functionals, not bare lambdas. A
+Functional declares its algebraic structure (Identity, Projection,
+NestedProjection, Tabular, LinearCombination) so expect can dispatch
+to the optimal computation. This is the same principle as Kernels
+for condition: structure enables dispatch. OpaqueClosure is the
+fallback — it works but forfeits fast paths.
+
+Functional types must compose. LinearCombination carries
+Vector{Tuple{Float64, Functional}}, not flat coefficient arrays.
+Each sub-functional navigates its own structure. Flat indexing
+schemes encode stride conventions that are invisible to the type
+system and forbidden.
+
+### No DSL wrappers around axiom-constrained operations
+A domain DSL file contains data (spaces, kernels, priors). It must
+not define functions that are thin wrappers around optimise, condition,
+expect, or push with domain-specific list navigation. Those wrappers
+exist only because state was a list needing navigation; with
+ProductMeasure state + factor/replace-factor, they disappear. Preferences
+are protocol-level Functional specs (functional_per_action with
+LinearCombination of NestedProjections), not DSL lambdas. Wrapping an
+axiom-constrained operation in a DSL function forces its arguments
+through an opaque closure bottleneck that defeats Functional dispatch.
+
 ### Indifference implies exploration
 When EU of interacting equals EU of waiting (both 0), interact.
 Indifference means VOI from the interaction outcome is positive.

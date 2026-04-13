@@ -84,8 +84,9 @@ function update_beta_state(rel_state::MixtureMeasure,
     binary = Finite([0.0, 1.0])
     k = Kernel(joint_space, binary,
         _ -> error("generate not used"),
-        (h, o) -> let r = h[Int(h[1]) + 2]; o == 1.0 ? log(r) : log(1.0 - r) end,
-        FactorSelector(1, c -> [Int(c) + 2]))
+        (h, o) -> let r = h[Int(h[1]) + 2]; o == 1.0 ? log(r) : log(1.0 - r) end;
+        factor_selector = FactorSelector(1, c -> [Int(c) + 2]),
+        likelihood_family = BetaBernoulli())
     posterior = condition(joint, k, obs)
 
     # 3. Extract category posteriors (sum weights by categorical value)
