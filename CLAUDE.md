@@ -400,6 +400,11 @@ Python bindings (python/):
     docs/                         Additional documentation
       rss-preference-learning.md  RSS preference learning design
     python/                       Python bindings (juliacall, Python >=3.11)
+    brain/                        Language-agnostic host interface
+      protocol.md                 JSON-RPC protocol spec
+      server.jl                   Julia server (holds Measures, evaluates DSL)
+      client.py                   Python client (spawns subprocess, sends RPC)
+      test_brain.py               Smoke tests
     papers/                       Publication (credence.tex)
 
 DSL source files use the `.bdsl` extension.

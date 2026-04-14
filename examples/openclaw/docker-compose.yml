@@ -1,0 +1,25 @@
+services:
+  credence-proxy:
+    image: ghcr.io/gfrmin/credence-proxy:latest
+    ports:
+      - "8377:8377"
+    volumes:
+      - credence-state:/data
+    environment:
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      BRAVE_API_KEY: ${BRAVE_API_KEY:-}
+      PERPLEXITY_API_KEY: ${PERPLEXITY_API_KEY:-}
+      TAVILY_API_KEY: ${TAVILY_API_KEY:-}
+      CREDENCE_REWARD: ${CREDENCE_REWARD:-1.0}
+      CREDENCE_LATENCY_WEIGHT: ${CREDENCE_LATENCY_WEIGHT:-0.01}
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8377/ready"]
+      interval: 10s
+      timeout: 3s
+      retries: 12
+      start_period: 120s
+    restart: unless-stopped
+
+volumes:
+  credence-state:
