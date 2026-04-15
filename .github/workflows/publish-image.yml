@@ -60,7 +60,7 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      - name: Smoke-test: container must reach /ready
+      - name: Smoke-test container reaches /ready
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY_CI || 'sk-ant-test-smoke' }}
         run: |
