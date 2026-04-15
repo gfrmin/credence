@@ -11,9 +11,48 @@ env:
   IMAGE_NAME: ${{ github.repository_owner }}/credence-proxy
 
 jobs:
+  unit-tests:
+    name: Python/Julia integration tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Set up Julia
+        uses: julia-actions/setup-julia@v2
+        with:
+          version: "1.11"
+
+      - name: Instantiate Credence Julia project
+        run: julia --project=. -e 'using Pkg; Pkg.instantiate(); Pkg.precompile()'
+
+      - name: Install Python workspace (server + search extras)
+        run: uv sync --extra server --extra search --no-dev
+
+      - name: Run credence_router + credence_agents pytest
+        env:
+          ANTHROPIC_API_KEY: sk-ant-test-smoke
+          CREDENCE_JULIA: julia
+          PYTHON_JULIACALL_HANDLE_SIGNALS: "yes"
+        run: |
+          uv run pytest \
+            python/credence_router/tests/ \
+            python/credence_agents/tests/ \
+            --ignore=python/credence_router/tests/test_live.py \
+            -v
+
   build-smoke-publish:
     name: Build, smoke-test, publish
     runs-on: ubuntu-latest
+    needs: unit-tests
     permissions:
       contents: read
       packages: write
