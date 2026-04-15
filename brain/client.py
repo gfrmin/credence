@@ -37,21 +37,27 @@ class BrainClient:
         julia: str = "julia",
         server_path: str | Path | None = None,
         startup_timeout: float = 60.0,
+        project: str | Path | None = None,
     ):
         if server_path is None:
             server_path = Path(__file__).parent / "server.jl"
         self._julia = julia
         self._server_path = str(Path(server_path).resolve())
         self._startup_timeout = startup_timeout
+        self._project = str(Path(project).resolve()) if project else None
         self._process: subprocess.Popen | None = None
         self._request_id = 0
 
     def _ensure_started(self):
         if self._process is not None and self._process.poll() is None:
             return
-        log.info("Starting brain process: %s %s", self._julia, self._server_path)
+        argv = [self._julia]
+        if self._project:
+            argv.append(f"--project={self._project}")
+        argv.append(self._server_path)
+        log.info("Starting brain process: %s", " ".join(argv))
         self._process = subprocess.Popen(
-            [self._julia, self._server_path],
+            argv,
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,

@@ -155,61 +155,79 @@ class TestLLMProvider:
 # They test the full DSL-backed routing path.
 
 try:
-    from credence_agents.julia_bridge import CredenceBridge
+    import juliacall  # noqa: F401
     _JULIA_AVAILABLE = True
 except ImportError:
     _JULIA_AVAILABLE = False
 
 
-@pytest.mark.skipif(not _JULIA_AVAILABLE, reason="Julia bridge not available")
-class TestRoutingDomainWithDSL:
-    """Tests that exercise the full DSL-backed routing path."""
+@pytest.mark.skipif(not _JULIA_AVAILABLE, reason="Julia runtime not available")
+class TestRoutingDomainWithBrain:
+    """Tests that exercise the full brain-backed routing path."""
 
     @pytest.fixture(scope="class")
-    def bridge(self):
-        return CredenceBridge()
+    def brain(self):
+        import os
+        from pathlib import Path
 
-    def _make_domain(self, bridge):
+        from credence_router.routing_domain import BrainClient, _REPO_ROOT
+
+        julia_exe = os.environ.get("CREDENCE_JULIA", "julia")
+        client = BrainClient(
+            julia=julia_exe,
+            server_path=_REPO_ROOT / "brain" / "server.jl",
+            project=str(_REPO_ROOT),
+        )
+        client.initialize(
+            dsl_files={"router": str(_REPO_ROOT / "examples" / "router.bdsl")},
+        )
+        yield client
+        client.shutdown()
+
+    def _make_domain(self, brain):
         from credence_router.routing_domain import RoutingDomain
 
         return RoutingDomain(
-            bridge=bridge,
+            brain=brain,
             provider_names=["cheap-fast", "medium", "expensive-good"],
             costs=[0.001, 0.01, 0.05],
             categories=LLM_CATEGORIES,
             category_infer=make_llm_category_infer_fn(),
         )
 
-    def test_route_returns_decision(self, bridge):
-        domain = self._make_domain(bridge)
+    def test_route_returns_decision(self, brain):
+        domain = self._make_domain(brain)
         decision = domain.route("hello world")
         assert isinstance(decision, RouteDecision)
         assert decision.provider_name in ("cheap-fast", "medium", "expensive-good")
 
-    def test_route_has_category_weights(self, bridge):
-        domain = self._make_domain(bridge)
+    def test_route_has_category_weights(self, brain):
+        domain = self._make_domain(brain)
         decision = domain.route("implement quicksort in Python")
         assert len(decision.category_weights) == len(LLM_CATEGORIES)
         assert abs(sum(decision.category_weights) - 1.0) < 1e-6
 
-    def test_report_outcome_updates_beliefs(self, bridge):
-        domain = self._make_domain(bridge)
-        rel_before = domain.learned_reliability
-
+    def test_queue_outcome_updates_beliefs(self, brain):
+        domain = self._make_domain(brain)
         domain.route("test query")
-        domain.report_outcome(Observation(completed=True))
+        rel_before = {
+            name: dict(cats) for name, cats in domain.learned_reliability.items()
+        }
+
+        domain.queue_outcome(Observation(completed=True, quality_score=0.9))
+        # route() drains queued outcomes before deciding.
+        domain.route("another query")
 
         rel_after = domain.learned_reliability
-        # At least one provider's reliability should have changed
-        changed = False
-        for name in rel_before:
-            for cat in rel_before[name]:
-                if abs(rel_before[name][cat] - rel_after[name][cat]) > 0.001:
-                    changed = True
-        assert changed
+        changed = any(
+            abs(rel_before[name][cat] - rel_after[name][cat]) > 1e-4
+            for name in rel_before
+            for cat in rel_before[name]
+        )
+        assert changed, (rel_before, rel_after)
 
-    def test_learned_reliability_structure(self, bridge):
-        domain = self._make_domain(bridge)
+    def test_learned_reliability_structure(self, brain):
+        domain = self._make_domain(brain)
         rel = domain.learned_reliability
         assert set(rel.keys()) == {"cheap-fast", "medium", "expensive-good"}
         for name, cats in rel.items():

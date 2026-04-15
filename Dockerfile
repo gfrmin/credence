@@ -32,9 +32,16 @@ RUN uv sync --extra server --extra search --no-dev 2>&1 | tail -5
 # Copy Julia DSL source (needed for precompilation)
 COPY src/ src/
 COPY examples/ examples/
-COPY Project.toml .
+COPY brain/ brain/
+COPY Project.toml ./
 
-# Resolve Julia via pyjuliapkg + precompile Credence module
+# Resolve Julia via pyjuliapkg + precompile Credence + brain/server.jl deps.
+# Two activation paths because the runtime uses both:
+#   - juliacall (in-process) for the precompile smoke test itself
+#   - `julia --project=/credence` (subprocess) for the brain server
+# Instantiating Credence's Project.toml ensures JSON3/HTTP etc. are
+# precompiled in the depot; they would otherwise trigger a first-start
+# compile inside the brain subprocess.
 ENV PYTHON_JULIACALL_HANDLE_SIGNALS=yes
 RUN uv run python -c "\
 import os; \
@@ -44,7 +51,10 @@ jl.seval('push!(LOAD_PATH, \"/credence/src\")'); \
 jl.seval('using Credence'); \
 jl.seval('load_dsl(read(\"/credence/examples/router.bdsl\", String))'); \
 print('Credence DSL precompiled successfully') \
-"
+" && \
+    "$(uv run python -c 'import juliapkg; print(juliapkg.executable())')" \
+      --project=/credence \
+      -e 'using Pkg; Pkg.resolve(); Pkg.instantiate(); Pkg.precompile(); using Credence, JSON3; println("brain deps precompiled")'
 
 # ── Stage 2: Slim runtime ────────────────────────────────────────
 FROM python:3.12-slim-bookworm AS runtime
@@ -61,7 +71,8 @@ COPY --from=build /credence/.venv /credence/.venv
 # Copy source code
 COPY --from=build /credence/src/ src/
 COPY --from=build /credence/examples/ examples/
-COPY --from=build /credence/Project.toml .
+COPY --from=build /credence/brain/ brain/
+COPY --from=build /credence/Project.toml /credence/Manifest.toml ./
 COPY --from=build /credence/python/ python/
 
 # Copy Julia depot with precompiled packages

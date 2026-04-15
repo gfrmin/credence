@@ -11,7 +11,8 @@ env:
   IMAGE_NAME: ${{ github.repository_owner }}/credence-proxy
 
 jobs:
-  publish:
+  build-smoke-publish:
+    name: Build, smoke-test, publish
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -45,7 +46,50 @@ jobs:
             type=sha,format=short
             type=raw,value=latest,enable=${{ github.ref == format('refs/heads/{0}', 'master') }}
 
-      - name: Build and push
+      # Build amd64 locally so we can run it as a startup smoke test.
+      # If startup fails here, we never push — the exact class of bug
+      # that slipped into v0.3.1 (KeyError on Julia symbol).
+      - name: Build amd64 for smoke test
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          platforms: linux/amd64
+          load: true
+          tags: credence-proxy:smoke
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Smoke-test: container must reach /ready
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY_CI || 'sk-ant-test-smoke' }}
+        run: |
+          set -e
+          docker run -d --rm --name credence-proxy-smoke \
+            -p 8377:8377 \
+            -e ANTHROPIC_API_KEY="$ANTHROPIC_API_KEY" \
+            credence-proxy:smoke
+          # Poll /ready up to 3 min. Precompiled image should answer well before.
+          for i in $(seq 1 36); do
+            if curl -fsS --max-time 5 http://localhost:8377/ready; then
+              echo "/ready OK after ${i}0s"
+              echo "--- /health ---"
+              curl -fsS http://localhost:8377/health
+              echo
+              echo "--- /state (head) ---"
+              curl -fsS http://localhost:8377/state | head -c 400
+              echo
+              docker stop credence-proxy-smoke
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "=== SMOKE TEST FAILED — container never reached /ready ==="
+          docker logs credence-proxy-smoke
+          docker stop credence-proxy-smoke
+          exit 1
+
+      - name: Build and push multi-arch (gated on smoke test above)
         uses: docker/build-push-action@v6
         with:
           context: .

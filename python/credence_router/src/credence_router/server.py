@@ -27,6 +27,7 @@ app = FastAPI(title="credence-proxy", version="0.2.0")
 # Global state (initialised on startup)
 _search_router = None
 _llm_domain = None
+_brain = None  # brain.client.BrainClient, spawned in _init_llm_domain
 _state_path: Path | None = None
 _llm_state_path: Path | None = None
 _request_log: list[dict] = []
@@ -102,7 +103,7 @@ def startup():
 
 def _init_llm_domain():
     """Initialise the LLM routing domain with all available providers."""
-    global _llm_domain
+    global _llm_domain, _brain
 
     from credence_router.tools.llm.provider import available_models, model_cost
 
@@ -111,12 +112,26 @@ def _init_llm_domain():
         log.info("No LLM API keys found — LLM routing disabled")
         return
 
-    from credence_agents.julia_bridge import CredenceBridge
+    # Import BrainClient via the routing_domain module which has already
+    # located brain/ on sys.path. Resolve the Julia binary from juliapkg
+    # so the brain subprocess can spawn without PATH mutation.
+    from credence_router.routing_domain import BrainClient, _REPO_ROOT
+    import juliapkg
 
     from credence_router.categories import LLM_CATEGORIES, make_llm_category_infer_fn
     from credence_router.routing_domain import RoutingDomain
 
-    bridge = CredenceBridge()
+    # Allow override: the container uses pyjuliapkg's julia (the only one
+    # present); local dev machines may have a different julia binary with
+    # a matching depot (CREDENCE_JULIA lets us choose).
+    julia_exe = os.environ.get("CREDENCE_JULIA") or str(juliapkg.executable())
+    server_path = _REPO_ROOT / "brain" / "server.jl"
+    _brain = BrainClient(
+        julia=julia_exe,
+        server_path=server_path,
+        project=str(_REPO_ROOT),
+    )
+    _brain.initialize(dsl_files={"router": str(_REPO_ROOT / "examples" / "router.bdsl")})
 
     model_names = [m.name for m in models]
     costs = [model_cost(m) for m in models]
@@ -124,7 +139,7 @@ def _init_llm_domain():
     reward = float(os.environ.get("CREDENCE_REWARD", "1.0"))
 
     _llm_domain = RoutingDomain(
-        bridge=bridge,
+        brain=_brain,
         provider_names=model_names,
         costs=costs,
         categories=LLM_CATEGORIES,
@@ -132,6 +147,17 @@ def _init_llm_domain():
         reward=reward,
     )
     log.info("LLM domain initialised: models=%s", model_names)
+
+
+@app.on_event("shutdown")
+def _shutdown_brain():
+    global _brain
+    if _brain is not None:
+        try:
+            _brain.shutdown()
+        except Exception as e:
+            log.warning("brain shutdown failed: %s", e)
+        _brain = None
 
 
 # ---------------------------------------------------------------------------
@@ -354,10 +380,10 @@ def health():
 
 @app.get("/ready")
 def readiness():
-    """Readiness probe — validates Julia is responsive (for Docker/k8s)."""
-    if _llm_domain is not None:
+    """Readiness probe — validates the brain is responsive (for Docker/k8s)."""
+    if _brain is not None:
         try:
-            _llm_domain._bridge.jl.seval("1+1")
+            _brain.n_factors(_llm_domain._state_id)
         except Exception as e:
             return {"status": "not_ready", "error": str(e)}, 503
     return {"status": "ready"}
