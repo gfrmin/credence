@@ -120,8 +120,9 @@ class CredenceBridge:
         """Call DSL agent-step. Returns (action_type, action_arg) as Python ints."""
         jl = self.jl
         fn = self.env[jl.Symbol("agent-step")]
+        cov_jl = self._make_float_vector(cov_probs)
         result = fn(
-            answer_measure, rel_measures, costs,
+            answer_measure, rel_measures, costs, cov_jl,
             float(submit_val), float(abstain_val), float(penalty_wrong),
         )
         # PythonCall uses 0-based indexing for Julia arrays/lists

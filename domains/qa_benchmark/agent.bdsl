@@ -50,7 +50,7 @@
 ; tools happens naturally through VOI — no epsilon-greedy,
 ; no exploration bonus.
 (define agent-step
-  (lambda (answer-measure reliability-measures tool-costs submit-value abstain-value penalty-wrong)
+  (lambda (answer-measure reliability-measures tool-costs coverage-probs submit-value abstain-value penalty-wrong)
     (let n (length (support answer-space))
       (let action-space (space :finite -1 0 1 2 3)
 
@@ -62,19 +62,19 @@
           ; Current best EU
           (let current-val (value answer-measure action-space pref)
 
-            ; Build tool index list dynamically
             (let n-tools (length reliability-measures)
             (let tool-indices (range n-tools)
 
-            ; For each tool, compute net VOI
+            ; For each tool, compute coverage-weighted net VOI
             (let tool-evals
               (map (lambda (i)
                      (let rel-m (nth reliability-measures i)
                        (let cost (nth tool-costs i)
-                         (let k (answer-kernel rel-m n)
-                           (let v (voi answer-measure k action-space pref
-                                       (support answer-space))
-                             (list (- v cost) i))))))
+                         (let cov (nth coverage-probs i)
+                           (let k (answer-kernel rel-m n)
+                             (let v (voi answer-measure k action-space pref
+                                         (support answer-space))
+                               (list (- (* cov v) cost) i)))))))
                    tool-indices)
 
               ; Find best tool

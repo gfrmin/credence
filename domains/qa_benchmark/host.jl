@@ -110,8 +110,13 @@ function run_bayesian_seed(tools::Vector{SimulatedTool},
             while true
                 rel_measures = [rel_betas[t, cat_idx] for t in available]
                 costs_jl = Float64[tools[t].cost for t in available]
+                # qa_benchmark assumes all tools always respond (no coverage
+                # uncertainty in this domain), so pass uniform 1.0 — preserves
+                # the pre-coverage agent-step behaviour.
+                cov_probs_jl = ones(Float64, length(available))
 
                 result = AGENT_STEP(answer_measure, rel_measures, costs_jl,
+                                    cov_probs_jl,
                                     REWARD_CORRECT, REWARD_ABSTAIN, PENALTY_WRONG)
                 action_type = Int(result[1])
                 action_arg = Int(result[2])

@@ -49,7 +49,7 @@
 ; tools happens naturally through VOI — no epsilon-greedy,
 ; no exploration bonus.
 (define agent-step
-  (lambda (answer-measure reliability-measures tool-costs submit-value abstain-value penalty-wrong)
+  (lambda (answer-measure reliability-measures tool-costs coverage-probs submit-value abstain-value penalty-wrong)
     (let n (length (support answer-space))
       (let action-space (space :finite -1 0 1 2 3)
 
@@ -61,24 +61,22 @@
           ; Current best EU
           (let current-val (value answer-measure action-space pref)
 
-            ; Build tool index list dynamically from reliability-measures length
             (let n-tools (length reliability-measures)
-            (let tool-indices
-              (if (= n-tools 1) (list 0)
-                (if (= n-tools 2) (list 0 1)
-                  (list 0 1 2)))
+            (let tool-indices (range n-tools)
 
-            ; For each tool, compute net VOI
-            ; Coverage is not pre-discounted here — it flows through the
-            ; posterior updates when the host observes responses/non-responses.
+            ; For each tool, compute coverage-weighted net VOI.
+            ; VOI assumes a response; coverage is the probability of getting
+            ; one. E[utility gain from querying] = cov * voi(respond) + (1-cov)*0
+            ; = cov * voi. Subtract cost to get net EU of the query action.
             (let tool-evals
               (map (lambda (i)
                      (let rel-m (nth reliability-measures i)
                        (let cost (nth tool-costs i)
-                         (let k (answer-kernel rel-m n)
-                           (let v (voi answer-measure k action-space pref
-                                       (support answer-space))
-                             (list (- v cost) i))))))
+                         (let cov (nth coverage-probs i)
+                           (let k (answer-kernel rel-m n)
+                             (let v (voi answer-measure k action-space pref
+                                         (support answer-space))
+                               (list (- (* cov v) cost) i)))))))
                    tool-indices)
 
               ; Find best tool
