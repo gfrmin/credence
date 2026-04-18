@@ -14,7 +14,7 @@ This is an **architecture paper**, not merely a benchmark paper. The benchmark r
 
 The benchmark has been redesigned: no coverage mechanism, pre-generated response
 tables (fair comparison), native tool-calling for LLM agents, Haiku 4.5 added.
-Results in SQLite at `domains/qa_benchmark/results/benchmark.db`. See `RESULTS.md`.
+Results in SQLite at `apps/julia/qa_benchmark/results/benchmark.db`. See `RESULTS.md`.
 
 1. **Bayesian is optimal at zero cost**: +163.7 score, $0 API cost, 0.016s/question.
    Beats all non-LLM baselines by 3x. Best strategy when you can't afford API calls.

@@ -18,10 +18,10 @@ The `python/` directory is a uv workspace with four packages:
 
 | Directory | PyPI package | Import path | Description |
 |-----------|-------------|-------------|-------------|
-| `python/credence_bindings/` | `credence` | `import credence` | Low-level Python bindings (Space, Measure, Kernel) |
-| `python/credence_agents/` | `credence-agents` | `import credence_agents` | Agent library + Julia bridge + benchmark |
-| `python/credence_router/` | `credence-router` | `import credence_router` | Tool routing via EU maximisation |
-| `python/bayesian_if/` | — | `import bayesian_if` | Interactive fiction agent application |
+| `apps/python/credence_bindings/` | `credence` | `import credence` | Low-level Python bindings (Space, Measure, Kernel) |
+| `apps/python/credence_agents/` | `credence-agents` | `import credence_agents` | Agent library + Julia bridge + benchmark |
+| `apps/python/credence_router/` | `credence-router` | `import credence_router` | Tool routing via EU maximisation |
+| `apps/python/bayesian_if/` | — | `import bayesian_if` | Interactive fiction agent application |
 
 Install all: `uv sync` from repo root. `credence_agents`, `credence_router`,
 and `bayesian_if` each have their own CLAUDE.md; read the relevant one when
@@ -31,11 +31,11 @@ working inside that package.
 
 The repo has two framings. CLAUDE.md is DSL-focused (axioms, frozen layer,
 forbidden patterns). README.md is product-focused: the public face is
-**credence-proxy** (in `python/credence_router/`), a drop-in
+**credence-proxy** (in `apps/python/credence_router/`), a drop-in
 OpenAI-compatible gateway that Bayesian-routes requests across LLM
 providers, packaged as a Docker image. The DSL program that drives it
 lives at `examples/router.bdsl`. When in doubt about user intent on the
-`python/credence_router/` package, the product framing is the gateway, not
+`apps/python/credence_router/` package, the product framing is the gateway, not
 the library.
 
 ## The axioms (mathematical truths, not design choices)
@@ -330,16 +330,16 @@ Run tests:
     julia test/test_rss.jl              # RSS domain tests
 
 Run POMDP agent tests:
-    cd julia/pomdp_agent && julia --project=. -e 'using Pkg; Pkg.test()'
+    cd apps/julia/pomdp_agent && julia --project=. -e 'using Pkg; Pkg.test()'
 
 Run the Jericho IF agent:
-    cd julia/pomdp_agent && julia --project=. examples/jericho_agent.jl /path/to/game.z3
+    cd apps/julia/pomdp_agent && julia --project=. examples/jericho_agent.jl /path/to/game.z3
 
 Run an example:
     julia -e 'push!(LOAD_PATH, "src"); using Credence; run_dsl(read("examples/coin.bdsl", String))'
 
 Run the grid-world agent:
-    julia domains/grid_world/host.jl
+    julia apps/julia/grid_world/host.jl
 
 Run the credence agent (host-driven):
     julia examples/host_credence_agent.jl
@@ -358,18 +358,18 @@ External deps (for full workspace): HTTP, JSON3, Serialization.
 Python workspace:
     uv sync                                         # install all 4 packages
     uv sync --extra server --extra search           # what CI installs
-    PYTHON_JULIACALL_HANDLE_SIGNALS=yes uv run pytest python/
+    PYTHON_JULIACALL_HANDLE_SIGNALS=yes uv run pytest apps/python/
 
 Run a single Python test file (example):
     PYTHON_JULIACALL_HANDLE_SIGNALS=yes \
-      uv run pytest python/credence_router/tests/test_routing.py -x
+      uv run pytest apps/python/credence_router/tests/test_routing.py -x
 
-`python/credence_router/tests/test_live.py` is excluded from CI (hits
+`apps/python/credence_router/tests/test_live.py` is excluded from CI (hits
 real provider APIs); run it manually when changing live paths.
 
 Brain server (language-agnostic host interface):
-    julia brain/server.jl                           # holds Measures, evaluates DSL via JSON-RPC
-    python -m brain.test_brain                      # smoke tests
+    julia apps/brain/server.jl                      # holds Measures, evaluates DSL via JSON-RPC
+    python -m brain.test_brain                      # smoke tests (from repo root)
 
 credence-proxy (production gateway):
     PYTHON_JULIACALL_HANDLE_SIGNALS=yes credence-router serve
@@ -397,48 +397,6 @@ and publishes the Docker image.
         compilation.jl            AST → closure compilation
         perturbation.jl           Posterior subtree analysis, grammar perturbation
         agent_state.jl            AgentState, sync_prune!, sync_truncate!
-    domains/                      Tier 3: domain applications
-      DOMAIN_INTERFACE.md         Contract for new Tier 3 domains
-      grid_world/                 Grid-world domain
-        simulation.jl             World simulation, entities, regime changes
-        terminals.jl              Seed grammars and terminal alphabet
-        host.jl                   Host driver (agent loop)
-        metrics.jl                Performance tracking
-        agent.bdsl                Agent DSL program
-      email_agent/                Email domain (JMAP integration)
-        features.jl               Email feature extraction
-        terminals.jl              Seed grammars
-        preferences.jl            Outcome classification
-        host.jl                   Host driver (1006 lines, full JMAP)
-        metrics.jl                Metrics
-        agent.bdsl                Agent DSL program
-        jmap_client.jl            Julia JMAP client for Fastmail
-        live.jl                   Live Fastmail host driver
-        llm_prosthetic.jl         LLM-based feature inference
-        cost_model.jl             Uncertain time-based cost model
-        eval_retrospective.jl     Retrospective evaluation
-        state_persistence.jl      Save/load agent state
-        action_composition.jl     Action composition helpers
-      qa_benchmark/               QA benchmark domain
-        environment.jl            Benchmark environment
-        host.jl                   Host driver
-        llm_agent.jl              LLM comparison agent
-        metrics.jl                Metrics
-        agent.bdsl                Agent DSL program
-      rss/                        RSS article ranking domain
-        db.jl                     Article database
-        features.jl               Article feature extraction
-        host.jl                   Host driver
-        preferences.jl            Preference learning
-        terminals.jl              Seed grammars
-        server.jl                 Server interface
-    julia/                        Additional Julia packages
-      pomdp_agent/                POMDP agent (MCTS, factored models, state abstraction)
-        Project.toml              Separate Julia package depending on Credence
-        src/                      BayesianAgents module
-        examples/                 Jericho IF agent, gridworld
-        test/                     55 unit tests
-        CLAUDE.md                 Package-specific guidance
     examples/                     Runnable DSL programs
       coin.bdsl                   Biased coin learning
       credence_agent.bdsl         Agent DSL (pure functions, host-driven)
@@ -453,18 +411,33 @@ and publishes the Docker image.
       test_grid_world.jl          Tier 3 tests (full agent, regime change, meta-learning)
       test_email_agent.jl         Email agent domain tests
       test_rss.jl                 RSS domain tests
+    apps/                         Everything built on top of the DSL
+      brain/                      Language-agnostic host interface (JSON-RPC)
+        protocol.md               JSON-RPC protocol spec
+        server.jl                 Julia server (holds Measures, evaluates DSL)
+        client.py                 Python client (spawns subprocess, sends RPC)
+        test_brain.py             Smoke tests
+      julia/                      Julia applications of the DSL
+        DOMAIN_INTERFACE.md       Contract for Tier 3 domains
+        grid_world/               Grid-world domain (simulation, host, terminals, metrics)
+        email_agent/              Email domain (JMAP integration, LLM prosthetic)
+        qa_benchmark/             QA benchmark domain (LLM comparison harness)
+        rss/                      RSS article ranking domain (Postgres-backed)
+        pomdp_agent/              POMDP agent package (MCTS, factored models)
+          Project.toml            Separate Julia package depending on Credence
+          src/, examples/, test/, CLAUDE.md
+      python/                     Python applications (uv workspace; Python >=3.11)
+        credence_bindings/        Low-level Python bindings
+        credence_agents/          Agent library + Julia bridge + benchmark
+        credence_router/          credence-proxy (LLM/search routing gateway)
+        bayesian_if/              Interactive fiction agent
     docs/                         Additional documentation
       rss-preference-learning.md  RSS preference learning design
-    python/                       Python bindings (juliacall, Python >=3.11)
-    brain/                        Language-agnostic host interface
-      protocol.md                 JSON-RPC protocol spec
-      server.jl                   Julia server (holds Measures, evaluates DSL)
-      client.py                   Python client (spawns subprocess, sends RPC)
-      test_brain.py               Smoke tests
     papers/                       Publication (credence.tex)
+    data/                         Eval output artefacts (gitignored)
     Dockerfile                    credence-proxy container (published by CI)
     SPEC.md                       Authoritative three-tier architecture spec
-    pyproject.toml                uv workspace root (4 members)
+    pyproject.toml                uv workspace root (4 members under apps/python/)
     .github/workflows/            CI: publish-image.yml (tests + Docker publish)
 
 DSL source files use the `.bdsl` extension.
@@ -483,7 +456,7 @@ Three-tier architecture. See SPEC.md for details.
 
 - Tier 1 (src/): DSL core — condition, expect, optimise, voi, TaggedBetaMeasure
 - Tier 2 (src/program_space/): program-space inference — grammars, enumeration, compilation, perturbation
-- Tier 3 (domains/): domain applications — each provides features, terminals, host driver (see domains/DOMAIN_INTERFACE.md)
+- Tier 3 (apps/julia/): domain applications — each provides features, terminals, host driver (see apps/julia/DOMAIN_INTERFACE.md)
 
     ┌─────────────────────────────┐
     │  Three types                │  FROZEN

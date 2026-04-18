@@ -8,19 +8,19 @@ A Bayesian decision-theoretic Interactive Fiction agent that uses the `credence_
 for information-gathering decisions. The agent uses VOI (Value of Information) to decide
 which sources to consult (look, examine, inventory, LLM) before committing to an action.
 
-Lives in the credence monorepo at `python/bayesian_if/`. Dependencies are workspace references.
+Lives in the credence monorepo at `apps/python/bayesian_if/`. Dependencies are workspace references.
 
 ## Development Commands
 
 ```bash
 # From monorepo root (credence/):
 uv sync                                                  # Install workspace
-uv run pytest python/bayesian_if/tests/                  # Run all tests
-uv run pytest python/bayesian_if/tests/test_agent.py -v  # Single file
+uv run pytest apps/python/bayesian_if/tests/                  # Run all tests
+uv run pytest apps/python/bayesian_if/tests/test_agent.py -v  # Single file
 
 # Lint and format
-ruff check python/bayesian_if/
-ruff format python/bayesian_if/
+ruff check apps/python/bayesian_if/
+ruff format apps/python/bayesian_if/
 
 # Run against a Z-machine game
 bayesian-if --game path/to/game.z5 --max-steps 100 --verbose

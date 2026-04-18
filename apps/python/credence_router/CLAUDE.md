@@ -13,10 +13,10 @@ calculations. Zero routing cost, <1ms routing latency, learns from feedback.
 ```bash
 # From monorepo root (credence/):
 uv sync                                                    # Install workspace
-uv run pytest python/credence_router/tests/                # Run all tests
-uv run pytest python/credence_router/tests/test_router.py  # Run one test file
-ruff check python/credence_router/                         # Lint
-ruff format python/credence_router/                        # Format
+uv run pytest apps/python/credence_router/tests/                # Run all tests
+uv run pytest apps/python/credence_router/tests/test_router.py  # Run one test file
+ruff check apps/python/credence_router/                         # Lint
+ruff format apps/python/credence_router/                        # Format
 ```
 
 ```bash

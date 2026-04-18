@@ -11,7 +11,7 @@ Fully automated:
 Usage:
     cd ~/git/credence
     source ~/.env
-    PYTHON_JULIACALL_HANDLE_SIGNALS=yes uv run python python/credence_router/scripts/openclaw_eval.py
+    PYTHON_JULIACALL_HANDLE_SIGNALS=yes uv run python apps/python/credence_router/scripts/openclaw_eval.py
 """
 
 from __future__ import annotations

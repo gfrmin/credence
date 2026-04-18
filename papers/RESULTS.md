@@ -1,7 +1,7 @@
 # Benchmark Results
 
-All experiments run from the Julia benchmark at `domains/qa_benchmark/host.jl`.
-Results stored in SQLite at `domains/qa_benchmark/results/benchmark.db`.
+All experiments run from the Julia benchmark at `apps/julia/qa_benchmark/host.jl`.
+Results stored in SQLite at `apps/julia/qa_benchmark/results/benchmark.db`.
 20 seeds, 50 questions per seed, 4 simulated tools with category-dependent reliability.
 
 **Important change from previous version:** Tool responses are pre-generated per seed
@@ -72,7 +72,7 @@ all_tools has the highest accuracy among non-LLM agents (64.4%) but the worst sc
 All per-question data is in SQLite:
 
 ```bash
-sqlite3 domains/qa_benchmark/results/benchmark.db
+sqlite3 apps/julia/qa_benchmark/results/benchmark.db
 ```
 
 ```sql

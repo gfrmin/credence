@@ -6,7 +6,7 @@ Everything reduces to three axioms: beliefs are probability measures, rational a
 
 ## Use credence-proxy for smarter LLM routing
 
-[credence-proxy](python/credence_router/) is a drop-in OpenAI-compatible gateway that learns which model works best for each type of query:
+[credence-proxy](apps/python/credence_router/) is a drop-in OpenAI-compatible gateway that learns which model works best for each type of query:
 
 | Metric | Always Sonnet | Credence routing | Change |
 |--------|--------------|-----------------|--------|
@@ -49,7 +49,7 @@ Add a custom provider to `~/.openclaw-dev/openclaw.json`:
 }
 ```
 
-See [credence-proxy docs](python/credence_router/README.md) for all endpoints, search routing, monitoring, and configuration.
+See [credence-proxy docs](apps/python/credence_router/README.md) for all endpoints, search routing, monitoring, and configuration.
 
 ## Explore the DSL
 
@@ -97,22 +97,28 @@ julia test/test_grid_world.jl       # Tier 3: full agent + regime change
 ```
 src/                        DSL core: parser, evaluator, ontology (Space, Measure, Kernel)
 src/program_space/          Program-space inference (grammars, enumeration, perturbation)
-domains/                    Research environments (grid world, email, RSS, QA)
-python/
-  credence_bindings/        Python bindings via juliacall (Space, Measure, Kernel)
-  credence_agents/          Domain-agnostic Bayesian agent library
-  credence_router/          credence-proxy: AI gateway for LLM/search routing
-  bayesian_if/              Interactive Fiction agent
-julia/pomdp_agent/          POMDP agent (Thompson MCTS, state abstraction)
 examples/                   DSL examples (coin, agent, grid)
+apps/                       Everything built on top of the DSL
+  brain/                    Language-agnostic host interface (JSON-RPC)
+  julia/                    Julia applications
+    grid_world/             Research environment
+    email_agent/            Email triage with JMAP
+    qa_benchmark/           QA benchmark harness
+    rss/                    RSS article ranking
+    pomdp_agent/            POMDP agent (Thompson MCTS, state abstraction)
+  python/                   Python workspace (uv)
+    credence_bindings/      Python bindings via juliacall
+    credence_agents/        Domain-agnostic Bayesian agent library
+    credence_router/        credence-proxy: AI gateway for LLM/search routing
+    bayesian_if/            Interactive Fiction agent
 ```
 
 | Component | README | What it does |
 |-----------|--------|-------------|
-| [credence-proxy](python/credence_router/) | [README](python/credence_router/README.md) | LLM/search routing gateway |
-| [credence-agents](python/credence_agents/) | [README](python/credence_agents/README.md) | Bayesian agent library + benchmark |
-| [bayesian-if](python/bayesian_if/) | [README](python/bayesian_if/README.md) | Interactive Fiction agent |
-| [POMDP agent](julia/pomdp_agent/) | [CLAUDE.md](julia/pomdp_agent/CLAUDE.md) | Planning under uncertainty (Jericho IF) |
+| [credence-proxy](apps/python/credence_router/) | [README](apps/python/credence_router/README.md) | LLM/search routing gateway |
+| [credence-agents](apps/python/credence_agents/) | [README](apps/python/credence_agents/README.md) | Bayesian agent library + benchmark |
+| [bayesian-if](apps/python/bayesian_if/) | [README](apps/python/bayesian_if/README.md) | Interactive Fiction agent |
+| [POMDP agent](apps/julia/pomdp_agent/) | [CLAUDE.md](apps/julia/pomdp_agent/CLAUDE.md) | Planning under uncertainty (Jericho IF) |
 
 ## Install everything
 
@@ -121,7 +127,7 @@ examples/                   DSL examples (coin, agent, grid)
 uv sync
 
 # Run Python tests
-PYTHON_JULIACALL_HANDLE_SIGNALS=yes uv run pytest python/
+PYTHON_JULIACALL_HANDLE_SIGNALS=yes uv run pytest apps/python/
 
 # Run credence-proxy from source
 PYTHON_JULIACALL_HANDLE_SIGNALS=yes credence-router serve

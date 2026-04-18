@@ -80,10 +80,10 @@ Python (credence_agents)              Julia (credence DSL)
 └──────────────────────┘              └──────────────────────────┘
 ```
 
-Lives in the credence monorepo at `python/credence_agents/`. Import path: `credence_agents` (PyPI: `credence-agents`).
+Lives in the credence monorepo at `apps/python/credence_agents/`. Import path: `credence_agents` (PyPI: `credence-agents`).
 
 ```
-python/credence_agents/
+apps/python/credence_agents/
 ├── credence_agents/             # The package (import as credence_agents)
 │   ├── __init__.py              # Public API re-exports
 │   ├── julia_bridge.py          # CredenceBridge: lazy juliacall wrapper
@@ -202,7 +202,7 @@ agent = initialize_agent(
 4. **Baseline comparison tests** — `test_baselines.py` (Oracle, Random, AllTools, SingleBest)
 5. **Benchmark harness tests** — `test_benchmark.py` (mock agents, no Julia)
 
-Run from monorepo root: `PYTHON_JULIACALL_HANDLE_SIGNALS=yes uv run pytest python/credence_agents/tests/ -v`
+Run from monorepo root: `PYTHON_JULIACALL_HANDLE_SIGNALS=yes uv run pytest apps/python/credence_agents/tests/ -v`
 
 ---
 
@@ -221,4 +221,4 @@ Run from monorepo root: `PYTHON_JULIACALL_HANDLE_SIGNALS=yes uv run pytest pytho
 
 - **juliacall** — Python-Julia bridge (lazy-loads Julia on first use)
 - **numpy** — used by benchmark/environment for coverage vectors and category priors
-- **Julia Credence DSL** — at `../../src/` relative to this package (monorepo), or `~/git/credence/src` (fallback)
+- **Julia Credence DSL** — at `../../../src/` relative to this package (monorepo), or `~/git/credence/src` (fallback)
