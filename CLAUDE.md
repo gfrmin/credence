@@ -23,15 +23,39 @@ The `python/` directory is a uv workspace with four packages:
 | `python/credence_router/` | `credence-router` | `import credence_router` | Tool routing via EU maximisation |
 | `python/bayesian_if/` | — | `import bayesian_if` | Interactive fiction agent application |
 
-Install all: `uv sync` from repo root. Each package has its own CLAUDE.md.
+Install all: `uv sync` from repo root. `credence_agents`, `credence_router`,
+and `bayesian_if` each have their own CLAUDE.md; read the relevant one when
+working inside that package.
+
+### The product surface
+
+The repo has two framings. CLAUDE.md is DSL-focused (axioms, frozen layer,
+forbidden patterns). README.md is product-focused: the public face is
+**credence-proxy** (in `python/credence_router/`), a drop-in
+OpenAI-compatible gateway that Bayesian-routes requests across LLM
+providers, packaged as a Docker image. The DSL program that drives it
+lives at `examples/router.bdsl`. When in doubt about user intent on the
+`python/credence_router/` package, the product framing is the gateway, not
+the library.
 
 ## The axioms (mathematical truths, not design choices)
 
     A1. Beliefs are probability measures                  (Cox)
     A2. Rational action maximises expected utility        (Savage)
     A3. Learning is conditioning on evidence              (Bayes, de Finetti)
-    A4. There is one learning mechanism and one
-        decision mechanism                                (Dutch book coherence)
+
+A1–A3 are theorems: each forces a unique answer under mild
+consistency requirements. The next item is engineering
+discipline — not proved by A1–A3, but what it takes to
+implement them without creating internal incoherence:
+
+    A4. One learning mechanism, one decision mechanism.
+
+Rationale: if condition and some second function can both
+modify beliefs, the implementation can disagree with itself
+— the situation Dutch book arguments rule out at the agent
+level. A4 is the invariant that prevents the theorems from
+being violated in code.
 
 ## The frozen layer: three types
 
@@ -44,6 +68,12 @@ ontology of Bayesian decision theory. They do not change.
 
 Everything else — every operation, every combinator, every
 named concept — is a function over these three types.
+
+What is frozen: the three types and their semantics. What
+is NOT frozen: the constructor roster below. Named
+distributions and space types may be added (and are),
+provided the added item respects the semantics of its type.
+The lists below are current vocabulary, not a closed set.
 
 ### Space constructors
 
@@ -59,6 +89,8 @@ named concept — is a function over these three types.
     (measure S :categorical w1 w2)  explicit weights
     (measure S :beta α β)           Beta distribution on [0,1]
     (measure S :gaussian μ σ)       Gaussian on Euclidean space
+    (measure S :gamma α β)          Gamma on positive reals
+    (measure S :exponential rate)   Exponential on positive reals
 
 ### Kernel constructors
 
@@ -320,10 +352,33 @@ Load DSL and get callable closures (host-driver pattern):
     env = load_dsl(read("examples/credence_agent.bdsl", String))
     agent_step = env[Symbol("agent-step")]
 
-Requires Julia >=1.9. External deps: HTTP, JSON3, Serialization.
+Requires Julia >=1.9 (stdlib only for the DSL core). CI pins Julia 1.11.
+External deps (for full workspace): HTTP, JSON3, Serialization.
 
-Python bindings (python/):
-    cd python && PYTHON_JULIACALL_HANDLE_SIGNALS=yes uv run pytest tests/
+Python workspace:
+    uv sync                                         # install all 4 packages
+    uv sync --extra server --extra search           # what CI installs
+    PYTHON_JULIACALL_HANDLE_SIGNALS=yes uv run pytest python/
+
+Run a single Python test file (example):
+    PYTHON_JULIACALL_HANDLE_SIGNALS=yes \
+      uv run pytest python/credence_router/tests/test_routing.py -x
+
+`python/credence_router/tests/test_live.py` is excluded from CI (hits
+real provider APIs); run it manually when changing live paths.
+
+Brain server (language-agnostic host interface):
+    julia brain/server.jl                           # holds Measures, evaluates DSL via JSON-RPC
+    python -m brain.test_brain                      # smoke tests
+
+credence-proxy (production gateway):
+    PYTHON_JULIACALL_HANDLE_SIGNALS=yes credence-router serve
+    docker build -t credence-proxy .                # same image CI publishes
+
+CI: `.github/workflows/publish-image.yml` runs core Julia tests,
+`uv sync --extra server --extra search --no-dev`, then
+`credence_router` + `credence_agents` pytest (excluding test_live.py),
+and publishes the Docker image.
 
 ## Project structure
 
@@ -384,10 +439,11 @@ Python bindings (python/):
         examples/                 Jericho IF agent, gridworld
         test/                     55 unit tests
         CLAUDE.md                 Package-specific guidance
-    examples/                     Legacy examples (still functional)
+    examples/                     Runnable DSL programs
       coin.bdsl                   Biased coin learning
       credence_agent.bdsl         Agent DSL (pure functions, host-driven)
       grid_agent.bdsl             Grid agent DSL
+      router.bdsl                 Bayesian LLM/search routing (drives credence-proxy)
       host_credence_agent.jl      Julia host driver for credence agent
     test/
       test_core.jl                Core DSL tests (42 tests)
@@ -406,6 +462,10 @@ Python bindings (python/):
       client.py                   Python client (spawns subprocess, sends RPC)
       test_brain.py               Smoke tests
     papers/                       Publication (credence.tex)
+    Dockerfile                    credence-proxy container (published by CI)
+    SPEC.md                       Authoritative three-tier architecture spec
+    pyproject.toml                uv workspace root (4 members)
+    .github/workflows/            CI: publish-image.yml (tests + Docker publish)
 
 DSL source files use the `.bdsl` extension.
 
