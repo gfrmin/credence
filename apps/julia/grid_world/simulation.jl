@@ -8,7 +8,7 @@ World rules determine classification logic. The active rule can change
 mid-run (regime change) without notification to the agent.
 """
 
-push!(LOAD_PATH, joinpath(@__DIR__, "..", "..", "src"))
+push!(LOAD_PATH, joinpath(@__DIR__, "..", "..", "..", "src"))
 using Credence
 
 # ── Enums ──

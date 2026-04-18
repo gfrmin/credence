@@ -10,14 +10,14 @@ pre-generated in a response table before any agent runs.
 Results stored in SQLite at results/benchmark.db.
 
 Usage:
-    julia domains/qa_benchmark/host.jl                          # 20 seeds, fast agents only
-    julia domains/qa_benchmark/host.jl --seeds 3                # quick test
-    julia domains/qa_benchmark/host.jl --seeds 20 --include-llm # with LLM agents
-    julia domains/qa_benchmark/host.jl --seeds 20 --llm-only --model claude-haiku-4-5-20251001
+    julia apps/julia/qa_benchmark/host.jl                          # 20 seeds, fast agents only
+    julia apps/julia/qa_benchmark/host.jl --seeds 3                # quick test
+    julia apps/julia/qa_benchmark/host.jl --seeds 20 --include-llm # with LLM agents
+    julia apps/julia/qa_benchmark/host.jl --seeds 20 --llm-only --model claude-haiku-4-5-20251001
 """
 
 # --- Setup ---
-push!(LOAD_PATH, joinpath(@__DIR__, "..", "..", "src"))
+push!(LOAD_PATH, joinpath(@__DIR__, "..", "..", "..", "src"))
 using Credence
 using Random
 

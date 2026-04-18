@@ -29,10 +29,9 @@ credence-llm-state.json
 credence-state.json
 *.bin
 
-# Domains and tests not needed for proxy
-domains/
+# Julia apps (domains, pomdp_agent) and tests — not needed for proxy
+apps/julia/
 test/
-julia/pomdp_agent/
 
 # Bayesian IF (separate application)
 python/bayesian_if/

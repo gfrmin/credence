@@ -19,7 +19,7 @@ Both LLM agents are driven by `llm_agent.jl`.
 ## File Layout
 
 ```
-domains/qa_benchmark/
+apps/julia/qa_benchmark/
   README.md         ← this file (the authoritative spec)
   environment.jl    ← tools + questions + query_tool()
   agent.bdsl        ← DSL agent (VOI-based tool selection)
@@ -311,25 +311,25 @@ agents learn to route numerical questions to the calculator.
 
 ```bash
 # Fast agents only (Bayesian + baselines), 20 seeds
-julia domains/qa_benchmark/host.jl --seeds 20
+julia apps/julia/qa_benchmark/host.jl --seeds 20
 
 # Include Ollama LLM agent
-julia domains/qa_benchmark/host.jl --seeds 20 --include-llm
+julia apps/julia/qa_benchmark/host.jl --seeds 20 --include-llm
 
 # Include Ollama with specific model
-julia domains/qa_benchmark/host.jl --seeds 20 --include-llm --model llama3.1
+julia apps/julia/qa_benchmark/host.jl --seeds 20 --include-llm --model llama3.1
 
 # Include Anthropic (requires ANTHROPIC_API_KEY)
-julia domains/qa_benchmark/host.jl --seeds 20 --include-llm --model claude-sonnet
+julia apps/julia/qa_benchmark/host.jl --seeds 20 --include-llm --model claude-sonnet
 
 # Both LLM backends
-julia domains/qa_benchmark/host.jl --seeds 20 --include-llm --model llama3.1 --model claude-sonnet
+julia apps/julia/qa_benchmark/host.jl --seeds 20 --include-llm --model llama3.1 --model claude-sonnet
 
 # Quick sanity check
-julia domains/qa_benchmark/host.jl --seeds 2
+julia apps/julia/qa_benchmark/host.jl --seeds 2
 
 # Ablation (Bayesian variants only)
-julia domains/qa_benchmark/host.jl --seeds 20 --ablation
+julia apps/julia/qa_benchmark/host.jl --seeds 20 --ablation
 ```
 
 ---
@@ -351,23 +351,23 @@ Implemented as keyword arguments to the Bayesian agent runner:
 ## Migration from Current Code
 
 ### Files to DELETE
-- `domains/qa_benchmark/tools.jl` (merged into environment.jl)
-- `domains/qa_benchmark/questions.jl` (merged into environment.jl)
-- `domains/qa_benchmark/llm_agents.jl` (replaced by llm_agent.jl)
+- `apps/julia/qa_benchmark/tools.jl` (merged into environment.jl)
+- `apps/julia/qa_benchmark/questions.jl` (merged into environment.jl)
+- `apps/julia/qa_benchmark/llm_agents.jl` (replaced by llm_agent.jl)
 
 ### Files to MOVE
-- `examples/credence_agent.bdsl` → `domains/qa_benchmark/agent.bdsl`
+- `examples/credence_agent.bdsl` → `apps/julia/qa_benchmark/agent.bdsl`
   (simplify: remove coverage handling, use `(range n-tools)`)
 
 ### Files to CREATE
-- `domains/qa_benchmark/README.md` (this file)
-- `domains/qa_benchmark/environment.jl` (merge tools.jl + questions.jl)
-- `domains/qa_benchmark/llm_agent.jl` (new, native tool-calling)
+- `apps/julia/qa_benchmark/README.md` (this file)
+- `apps/julia/qa_benchmark/environment.jl` (merge tools.jl + questions.jl)
+- `apps/julia/qa_benchmark/llm_agent.jl` (new, native tool-calling)
 
 ### Files to REWRITE
-- `domains/qa_benchmark/host.jl` (simplified: no coverage, no cat inference,
+- `apps/julia/qa_benchmark/host.jl` (simplified: no coverage, no cat inference,
   with reliability learning, load agent.bdsl from this directory)
-- `domains/qa_benchmark/metrics.jl` (add tool_responses to QuestionResult)
+- `apps/julia/qa_benchmark/metrics.jl` (add tool_responses to QuestionResult)
 
 ### Files to MODIFY (outside domain)
 - `src/eval.jl` — add `range` primitive

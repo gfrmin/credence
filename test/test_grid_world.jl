@@ -17,7 +17,7 @@ using Credence: enumerate_programs, compile_kernel
 using Credence: aggregate_grammar_weights
 
 # Load grid-world domain
-include(joinpath(@__DIR__, "..", "domains", "grid_world", "host.jl"))
+include(joinpath(@__DIR__, "..", "apps", "julia", "grid_world", "host.jl"))
 
 using Random
 

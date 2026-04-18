@@ -4,7 +4,7 @@
 
     Tier 1: DSL core (this module)
     Tier 2: Program-space inference (ProgramSpace submodule)
-    Tier 3: Domain applications (domains/)
+    Tier 3: Domain applications (apps/julia/)
 """
 module Credence
 

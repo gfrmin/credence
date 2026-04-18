@@ -4,7 +4,7 @@
 """
 
 push!(LOAD_PATH, joinpath(@__DIR__, "..", "src"))
-include(joinpath(@__DIR__, "..", "domains", "rss", "host.jl"))
+include(joinpath(@__DIR__, "..", "apps", "julia", "rss", "host.jl"))
 
 using Dates
 using Random

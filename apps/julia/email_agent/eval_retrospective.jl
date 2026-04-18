@@ -10,7 +10,7 @@ Fetches both sets, shuffles, splits 70/30 train/test, runs the agent
 through training with conditioning, then evaluates on held-out test set.
 """
 
-push!(LOAD_PATH, joinpath(@__DIR__, "..", "..", "src"))
+push!(LOAD_PATH, joinpath(@__DIR__, "..", "..", "..", "src"))
 using Credence
 using Credence: weights, mean, condition
 using Credence: TaggedBetaMeasure, MixtureMeasure, BetaMeasure

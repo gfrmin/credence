@@ -5,7 +5,7 @@ Email-specific seed grammars. GTExpr/LTExpr reference raw observable
 features directly (e.g., :subject_has_you, :sender_is_bulk_domain).
 """
 
-push!(LOAD_PATH, joinpath(@__DIR__, "..", "..", "src"))
+push!(LOAD_PATH, joinpath(@__DIR__, "..", "..", "..", "src"))
 using Credence
 using Credence: Grammar, ProductionRule
 using Credence: GTExpr, LTExpr, AndExpr, OrExpr, NotExpr

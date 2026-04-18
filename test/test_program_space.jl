@@ -14,8 +14,8 @@ using Credence: prune, truncate
 using Credence: ActionExpr, IfExpr
 
 # Grid-world simulation and terminals for program enumeration tests
-include(joinpath(@__DIR__, "..", "domains", "grid_world", "simulation.jl"))
-include(joinpath(@__DIR__, "..", "domains", "grid_world", "terminals.jl"))
+include(joinpath(@__DIR__, "..", "apps", "julia", "grid_world", "simulation.jl"))
+include(joinpath(@__DIR__, "..", "apps", "julia", "grid_world", "terminals.jl"))
 
 using Random
 

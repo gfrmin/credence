@@ -25,7 +25,7 @@ papers/*.log
 papers/*.pdf
 
 # Debug logs
-domains/qa_benchmark/llm_debug.log
+apps/julia/qa_benchmark/llm_debug.log
 
 # Claude Code local settings
 .claude/

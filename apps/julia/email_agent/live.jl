@@ -7,8 +7,8 @@ host.jl, but with interactive CLI review instead of a simulated user.
 All actions are timed and feed the cost model. State persists across sessions.
 
 Usage:
-    julia domains/email_agent/live.jl
-    OLLAMA_URL=http://localhost:11434 julia domains/email_agent/live.jl
+    julia apps/julia/email_agent/live.jl
+    OLLAMA_URL=http://localhost:11434 julia apps/julia/email_agent/live.jl
 """
 
 # host.jl brings all domain files + Credence imports + shared functions

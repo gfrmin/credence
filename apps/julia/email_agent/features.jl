@@ -10,7 +10,7 @@ Content features (15 keys) plus optional processing-state features (9 keys)
 for multi-step episodes.
 """
 
-push!(LOAD_PATH, joinpath(@__DIR__, "..", "..", "src"))
+push!(LOAD_PATH, joinpath(@__DIR__, "..", "..", "..", "src"))
 using Credence
 using Credence: Grammar
 

@@ -5,7 +5,7 @@
     feed names and tag names vary per installation.
 """
 
-push!(LOAD_PATH, joinpath(@__DIR__, "..", "..", "src"))
+push!(LOAD_PATH, joinpath(@__DIR__, "..", "..", "..", "src"))
 using Credence
 using Credence: Grammar, ProductionRule
 using Credence: GTExpr, LTExpr, AndExpr, OrExpr, NotExpr

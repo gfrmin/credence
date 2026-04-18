@@ -14,7 +14,7 @@ Tier 3: grid-world-specific. Uses Tier 1 (Credence DSL) and Tier 2
 (ProgramSpace) for domain-independent inference machinery.
 """
 
-push!(LOAD_PATH, joinpath(@__DIR__, "..", "..", "src"))
+push!(LOAD_PATH, joinpath(@__DIR__, "..", "..", "..", "src"))
 using Credence
 using Credence: expect, condition, draw, optimise, value, weights, mean
 using Credence: CategoricalMeasure, BetaMeasure, TaggedBetaMeasure, MixtureMeasure

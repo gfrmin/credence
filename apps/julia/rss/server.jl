@@ -6,13 +6,13 @@
     Exposes ranking and conditioning endpoints for the Python sidecar.
 
     Usage:
-        DATABASE_URL=postgres://... julia domains/rss/server.jl
+        DATABASE_URL=postgres://... julia apps/julia/rss/server.jl
 
     Startup: connects to DB, initializes agent from feeds/tags,
     bootstraps from historical read events, then serves HTTP on port 8081.
 """
 
-push!(LOAD_PATH, joinpath(@__DIR__, "..", "..", "src"))
+push!(LOAD_PATH, joinpath(@__DIR__, "..", "..", "..", "src"))
 include(joinpath(@__DIR__, "host.jl"))
 include(joinpath(@__DIR__, "db.jl"))
 

@@ -12,7 +12,7 @@
     (ProgramSpace) for domain-independent inference machinery.
 """
 
-push!(LOAD_PATH, joinpath(@__DIR__, "..", "..", "src"))
+push!(LOAD_PATH, joinpath(@__DIR__, "..", "..", "..", "src"))
 using Credence
 using Credence: expect, condition, draw, weights, mean, logsumexp
 using Credence: CategoricalMeasure, BetaMeasure, TaggedBetaMeasure, MixtureMeasure

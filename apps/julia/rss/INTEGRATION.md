@@ -140,14 +140,14 @@ RUN julia --project=. -e 'using Pkg; Pkg.add(["HTTP", "JSON3", "LibPQ"]); Pkg.pr
 # Copy Credence DSL source
 COPY credence/src/ /app/src/
 
-# Copy RSS domain
-COPY credence/domains/rss/ /app/domains/rss/
+# Copy RSS app
+COPY credence/apps/julia/rss/ /app/apps/julia/rss/
 
 # Precompile
-RUN julia -e 'push!(LOAD_PATH, "src"); include("domains/rss/server.jl")'
+RUN julia -e 'push!(LOAD_PATH, "src"); include("apps/julia/rss/server.jl")'
 
 EXPOSE 8081
-CMD ["julia", "domains/rss/server.jl"]
+CMD ["julia", "apps/julia/rss/server.jl"]
 ```
 
 **Build context:** The Dockerfile expects the Credence source to be available.
@@ -157,10 +157,10 @@ For development, use volume mounts instead of COPY:
   credence:
     image: julia:1.11-bookworm
     working_dir: /app
-    command: julia domains/rss/server.jl
+    command: julia apps/julia/rss/server.jl
     volumes:
       - /path/to/bayesian-stuff/credence/src:/app/src:ro
-      - /path/to/bayesian-stuff/credence/domains/rss:/app/domains/rss:ro
+      - /path/to/bayesian-stuff/credence/apps/julia/rss:/app/apps/julia/rss:ro
     environment:
       DATABASE_URL: postgres://miniflux:${POSTGRES_PASSWORD:-miniflux}@db/miniflux?sslmode=disable
     depends_on:
