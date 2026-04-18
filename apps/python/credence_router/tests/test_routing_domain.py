@@ -175,7 +175,7 @@ class TestRoutingDomainWithBrain:
         julia_exe = os.environ.get("CREDENCE_JULIA", "julia")
         client = BrainClient(
             julia=julia_exe,
-            server_path=_REPO_ROOT / "brain" / "server.jl",
+            server_path=_REPO_ROOT / "apps" / "brain" / "server.jl",
             project=str(_REPO_ROOT),
         )
         client.initialize(

@@ -125,7 +125,7 @@ def _init_llm_domain():
     # present); local dev machines may have a different julia binary with
     # a matching depot (CREDENCE_JULIA lets us choose).
     julia_exe = os.environ.get("CREDENCE_JULIA") or str(juliapkg.executable())
-    server_path = _REPO_ROOT / "brain" / "server.jl"
+    server_path = _REPO_ROOT / "apps" / "brain" / "server.jl"
     _brain = BrainClient(
         julia=julia_exe,
         server_path=server_path,

@@ -32,7 +32,7 @@ RUN uv sync --extra server --extra search --no-dev 2>&1 | tail -5
 # Copy Julia DSL source (needed for precompilation)
 COPY src/ src/
 COPY examples/ examples/
-COPY brain/ brain/
+COPY apps/brain/ apps/brain/
 COPY Project.toml ./
 
 # Resolve Julia via pyjuliapkg + precompile Credence + brain/server.jl deps.
@@ -71,7 +71,7 @@ COPY --from=build /credence/.venv /credence/.venv
 # Copy source code
 COPY --from=build /credence/src/ src/
 COPY --from=build /credence/examples/ examples/
-COPY --from=build /credence/brain/ brain/
+COPY --from=build /credence/apps/brain/ apps/brain/
 COPY --from=build /credence/Project.toml /credence/Manifest.toml ./
 COPY --from=build /credence/apps/python/ apps/python/
 

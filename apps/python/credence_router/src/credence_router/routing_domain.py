@@ -7,7 +7,7 @@ Observe is factor → condition → replace_factor on the chosen leaf.
 
 No DSL wrappers around axiom-constrained operations. The host
 orchestrates the primitives directly against the protocol handlers
-in brain/server.jl.
+in apps/brain/server.jl.
 """
 
 from __future__ import annotations
@@ -31,7 +31,7 @@ log = logging.getLogger(__name__)
 
 
 def _ensure_brain_importable() -> Path:
-    """Locate brain/ and make it importable. Returns the dir containing brain/."""
+    """Locate apps/brain/ and make it importable. Returns the repo root."""
     candidates: list[Path] = []
     env = os.environ.get("CREDENCE_REPO_ROOT")
     if env:
@@ -39,13 +39,13 @@ def _ensure_brain_importable() -> Path:
     candidates.extend(Path(__file__).resolve().parents)
     candidates.append(Path("/credence"))
     for root in candidates:
-        if (root / "brain" / "client.py").is_file():
-            s = str(root)
-            if s not in sys.path:
-                sys.path.insert(0, s)
+        if (root / "apps" / "brain" / "client.py").is_file():
+            apps_dir = str(root / "apps")
+            if apps_dir not in sys.path:
+                sys.path.insert(0, apps_dir)
             return root
     raise RuntimeError(
-        "Could not locate brain/client.py. Set CREDENCE_REPO_ROOT to the repo root."
+        "Could not locate apps/brain/client.py. Set CREDENCE_REPO_ROOT to the repo root."
     )
 
 

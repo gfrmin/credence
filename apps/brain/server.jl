@@ -1,6 +1,6 @@
 #!/usr/bin/env julia
 """
-    brain/server.jl — Credence brain process
+    apps/brain/server.jl — Credence brain process
 
 JSON-RPC 2.0 over stdio. Reads newline-delimited JSON from stdin,
 writes responses to stdout, logs to stderr.
@@ -10,7 +10,7 @@ in a registry keyed by opaque string IDs. The host never sees the internal
 representation — only the ID.
 """
 
-push!(LOAD_PATH, joinpath(@__DIR__, "..", "src"))
+push!(LOAD_PATH, joinpath(@__DIR__, "..", "..", "src"))
 using Credence
 using Credence: expect, condition, push_measure, draw, density
 using Credence: weights, mean, variance, prune, truncate, logsumexp
