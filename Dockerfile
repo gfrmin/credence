@@ -18,13 +18,13 @@ WORKDIR /credence
 
 # Copy workspace definition and all Python packages
 COPY pyproject.toml uv.lock* ./
-COPY python/credence_bindings/ python/credence_bindings/
-COPY python/credence_agents/ python/credence_agents/
-COPY python/credence_router/ python/credence_router/
+COPY apps/python/credence_bindings/ apps/python/credence_bindings/
+COPY apps/python/credence_agents/ apps/python/credence_agents/
+COPY apps/python/credence_router/ apps/python/credence_router/
 # Stub for bayesian_if (workspace member, not needed but must exist for uv)
-RUN mkdir -p python/bayesian_if && \
+RUN mkdir -p apps/python/bayesian_if && \
     echo '[project]\nname = "bayesian-if"\nversion = "0.0.0"\nrequires-python = ">=3.11"' \
-    > python/bayesian_if/pyproject.toml
+    > apps/python/bayesian_if/pyproject.toml
 
 # Install Python packages with server + search extras
 RUN uv sync --extra server --extra search --no-dev 2>&1 | tail -5
@@ -73,7 +73,7 @@ COPY --from=build /credence/src/ src/
 COPY --from=build /credence/examples/ examples/
 COPY --from=build /credence/brain/ brain/
 COPY --from=build /credence/Project.toml /credence/Manifest.toml ./
-COPY --from=build /credence/python/ python/
+COPY --from=build /credence/apps/python/ apps/python/
 
 # Copy Julia depot with precompiled packages
 COPY --from=build /root/.julia /root/.julia

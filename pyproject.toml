@@ -1,7 +1,7 @@
 [tool.uv.workspace]
 members = [
-    "python/credence_bindings",
-    "python/credence_agents",
-    "python/credence_router",
-    "python/bayesian_if",
+    "apps/python/credence_bindings",
+    "apps/python/credence_agents",
+    "apps/python/credence_router",
+    "apps/python/bayesian_if",
 ]

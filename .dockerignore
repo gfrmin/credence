@@ -34,4 +34,4 @@ apps/julia/
 test/
 
 # Bayesian IF (separate application)
-python/bayesian_if/
+apps/python/bayesian_if/

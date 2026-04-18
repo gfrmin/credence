@@ -36,8 +36,9 @@ class CredenceBridge:
         dsl_path = self._dsl_path
         credence_src = self._credence_src
         if dsl_path is None:
-            # Monorepo: ../../examples/credence_agent.bdsl relative to this file
-            monorepo = Path(__file__).resolve().parent.parent.parent.parent
+            # Monorepo: apps/python/credence_agents/credence_agents/julia_bridge.py
+            # → 5 levels up to reach repo root.
+            monorepo = Path(__file__).resolve().parents[4]
             candidate = monorepo / "examples" / "credence_agent.bdsl"
             if candidate.exists():
                 dsl_path = str(candidate)
@@ -51,7 +52,7 @@ class CredenceBridge:
                         "Cannot find credence_agent.bdsl. Pass dsl_path= explicitly."
                     )
         if credence_src is None:
-            monorepo = Path(__file__).resolve().parent.parent.parent.parent
+            monorepo = Path(__file__).resolve().parents[4]
             candidate = monorepo / "src"
             if candidate.exists():
                 credence_src = str(candidate)

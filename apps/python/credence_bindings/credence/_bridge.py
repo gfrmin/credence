@@ -25,7 +25,7 @@ class _Bridge:
         # root, not the src/ directory — we append src/ ourselves so a stable
         # marker file (src/Credence.jl) can be checked.
         env_root = os.environ.get("CREDENCE_SRC")
-        monorepo_root = Path(__file__).resolve().parents[3]
+        monorepo_root = Path(__file__).resolve().parents[4]
         if env_root is not None:
             repo_root = Path(env_root)
             origin = f"CREDENCE_SRC={env_root}"

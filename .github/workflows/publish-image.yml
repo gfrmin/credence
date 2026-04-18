@@ -44,9 +44,9 @@ jobs:
           PYTHON_JULIACALL_HANDLE_SIGNALS: "yes"
         run: |
           uv run pytest \
-            python/credence_router/tests/ \
-            python/credence_agents/tests/ \
-            --ignore=python/credence_router/tests/test_live.py \
+            apps/python/credence_router/tests/ \
+            apps/python/credence_agents/tests/ \
+            --ignore=apps/python/credence_router/tests/test_live.py \
             -v
 
   build-smoke-publish:
