@@ -3,11 +3,11 @@
 Practical guidance for Claude Code working in this package.
 
 This is the POMDP agent package within the credence monorepo.
-Location: `credence/julia/pomdp_agent/`
+Location: `credence/apps/julia/pomdp_agent/`
 
 ## Build & Run
 
-Julia >= 1.9 required. Run from this directory (`credence/julia/pomdp_agent/`).
+Julia >= 1.9 required. Run from this directory (`credence/apps/julia/pomdp_agent/`).
 
     julia --project=. -e 'using Pkg; Pkg.instantiate()'
     julia --project=. -e 'using Pkg; Pkg.test()'
