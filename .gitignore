@@ -11,6 +11,10 @@ credence-llm-state.json
 # Python
 __pycache__/
 *.egg-info/
+/dist/
+
+# Eval data artefacts (outputs, not inputs)
+/data/
 
 # Serena cache (config is committed, cache is not)
 .serena/cache/
