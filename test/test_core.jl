@@ -1432,5 +1432,40 @@ end
 println()
 
 println("=" ^ 60)
+println("TEST: condition(m, e::Event) equivalence to condition(m, indicator_kernel(e), true)")
+println("=" ^ 60)
+
+# Di Lavore–Román–Sobociński Prop. 4.9 in the codebase:
+# the sibling form is provably equivalent to the parametric form at
+# observation `true` for any deterministic event. Pin this as a
+# regression canary — if someone later routes condition(::Event)
+# through a separate code path, this catches semantic drift.
+
+let
+    sp = Interval(0.0, 1.0)
+    components = [TaggedBetaMeasure(sp, t, BetaMeasure(2.0 + t, 3.0)) for t in 1:5]
+    m = MixtureMeasure(sp, components, Float64[0.0, -0.5, 0.1, 0.2, -0.3])
+
+    events = Event[
+        TagSet(sp, Set([1, 3, 5])),
+        TagSet(sp, Set([2, 4])),
+        TagSet(sp, Set([1, 2, 3, 4, 5])),        # all — trivial case
+        Complement(TagSet(sp, Set([3]))),
+        Conjunction(TagSet(sp, Set([1, 2, 3, 4])), TagSet(sp, Set([2, 3, 4, 5]))),
+        Disjunction(TagSet(sp, Set([1])), TagSet(sp, Set([5]))),
+    ]
+    for (i, e) in enumerate(events)
+        lhs = condition(m, e)
+        rhs = condition(m, indicator_kernel(e), true)
+        w_lhs = weights(lhs)
+        w_rhs = weights(rhs)
+        close_enough = all(abs(w_lhs[j] - w_rhs[j]) < 1e-12 for j in eachindex(w_lhs))
+        @assert close_enough "event $i: weights diverge"
+    end
+    println("PASSED: 6 event variants — both condition forms agree to 1e-12")
+end
+
+println()
+println("=" ^ 60)
 println("ALL TESTS PASSED")
 println("=" ^ 60)
