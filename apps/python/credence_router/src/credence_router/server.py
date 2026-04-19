@@ -27,7 +27,7 @@ app = FastAPI(title="credence-proxy", version="0.2.0")
 # Global state (initialised on startup)
 _search_router = None
 _llm_domain = None
-_brain = None  # brain.client.BrainClient, spawned in _init_llm_domain
+_brain = None  # skin.client.SkinClient, spawned in _init_llm_domain
 _state_path: Path | None = None
 _llm_state_path: Path | None = None
 _request_log: list[dict] = []
@@ -112,10 +112,10 @@ def _init_llm_domain():
         log.info("No LLM API keys found — LLM routing disabled")
         return
 
-    # Import BrainClient via the routing_domain module which has already
-    # located brain/ on sys.path. Resolve the Julia binary from juliapkg
-    # so the brain subprocess can spawn without PATH mutation.
-    from credence_router.routing_domain import BrainClient, _REPO_ROOT
+    # Import SkinClient via the routing_domain module which has already
+    # located skin/ on sys.path. Resolve the Julia binary from juliapkg
+    # so the skin subprocess can spawn without PATH mutation.
+    from credence_router.routing_domain import SkinClient, _REPO_ROOT
     import juliapkg
 
     from credence_router.categories import LLM_CATEGORIES, make_llm_category_infer_fn
@@ -125,8 +125,8 @@ def _init_llm_domain():
     # present); local dev machines may have a different julia binary with
     # a matching depot (CREDENCE_JULIA lets us choose).
     julia_exe = os.environ.get("CREDENCE_JULIA") or str(juliapkg.executable())
-    server_path = _REPO_ROOT / "apps" / "brain" / "server.jl"
-    _brain = BrainClient(
+    server_path = _REPO_ROOT / "apps" / "skin" / "server.jl"
+    _brain = SkinClient(
         julia=julia_exe,
         server_path=server_path,
         project=str(_REPO_ROOT),
@@ -139,7 +139,7 @@ def _init_llm_domain():
     reward = float(os.environ.get("CREDENCE_REWARD", "1.0"))
 
     _llm_domain = RoutingDomain(
-        brain=_brain,
+        skin=_brain,
         provider_names=model_names,
         costs=costs,
         categories=LLM_CATEGORIES,
@@ -150,13 +150,13 @@ def _init_llm_domain():
 
 
 @app.on_event("shutdown")
-def _shutdown_brain():
+def _shutdown_skin():
     global _brain
     if _brain is not None:
         try:
             _brain.shutdown()
         except Exception as e:
-            log.warning("brain shutdown failed: %s", e)
+            log.warning("skin shutdown failed: %s", e)
         _brain = None
 
 
@@ -380,7 +380,7 @@ def health():
 
 @app.get("/ready")
 def readiness():
-    """Readiness probe — validates the brain is responsive (for Docker/k8s)."""
+    """Readiness probe — validates the skin is responsive (for Docker/k8s)."""
     if _brain is not None:
         try:
             _brain.n_factors(_llm_domain._state_id)

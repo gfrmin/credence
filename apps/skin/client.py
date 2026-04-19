@@ -1,12 +1,12 @@
-"""Credence brain client — spawns Julia brain process, talks JSON-RPC over stdio.
+"""Credence skin client — spawns Julia skin process, talks JSON-RPC over stdio.
 
 Usage:
-    brain = BrainClient()
-    brain.initialize(dsl_files={"router": "examples/router.bdsl"})
-    state_id = brain.create_state(type="beta", alpha=1.0, beta=1.0)
-    brain.condition(state_id, kernel={"type": "bernoulli"}, observation=1.0)
-    w = brain.weights(state_id)
-    brain.shutdown()
+    skin = SkinClient()
+    skin.initialize(dsl_files={"router": "examples/router.bdsl"})
+    state_id = skin.create_state(type="beta", alpha=1.0, beta=1.0)
+    skin.condition(state_id, kernel={"type": "bernoulli"}, observation=1.0)
+    w = skin.weights(state_id)
+    skin.shutdown()
 """
 
 from __future__ import annotations
@@ -21,16 +21,16 @@ from typing import Any
 log = logging.getLogger(__name__)
 
 
-class BrainError(Exception):
-    """Error from the brain process."""
+class SkinError(Exception):
+    """Error from the skin process."""
 
     def __init__(self, code: int, message: str):
         self.code = code
         super().__init__(f"[{code}] {message}")
 
 
-class BrainClient:
-    """Spawns a Julia brain subprocess, communicates via JSON-RPC 2.0 over stdio."""
+class SkinClient:
+    """Spawns a Julia skin subprocess, communicates via JSON-RPC 2.0 over stdio."""
 
     def __init__(
         self,
@@ -55,7 +55,7 @@ class BrainClient:
         if self._project:
             argv.append(f"--project={self._project}")
         argv.append(self._server_path)
-        log.info("Starting brain process: %s", " ".join(argv))
+        log.info("Starting skin process: %s", " ".join(argv))
         self._process = subprocess.Popen(
             argv,
             stdin=subprocess.PIPE,
@@ -91,14 +91,14 @@ class BrainClient:
             stderr = ""
             if self._process.stderr:
                 stderr = self._process.stderr.read()
-            raise BrainError(-1, f"Brain process died. stderr: {stderr}")
+            raise SkinError(-1, f"Skin process died. stderr: {stderr}")
 
         log.debug("← %s", response_line.rstrip())
         response = json.loads(response_line)
 
         if "error" in response:
             err = response["error"]
-            raise BrainError(err["code"], err["message"])
+            raise SkinError(err["code"], err["message"])
 
         return response["result"]
 
@@ -109,7 +109,7 @@ class BrainClient:
         dsl_files: dict[str, str | Path] | None = None,
         plugins: list[str | Path] | None = None,
     ) -> dict:
-        """Initialize the brain. Must be called before other operations."""
+        """Initialize the skin. Must be called before other operations."""
         params: dict[str, Any] = {}
         if dsl_files:
             params["dsl_files"] = {
@@ -123,7 +123,7 @@ class BrainClient:
         """Graceful shutdown."""
         try:
             self._call("shutdown")
-        except (BrainError, BrokenPipeError):
+        except (SkinError, BrokenPipeError):
             pass
         if self._process:
             self._process.terminate()

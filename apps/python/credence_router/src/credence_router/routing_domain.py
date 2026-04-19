@@ -1,13 +1,13 @@
-"""RoutingDomain: provider routing via the brain server.
+"""RoutingDomain: provider routing via the skin server.
 
 State is a nested ProductMeasure (providers × categories × (theta, k)).
-Decide is `brain.optimise` with a `functional_per_action` spec of
+Decide is `skin.optimise` with a `functional_per_action` spec of
 LinearCombination of NestedProjections that descends to the θ leaf.
 Observe is factor → condition → replace_factor on the chosen leaf.
 
 No DSL wrappers around axiom-constrained operations. The host
 orchestrates the primitives directly against the protocol handlers
-in apps/brain/server.jl.
+in apps/skin/server.jl.
 """
 
 from __future__ import annotations
@@ -30,8 +30,8 @@ from numpy.typing import NDArray
 log = logging.getLogger(__name__)
 
 
-def _ensure_brain_importable() -> Path:
-    """Locate apps/brain/ and make it importable. Returns the repo root."""
+def _ensure_skin_importable() -> Path:
+    """Locate apps/skin/ and make it importable. Returns the repo root."""
     candidates: list[Path] = []
     env = os.environ.get("CREDENCE_REPO_ROOT")
     if env:
@@ -39,18 +39,18 @@ def _ensure_brain_importable() -> Path:
     candidates.extend(Path(__file__).resolve().parents)
     candidates.append(Path("/credence"))
     for root in candidates:
-        if (root / "apps" / "brain" / "client.py").is_file():
+        if (root / "apps" / "skin" / "client.py").is_file():
             apps_dir = str(root / "apps")
             if apps_dir not in sys.path:
                 sys.path.insert(0, apps_dir)
             return root
     raise RuntimeError(
-        "Could not locate apps/brain/client.py. Set CREDENCE_REPO_ROOT to the repo root."
+        "Could not locate apps/skin/client.py. Set CREDENCE_REPO_ROOT to the repo root."
     )
 
 
-_REPO_ROOT = _ensure_brain_importable()
-from brain.client import BrainClient  # noqa: E402
+_REPO_ROOT = _ensure_skin_importable()
+from skin.client import SkinClient  # noqa: E402
 
 if TYPE_CHECKING:
     pass
@@ -86,7 +86,7 @@ class RouteDecision:
     wall_time: float = 0.0
 
 
-def _make_router_state(brain: BrainClient, n_providers: int, n_categories: int) -> str:
+def _make_router_state(skin: SkinClient, n_providers: int, n_categories: int) -> str:
     """Build a nested ProductMeasure state.
 
     Shape: providers × categories × (theta, concentration).
@@ -102,7 +102,7 @@ def _make_router_state(brain: BrainClient, n_providers: int, n_categories: int) 
     }
     provider = {"type": "product", "factors": [leaf for _ in range(n_categories)]}
     state = {"type": "product", "factors": [provider for _ in range(n_providers)]}
-    return brain.create_state(**state)
+    return skin.create_state(**state)
 
 
 def _router_preference(
@@ -137,23 +137,23 @@ def _router_preference(
 
 
 class RoutingDomain:
-    """Provider routing backed by the brain server.
+    """Provider routing backed by the skin server.
 
     The host holds one state_id and orchestrates:
-    - route()          → brain.optimise(state, actions, functional_per_action)
+    - route()          → skin.optimise(state, actions, functional_per_action)
     - _apply_outcome() → factor → condition → replace_factor chain
     """
 
     def __init__(
         self,
-        brain: BrainClient,
+        skin: SkinClient,
         provider_names: list[str],
         costs: list[float],
         categories: tuple[str, ...],
         category_infer: Callable[[str], NDArray[np.float64]],
         reward: float = 1.0,
     ):
-        self._brain = brain
+        self._brain = skin
         self._provider_names = provider_names
         self._costs = list(costs)
         self._categories = categories
@@ -161,7 +161,7 @@ class RoutingDomain:
         self._reward = reward
 
         self._state_id = _make_router_state(
-            brain, len(provider_names), len(categories),
+            skin, len(provider_names), len(categories),
         )
         self._actions_spec = {
             "type": "finite",
@@ -172,7 +172,7 @@ class RoutingDomain:
         self._cached_reliability: dict[str, dict[str, float]] = {}
 
         # Outcome queue: async judge appends here, route() drains synchronously
-        # before deciding. Keeps brain-subprocess calls off the async path.
+        # before deciding. Keeps skin-subprocess calls off the async path.
         self._pending_outcomes: deque[tuple[Observation, RouteDecision]] = deque()
 
         # Warm the reliability cache so /state returns useful data before
@@ -222,7 +222,7 @@ class RoutingDomain:
     def queue_outcome(self, observation: Observation) -> None:
         """Queue an outcome for processing on the next route() call.
 
-        Thread-safe: appends to a deque. No brain calls — safe from async context.
+        Thread-safe: appends to a deque. No skin calls — safe from async context.
         """
         if self._last_decision is None:
             return
@@ -237,11 +237,11 @@ class RoutingDomain:
     def _apply_outcome(self, observation: Observation, decision: RouteDecision) -> None:
         """Update beliefs from an observed outcome via factor → condition → replace_factor.
 
-        NOTE: brain protocol currently supports single-path updates — one
+        NOTE: skin protocol currently supports single-path updates — one
         (provider, category) leaf per observation. We credit the argmax
         category of decision.category_weights. Distributed credit assignment
         across multiple categories needs FiringByTag / DispatchByComponent
-        support in the brain protocol (see CLAUDE.md "No opaque likelihood
+        support in the skin protocol (see CLAUDE.md "No opaque likelihood
         functions" entry); follow-up work.
         """
         if observation.quality_score is not None:
@@ -258,29 +258,29 @@ class RoutingDomain:
             key=lambda i: decision.category_weights[i],
         ))
 
-        brain = self._brain
-        provider_id = brain.factor(self._state_id, decision.provider_idx)
-        category_id = brain.factor(provider_id, cat_idx)
-        brain.condition(
+        skin = self._brain
+        provider_id = skin.factor(self._state_id, decision.provider_idx)
+        category_id = skin.factor(provider_id, cat_idx)
+        skin.condition(
             category_id, kernel={"type": "quality"}, observation=quality,
         )
-        provider_updated = brain.replace_factor(provider_id, cat_idx, category_id)
-        self._state_id = brain.replace_factor(
+        provider_updated = skin.replace_factor(provider_id, cat_idx, category_id)
+        self._state_id = skin.replace_factor(
             self._state_id, decision.provider_idx, provider_updated,
         )
 
     def _compute_reliability(self) -> dict[str, dict[str, float]]:
         """Per-provider per-category E[theta] from the current ProductMeasure."""
-        brain = self._brain
+        skin = self._brain
         theta_projection = {"type": "projection", "index": 0}
         result: dict[str, dict[str, float]] = {}
         for i, name in enumerate(self._provider_names):
-            provider_id = brain.factor(self._state_id, i)
+            provider_id = skin.factor(self._state_id, i)
             result[name] = {}
             for j, cat in enumerate(self._categories):
                 try:
-                    leaf_id = brain.factor(provider_id, j)
-                    mean = float(brain.expect(leaf_id, function=theta_projection))
+                    leaf_id = skin.factor(provider_id, j)
+                    mean = float(skin.expect(leaf_id, function=theta_projection))
                     result[name][cat] = mean
                 except Exception:
                     result[name][cat] = 0.5
@@ -306,7 +306,7 @@ class RoutingDomain:
     # --- State persistence ---
 
     def save_state(self, path: str | Path) -> None:
-        """Persist state via brain snapshot (base64). JSON sidecar holds last_decision."""
+        """Persist state via skin snapshot (base64). JSON sidecar holds last_decision."""
         path = Path(path)
         data_b64 = self._brain.snapshot_state(self._state_id)
         path.write_bytes(base64.b64decode(data_b64))
@@ -321,7 +321,7 @@ class RoutingDomain:
         log.info("LLM state saved to %s", path)
 
     def load_state(self, path: str | Path) -> None:
-        """Restore state via brain snapshot."""
+        """Restore state via skin snapshot."""
         path = Path(path)
         if not path.exists():
             return

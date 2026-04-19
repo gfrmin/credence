@@ -1,11 +1,11 @@
 #!/usr/bin/env julia
 """
-    apps/brain/server.jl — Credence brain process
+    apps/skin/server.jl — Credence skin process
 
 JSON-RPC 2.0 over stdio. Reads newline-delimited JSON from stdin,
 writes responses to stdout, logs to stderr.
 
-The brain holds stateful objects (measures, agent states, DSL environments)
+The skin holds stateful objects (measures, agent states, DSL environments)
 in a registry keyed by opaque string IDs. The host never sees the internal
 representation — only the ID.
 """
@@ -1011,7 +1011,7 @@ end
 # ═══════════════════════════════════════
 
 function main()
-    log_msg("Credence brain server starting...")
+    log_msg("Credence skin server starting...")
 
     for line in eachline(stdin)
         isempty(strip(line)) && continue

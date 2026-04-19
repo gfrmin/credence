@@ -1,6 +1,6 @@
-# Credence Brain Protocol
+# Credence Skin Protocol
 
-JSON-RPC 2.0 over stdio. Brain reads newline-delimited JSON from stdin,
+JSON-RPC 2.0 over stdio. Skin reads newline-delimited JSON from stdin,
 writes newline-delimited JSON to stdout, logs to stderr.
 
 ## Framing
@@ -17,7 +17,7 @@ No Content-Length headers (unlike LSP). One request per line.
 
 ### initialize
 
-Called once after spawning the brain process. Loads the Credence module
+Called once after spawning the skin process. Loads the Credence module
 and optionally preloads DSL programs and Julia plugin files.
 
 ```json
@@ -40,11 +40,11 @@ Response:
 a named DSL environment. The name becomes the `env_id` for `call_dsl`.
 
 `plugins`: optional list of .jl files to `include()`. These can register
-custom kernel constructors in the brain's kernel registry.
+custom kernel constructors in the skin's kernel registry.
 
 ### shutdown
 
-Graceful shutdown. Brain process exits after responding.
+Graceful shutdown. Skin process exits after responding.
 
 ```json
 {"method": "shutdown", "params": {}}
@@ -56,7 +56,7 @@ Graceful shutdown. Brain process exits after responding.
 
 ## State Management
 
-The brain holds stateful objects (measures, agent states, DSL environments)
+The skin holds stateful objects (measures, agent states, DSL environments)
 in a registry keyed by opaque string IDs. The host never sees the internal
 representation -- only the ID.
 
@@ -480,7 +480,7 @@ Call a named function from a loaded DSL environment.
 ```
 
 For DSL functions that return opaque Julia objects (measures, lists of
-measures), the brain wraps them in state IDs automatically. For scalar
+measures), the skin wraps them in state IDs automatically. For scalar
 returns (numbers, booleans), the value is returned directly.
 
 ```json
@@ -549,7 +549,7 @@ Example with state references:
 
 ### Function specs (for expect)
 
-Function specs are serialised `Functional` types. The brain's `expect`
+Function specs are serialised `Functional` types. The skin's `expect`
 dispatches on the Functional subtype to select the optimal computation
 (closed-form for leaf measures, recursive decomposition for ProductMeasure,
 weighted sums for CategoricalMeasure, quadrature or Monte Carlo fallback
