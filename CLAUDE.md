@@ -338,9 +338,9 @@ Run a single Python test file (example):
 `apps/python/credence_router/tests/test_live.py` is excluded from CI (hits
 real provider APIs); run it manually when changing live paths.
 
-Brain server (language-agnostic host interface):
-    julia apps/brain/server.jl                      # holds Measures, evaluates DSL via JSON-RPC
-    python -m brain.test_brain                      # smoke tests (from repo root)
+Skin server (language-agnostic host interface — JSON-RPC wire layer):
+    julia apps/skin/server.jl                       # holds Measures, evaluates DSL via JSON-RPC
+    python -m skin.test_skin                        # smoke tests (from repo root)
 
 credence-proxy (production gateway):
     PYTHON_JULIACALL_HANDLE_SIGNALS=yes credence-router serve
@@ -382,13 +382,8 @@ and publishes the Docker image.
       test_grid_world.jl          Grid-world tests (full agent, regime change, meta-learning)
       test_email_agent.jl         Email agent domain tests
       test_rss.jl                 RSS domain tests
-    apps/                         Everything built on top of the DSL
-      brain/                      Language-agnostic host interface (JSON-RPC)
-        protocol.md               JSON-RPC protocol spec
-        server.jl                 Julia server (holds Measures, evaluates DSL)
-        client.py                 Python client (spawns subprocess, sends RPC)
-        test_brain.py             Smoke tests
-      julia/                      Julia applications of the DSL
+    apps/                         Everything built on top of the DSL — three sub-layers:
+      julia/                      Brain-side applications (in-process DSL callers)
         DOMAIN_INTERFACE.md       Contract for apps/julia domains
         grid_world/               Grid-world domain (simulation, host, terminals, metrics)
         email_agent/              Email domain (JMAP integration, LLM prosthetic)
@@ -397,7 +392,12 @@ and publishes the Docker image.
         pomdp_agent/              POMDP agent package (MCTS, factored models)
           Project.toml            Separate Julia package depending on Credence
           src/, examples/, test/, CLAUDE.md
-      python/                     Python applications (uv workspace; Python >=3.11)
+      skin/                       JSON-RPC translation layer (opaque Measure handles)
+        protocol.md               JSON-RPC protocol spec
+        server.jl                 Julia server (holds Measures, evaluates DSL)
+        client.py                 Python client (spawns subprocess, sends RPC)
+        test_skin.py              Smoke tests
+      python/                     Body — user-facing surfaces, prosthetics, connections (uv workspace; Python >=3.11)
         credence_bindings/        Low-level Python bindings
         credence_agents/          Agent library + Julia bridge + benchmark
         credence_router/          credence-proxy (LLM/search routing gateway)
@@ -431,10 +431,15 @@ Two-tier architecture. See SPEC.md for details.
   a Kernel variant, enumeration/compilation as execution strategies).
   Program-related files are grouped under src/program_space/ for cohesion,
   not as a separate tier.
-- Tier 2 (apps/): Applications — apps/julia/* (Julia domains + pomdp_agent),
-  apps/python/* (credence_bindings, credence_agents, credence_router,
-  bayesian_if), apps/brain/server.jl (JSON-RPC bridge). Each domain provides
-  features, terminals, host driver (see apps/julia/DOMAIN_INTERFACE.md).
+- Tier 2 (apps/): Applications, in three explicit sub-layers relative to the wire:
+  - **Brain-side applications** (`apps/julia/*`) — in-process DSL callers; domains
+    (grid_world, email_agent, rss, qa_benchmark) and the pomdp_agent package.
+    See `apps/julia/DOMAIN_INTERFACE.md`.
+  - **Skin** (`apps/skin/`) — JSON-RPC translation layer. The `SkinClient`
+    Python handle talks to `server.jl`; Measures stay server-side as opaque IDs.
+  - **Body** (`apps/python/*`) — user-facing surfaces, prosthetics, connections:
+    credence_bindings, credence_agents, credence_router (credence-proxy gateway),
+    bayesian_if. The body talks to the skin, never to Measures directly.
 
     ┌─────────────────────────────┐
     │  Three types                │  FROZEN
@@ -455,8 +460,9 @@ Two-tier architecture. See SPEC.md for details.
     │  enumeration, compilation   │
     ├─────────────────────────────┤
     │  Applications (apps/)       │  MUTABLE
-    │  Julia domains, Python      │
-    │  surfaces, JSON-RPC bridge  │
+    │  brain-side  apps/julia/    │  (in-process DSL callers)
+    │  skin        apps/skin/     │  (JSON-RPC translation)
+    │  body        apps/python/   │  (user-facing surfaces)
     └─────────────────────────────┘
 
     Host (Julia): provides observations, executes actions,

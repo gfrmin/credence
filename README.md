@@ -98,15 +98,15 @@ julia test/test_grid_world.jl       # Tier 3: full agent + regime change
 src/                        DSL core: parser, evaluator, ontology (Space, Measure, Kernel)
 src/program_space/          Program-space inference (grammars, enumeration, perturbation)
 examples/                   DSL examples (coin, agent, grid)
-apps/                       Everything built on top of the DSL
-  brain/                    Language-agnostic host interface (JSON-RPC)
-  julia/                    Julia applications
+apps/                       Everything built on top of the DSL (three sub-layers)
+  julia/                    brain-side — in-process DSL callers
     grid_world/             Research environment
     email_agent/            Email triage with JMAP
     qa_benchmark/           QA benchmark harness
     rss/                    RSS article ranking
     pomdp_agent/            POMDP agent (Thompson MCTS, state abstraction)
-  python/                   Python workspace (uv)
+  skin/                     JSON-RPC translation layer (opaque Measure handles)
+  python/                   body — user-facing surfaces (uv workspace)
     credence_bindings/      Python bindings via juliacall
     credence_agents/        Domain-agnostic Bayesian agent library
     credence_router/        credence-proxy: AI gateway for LLM/search routing
