@@ -63,7 +63,7 @@ function run_bayesian_seed(tools::Vector{SimulatedTool},
 
         if greedy
             # Query tool with highest E[reliability], submit its answer directly
-            best_t = argmax(t -> mean(rel_betas[t, cat_idx]), 1:n_tools)
+            best_t = argmax(t -> mean(rel_betas[t, cat_idx]), 1:n_tools)  # credence-lint: allow — precedent:baseline-comparison — greedy baseline: argmax over mean reliability, intentionally non-Bayesian for paper comparison
             q_cost += tools[best_t].cost
             response = response_table[qi, best_t]
             tool_responses[best_t] = response

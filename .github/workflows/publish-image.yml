@@ -37,6 +37,12 @@ jobs:
       - name: Install Python workspace (server + search extras)
         run: uv sync --extra server --extra search --no-dev
 
+      - name: credence-lint corpus self-test
+        run: python3 tools/credence-lint/credence_lint.py --repo-root . test
+
+      - name: credence-lint apps/ (pass one)
+        run: python3 tools/credence-lint/credence_lint.py --repo-root . check apps/
+
       - name: Run credence_router + credence_agents pytest
         env:
           ANTHROPIC_API_KEY: sk-ant-test-smoke

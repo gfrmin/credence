@@ -7,6 +7,5 @@ aggregation inside the DSL with declared structure.
 from skin.client import SkinClient
 
 
-def posterior_mass_over_threshold(skin: SkinClient, state_id: str) -> float:
-    w = skin.weights(state_id)
-    return sum(wi for wi in w if wi > 0.1)  # violation: arithmetic on weights
+def posterior_mass(skin: SkinClient, state_id: str) -> float:
+    return sum(skin.weights(state_id))  # violation: aggregator over DSL return

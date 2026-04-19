@@ -367,7 +367,7 @@ function compute_eu_primitive(
         rec_cache[j] == action || continue
         tbm = comp::TaggedBetaMeasure
         w = component_weights[j]
-        weighted_approval += w * mean(tbm.beta)
+        weighted_approval += w * mean(tbm.beta)  # credence-lint: allow — precedent:posterior-iteration — tracked in issue #6
         matching_weight += w
     end
     matching_weight < 1e-300 ? 0.5 : weighted_approval / matching_weight

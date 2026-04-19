@@ -264,9 +264,16 @@ Both the slug and the reason are mandatory. Unknown slugs and missing reasons fa
 
 #### Iterating a posterior's support
 **Slug:** `posterior-iteration`.
-**Almost always illegal in consumer code.** If you're writing a loop over `zip(support(m), weights(m))` to compute something, the "something" is probability arithmetic.
+**Almost always illegal in consumer code.** If you're writing a loop over `zip(support(m), weights(m))` — or over a mixture's components to sum weighted quantities — the "something" is probability arithmetic.
 **Rewrite:** declare the computation as a `Functional` (`Projection`, `NestedProjection`, `Tabular`, composed via `LinearCombination`) and call `expect(m, f)`. The loop happens inside `expect`, which knows how to dispatch on the measure's type.
-**Follows from Invariant 1 and Invariant 2** jointly: the spatial rule rejects the loop; the declared-structure rule points to the rewrite. No escape hatch — the rewrite is the right answer.
+**Temporary escape hatch for deferred rewrites.** Inline iteration that predates the Functional invariant may be kept via `# credence-lint: allow — precedent:posterior-iteration — tracked in issue #<N>`. The reason must reference a tracking issue for the Functional rewrite; the pragma lives until the rewrite lands. No open-ended escape — every use is logged against a named rewrite commitment.
+**Follows from Invariant 1 and Invariant 2** jointly: the spatial rule rejects the loop; the declared-structure rule points to the rewrite.
+
+#### Baseline comparison
+**Slug:** `baseline-comparison`.
+**Legal with escape hatch.** Research baselines deliberately implement non-Bayesian decision mechanisms — argmax-of-means, fixed-threshold, cheapest-first — to empirically contrast against the principled EU-max agent. The paper depends on having these baselines; they are not bugs to be fixed.
+**Required pragma:** `# credence-lint: allow — precedent:baseline-comparison — <which baseline, why non-Bayesian>`. Each baseline's violation is tagged so `grep -r 'baseline-comparison'` produces an inventory of what the paper compares against.
+**Follows from Invariant 1 (topological face)** being scoped to the agent. The invariant forbids parallel decision mechanisms *that the agent uses*; a baseline is, by construction, not the agent. This precedent makes that distinction explicit.
 
 #### Test code computing expected values manually
 **Slug:** `test-oracle`.

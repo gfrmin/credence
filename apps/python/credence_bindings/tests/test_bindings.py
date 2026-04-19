@@ -44,14 +44,14 @@ def test_categorical_prior():
 
 def test_beta_measure():
     m = Measure.beta(8.0, 2.0)
-    assert abs(m.mean() - 0.8) < 1e-10
+    assert abs(m.mean() - 0.8) < 1e-10  # credence-lint: allow — precedent:test-oracle — Beta(8,2) mean = 8/10 = 0.8
     expected_var = 8 * 2 / (10**2 * 11)
-    assert abs(m.variance() - expected_var) < 1e-10
+    assert abs(m.variance() - expected_var) < 1e-10  # credence-lint: allow — precedent:test-oracle — Beta variance αβ/((α+β)²(α+β+1))
 
 
 def test_gaussian_measure():
     m = Measure.gaussian(5.0, 2.0)
-    assert abs(m.mean() - 5.0) < 1e-10
+    assert abs(m.mean() - 5.0) < 1e-10  # credence-lint: allow — precedent:test-oracle — Gaussian(5, 2) mean = 5
 
 
 # ── Kernel tests ──
@@ -68,9 +68,9 @@ def test_kernel_density():
         return math.log(1.0 - h)
 
     k = Kernel(H, O, log_density=bernoulli_ld)
-    assert abs(density(k, 0.7, 1) - math.log(0.7)) < 1e-10
-    assert abs(density(k, 0.7, 0) - math.log(0.3)) < 1e-10
-    assert abs(density(k, 0.3, 1) - math.log(0.3)) < 1e-10
+    assert abs(density(k, 0.7, 1) - math.log(0.7)) < 1e-10  # credence-lint: allow — precedent:test-oracle — Bernoulli(0.7) density at 1 = log(0.7)
+    assert abs(density(k, 0.7, 0) - math.log(0.3)) < 1e-10  # credence-lint: allow — precedent:test-oracle — Bernoulli(0.7) density at 0 = log(0.3)
+    assert abs(density(k, 0.3, 1) - math.log(0.3)) < 1e-10  # credence-lint: allow — precedent:test-oracle — Bernoulli(0.3) density at 1 = log(0.3)
 
 
 # ── Condition tests ──
@@ -159,7 +159,7 @@ def test_mixture_measure():
 # ── DSL interop ──
 
 def test_run_dsl_coin():
-    coin_path = Path(__file__).resolve().parents[3] / "examples" / "coin.bdsl"
+    coin_path = Path(__file__).resolve().parents[4] / "examples" / "coin.bdsl"
     source = coin_path.read_text()
     # coin.bdsl's final expression is (voi ...) which returns a number
     result = run_dsl(source)
