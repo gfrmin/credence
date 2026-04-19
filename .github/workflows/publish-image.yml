@@ -4,6 +4,8 @@ on:
   push:
     branches: [master]
     tags: ["v*.*.*"]
+  pull_request:
+    branches: [master]
   workflow_dispatch:
 
 env:
@@ -55,13 +57,11 @@ jobs:
             --ignore=apps/python/credence_router/tests/test_live.py \
             -v
 
-  build-smoke-publish:
-    name: Build, smoke-test, publish
+  smoke-build:
+    name: Build amd64 + smoke test
     runs-on: ubuntu-latest
     needs: unit-tests
-    permissions:
-      contents: read
-      packages: write
+    # No packages: write — this job only builds and smoke-tests locally.
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -72,28 +72,10 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Log in to GHCR
-        uses: docker/login-action@v3
-        with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Extract image metadata
-        id: meta
-        uses: docker/metadata-action@v5
-        with:
-          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
-          tags: |
-            type=ref,event=branch
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
-            type=sha,format=short
-            type=raw,value=latest,enable=${{ github.ref == format('refs/heads/{0}', 'master') }}
-
       # Build amd64 locally so we can run it as a startup smoke test.
       # If startup fails here, we never push — the exact class of bug
-      # that slipped into v0.3.1 (KeyError on Julia symbol).
+      # that slipped into v0.3.1 (KeyError on Julia symbol). Cache
+      # layers are written to GHA for the publish job to reuse.
       - name: Build amd64 for smoke test
         uses: docker/build-push-action@v6
         with:
@@ -134,7 +116,50 @@ jobs:
           docker stop credence-proxy-smoke
           exit 1
 
-      - name: Build and push multi-arch (gated on smoke test above)
+  publish:
+    name: Publish multi-arch to GHCR
+    runs-on: ubuntu-latest
+    needs: smoke-build
+    # Job-level gate: publish only on master pushes and version tags.
+    # PR runs and workflow_dispatch on non-master refs never enter this
+    # job at all, so the packages: write permission is scoped to the
+    # pushes that actually need it.
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/master' || startsWith(github.ref, 'refs/tags/v'))
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract image metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=ref,event=branch
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=sha,format=short
+            type=raw,value=latest,enable=${{ github.ref == format('refs/heads/{0}', 'master') }}
+
+      # Multi-arch build + push. Reuses cache layers written by
+      # smoke-build above; amd64 is a cache hit, arm64 is fresh.
+      - name: Build and push multi-arch
         uses: docker/build-push-action@v6
         with:
           context: .
