@@ -2,9 +2,16 @@
     Credence — Three types. Axiom-constrained functions.
     Everything else is stdlib.
 
-    Tier 1: DSL core (this module)
-    Tier 2: Program-space inference (ProgramSpace submodule)
-    Tier 3: Domain applications (apps/julia/)
+    The DSL core: Space, Measure, Kernel; the axiom-constrained functions
+    (condition, expect, push); the standard library built on them (optimise,
+    value, voi, model, problem, …); and their program-space extensions —
+    Grammar (a Space constructor for ASTs), CompiledKernel (a Kernel
+    performance variant), enumerate_programs (an execution strategy), and
+    perturb_grammar (a stdlib learning operation). Program-related files
+    are grouped under program_space/ for cohesion, not as a separate tier.
+
+    Applications (Julia domains, Python surfaces, JSON-RPC bridge) live
+    under apps/.
 """
 module Credence
 
@@ -13,14 +20,17 @@ include("ontology.jl")
 include("eval.jl")
 include("persistence.jl")
 include("host_helpers.jl")
-include("program_space/ProgramSpace.jl")
+include("program_space/types.jl")
+include("program_space/enumeration.jl")
+include("program_space/compilation.jl")
+include("program_space/perturbation.jl")
+include("program_space/agent_state.jl")
 
 using .Parse
 using .Ontology
 import .Ontology: truncate  # resolve ambiguity with Base.truncate
 using .Eval
 using .Persistence
-using .ProgramSpace
 
 export run_dsl, load_dsl, parse_sexpr, parse_all
 export Space, Finite, Interval, ProductSpace, Simplex, Euclidean, PositiveReals, support
@@ -36,7 +46,8 @@ export save_state, load_state
 export initial_rel_state, initial_cov_state, marginalize_betas, update_beta_state
 export extract_reliability_means
 
-# Re-export Tier 2 (ProgramSpace)
+# Program-space extensions (Grammar/Program types, compilation, enumeration,
+# perturbation, AgentState). Defined directly in this module.
 export ProgramExpr, GTExpr, LTExpr, AndExpr, OrExpr, NotExpr, NonterminalRef
 export PersistsExpr, ChangedExpr, SinceExpr
 export show_expr

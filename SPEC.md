@@ -521,15 +521,15 @@ An LLM extends the agent's sensory and effector capabilities (§6.4). As a senso
 
 ## 12. Architecture
 
-### 12.1 Three tiers
+### 12.1 Two tiers
 
-**Tier 1 (`brain/`):** DSL core. Measures, kernels, `condition`, `expect`, `optimise`, `TaggedBetaMeasure`, evaluator, stdlib (which includes `voi` as a derived computation). Domain-independent.
+**Tier 1 (`src/`): DSL core.** The three frozen types (Space, Measure, Kernel), the axiom-constrained functions (`condition`, `expect`, `push`, `density`), and the standard library built on them (`optimise`, `value`, `voi`, `model`, `problem`). Program-space capabilities are extensions *within* this tier, not a separate layer: a Grammar is a Space constructor whose elements are ASTs, a measure over programs is a Measure, `CompiledKernel` is a Kernel performance variant, `enumerate_programs` is an execution strategy, `perturb_grammar` is a stdlib learning operation (peer of `voi`). Features are `Dict{Symbol, Float64}`; `GTExpr`/`LTExpr` carry `Symbol` (feature name), not `Int` (channel index); grammars specify a `feature_set::Set{Symbol}`. Code lives in `src/`, with program-related files grouped under `src/program_space/` for cohesion. Domain-independent.
 
-**Tier 2 (`brain/program_space/`):** Program-space inference. Grammars, enumeration, compilation, perturbation, `AgentState`. Domain-independent. Features are `Dict{Symbol, Float64}`. `GTExpr` and `LTExpr` carry `Symbol` (feature name), not `Int` (channel index). Grammars specify a `feature_set::Set{Symbol}` — the features they attend to. Compilation does hash lookup on feature names.
+**Tier 2 (`apps/`): Applications.** `apps/julia/*` hosts Julia domain drivers — event sources and host loops for `grid_world`, `email_agent`, `rss`, `qa_benchmark`, plus the standalone `pomdp_agent` package. `apps/python/*` hosts the user-facing Python surfaces: low-level bindings (`credence_bindings`), the agent library (`credence_agents`), the credence-proxy gateway (`credence_router`), and the interactive-fiction agent (`bayesian_if`). `apps/brain/server.jl` is a JSON-RPC bridge that exposes Tier 1 to non-Julia clients by holding Measures as opaque IDs. These three sub-layers (Julia domains, Python surfaces, wire bridge) play different roles and will likely be named explicitly in a follow-up.
 
-**Tier 3 (`connections/` + `interface/` + `server.jl`):** The body. Each connection provides named features and named actions. The interface handles user communication. The server loop mediates brain and body.
+**Test fixtures (`test/`):** Synthetic testbeds for validating Tier 1. Not part of the product.
 
-**Test fixtures (`test/fixtures/`):** Synthetic testbeds (grid world, synthetic email) for validating the brain. Not part of the product.
+**On "brain".** The word is overloaded. Historically SPEC.md used it for the Tier 1 DSL core (the decision-theoretic machinery); in the code, `apps/brain/server.jl` is the JSON-RPC process that hosts that machinery for external clients. They share a name because they play the same conceptual role at different layers. Where disambiguation matters, prefer "Tier 1 brain" (the abstraction) vs "brain server" (the wire process).
 
 ### 12.2 One agent per user
 

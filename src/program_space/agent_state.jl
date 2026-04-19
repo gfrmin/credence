@@ -6,7 +6,7 @@ compiled_kernels, all_programs). sync_prune!/sync_truncate! keep them
 in lock-step and reindex TaggedBetaMeasure tags.
 """
 
-using ..Ontology
+using .Ontology
 
 # ═══════════════════════════════════════
 # AgentState — bundles belief with parallel arrays

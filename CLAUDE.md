@@ -324,8 +324,8 @@ Run tests:
     julia test/test_core.jl             # Core DSL tests
     julia test/test_flat_mixture.jl     # Flat mixture tests
     julia test/test_host.jl             # Host helper tests
-    julia test/test_program_space.jl    # Tier 2 tests
-    julia test/test_grid_world.jl       # Tier 3 grid-world tests
+    julia test/test_program_space.jl    # Program-space tests (grammars, enumeration, perturbation)
+    julia test/test_grid_world.jl       # Grid-world domain tests
     julia test/test_email_agent.jl      # Email agent domain tests
     julia test/test_rss.jl              # RSS domain tests
 
@@ -390,7 +390,7 @@ and publishes the Docker image.
       stdlib.bdsl                 Standard library (optimise, value, voi, etc.)
       persistence.jl              Save/load agent state across sessions
       host_helpers.jl             Host-level reliability/coverage helpers
-      program_space/              Tier 2: program-space inference
+      program_space/              Program-space extensions (grouped for cohesion)
         ProgramSpace.jl           Module entry point
         types.jl                  AST types, Grammar, Program, CompiledKernel
         enumeration.jl            Bottom-up enumeration, complexity scoring
@@ -407,8 +407,8 @@ and publishes the Docker image.
       test_core.jl                Core DSL tests (42 tests)
       test_flat_mixture.jl        Flat mixture conditioning tests
       test_host.jl                Host helper tests
-      test_program_space.jl       Tier 2 tests (enumeration, compilation, perturbation)
-      test_grid_world.jl          Tier 3 tests (full agent, regime change, meta-learning)
+      test_program_space.jl       Program-space tests (enumeration, compilation, perturbation)
+      test_grid_world.jl          Grid-world tests (full agent, regime change, meta-learning)
       test_email_agent.jl         Email agent domain tests
       test_rss.jl                 RSS domain tests
     apps/                         Everything built on top of the DSL
@@ -418,7 +418,7 @@ and publishes the Docker image.
         client.py                 Python client (spawns subprocess, sends RPC)
         test_brain.py             Smoke tests
       julia/                      Julia applications of the DSL
-        DOMAIN_INTERFACE.md       Contract for Tier 3 domains
+        DOMAIN_INTERFACE.md       Contract for apps/julia domains
         grid_world/               Grid-world domain (simulation, host, terminals, metrics)
         email_agent/              Email domain (JMAP integration, LLM prosthetic)
         qa_benchmark/             QA benchmark domain (LLM comparison harness)
@@ -452,32 +452,40 @@ Constructors: `CategoricalMeasure(Finite(vals))` for uniform prior,
 
 ## Architecture
 
-Three-tier architecture. See SPEC.md for details.
+Two-tier architecture. See SPEC.md for details.
 
-- Tier 1 (src/): DSL core — condition, expect, optimise, voi, TaggedBetaMeasure
-- Tier 2 (src/program_space/): program-space inference — grammars, enumeration, compilation, perturbation
-- Tier 3 (apps/julia/): domain applications — each provides features, terminals, host driver (see apps/julia/DOMAIN_INTERFACE.md)
+- Tier 1 (src/): DSL core — Space/Measure/Kernel, condition/expect/push, the
+  stdlib (optimise, voi, perturb-grammar, agent-state, …), and their
+  program-space extensions (Grammar as a Space constructor, CompiledKernel as
+  a Kernel variant, enumeration/compilation as execution strategies).
+  Program-related files are grouped under src/program_space/ for cohesion,
+  not as a separate tier.
+- Tier 2 (apps/): Applications — apps/julia/* (Julia domains + pomdp_agent),
+  apps/python/* (credence_bindings, credence_agents, credence_router,
+  bayesian_if), apps/brain/server.jl (JSON-RPC bridge). Each domain provides
+  features, terminals, host driver (see apps/julia/DOMAIN_INTERFACE.md).
 
     ┌─────────────────────────────┐
     │  Three types                │  FROZEN
-    │  Space, Measure, Kernel     │
+    │  Space, Measure, Kernel     │  (Grammar = a discrete Space constructor)
     ├─────────────────────────────┤
     │  Axiom-constrained fns      │  Behaviour frozen,
     │  condition, expect, push    │  interface negotiable
     ├─────────────────────────────┤
     │  Standard library           │  MUTABLE
-    │  optimise, voi, model, etc  │
-    ├─────────────────────────────┤
-    │  Program-space inference    │  Tier 2, MUTABLE
-    │  Grammars, enumeration,     │
-    │  compilation, perturbation  │
-    ├─────────────────────────────┤
-    │  Domain applications        │  Tier 3, MUTABLE
-    │  Grid world, email agent    │
+    │  optimise, value, voi,      │  (perturb_grammar and agent-state
+    │  model, problem,            │   live here too — peers of voi, not
+    │  perturb_grammar,           │   a layer above it)
+    │  agent-state                │
     ├─────────────────────────────┤
     │  Julia execution layer      │  MUTABLE
-    │  Conjugate, quadrature,     │
-    │  particle, heuristic        │
+    │  Conjugate, quadrature,     │  (enumeration + compilation live
+    │  particle, heuristic,       │   here alongside conjugate dispatch)
+    │  enumeration, compilation   │
+    ├─────────────────────────────┤
+    │  Applications (apps/)       │  MUTABLE
+    │  Julia domains, Python      │
+    │  surfaces, JSON-RPC bridge  │
     └─────────────────────────────┘
 
     Host (Julia): provides observations, executes actions,
