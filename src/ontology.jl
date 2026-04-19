@@ -1084,6 +1084,20 @@ function condition(m::Measure, k::Kernel, obs; n_particles::Int=1000)
     CategoricalMeasure(Finite(samples), log_weights)
 end
 
+# ── condition — sibling form taking an Event directly ──
+#
+# Provably equivalent to conditioning on `indicator_kernel(e)` at
+# observation `true`, for deterministic events. Di Lavore–Román–
+# Sobociński Proposition 4.9: Pearl and Jeffrey coincide on
+# deterministic observations, both equal Bayesian inversion at the
+# observed point. The parametric form `condition(m, k, obs)` stays
+# the primary signature for existing consumers; this form is the
+# natural idiom for new code whose conditioning object is an event
+# rather than a kernel-observation pair.
+function condition(m::Measure, e::Event)
+    condition(m, indicator_kernel(e), true)
+end
+
 # ================================================================
 # AXIOM-CONSTRAINED FUNCTION: push_measure
 # ================================================================
