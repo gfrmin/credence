@@ -224,39 +224,54 @@ Second example: weights. Measures store weights in log-space internally (`logw` 
 
 Case law. Each entry names which invariant it follows from and why. Weight is on grey-zone cases — the bright-line violations are caught by the constitution and (eventually) by CI; what merits human-readable reasoning are the judgement calls where mechanical enforcement can't distinguish causal from non-causal.
 
+Every precedent carries a stable **slug** — a short identifier used by the lint escape-hatch pragma. When a grey-zone case sanctions code that would otherwise violate the invariants, the author marks the line with:
+
+```
+# credence-lint: allow — precedent:<slug> — <one-line reason>
+```
+
+Both the slug and the reason are mandatory. Unknown slugs and missing reasons fail the lint. Novel cases unblock via a new precedent entry in this document (with its own slug) in the same PR — new escape hatches are constitutional amendments, not inline concessions. `grep -r 'credence-lint:' .` is a usable audit surface.
+
 ### Grey zones
 
 #### Reading vs. computing on weights
+**Slug:** `compute-on-weights`.
 **Legal:** `weights(m)` for logging, telemetry, display. `mean(m)` passed to a non-causal dashboard.
 **Illegal:** any arithmetic on the result that feeds back into a decision or belief — summation, multiplication, comparison-in-branch, threshold checks that gate behaviour.
-**Follows from Invariant 1** because the public accessor is sanctioned access; what makes it a violation is the subsequent causal arithmetic. `weights()` itself does no reasoning; what you do with the return value can.
+**Follows from Invariant 1** because the public accessor is sanctioned access; what makes it a violation is the subsequent causal arithmetic. `weights()` itself does no reasoning; what you do with the return value can. There is no escape hatch — arithmetic that needs the posterior must flow through `expect` with a declared Functional. The slug exists for cross-referencing.
 
 #### Sort-for-display vs. compare-to-branch
+**Slug:** `sort-for-display`.
 **Legal:** `sort(pairs, by=last)` for a top-K log line. The ordering is non-causal — the display is read by a human, not by the agent.
 **Illegal:** `if w1 > w2 then action_a else action_b` — that comparison *is* the decision, and it lives outside `optimise`.
-**Follows from Invariant 1 (topological face)** because action selection must flow through EU-max. A weight comparison in application code is a parallel decision mechanism.
+**Follows from Invariant 1 (topological face)** because action selection must flow through EU-max. A weight comparison in application code is a parallel decision mechanism. Escape hatch with this slug permits comparison/sort when the author can assert the result is consumed only by display/logging, not by subsequent logic.
 
 #### Display arithmetic
-**Legal with escape hatch:** `"$(round(w * 100, digits=1))%"` for a progress bar or report.
-**Required:** explicit `# lint:allow display-arithmetic` pragma (or equivalent) on the line, reviewed per commit.
-**Follows from Invariant 1** because the rule binds causal arithmetic; display arithmetic is non-causal by construction. CI cannot distinguish them mechanically, so the author carries the burden of marking it.
+**Slug:** `display-arithmetic`.
+**Legal with escape hatch:** `f"{round(w * 100, 1)}%"` for a progress bar or report.
+**Required pragma:** `# credence-lint: allow — precedent:display-arithmetic — <reason>` on the line, reviewed per commit.
+**Follows from Invariant 1** because the rule binds causal arithmetic; display arithmetic is non-causal by construction. CI cannot distinguish display from causation mechanically, so the author carries the burden of marking it.
 
 #### Stdlib compositions calling each other
+**Slug:** `stdlib-composition`.
 **Legal:** `voi` calls `expect`; `optimise` calls `expect` + `argmax`; `model`/`problem` constructors compose kernels and priors; `perturb_grammar` takes posterior analysis as input.
-**Follows from Invariant 1 (topological face)** because the canalised path is the axiom-constrained functions **and their stdlib compositions**. Stdlib members calling each other stays on the sanctioned path. New stdlib operations are added by composing existing ones plus ordinary computation, not by creating a new arithmetic path.
+**Follows from Invariant 1 (topological face)** because the canalised path is the axiom-constrained functions **and their stdlib compositions**. Stdlib members calling each other stays on the sanctioned path. New stdlib operations are added by composing existing ones plus ordinary computation, not by creating a new arithmetic path. Slug is documentation-only — stdlib code lives in `src/`, which is out of scope for the lint.
 
 #### Application constructing a `Problem`
+**Slug:** `declarative-construction`.
 **Legal.** `Problem(state, actions, preference)` is a struct constructor — declarative data. `initial_rel_state(...)`, `CategoricalMeasure(Finite(vals))`, `Kernel(H, O, gen, likelihood_family=…)` — all declarative.
-**Contrast with:** a DSL wrapper like `(defun solve-email (state) (optimise state email-actions email-pref))` — that is a callable re-exporting an axiom-constrained op with hidden structure (see Invariant 2 violation in the Historical rejections).
+**Contrast with:** a DSL wrapper like `(defun solve-email (state) (optimise state email-actions email-pref))` — that is a callable re-exporting an axiom-constrained op with hidden structure (see Invariant 2 violation in the Historical rejections). Slug is documentation-only — constructors don't trigger the lint in the first place.
 
 #### Iterating a posterior's support
+**Slug:** `posterior-iteration`.
 **Almost always illegal in consumer code.** If you're writing a loop over `zip(support(m), weights(m))` to compute something, the "something" is probability arithmetic.
 **Rewrite:** declare the computation as a `Functional` (`Projection`, `NestedProjection`, `Tabular`, composed via `LinearCombination`) and call `expect(m, f)`. The loop happens inside `expect`, which knows how to dispatch on the measure's type.
-**Follows from Invariant 1 and Invariant 2** jointly: the spatial rule rejects the loop; the declared-structure rule points to the rewrite.
+**Follows from Invariant 1 and Invariant 2** jointly: the spatial rule rejects the loop; the declared-structure rule points to the rewrite. No escape hatch — the rewrite is the right answer.
 
 #### Test code computing expected values manually
-**Legal with escape hatch.** Tests *of* the reasoner legitimately need an independent oracle: `@test expect(m, f) ≈ 0.7  # computed by hand from Beta(3,7)`.
-**Required:** `# lint:allow test-oracle` pragma on the comparison. The manual computation is the test's ground truth; it is causal *within the test*, but the test is non-causal with respect to the agent (it doesn't feed back into agent behaviour).
+**Slug:** `test-oracle`.
+**Legal with escape hatch.** Tests *of* the reasoner legitimately need an independent oracle: `assert expect(m, f) == pytest.approx(0.7)  # computed by hand from Beta(3,7)`.
+**Required pragma:** `# credence-lint: allow — precedent:test-oracle — <reason>` on the comparison line. The manual computation is the test's ground truth; it is causal *within the test*, but the test is non-causal with respect to the agent (it doesn't feed back into agent behaviour).
 
 ### Specific derivations
 
