@@ -121,14 +121,24 @@ class SkinClient:
         return self._call("initialize", params)
 
     def shutdown(self):
-        """Graceful shutdown."""
+        """Graceful shutdown.
+
+        The 30s wait is sized for CI flake resistance on Julia processes
+        carrying a fully-initialised Credence depot and a loaded BDSL —
+        Julia shutdown is rarely instantaneous. A clean exit in practice
+        should be well under 10s; if shutdown ever takes longer than
+        that in real runs, treat it as a signal to investigate the
+        shutdown path (mutex held across the subprocess boundary, async
+        task not cancelled, etc.) rather than bumping this number
+        further. See issue #9.
+        """
         try:
             self._call("shutdown")
         except (SkinError, BrokenPipeError):
             pass
         if self._process:
             self._process.terminate()
-            self._process.wait(timeout=5)
+            self._process.wait(timeout=30)
             self._process = None
 
     def __del__(self):
