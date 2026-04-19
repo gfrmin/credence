@@ -224,6 +224,9 @@ struct MixtureMeasure <: Measure
     function MixtureMeasure(space::Space, components::Vector{<:Measure}, log_weights::Vector{Float64})
         length(components) == length(log_weights) || error("components and weights must match")
         length(components) > 0 || error("mixture must have at least one component")
+        if all(lw -> lw == -Inf, log_weights)
+            error("mixture has zero total mass — all components impossible")
+        end
         max_lw = maximum(log_weights)
         log_total = max_lw + log(sum(exp.(log_weights .- max_lw)))
         new(space, Vector{Measure}(components), log_weights .- log_total)
