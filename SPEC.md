@@ -8,6 +8,21 @@
 
 The architecture rests on five axioms — the true bottom of the system, from which everything else is derived or learned. Each is grounded in a foundational result establishing its necessity.
 
+### 1.0 Foundations: coherence, not measure
+
+Credence's axiomatic layer is justified by *coherence*, not by measure theory. The primary warrant for Bayesian updating is de Finetti's theorem (the Dutch-book argument, sharpened by Lewis 1999 for sequential coherence): an agent whose credences cannot be exploited by a well-informed book-maker must update by conditioning. Regazzini's finitely-additive extension (1985) shows this does not require σ-additivity — the coherence conditions are strictly finite. Kolmogorov's measure-theoretic foundations remain *useful* as a model for continuous-space machinery (Radon–Nikodym densities, disintegration, etc.) but they are not the reason the update rule is the update rule.
+
+The operational consequence is that **events are first-class bearers of probability**, not derived subsets of a measurable space. P(A) is declared directly for a declared proposition A, and conditional probability P(· | A) is a primitive alongside it. Parametric Bayesian update — the familiar `P(θ | o) ∝ P(o | θ) P(θ)` — is one *derived* instance, recovered when the conditioning object A is the event "observation = o" with a declared likelihood kernel P(o | θ).
+
+In the code this is realised by a fourth first-class type, `Event`, and two forms of `condition`:
+
+- **Parametric**: `condition(μ, k, obs)` — the primary form, takes a kernel and an observation. Unchanged by this posture; every existing consumer works verbatim.
+- **Event-shaped**: `condition(μ, e::Event)` — the sibling form, takes a declared event directly. Expands to `condition(μ, indicator_kernel(e), true)` via the event's witness kernel (Di Lavore–Román–Sobociński 2024, Prop. 4.9: Pearl and Jeffrey coincide on deterministic observations, both equal Bayesian inversion at the observed point).
+
+Events are declared structure per Invariant 2: `TagSet(space, tags)`, `FeatureEquals(space, name, value)`, `FeatureInterval(space, name, lo, hi)`, plus Boolean composition via `Conjunction` / `Disjunction` / `Complement`. Each carries its data in typed fields; `indicator_kernel` is the mechanical bridge from the event layer to the axiom layer.
+
+σ-additivity remains in specific `Measure` subtypes where it earns its keep (Gaussian, Beta, etc. — continuous distributions that want Radon–Nikodym densities for their dispatches). The *axioms* require only finite coherence; particular measure implementations may be richer without affecting the coherence-based justification.
+
 ### 1.1 Bayes' rule (`condition`)
 
 Beliefs are updated by conditioning on observations:
@@ -265,12 +280,15 @@ struct Connection
     name::Symbol                    # :gmail, :calendar
     features::Vector{Symbol}        # [:urgency, :is_manager, :topic_finance, ...]
     actions::Vector{Symbol}         # [:archive, :mark_read, :add_label_urgent, ...]
+    events::Vector{Event}           # declared propositions the connection recognises
     extract::Function               # event → Dict{Symbol, Float64} (partial)
     execute!::Function              # (event_context, action) → outcome
 end
 ```
 
-The body assembles the full feature dictionary by merging all connections' contributions. Adding a new connection means registering it — new named features appear, new named actions become available. No changes to the brain, no changes to existing connections, no index shifting.
+A connection registers three things rather than two: named features (what it can sense), named actions (what it can do), and declared **events** (the propositions over its feature space that the brain may condition on — e.g. `FeatureEquals(:topic, :finance)`, `FeatureInterval(:urgency, 0.7, 1.0)`). Events are declared at registration time, same as features and actions; the brain conditions on them through the `condition(μ, e::Event)` sibling form (§1.0). New events require new `Connection` entries, not ad-hoc predicate closures.
+
+The body assembles the full feature dictionary by merging all connections' contributions. Adding a new connection means registering it — new named features appear, new named actions become available, new declared events become conditionable. No changes to the brain, no changes to existing connections, no index shifting.
 
 ### 6.4 What the body does
 
