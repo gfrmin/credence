@@ -170,153 +170,124 @@ The host provides observations and executes actions.
 
 The S-expression grammar: expr = atom | '(' expr* ')'
 
-## Forbidden patterns
+## Three invariants
 
-These are mathematical errors, not style preferences.
+The constitution binds three invariants. They are independent — you can satisfy any two while violating the third, and each fails in a different way. Treat all three as equally constitutional: declared-structure is not a softer "style" sibling of single-reasoner. CI catches what it can; the rest is on the author.
 
-### No AST interpretation at conditioning time
-Programs are compiled into closures at enumeration time via `compile_kernel`.
-The `CompiledKernel` struct has no AST field — enforced by the type system.
-Kernel evaluation calls a closure, never walks a tree. If you need to
-analyse program structure (for grammar perturbation), use the `Program`
-struct which retains the AST. The two representations serve different
-purposes and must not be conflated.
+**The invariants bind computations whose outputs cause the agent to act or update.** Computation that is non-causal by construction — display formatting, sorted logging, diagnostic telemetry, test oracles — is out of scope. The burden is on the author to show the computation cannot feed back into decisions or beliefs. If in doubt, push it into `src/` or declare it structurally.
 
-### No random mutation in place of subprogram extraction
-Nonterminal proposals must be grounded in posterior analysis.
-`propose_nonterminal` requires a `SubprogramFrequencyTable`, which can
-only be constructed by `analyse_posterior_subtrees`. There is no shortcut:
-the type system enforces the dependency. Random AST generation or mutation
-without posterior analysis violates the principled compression pipeline.
+### Invariant 1: Single reasoner
 
-### No second learning mechanism
-Only condition modifies beliefs. Any function that produces a
-measure with altered weights without conditioning on an
-observation violates A4. This includes: forget, decay, exploration
-bonuses, ad-hoc reweighting. If the world changes, include
-drift-rate in the hypothesis space.
+Tier 1 is the only reasoner. Two faces, and they both bite:
 
-### No second decision mechanism
-Only EU maximisation (via expect + argmax) selects actions.
-Epsilon-greedy, UCB bonuses, and similar heuristics are
-not forbidden as CONCEPTS — they may emerge as EU-maximising
-strategies when computational cost enters the utility function.
-But they must not be hard-coded as mechanisms outside of EU
-maximisation.
+- **Spatial.** Arithmetic on probabilities or utilities happens only in `src/`. Applications (`apps/`), tests, and hosts never multiply, sum, integrate, compare, or condition raw probability values to influence behaviour.
+- **Topological.** Within `src/`, the arithmetic is canalised through the axiom-constrained functions (`condition`, `expect`, `push`, `density`) and their stdlib compositions (`optimise`, `value`, `voi`, `perturb_grammar`, `model`, `problem`, …). No other path modifies weights or selects actions.
 
-### No opaque likelihood functions
-Likelihoods are kernels, not bare lambdas. A kernel declares
-its source space, target space, and generative structure. This
-enables the compiler to select computational backends and detect
-conjugate structure. (lambda (h o) ...) as a likelihood is a
-v1 pattern that should not appear.
+What applications do instead: **declare** data (Spaces, Measures, Kernels, Functionals, Problems) and **call** Tier 1 primitives. The answer to "I need to compute X from the posterior" is always "declare X as a Functional and call `expect`". The arithmetic lives in `expect`; the application lives in `apps/`.
 
-### Declare kernel structure at construction, not at dispatch
-A kernel's per-θ algebraic form (BetaBernoulli, Flat, etc.) is
-declared via the likelihood_family field at Kernel construction, not
-inferred at dispatch by probing log-density values or return types.
-This is the condition-side analogue of the Functional hierarchy for
-expect: structure enables dispatch, declaration is the mechanism.
-Kernel construction requires a likelihood_family keyword argument —
-omission raises UndefKeywordError at construction time, not later.
-condition() additionally rejects PushOnly and any unrecognised family
-with a clear remediation error. Probing a
-kernel's output at chosen inputs to infer structure (e.g. treating
-log_density == 0.0 as "flat") is forbidden — it misfires on
-legitimate edge cases and hides the assumption from the type system.
+Direct consequences of Invariant 1:
 
-Per-component routing in mixtures has a declarative vocabulary:
-FiringByTag(fires::Set{Int}, when_fires, when_not) for the dominant
-"some predicates fire, some don't" pattern. DispatchByComponent takes
-a classify(measure) -> LikelihoodFamily closure; it is the typed-return
-escape hatch (analogous to OpaqueClosure for Functional) and should
-only be used when no declarative subtype fits. Adding a new declarative
-subtype is preferred over reaching for DispatchByComponent.
+- *No second learning mechanism.* Only `condition` changes beliefs. Forget, decay, exploration bonuses, ad-hoc reweighting violate the topological face even if written inside `src/`. If the world changes, encode drift-rate in the hypothesis space so `condition` can learn it.
+- *No second decision mechanism.* Only EU-maximisation selects actions. Epsilon-greedy, UCB, Thompson sampling are not forbidden as *concepts* — they may emerge as EU-optimal strategies when computational cost enters the utility function — but they cannot be hard-coded as mechanisms outside EU-max.
+- *No random mutation in place of subprogram extraction.* Changes to the hypothesis space are weight-changes in disguise and must derive from `src/`-computed posterior analysis. `propose_nonterminal` requires a `SubprogramFrequencyTable`, only constructable by `analyse_posterior_subtrees`; the type system enforces the dependency.
+- *No host-side reimplementation.* `condition`, `expect`, `optimise`, `value`, `push`, `density` have one implementation each, in the ontology module. Hosts call; hosts do not reimplement.
+- *`draw` is the boundary, not an exception.* `draw : Measure(S) → S` is the only source of randomness. It lives in the ontology module for Julia callers but is **not** in the DSL's `default_env` — the DSL is pure. Host code calls `draw` after the DSL has constructed the posterior; the DSL does not sample. "Construct the posterior in the DSL, call `draw()` in the host" is the canonical shape.
+- *Heuristics live inside EU-max, not alongside it.* When computational cost enters the utility function, an approximate strategy may have higher EU than the exact Bayesian computation — that is not an approximation, it is the optimal strategy. Heuristics are implemented as alternative backends of `expect`/`condition`/`push` inside the Julia execution layer, selected by the same EU machinery the agent uses for domain actions. The DSL specification does not change.
 
-### No opaque functions passed to expect
-Functions passed to expect are Functionals, not bare lambdas. A
-Functional declares its algebraic structure (Identity, Projection,
-NestedProjection, Tabular, LinearCombination) so expect can dispatch
-to the optimal computation. This is the same principle as Kernels
-for condition: structure enables dispatch. OpaqueClosure is the
-fallback — it works but forfeits fast paths.
+### Invariant 2: Declared structure
 
-Functional types must compose. LinearCombination carries
-Vector{Tuple{Float64, Functional}}, not flat coefficient arrays.
-Each sub-functional navigates its own structure. Flat indexing
-schemes encode stride conventions that are invisible to the type
-system and forbidden.
+Tier 1's dispatch quality depends on first-class type access to the structure of its inputs. Opaque functions are a correctness hazard, not just a performance one — they force `condition`/`expect` to infer structure at runtime or fall back to generic computation, and inferred structure is unreliable: legitimate edge cases misfire.
 
-### No DSL wrappers around axiom-constrained operations
-A domain DSL file contains data (spaces, kernels, priors). It must
-not define functions that are thin wrappers around optimise, condition,
-expect, or push with domain-specific list navigation. Those wrappers
-exist only because state was a list needing navigation; with
-ProductMeasure state + factor/replace-factor, they disappear. Preferences
-are protocol-level Functional specs (functional_per_action with
-LinearCombination of NestedProjections), not DSL lambdas. Wrapping an
-axiom-constrained operation in a DSL function forces its arguments
-through an opaque closure bottleneck that defeats Functional dispatch.
+The rule: functions passed to axiom-constrained operations carry their algebraic structure in their type.
 
-### Indifference implies exploration
-When EU of interacting equals EU of waiting (both 0), interact.
-Indifference means VOI from the interaction outcome is positive.
-The select_action threshold is >= 0, not > 0. Do not "fix" this
-back to strict inequality.
+- **Kernels** declare their `likelihood_family` at construction: `BetaBernoulli`, `Flat`, `FiringByTag`, `DispatchByComponent`, etc. Omitting the keyword raises `UndefKeywordError` at construction — not later at dispatch. `condition()` rejects `PushOnly` and unrecognised families with a remediation error. Probing a kernel's output at chosen inputs to infer structure (e.g. treating `log_density == 0.0` as "flat") is forbidden: it misfires on legitimate zero-density points and hides the assumption from the type system.
+- **Functionals passed to `expect`** declare their structure: `Identity`, `Projection`, `NestedProjection`, `Tabular`, `LinearCombination`. `OpaqueClosure` is the fallback — it works but forfeits fast paths.
+- **Composability is part of structure.** `LinearCombination` carries `Vector{Tuple{Float64, Functional}}`, not flat coefficient arrays. Each sub-functional navigates its own structure. Flat indexing schemes encode stride conventions invisible to the type system — forbidden.
+- **Per-component routing in mixtures has a declarative vocabulary.** `FiringByTag(fires::Set{Int}, when_fires, when_not)` covers the dominant "some predicates fire, some don't" pattern. `DispatchByComponent` takes a `classify(measure) -> LikelihoodFamily` closure; it is the typed-return escape hatch (analogue of `OpaqueClosure` for Functional) and should be reached for only when no declarative subtype fits. Add a new declarative subtype before reaching for `DispatchByComponent`.
 
-### Non-firing predicates predict the base rate
-Programs whose predicates don't fire return log(0.5), not 0.0.
-A non-firing program is implicitly predicting "I don't know, so
-50/50." That prediction is scored against the observation. The
-ranking: informed-and-right > uninformed > informed-and-wrong.
-Returning 0.0 makes non-firing programs unbeatable (no information
-= no penalty), creating weight rigidity after regime changes.
+Invariant 2 also bears on DSL wrappers. A domain file that defines `(defun choose-x (s) (optimise s as pref))` funnels its arguments through an opaque closure that defeats Functional dispatch. Domain files contain data (spaces, kernels, priors); preferences are protocol-level Functional specs (e.g. `functional_per_action` with `LinearCombination` of `NestedProjections`), not DSL lambdas. Wrapping forces an opaque bottleneck around an axiom-constrained op — a violation of Invariant 2, and a violation of Invariant 1's topological face (the wrapper creates a hidden path to the axiom-constrained op that CI can't see).
 
-### Heuristics are EU maximisation, not approximations
-When computational cost enters the utility function, a faster
-approximate strategy may have higher EU than the exact Bayesian
-computation. This is not an approximation — it IS the optimal
-strategy. Heuristics belong in the Julia execution layer as
-alternative implementations of expect/condition/push, selected
-by the same EU-maximisation machinery the agent uses for
-everything else. The DSL specification does not change.
+### Invariant 3: Single-responsibility representations
 
-## The host boundary
+Each piece of data has one semantic role. Representations used for computation and representations used for structural analysis are kept separate, even when they describe the same thing.
 
-The DSL constructs mathematical objects (measures, kernels, numbers).
-The host realises them (draws values, executes actions, drives loops).
+Canonical example: programs.
 
-draw : Measure(S) → S is the ONLY source of randomness. It lives
-in the ontology module, exported for Julia callers, NOT in the
-DSL's default_env.
+- **`CompiledKernel`** is for arithmetic. Its type has no AST field, enforced. Kernel evaluation calls a closure, never walks a tree.
+- **`Program`** retains the AST, for structural analysis (grammar perturbation, subprogram frequency, complexity scoring).
 
-optimise and value live in the ontology module alongside expect
-and condition. One implementation per operation. The host calls
-them; the host does not reimplement them.
+The two representations serve different purposes and must not be conflated. Conflation typically appears as a single type trying to support both cheap evaluation and tree traversal; the failure mode is silent drift (cached closure and AST diverging) or dispatch ambiguity (runtime type-checks to decide which path to take).
 
-If you need randomness → use draw in the host.
-If you need decisions → use optimise/value from the ontology, or
-call the DSL's optimise via run_dsl.
+Second example: weights. Measures store weights in log-space internally (`logw` field). Consumer code reads probabilities via `weights(m)`; direct access to `logw`, whether by exponentiation or otherwise, betrays assumptions about normalisation that only the Measure type knows. `logw` is a private representation; `weights(m)` is the public accessor. Mixing the two — caching `logw` somewhere and then treating it as a probability, or normalising it by hand in consumer code — is a Single-responsibility violation.
 
-Do not reimplement expect, condition, optimise, or value in the
-host. Call the ontology module's exports.
+## Precedents
 
-## Rejected patterns (with reasoning)
+Case law. Each entry names which invariant it follows from and why. Weight is on grey-zone cases — the bright-line violations are caught by the constitution and (eventually) by CI; what merits human-readable reasoning are the judgement calls where mechanical enforcement can't distinguish causal from non-causal.
 
-PROPOSED: Add (sample measure) to the DSL for Thompson sampling.
-REJECTED: sample is randomness, randomness is a side effect,
-the DSL is pure. Construct the posterior in the DSL, call
-draw() in the host.
+### Grey zones
 
-PROPOSED: Add host_decide() / host_optimise() in the host driver.
-REJECTED: optimise and value belong in the ontology alongside
-expect and condition. One implementation per operation. The host
-driver is pure orchestration — it calls ontology functions.
+#### Reading vs. computing on weights
+**Legal:** `weights(m)` for logging, telemetry, display. `mean(m)` passed to a non-causal dashboard.
+**Illegal:** any arithmetic on the result that feeds back into a decision or belief — summation, multiplication, comparison-in-branch, threshold checks that gate behaviour.
+**Follows from Invariant 1** because the public accessor is sanctioned access; what makes it a violation is the subsequent causal arithmetic. `weights()` itself does no reasoning; what you do with the return value can.
 
-PROPOSED: (thompson-sample m actions pref) in stdlib that calls sample.
-REJECTED: Compounds both errors above. Thompson sampling is
-draw (host) + argmax (ordinary computation). The DSL computed
-the posterior; its job is done.
+#### Sort-for-display vs. compare-to-branch
+**Legal:** `sort(pairs, by=last)` for a top-K log line. The ordering is non-causal — the display is read by a human, not by the agent.
+**Illegal:** `if w1 > w2 then action_a else action_b` — that comparison *is* the decision, and it lives outside `optimise`.
+**Follows from Invariant 1 (topological face)** because action selection must flow through EU-max. A weight comparison in application code is a parallel decision mechanism.
+
+#### Display arithmetic
+**Legal with escape hatch:** `"$(round(w * 100, digits=1))%"` for a progress bar or report.
+**Required:** explicit `# lint:allow display-arithmetic` pragma (or equivalent) on the line, reviewed per commit.
+**Follows from Invariant 1** because the rule binds causal arithmetic; display arithmetic is non-causal by construction. CI cannot distinguish them mechanically, so the author carries the burden of marking it.
+
+#### Stdlib compositions calling each other
+**Legal:** `voi` calls `expect`; `optimise` calls `expect` + `argmax`; `model`/`problem` constructors compose kernels and priors; `perturb_grammar` takes posterior analysis as input.
+**Follows from Invariant 1 (topological face)** because the canalised path is the axiom-constrained functions **and their stdlib compositions**. Stdlib members calling each other stays on the sanctioned path. New stdlib operations are added by composing existing ones plus ordinary computation, not by creating a new arithmetic path.
+
+#### Application constructing a `Problem`
+**Legal.** `Problem(state, actions, preference)` is a struct constructor — declarative data. `initial_rel_state(...)`, `CategoricalMeasure(Finite(vals))`, `Kernel(H, O, gen, likelihood_family=…)` — all declarative.
+**Contrast with:** a DSL wrapper like `(defun solve-email (state) (optimise state email-actions email-pref))` — that is a callable re-exporting an axiom-constrained op with hidden structure (see Invariant 2 violation in the Historical rejections).
+
+#### Iterating a posterior's support
+**Almost always illegal in consumer code.** If you're writing a loop over `zip(support(m), weights(m))` to compute something, the "something" is probability arithmetic.
+**Rewrite:** declare the computation as a `Functional` (`Projection`, `NestedProjection`, `Tabular`, composed via `LinearCombination`) and call `expect(m, f)`. The loop happens inside `expect`, which knows how to dispatch on the measure's type.
+**Follows from Invariant 1 and Invariant 2** jointly: the spatial rule rejects the loop; the declared-structure rule points to the rewrite.
+
+#### Test code computing expected values manually
+**Legal with escape hatch.** Tests *of* the reasoner legitimately need an independent oracle: `@test expect(m, f) ≈ 0.7  # computed by hand from Beta(3,7)`.
+**Required:** `# lint:allow test-oracle` pragma on the comparison. The manual computation is the test's ground truth; it is causal *within the test*, but the test is non-causal with respect to the agent (it doesn't feed back into agent behaviour).
+
+### Specific derivations
+
+#### Indifference implies exploration
+When `EU(interact) == EU(wait)` (both zero), interact. `select_action` threshold is `>= 0`, not `> 0`. Follows from correct EU accounting: at indifference, VOI from the interaction outcome is still positive (you'll learn something), which is part of EU. If the threshold is strict, a correct EU computation will have already broken the tie. Listed here because it's the kind of edge case that gets "fixed" back to strict inequality under perceived instability, and the fix is wrong.
+
+#### Non-firing predicates predict the base rate
+Programs whose predicates don't fire return `log(0.5)`, not `0.0`. A non-firing program is implicitly predicting "I don't know, 50/50"; that prediction is scored against the observation. Ranking: *informed-and-right* > *uninformed* > *informed-and-wrong*. Returning `0.0` makes non-firing programs unbeatable (no information → no penalty), creating weight rigidity after regime changes. Listed here because the bug manifests long after the change (the posterior stops adapting) and the fix looks like a tunable constant; it is not — it is scoring-rule calibration.
+
+### Historical rejections
+
+#### PROPOSED: `(sample measure)` in the DSL for Thompson sampling.
+**REJECTED.** Sampling is randomness; randomness is a side effect; the DSL is pure. Construct the posterior in the DSL; call `draw()` in the host. **Invariant 1 (spatial)** — DSL stays non-executing.
+
+#### PROPOSED: `host_decide()` / `host_optimise()` in host drivers.
+**REJECTED.** `optimise` and `value` belong in the ontology alongside `expect` and `condition`. One implementation per operation. The host driver is pure orchestration — it calls ontology functions. **Invariant 1 (topological)** — one canonical path per operation.
+
+#### PROPOSED: `(thompson-sample m actions pref)` in stdlib that calls sample.
+**REJECTED.** Compounds both errors above. Thompson sampling is `draw` (host) + `argmax` (ordinary computation on the drawn value). The DSL constructs the posterior; its job is done. **Invariant 1 (both faces).**
+
+#### PROPOSED: Bare lambda as a kernel's likelihood.
+**REJECTED.** Kernels declare `likelihood_family` at construction; bare lambdas defeat conjugate dispatch and force probing. **Invariant 2.**
+
+#### PROPOSED: Flat coefficient arrays for `LinearCombination` instead of `Vector{Tuple{Float64, Functional}}`.
+**REJECTED.** Flat indexing encodes stride conventions invisible to the type system. Each sub-functional must navigate its own structure. **Invariant 2** — composition is part of structure.
+
+#### PROPOSED: Inferring kernel family by probing `log_density == 0.0` for flat likelihoods.
+**REJECTED.** Legitimate kernels can return zero log-density at specific points without being flat; the probe misfires and hides the assumption from the type system. **Invariant 2** — declared at construction, not dispatch.
+
+#### PROPOSED: DSL wrapper functions in domain files (e.g., `(defun choose-email (s) (optimise s email-actions email-pref))`).
+**REJECTED.** Wrappers force the preference through an opaque closure that defeats Functional dispatch AND hide the causal arithmetic path from CI. A domain file contains data; axiom-constrained ops are called at the protocol level, not wrapped. **Invariants 1 and 2** jointly.
 
 ## Development commands
 
