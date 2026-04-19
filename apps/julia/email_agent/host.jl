@@ -343,16 +343,27 @@ end
 # ═══════════════════════════════════════
 
 """
-    compute_eu_primitive(state, action, rec_cache, component_weights, remaining_target) → Float64
+    compute_eu_primitive(state, action, rec_cache, remaining_target) → Float64
 
 EU for a primitive action in a multi-step episode. An action is valuable
-if it's in the remaining target set and programs recommending it have high confidence.
+if it's in the remaining target set and programs recommending it have
+high confidence.
+
+Formulated via event-conditioning (de Finettian surface syntax,
+issue #6): `E[approval | program recommends action]` equals
+`expect(condition(belief, TagSet(components recommending action)), Identity)`.
+The hand-rolled posterior iteration that previously lived here is
+now done inside the axiom layer — `_predictive_ll` propagates the
+indicator kernel's 0 / -Inf log-density as the weight multiplier,
+non-firing components drop to zero in the conditioned mixture, and
+`expect(MixtureMeasure, Identity)` aggregates. Semantically
+identical to the former hand-rolled `Σ w_j · mean(β_j) / Σ w_j` for
+firing components; numerically identical modulo reordered arithmetic.
 """
 function compute_eu_primitive(
     state::AgentState,
     action::Symbol,
     rec_cache::Dict{Int, Symbol},
-    component_weights::Vector{Float64},
     remaining_target::Set{Symbol}
 )::Float64
     if action == :done
@@ -360,17 +371,11 @@ function compute_eu_primitive(
     end
     action in remaining_target || return 0.0
 
-    weighted_approval = 0.0
-    matching_weight = 0.0
-    for (j, comp) in enumerate(state.belief.components)
-        haskey(rec_cache, j) || continue
-        rec_cache[j] == action || continue
-        tbm = comp::TaggedBetaMeasure
-        w = component_weights[j]
-        weighted_approval += w * mean(tbm.beta)  # credence-lint: allow — precedent:posterior-iteration — tracked in issue #6
-        matching_weight += w
-    end
-    matching_weight < 1e-300 ? 0.5 : weighted_approval / matching_weight
+    fires = Set{Int}(j for (j, rec) in pairs(rec_cache) if rec == action)
+    isempty(fires) && return 0.5  # domain base-rate when no program recommends
+
+    restricted = condition(state.belief, TagSet(state.belief.space, fires))
+    expect(restricted, Identity())
 end
 
 """
@@ -399,7 +404,7 @@ function compute_eu_step(
     action == :ask_user && return 1.0 - ask_cost
 
     (action in PRIMITIVE_ACTIONS || action == :done) && return compute_eu_primitive(
-        state, action, rec_cache, component_weights, remaining_target)
+        state, action, rec_cache, remaining_target)
 
     0.0
 end
@@ -799,11 +804,10 @@ function run_agent(;
 
             # Surprise: use component-weighted approval for the first target action
             first_target = isempty(target) ? :done : first(target)
-            w_now = weights(state.belief)
             rec_cache = Dict{Int, Symbol}()
             features_now = extract_features(email)
             evaluate_programs!(rec_cache, state.compiled_kernels, features_now, temporal_state)
-            eu_first = compute_eu_primitive(state, first_target, rec_cache, w_now, target)
+            eu_first = compute_eu_primitive(state, first_target, rec_cache, target)
             surprise = -log(max(eu_first, 1e-300))
 
             if verbose
