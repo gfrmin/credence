@@ -1,3 +1,4 @@
+# Role: body
 """Bridge to Julia Credence DSL via juliacall.
 
 Single module that loads Julia, the Credence module, and the BDSL agent

@@ -1,3 +1,4 @@
+# Role: body
 """Experiment 3: Ablation studies (SPEC §7.3).
 
 Six Bayesian agent variants with components disabled to measure contribution.

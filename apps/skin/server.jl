@@ -1,4 +1,5 @@
 #!/usr/bin/env julia
+# Role: skin
 """
     apps/skin/server.jl — Credence skin process
 

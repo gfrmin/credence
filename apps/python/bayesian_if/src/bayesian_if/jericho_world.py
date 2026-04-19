@@ -1,3 +1,4 @@
+# Role: body
 """Jericho adapter — wraps jericho.FrotzEnv as a World."""
 
 from __future__ import annotations

@@ -1,3 +1,4 @@
+# Role: body
 """Inference layer: types and Julia bridge.
 
 Computation (Beta posteriors, VOI, EU-based decisions) is now handled by the

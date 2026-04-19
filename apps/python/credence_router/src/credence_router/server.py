@@ -1,3 +1,4 @@
+# Role: body
 """HTTP server for credence proxy — Bayesian AI Gateway.
 
 Unified proxy routing both search and LLM calls via EU maximisation.

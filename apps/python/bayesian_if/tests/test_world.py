@@ -1,3 +1,4 @@
+# Role: body
 """Tests for the World protocol and MockWorld."""
 
 from bayesian_if.world import Observation, World

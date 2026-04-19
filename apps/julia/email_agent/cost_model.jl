@@ -1,3 +1,4 @@
+# Role: brain-side application
 """
     cost_model.jl — Uncertain, time-based cost model for actions
 

@@ -1,3 +1,4 @@
+# Role: body
 """Benchmark runner: compares routing strategies on the question bank.
 
 Measures accuracy, tool cost, routing cost, total cost, and latency

@@ -1,3 +1,4 @@
+# Role: brain-side application
 """
     environment.jl — Simulated tools and question bank for the QA benchmark.
 

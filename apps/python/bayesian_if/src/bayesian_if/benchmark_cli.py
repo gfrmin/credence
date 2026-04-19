@@ -1,3 +1,4 @@
+# Role: body
 """CLI entry point for TextWorld benchmarks."""
 
 from __future__ import annotations

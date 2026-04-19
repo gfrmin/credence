@@ -1,3 +1,4 @@
+# Role: body
 """Drop-in replacement for langgraph.prebuilt.create_react_agent.
 
 Builds a real LangGraph StateGraph but swaps the LLM routing node with

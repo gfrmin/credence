@@ -1,3 +1,4 @@
+# Role: brain-side application
 """
     preferences.jl — RSS action space for program enumeration.
 

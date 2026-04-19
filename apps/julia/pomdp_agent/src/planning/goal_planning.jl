@@ -1,3 +1,4 @@
+# Role: brain-side application
 """
     Goal-Directed Planning (Stage 5)
 

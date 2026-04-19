@@ -1,3 +1,4 @@
+# Role: brain-side application
 """
     jmap_client.jl — Minimal Julia JMAP client for Fastmail
 

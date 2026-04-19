@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# Role: body
 """Side-by-side comparison: LangGraph ReAct vs credence-router with Ollama.
 
 Runs the same questions through both routing approaches using a local llama3.1

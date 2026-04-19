@@ -1,3 +1,4 @@
+# Role: body
 """SearchRouter: Bayesian web search provider routing via EU maximisation.
 
 Provider selection is a direct EU maximisation over learned reliability:

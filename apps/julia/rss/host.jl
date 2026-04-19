@@ -1,3 +1,4 @@
+# Role: brain-side application
 """
     host.jl — Host driver for RSS article ranking via program-space inference.
 

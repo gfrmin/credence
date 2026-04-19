@@ -1,3 +1,4 @@
+# Role: body
 """Tests for post-question reliability update logic.
 
 Action selection and Bayesian updates are now in Julia. These tests cover

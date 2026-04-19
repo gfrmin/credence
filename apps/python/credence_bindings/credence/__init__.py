@@ -1,3 +1,4 @@
+# Role: body
 """Credence — Python bindings for the Bayesian decision-making DSL."""
 
 from credence.space import Space

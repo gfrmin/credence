@@ -1,3 +1,4 @@
+# Role: brain-side application
 """
     db.jl — PostgreSQL queries for the RSS domain.
 

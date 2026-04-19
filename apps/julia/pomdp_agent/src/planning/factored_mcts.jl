@@ -1,3 +1,4 @@
+# Role: brain-side application
 """
     Factored MCTS (Stage 1: MVBN)
 

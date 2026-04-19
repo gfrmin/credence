@@ -1,3 +1,4 @@
+# Role: body
 """CLI entry points: bench and route subcommands."""
 
 from __future__ import annotations

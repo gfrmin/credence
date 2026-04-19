@@ -1,3 +1,4 @@
+# Role: body
 """Live API smoke tests — skipped unless API keys are set.
 
 Run manually:

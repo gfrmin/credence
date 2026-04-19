@@ -1,3 +1,4 @@
+# Role: body
 """RouterGroup: multi-router state management."""
 
 from __future__ import annotations

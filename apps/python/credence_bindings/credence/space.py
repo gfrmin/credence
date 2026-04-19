@@ -1,3 +1,4 @@
+# Role: body
 """Space — a set of possibilities. Wraps Julia Space objects."""
 
 from __future__ import annotations

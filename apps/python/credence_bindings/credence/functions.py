@@ -1,3 +1,4 @@
+# Role: body
 """Standalone wrappers for axiom-constrained and host-boundary functions."""
 
 from __future__ import annotations

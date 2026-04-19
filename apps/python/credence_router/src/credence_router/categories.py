@@ -1,3 +1,4 @@
+# Role: body
 """Category definitions and inference functions.
 
 Re-exports benchmark categories from credence, and provides generic

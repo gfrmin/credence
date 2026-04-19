@@ -1,3 +1,4 @@
+# Role: body
 """Domain-specific category definitions for the Q&A benchmark."""
 
 from __future__ import annotations

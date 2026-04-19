@@ -1,3 +1,4 @@
+# Role: body
 """Perplexity Search API adapter."""
 
 from __future__ import annotations

@@ -1,3 +1,4 @@
+# Role: body
 """Simulated tools for testing and benchmarking without API keys.
 
 Deterministic given a seed. Simulates tool reliability per category

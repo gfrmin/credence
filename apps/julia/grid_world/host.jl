@@ -1,4 +1,5 @@
 #!/usr/bin/env julia
+# Role: brain-side application
 """
     host.jl — Host driver for the grid-world program-space agent
 

@@ -1,3 +1,4 @@
+# Role: body
 """Perplexity tool: web search via Perplexity Sonar API.
 
 Stronger on factual and recent events, weaker on reasoning.

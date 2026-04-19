@@ -1,3 +1,4 @@
+# Role: brain-side application
 """
     metrics.jl — Scoring, summary statistics, and SQLite storage for the QA benchmark.
 """

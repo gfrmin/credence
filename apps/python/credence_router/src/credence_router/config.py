@@ -1,3 +1,4 @@
+# Role: body
 """Effort-to-parameters mapping for routing configuration."""
 
 from __future__ import annotations

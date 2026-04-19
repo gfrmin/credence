@@ -1,3 +1,4 @@
+# Role: body
 """Tests for benchmark infrastructure."""
 
 from __future__ import annotations

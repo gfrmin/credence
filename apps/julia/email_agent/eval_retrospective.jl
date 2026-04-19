@@ -1,4 +1,5 @@
 #!/usr/bin/env julia
+# Role: brain-side application
 """
     eval_retrospective.jl — Evaluate the agent on real email using flag/archive labels
 

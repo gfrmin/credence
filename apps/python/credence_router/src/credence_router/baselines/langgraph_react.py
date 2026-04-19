@@ -1,3 +1,4 @@
+# Role: body
 """LangGraph ReAct baseline: same tools, LLM-based routing.
 
 Uses LangGraph's ReAct agent with Claude Sonnet as the routing LLM.

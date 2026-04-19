@@ -1,3 +1,4 @@
+# Role: body
 """Credence: Bayesian decision-theoretic agents.
 
 Inference is handled by the Julia Credence DSL via juliacall.

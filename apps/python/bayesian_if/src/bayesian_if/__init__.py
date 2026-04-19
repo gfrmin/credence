@@ -1,3 +1,4 @@
+# Role: body
 """Bayesian decision-theoretic Interactive Fiction agent."""
 
 from bayesian_if.world import Observation, StateSnapshot, World

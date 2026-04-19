@@ -1,3 +1,4 @@
+# Role: body
 """Tests for reward attribution."""
 
 from bayesian_if.reward import attribute_reward

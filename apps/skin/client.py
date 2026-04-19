@@ -1,3 +1,4 @@
+# Role: skin
 """Credence skin client — spawns Julia skin process, talks JSON-RPC over stdio.
 
 Usage:

@@ -1,3 +1,4 @@
+# Role: brain-side application
 """
     host.jl — QA benchmark host driver.
 

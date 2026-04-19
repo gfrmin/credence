@@ -1,3 +1,4 @@
+# Role: body
 """CLI entry point: play an IF game with the Bayesian agent."""
 
 from __future__ import annotations

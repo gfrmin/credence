@@ -1,3 +1,4 @@
+# Role: body
 """Brave Search API adapter."""
 
 from __future__ import annotations

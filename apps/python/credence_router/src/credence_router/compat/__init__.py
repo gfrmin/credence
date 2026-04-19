@@ -1,3 +1,4 @@
+# Role: body
 """LangGraph drop-in compatibility layer.
 
 Swap your import::

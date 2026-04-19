@@ -1,3 +1,4 @@
+# Role: brain-side application
 """
     terminals.jl — RSS seed grammars for preference learning.
 

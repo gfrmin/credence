@@ -1,3 +1,4 @@
+# Role: body
 """Question bank: 50 hand-curated multiple-choice questions across 5 categories.
 
 Distribution: 15 factual, 10 numerical, 8 recent_events, 7 misconceptions, 10 reasoning.

@@ -1,3 +1,4 @@
+# Role: body
 """TextWorld adapter — wraps textworld environments as a World."""
 
 from __future__ import annotations

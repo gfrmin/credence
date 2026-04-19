@@ -1,3 +1,4 @@
+# Role: body
 """Baseline agents: Random, AllTools, Oracle, SingleBestTool.
 
 These provide reference points for the benchmark. The OracleAgent uses the

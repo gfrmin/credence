@@ -1,3 +1,4 @@
+# Role: body
 """Experiment 2: Tool reliability drift (SPEC §7.2).
 
 Tool A's reliability degrades at question 25. The Bayesian agent with

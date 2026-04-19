@@ -1,3 +1,4 @@
+# Role: body
 """Router: transparent, cost-optimal tool routing via EU maximisation.
 
 Wraps credence's BayesianAgent (backed by the Julia Credence DSL) to provide

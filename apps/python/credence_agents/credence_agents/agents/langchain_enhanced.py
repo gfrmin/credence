@@ -1,3 +1,4 @@
+# Role: body
 """Enhanced LangChain agent with reliability-aware prompting (SPEC §4.2).
 
 Same as standard but with strategy guidance and full conversation history

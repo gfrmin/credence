@@ -1,3 +1,4 @@
+# Role: body
 """Unified LLM provider forwarder via OpenAI-compatible endpoints.
 
 All major providers (Anthropic, OpenAI, Google) expose OpenAI-compatible

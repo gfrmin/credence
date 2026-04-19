@@ -1,3 +1,4 @@
+# Role: body
 """Full comparison: 20-seed stationary + drift, 20-seed LangChain.
 
 Runs non-LLM agents with full statistical power (20 seeds) and LangChain

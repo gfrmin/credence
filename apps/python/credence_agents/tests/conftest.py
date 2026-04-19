@@ -1,3 +1,4 @@
+# Role: body
 """Shared fixtures for credence-engine tests."""
 
 import pytest

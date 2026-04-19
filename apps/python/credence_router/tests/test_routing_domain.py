@@ -1,3 +1,4 @@
+# Role: body
 """Tests for RoutingDomain and LLM proxy components."""
 
 from __future__ import annotations

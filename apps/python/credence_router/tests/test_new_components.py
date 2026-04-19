@@ -1,3 +1,4 @@
+# Role: body
 """Tests for new credence-router components: KeywordCategoryTool, CoveragePrior,
 RoutingParams, derive_routing_params, RouterGroup, make_keyword_category_infer_fn,
 make_router_category_infer_fn.

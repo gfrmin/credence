@@ -1,3 +1,4 @@
+# Role: body
 """Tests for the Bayesian decision-theoretic agent (Julia DSL backend).
 
 Hand-fed sequences with mock tools to verify:

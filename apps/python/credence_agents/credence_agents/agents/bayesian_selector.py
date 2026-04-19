@@ -1,3 +1,4 @@
+# Role: body
 """BayesianSelector: base class for EU-maximising selection over options.
 
 Options can be tools (BayesianAgent), providers (RoutingDomain),

@@ -1,3 +1,4 @@
+# Role: body
 """TextWorld benchmark suite: game generation, runner, baselines, and metrics."""
 
 from __future__ import annotations

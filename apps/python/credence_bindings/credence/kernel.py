@@ -1,3 +1,4 @@
+# Role: body
 """Kernel — a conditional distribution between two spaces."""
 
 from __future__ import annotations

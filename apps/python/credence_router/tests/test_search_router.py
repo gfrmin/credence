@@ -1,3 +1,4 @@
+# Role: body
 """Tests for SearchRouter, search tool protocols, and eval harness."""
 
 from __future__ import annotations

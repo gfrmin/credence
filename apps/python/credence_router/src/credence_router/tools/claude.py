@@ -1,3 +1,4 @@
+# Role: body
 """Claude tool: routes questions to Anthropic's Claude API.
 
 Parameterised by model — use ClaudeTool("haiku") for cheap/fast routing

@@ -1,3 +1,4 @@
+# Role: brain-side application
 """
     Unified Bayesian Agent: Interactive Fiction via Jericho
 

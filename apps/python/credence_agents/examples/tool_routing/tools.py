@@ -1,3 +1,4 @@
+# Role: body
 """Tool profiles modelling real-world API costs, latencies, and reliabilities.
 
 Four tools that mirror a realistic routing scenario:

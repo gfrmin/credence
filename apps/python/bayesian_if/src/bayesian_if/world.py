@@ -1,3 +1,4 @@
+# Role: body
 """World protocol and state types for Interactive Fiction environments."""
 
 from __future__ import annotations

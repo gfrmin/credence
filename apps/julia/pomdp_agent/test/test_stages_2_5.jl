@@ -1,3 +1,4 @@
+# Role: brain-side application
 """
 Test suite for Stages 2-5 implementation.
 

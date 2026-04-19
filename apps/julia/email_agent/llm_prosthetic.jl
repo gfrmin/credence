@@ -1,3 +1,4 @@
+# Role: brain-side application
 """
     llm_prosthetic.jl — LLM as sensor prosthetic (spec §6.4)
 

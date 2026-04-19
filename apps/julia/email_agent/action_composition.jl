@@ -1,3 +1,4 @@
+# Role: brain-side application
 """
     action_composition.jl — Host-level action decomposition (spec §7.4)
 

@@ -1,3 +1,4 @@
+# Role: body
 """Custom LangGraph node that uses credence-router for tool selection.
 
 Replaces the LLM's tool-selection step with credence-router's VOI calculation.

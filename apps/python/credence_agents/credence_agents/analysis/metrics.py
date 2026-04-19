@@ -1,3 +1,4 @@
+# Role: body
 """Benchmark metrics: score, accuracy, calibration, cost efficiency.
 
 All functions take a BenchmarkResult (or its records) and return scalar

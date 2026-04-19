@@ -1,3 +1,4 @@
+# Role: body
 """Tests for the benchmark harness: scoring, abstention, tool costs, guards, snapshots."""
 
 from __future__ import annotations

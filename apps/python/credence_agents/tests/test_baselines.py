@@ -1,3 +1,4 @@
+# Role: body
 """Tests for baseline agents and LangChain agents (sans LLM calls).
 
 Verifies all agents run through the benchmark without errors, produce valid

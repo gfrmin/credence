@@ -1,3 +1,4 @@
+# Role: brain-side application
 """
     features.jl — RSS article features for preference learning.
 

@@ -1,3 +1,4 @@
+# Role: brain-side application
 """
     Bayesian Agent Example: Grid World
 

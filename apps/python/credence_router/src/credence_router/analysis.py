@@ -1,3 +1,4 @@
+# Role: body
 """Analysis and reporting utilities for benchmark results."""
 
 from __future__ import annotations

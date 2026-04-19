@@ -1,3 +1,4 @@
+# Role: body
 """IF situation categories and category inference function."""
 
 from __future__ import annotations

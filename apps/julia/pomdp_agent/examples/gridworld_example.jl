@@ -1,3 +1,4 @@
+# Role: brain-side application
 """
 Example: Running a Bayesian agent on GridWorld
 

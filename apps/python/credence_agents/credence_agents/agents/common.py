@@ -1,3 +1,4 @@
+# Role: body
 """Shared agent interface and result types."""
 
 from __future__ import annotations

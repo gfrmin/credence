@@ -1,3 +1,4 @@
+# Role: brain-side application
 """
     FactoredWorldModel (Stage 1: MVBN)
 

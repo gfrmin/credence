@@ -1,3 +1,4 @@
+# Role: brain-side application
 """
     llm_agent.jl — LLM agent driver with native tool-calling.
 

@@ -1,3 +1,4 @@
+# Role: body
 """Startup smoke test.
 
 Guards against the exact regression that shipped in v0.3.1: a missing

@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# Role: body
 """credence-router demo: transparent tool routing via EU maximisation.
 
 Routes multiple-choice questions to the cheapest reliable tool using

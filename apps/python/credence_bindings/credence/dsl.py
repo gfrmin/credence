@@ -1,3 +1,4 @@
+# Role: body
 """DSL interop — run_dsl and load_dsl."""
 
 from __future__ import annotations

@@ -1,3 +1,4 @@
+# Role: brain-side application
 """
     terminals.jl — Email terminal alphabet and seed grammars
 

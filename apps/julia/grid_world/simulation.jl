@@ -1,3 +1,4 @@
+# Role: brain-side application
 """
     grid_world.jl — 5×5 grid world simulation for program-space agent
 

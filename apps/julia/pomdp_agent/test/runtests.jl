@@ -1,3 +1,4 @@
+# Role: brain-side application
 """
 Test suite for BayesianAgents Stage 1 (MVBN).
 

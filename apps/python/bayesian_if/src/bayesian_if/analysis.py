@@ -1,3 +1,4 @@
+# Role: body
 """Post-hoc analysis of benchmark data: tool agreement, failure taxonomy, etc."""
 
 from __future__ import annotations

@@ -1,3 +1,4 @@
+# Role: body
 """KeywordCategoryTool: zero-cost Tool that votes for a category on regex match."""
 
 from __future__ import annotations

@@ -1,3 +1,4 @@
+# Role: brain-side application
 """
     state_persistence.jl — Save/load email agent state across sessions
 

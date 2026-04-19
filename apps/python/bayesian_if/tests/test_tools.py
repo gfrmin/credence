@@ -1,3 +1,4 @@
+# Role: body
 """Tests for IF information-gathering tools."""
 
 from bayesian_if.tools import (

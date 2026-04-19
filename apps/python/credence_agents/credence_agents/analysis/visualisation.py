@@ -1,3 +1,4 @@
+# Role: body
 """Visualisation functions for benchmark results.
 
 All functions take data and return matplotlib Figure objects. No side effects

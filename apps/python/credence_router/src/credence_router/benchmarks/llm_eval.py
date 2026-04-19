@@ -1,3 +1,4 @@
+# Role: body
 """LLM model routing evaluation.
 
 Same two-phase design as search_eval:

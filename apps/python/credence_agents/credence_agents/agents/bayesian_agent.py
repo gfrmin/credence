@@ -1,3 +1,4 @@
+# Role: body
 """Bayesian decision-theoretic agent backed by the Julia Credence DSL.
 
 All inference (VOI, EU maximisation, Bayesian conditioning) runs in Julia via

@@ -1,4 +1,5 @@
 #!/usr/bin/env julia
+# Role: brain-side application
 """
     server.jl — HTTP service for RSS article ranking.
 

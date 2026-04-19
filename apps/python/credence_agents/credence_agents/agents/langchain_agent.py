@@ -1,3 +1,4 @@
+# Role: body
 """Standard LangChain ReAct agent for the benchmark.
 
 Uses the system prompt from SPEC §4.1 verbatim. Wraps SimulatedTools as

@@ -1,3 +1,4 @@
+# Role: body
 """Simple baseline routing strategies: random, always-cheapest, always-best.
 
 These provide reference points for the credence-router benchmark.

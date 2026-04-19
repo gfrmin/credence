@@ -1,3 +1,4 @@
+# Role: body
 """Information-gathering tools for IF — each returns a recommended action index."""
 
 from __future__ import annotations

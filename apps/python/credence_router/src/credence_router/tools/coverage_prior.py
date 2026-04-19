@@ -1,3 +1,4 @@
+# Role: body
 """CoveragePrior: per-tool learnable Beta-distributed coverage."""
 
 from __future__ import annotations

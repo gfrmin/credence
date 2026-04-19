@@ -1,3 +1,4 @@
+# Role: body
 """Measure — a probability distribution over a space."""
 
 from __future__ import annotations

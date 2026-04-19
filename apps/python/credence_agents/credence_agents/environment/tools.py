@@ -1,3 +1,4 @@
+# Role: body
 """Simulated tools with category-dependent reliability and coverage.
 
 Each tool is a pure data structure. The query function is standalone and

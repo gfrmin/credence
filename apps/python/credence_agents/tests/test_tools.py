@@ -1,3 +1,4 @@
+# Role: body
 """Tests for simulated tools: structure, determinism, rates, coverage, and bridge."""
 
 from __future__ import annotations

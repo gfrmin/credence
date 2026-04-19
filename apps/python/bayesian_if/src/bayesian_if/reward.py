@@ -1,3 +1,4 @@
+# Role: body
 """Reward attribution: bridge IF score deltas to credence's was_correct signal."""
 
 from __future__ import annotations

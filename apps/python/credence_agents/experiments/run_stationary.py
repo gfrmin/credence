@@ -1,3 +1,4 @@
+# Role: body
 """Experiment 1: Stationary tool reliabilities (SPEC §7.1).
 
 50 questions, fixed reliabilities, N seeds. Compares Bayesian, baselines,

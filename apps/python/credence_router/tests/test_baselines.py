@@ -1,3 +1,4 @@
+# Role: body
 """Tests for baseline solvers."""
 
 from __future__ import annotations

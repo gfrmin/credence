@@ -1,3 +1,4 @@
+# Role: body
 """End-to-end evaluation: Credence routing vs always-sonnet through OpenClaw.
 
 Fully automated:

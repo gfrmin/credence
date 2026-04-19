@@ -1,3 +1,4 @@
+# Role: body
 """Internal Julia bridge — singleton that lazy-loads Julia and Credence."""
 
 from __future__ import annotations

@@ -1,3 +1,4 @@
+# Role: body
 """Adapts LangChain tools for credence-router's VOI-based selection.
 
 Routing probes are free (keyword matching only, no LLM call).

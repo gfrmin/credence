@@ -1,3 +1,4 @@
+# Role: body
 """Answer dataclass returned by Router.solve()."""
 
 from __future__ import annotations

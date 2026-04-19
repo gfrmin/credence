@@ -1,3 +1,4 @@
+# Role: body
 """Action types and post-question reliability update logic.
 
 Action selection and Bayesian updates are now handled by the Julia Credence DSL.

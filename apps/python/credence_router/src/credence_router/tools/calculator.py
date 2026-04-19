@@ -1,3 +1,4 @@
+# Role: body
 """Calculator tool: evaluates mathematical expressions via safe AST parsing.
 
 Free, instant, only handles numerical questions. Returns None for

@@ -1,4 +1,5 @@
 #!/usr/bin/env julia
+# Role: brain-side application
 """
     live.jl — Live host driver for the email agent on real Fastmail email
 

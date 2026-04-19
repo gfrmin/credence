@@ -1,3 +1,4 @@
+# Role: brain-side application
 """
     hidden_variable_inference.jl (Stage 2: Hidden Variable Inference)
 

@@ -1,3 +1,4 @@
+# Role: brain-side application
 """
     Bayesian State Inference (Stage 1: MVBN)
 

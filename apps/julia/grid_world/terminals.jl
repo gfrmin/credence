@@ -1,3 +1,4 @@
+# Role: brain-side application
 """
     terminals.jl — Grid-world terminal alphabet and seed grammars
 

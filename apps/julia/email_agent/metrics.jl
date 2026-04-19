@@ -1,3 +1,4 @@
+# Role: brain-side application
 """
     metrics.jl — Email agent performance tracking
 

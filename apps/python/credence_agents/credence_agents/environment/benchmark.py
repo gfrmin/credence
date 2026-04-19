@@ -1,3 +1,4 @@
+# Role: body
 """Benchmark harness: runs agents through the question bank and records results.
 
 Manages the question loop, enforces protocol invariants (no re-querying, bounded

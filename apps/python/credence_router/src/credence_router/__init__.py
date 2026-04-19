@@ -1,3 +1,4 @@
+# Role: body
 """credence-router: transparent, cost-optimal tool routing via EU maximisation."""
 
 from credence_router.answer import Answer

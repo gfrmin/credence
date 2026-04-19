@@ -1,3 +1,4 @@
+# Role: body
 """IFAgent — composes BayesianAgent with IF domain logic."""
 
 from __future__ import annotations

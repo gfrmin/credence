@@ -1,3 +1,4 @@
+# Role: body
 """Tests for the IFAgent — full integration with mock world."""
 
 from bayesian_if.agent import IFAgent, _exploration_tiebreak, _is_uniform_posterior, _safe_action

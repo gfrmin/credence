@@ -1,3 +1,4 @@
+# Role: skin
 """Smoke tests for the skin server via the Python client."""
 
 from pathlib import Path

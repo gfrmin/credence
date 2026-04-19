@@ -1,3 +1,4 @@
+# Role: brain-side application
 """
     MinimalState (Stage 1-2: MVBN with Hidden Variables)
 

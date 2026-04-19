@@ -1,3 +1,4 @@
+# Role: body
 """Environment layer: simulated tools, question bank, and benchmark harness."""
 
 from credence_agents.environment.tools import (

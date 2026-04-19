@@ -1,3 +1,4 @@
+# Role: body
 """Scoring rules and tool configuration types.
 
 Computation (VOI, EU) is now handled by the Julia Credence DSL.

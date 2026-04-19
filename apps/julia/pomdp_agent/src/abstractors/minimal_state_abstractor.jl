@@ -1,3 +1,4 @@
+# Role: brain-side application
 """
     MinimalStateAbstractor <: StateAbstractor
 

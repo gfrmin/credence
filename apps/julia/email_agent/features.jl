@@ -1,3 +1,4 @@
+# Role: brain-side application
 """
     features.jl — Email type, feature extraction, user preferences, synthetic corpus
 

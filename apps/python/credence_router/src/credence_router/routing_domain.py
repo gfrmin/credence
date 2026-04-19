@@ -1,3 +1,4 @@
+# Role: body
 """RoutingDomain: provider routing via the skin server.
 
 State is a nested ProductMeasure (providers × categories × (theta, k)).

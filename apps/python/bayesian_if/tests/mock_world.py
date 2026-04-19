@@ -1,3 +1,4 @@
+# Role: body
 """Mock IF world for testing: 3 rooms, 2 objects, a goal."""
 
 from __future__ import annotations

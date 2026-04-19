@@ -1,3 +1,4 @@
+# Role: body
 """DuckDuckGo search adapter (no API key required)."""
 
 from __future__ import annotations

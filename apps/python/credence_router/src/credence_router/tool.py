@@ -1,3 +1,4 @@
+# Role: body
 """Tool protocol and base class for credence-router.
 
 Tools answer multiple-choice questions. Each tool declares its monetary cost,

@@ -1,3 +1,4 @@
+# Role: brain-side application
 """
     metrics.jl — Per-step tracking for program-space agent
 
