@@ -1005,6 +1005,53 @@ function update(cp::ConjugatePrevision{DirichletPrevision, Categorical{T}}, obs)
     ConjugatePrevision(DirichletPrevision(new_alpha), cp.likelihood)
 end
 
+# ── (NormalGammaPrevision, NormalGammaLikelihood) — replaces ontology.jl:976-988 ──
+#
+# NormalGamma is the conjugate prior for a Normal with unknown mean AND
+# unknown variance. Update closed-form: κ_n = κ + 1, μ_n = (κμ + r)/κ_n,
+# α_n = α + 1/2, β_n = β + κ(r-μ)²/(2κ_n). Backward compat via
+# params[:normal_gamma] flag (existing kernels); forward path via
+# likelihood_family = NormalGammaLikelihood().
+
+function maybe_conjugate(p::NormalGammaPrevision, k::Kernel)
+    if k.likelihood_family isa NormalGammaLikelihood
+        return ConjugatePrevision(p, k.likelihood_family)
+    elseif k.params !== nothing && haskey(k.params, :normal_gamma)
+        return ConjugatePrevision(p, NormalGammaLikelihood())
+    end
+    nothing
+end
+
+function update(cp::ConjugatePrevision{NormalGammaPrevision, NormalGammaLikelihood}, obs)
+    r = Float64(obs)
+    κ, μ, α, β = cp.prior.κ, cp.prior.μ, cp.prior.α, cp.prior.β
+    κₙ = κ + 1.0
+    μₙ = (κ * μ + r) / κₙ
+    αₙ = α + 0.5
+    βₙ = β + κ * (r - μ)^2 / (2.0 * κₙ)
+    ConjugatePrevision(NormalGammaPrevision(κₙ, μₙ, αₙ, βₙ), cp.likelihood)
+end
+
+# ── (GammaPrevision, Exponential) — net-new fast-path (no prior dispatch) ──
+#
+# Conjugate update for Gamma(α, β) as prior on the rate parameter of
+# an Exponential likelihood: posterior is Gamma(α + 1, β + obs).
+# No legacy path — this pair wasn't previously dispatched; existing
+# code falls through to particle.
+
+function maybe_conjugate(p::GammaPrevision, k::Kernel)
+    if k.likelihood_family isa Exponential
+        return ConjugatePrevision(p, k.likelihood_family)
+    end
+    nothing
+end
+
+function update(cp::ConjugatePrevision{GammaPrevision, Exponential}, obs)
+    r = Float64(obs)
+    r > 0 || error("Exponential observations must be positive, got $r")
+    ConjugatePrevision(GammaPrevision(cp.prior.alpha + 1.0, cp.prior.beta + r), cp.likelihood)
+end
+
 function condition(m::CategoricalMeasure{T}, k::Kernel, observation) where T
     new_logw = copy(m.logw)
     for i in eachindex(m.space.values)

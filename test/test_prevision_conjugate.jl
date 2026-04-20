@@ -205,6 +205,93 @@ let cats = Finite([:a, :b, :c])
           updated_a.alpha == [3.0, 3.0, 5.0], "got α=$(updated_a.alpha)")
 end
 
+# ── (NormalGammaPrevision, NormalGammaLikelihood) ──
+#
+# Conjugate prior for Normal with unknown mean + variance.
+# κ_n = κ+1; μ_n = (κμ+r)/κ_n; α_n = α+0.5; β_n = β + κ(r-μ)²/(2κ_n).
+
+let k_new = Kernel(ProductSpace(Space[Euclidean(1), PositiveReals()]), Euclidean(1),
+                   h -> GaussianMeasure(Euclidean(1), h[1], sqrt(h[2])),
+                   (h, o) -> -0.5 * (o - h[1])^2 / h[2];
+                   likelihood_family = NormalGammaLikelihood())
+    using Credence: NormalGammaPrevision
+
+    p = NormalGammaPrevision(1.0, 0.0, 2.0, 1.0)  # κ=1, μ=0, α=2, β=1
+
+    check("NormalGammaPrevision + NormalGammaLikelihood → :conjugate",
+          _dispatch_path(p, k_new) === :conjugate,
+          "got $(_dispatch_path(p, k_new))")
+
+    # obs=2.0: κ_n = 2, μ_n = (1*0 + 2)/2 = 1.0, α_n = 2.5, β_n = 1 + 1*4/4 = 2.0
+    cp = maybe_conjugate(p, k_new)
+    updated = update(cp, 2.0).prior
+    check("NormalGamma posterior κ_n = 2.0 (==)",
+          updated.κ == 2.0, "got κ=$(updated.κ)")
+    check("NormalGamma posterior μ_n = 1.0 (==, 2/2 exact)",
+          updated.μ == 1.0, "got μ=$(updated.μ)")
+    check("NormalGamma posterior α_n = 2.5 (==)",
+          updated.α == 2.5, "got α=$(updated.α)")
+    check("NormalGamma posterior β_n = 2.0 (==, κ(r-μ)²/(2κ_n) = 4/4)",
+          updated.β == 2.0, "got β=$(updated.β)")
+end
+
+# Legacy params-based path for NormalGamma.
+let k_legacy = Kernel(ProductSpace(Space[Euclidean(1), PositiveReals()]), Euclidean(1),
+                      h -> GaussianMeasure(Euclidean(1), h[1], sqrt(h[2])),
+                      (h, o) -> -0.5 * (o - h[1])^2 / h[2];
+                      params = Dict{Symbol,Any}(:normal_gamma => true),
+                      likelihood_family = PushOnly())
+    using Credence: NormalGammaPrevision
+
+    p = NormalGammaPrevision(1.0, 0.0, 2.0, 1.0)
+
+    check("NormalGammaPrevision + legacy params-based kernel → :conjugate",
+          _dispatch_path(p, k_legacy) === :conjugate,
+          "got $(_dispatch_path(p, k_legacy))")
+
+    cp = maybe_conjugate(p, k_legacy)
+    updated = update(cp, 2.0).prior
+    check("legacy NormalGamma path matches new-path result",
+          updated.κ == 2.0 && updated.μ == 1.0 && updated.α == 2.5 && updated.β == 2.0,
+          "got (κ, μ, α, β) = ($(updated.κ), $(updated.μ), $(updated.α), $(updated.β))")
+end
+
+# ── (GammaPrevision, Exponential) — net-new fast-path ──
+#
+# Posterior is Gamma(α+1, β+obs). No legacy path (this pair wasn't
+# previously dispatched — existing GammaMeasure + Exponential kernels
+# fell through to particle).
+
+let k = Kernel(PositiveReals(), PositiveReals(),
+               h -> GammaMeasure(PositiveReals(), 1.0, h),
+               (h, o) -> log(h) - h * o;
+               likelihood_family = Exponential())
+    using Credence: GammaPrevision
+
+    p = GammaPrevision(2.0, 3.0)
+
+    check("GammaPrevision + Exponential → :conjugate (net-new)",
+          _dispatch_path(p, k) === :conjugate,
+          "got $(_dispatch_path(p, k))")
+
+    # obs=4.0: α_n = 3, β_n = 7
+    cp = maybe_conjugate(p, k)
+    updated = update(cp, 4.0).prior
+    check("GammaPrevision(2, 3) + Exponential obs=4.0 → Gamma(3, 7) (==)",
+          updated.alpha == 3.0 && updated.beta == 7.0,
+          "got α=$(updated.alpha), β=$(updated.beta)")
+
+    # Negative/zero obs must error.
+    raised = try
+        update(cp, -1.0)
+        false
+    catch
+        true
+    end
+    check("GammaPrevision + Exponential rejects negative obs",
+          raised, "expected error on obs=-1.0")
+end
+
 # ── TaggedBetaPrevision: must NOT match as conjugate (transitional scaffolding) ──
 #
 # Per PR #19's Move 1 revision addendum (commit 6dce5e4), TaggedBetaMeasure
