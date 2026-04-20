@@ -24,7 +24,7 @@ module Ontology
 # so `using .Previsions, .Ontology` in Credence is unambiguous.
 import ..Previsions: TestFunction, Identity, Projection, NestedProjection,
                      Tabular, LinearCombination, OpaqueClosure, expect
-import ..Previsions: BetaPrevision, TaggedBetaPrevision, GaussianPrevision, GammaPrevision, CategoricalPrevision, DirichletPrevision
+import ..Previsions: BetaPrevision, TaggedBetaPrevision, GaussianPrevision, GammaPrevision, CategoricalPrevision, DirichletPrevision, NormalGammaPrevision
 
 export Space, Finite, Interval, ProductSpace, Simplex, Euclidean, PositiveReals, support
 export Measure, CategoricalMeasure, BetaMeasure, TaggedBetaMeasure, GaussianMeasure, GammaMeasure, ExponentialMeasure, DirichletMeasure, NormalGammaMeasure, ProductMeasure, MixtureMeasure
@@ -275,24 +275,31 @@ mean(m::GammaMeasure) = m.alpha / m.beta
 ExponentialMeasure(rate::Float64) = GammaMeasure(1.0, rate)
 
 # ── Normal-Gamma: conjugate prior for Normal with unknown mean and variance ──
+#
+# Move 3: wraps NormalGammaPrevision; scalar hyperparameters forward via
+# the shield.
 
 struct NormalGammaMeasure <: Measure
+    prevision::NormalGammaPrevision
     space::ProductSpace          # Euclidean(1) × PositiveReals
-    κ::Float64                   # pseudo-observation count (mean precision)
-    μ::Float64                   # posterior mean location
-    α::Float64                   # shape (half-observations for variance)
-    β::Float64                   # rate (scaled sum of squared deviations)
 
     function NormalGammaMeasure(space::ProductSpace, κ::Float64, μ::Float64, α::Float64, β::Float64)
-        κ > 0 || error("κ must be positive")
-        α > 0 || error("α must be positive")
-        β > 0 || error("β must be positive")
-        new(space, κ, μ, α, β)
+        new(NormalGammaPrevision(κ, μ, α, β), space)
     end
 end
 
 NormalGammaMeasure(κ::Float64, μ::Float64, α::Float64, β::Float64) =
     NormalGammaMeasure(ProductSpace(Space[Euclidean(1), PositiveReals()]), κ, μ, α, β)
+
+function Base.getproperty(m::NormalGammaMeasure, s::Symbol)
+    if s === :κ || s === :μ || s === :α || s === :β
+        return getproperty(getfield(m, :prevision), s)
+    else
+        return getfield(m, s)
+    end
+end
+
+Base.propertynames(::NormalGammaMeasure) = (:κ, :μ, :α, :β, :space, :prevision)
 
 mean(m::NormalGammaMeasure) = m.μ
 

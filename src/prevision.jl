@@ -30,7 +30,7 @@ module Previsions
 
 export Prevision, TestFunction, Indicator, apply, expect
 export Identity, Projection, NestedProjection, Tabular, LinearCombination, OpaqueClosure
-export BetaPrevision, TaggedBetaPrevision, GaussianPrevision, GammaPrevision, CategoricalPrevision, DirichletPrevision
+export BetaPrevision, TaggedBetaPrevision, GaussianPrevision, GammaPrevision, CategoricalPrevision, DirichletPrevision, NormalGammaPrevision
 # At Move 2, `Ontology`'s `Functional` hierarchy is aliased onto these
 # types (`const Functional = TestFunction` plus `import ..Previsions:
 # Identity, …`), so both modules export the same bindings (they resolve
@@ -299,6 +299,29 @@ struct DirichletPrevision <: Prevision
     function DirichletPrevision(alpha::Vector{Float64})
         all(a -> a > 0, alpha) || error("all alpha must be positive")
         new(alpha)
+    end
+end
+
+"""
+    NormalGammaPrevision(κ, μ, α, β) <: Prevision
+
+Prevision whose representing measure is the Normal-Gamma conjugate prior
+for a Normal with unknown mean and variance. Carries the four
+hyperparameters (κ pseudo-obs count, μ mean location, α shape, β rate).
+The `NormalGammaMeasure` view wraps it and forwards `m.κ`, `m.μ`, `m.α`,
+`m.β` through the `getproperty` shield.
+"""
+struct NormalGammaPrevision <: Prevision
+    κ::Float64
+    μ::Float64
+    α::Float64
+    β::Float64
+
+    function NormalGammaPrevision(κ::Float64, μ::Float64, α::Float64, β::Float64)
+        κ > 0 || error("κ must be positive")
+        α > 0 || error("α must be positive")
+        β > 0 || error("β must be positive")
+        new(κ, μ, α, β)
     end
 end
 
