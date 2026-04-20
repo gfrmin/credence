@@ -427,6 +427,167 @@ def test_v1_snapshot_fails_loudly():
         skin.shutdown()
 
 
+def test_beta_bernoulli_conjugate():
+    """Beta-Bernoulli conjugate: _dispatch_path == 'conjugate'; posterior bit-exact.
+
+    Stratum-2 contract (Move 4): dispatch-path assertion FIRST, then value —
+    a silent registry miss would still produce the correct value via the
+    particle path, so pinning the path is load-bearing.
+    """
+    skin = SkinClient()
+    try:
+        skin.initialize()
+        sid = skin.create_state(type="beta", alpha=2.0, beta=3.0)
+        kernel = {"type": "bernoulli"}
+
+        path = skin._dispatch_path(sid, kernel)
+        assert path == "conjugate", f"Expected 'conjugate', got {path!r}"
+
+        skin.condition(sid, kernel=kernel, observation=1.0)
+        m = skin.mean(sid)
+        assert m == 3 / 6, f"Beta(3,3) mean = 3/6 (exact), got {m}"
+
+        skin.destroy_state(sid)
+        print("PASS: beta-bernoulli conjugate (dispatch-path pinned, α+1 exact)")
+    finally:
+        skin.shutdown()
+
+
+def test_flat_likelihood_no_op():
+    """BetaMeasure + Flat likelihood: posterior equals prior bit-exactly."""
+    skin = SkinClient()
+    try:
+        skin.initialize()
+        sid = skin.create_state(type="beta", alpha=4.0, beta=7.0)
+        m_before = skin.mean(sid)
+        assert m_before == 4.0 / 11.0, f"Beta(4,7) mean = 4/11, got {m_before}"
+
+        kernel = {"type": "flat"}
+        path = skin._dispatch_path(sid, kernel)
+        assert path == "conjugate", f"Expected 'conjugate', got {path!r}"
+
+        # Flat is obs-agnostic; any obs leaves α, β untouched.
+        skin.condition(sid, kernel=kernel, observation=1.0)
+        m_after = skin.mean(sid)
+        assert m_after == m_before, f"Flat no-op drifted: {m_before} → {m_after}"
+
+        skin.destroy_state(sid)
+        print("PASS: flat likelihood no-op (dispatch-path pinned, prior preserved)")
+    finally:
+        skin.shutdown()
+
+
+def test_gaussian_normal_conjugate():
+    """Gaussian-NormalNormal conjugate: closed-form posterior mean.
+
+    Prior: N(0, 1). Obs: 2.0 with σ_obs = 1. Posterior precision τ_post = 2;
+    posterior mean μ_post = (1·0 + 1·2) / 2 = 1.0 — bit-exact integer ratio.
+    """
+    skin = SkinClient()
+    try:
+        skin.initialize()
+        sid = skin.create_state(type="gaussian", mu=0.0, sigma=1.0)
+
+        # Skin's gaussian_known_var kernel declares params[:sigma_obs]; the
+        # registry matches on that legacy pattern and produces a
+        # ConjugatePrevision{GaussianPrevision, NormalNormal}.
+        kernel = {"type": "gaussian_known_var", "variance": 1.0}
+        path = skin._dispatch_path(sid, kernel)
+        assert path == "conjugate", f"Expected 'conjugate', got {path!r}"
+
+        skin.condition(sid, kernel=kernel, observation=2.0)
+        m = skin.mean(sid)
+        assert m == 1.0, f"Gaussian posterior μ = (τ_prior·0 + τ_obs·2)/2 = 1.0 exact, got {m}"
+
+        skin.destroy_state(sid)
+        print("PASS: gaussian-normal conjugate (dispatch-path pinned, μ_post exact)")
+    finally:
+        skin.shutdown()
+
+
+def test_dirichlet_categorical_conjugate():
+    """Dirichlet-Categorical conjugate: α at observed idx increments by 1."""
+    skin = SkinClient()
+    try:
+        skin.initialize()
+        sid = skin.create_state(type="dirichlet", alpha=[2.0, 3.0, 5.0])
+        w_before = skin.weights(sid)
+        assert w_before == [0.2, 0.3, 0.5], f"expected [0.2, 0.3, 0.5], got {w_before}"
+
+        # Observe category index 1 (label 1.0). Posterior α = [2, 4, 5].
+        kernel = {"type": "categorical", "categories": [0.0, 1.0, 2.0]}
+        path = skin._dispatch_path(sid, kernel)
+        assert path == "conjugate", f"Expected 'conjugate', got {path!r}"
+
+        skin.condition(sid, kernel=kernel, observation=1.0)
+        w_after = skin.weights(sid)
+        # α/sum(α) = [2, 4, 5]/11
+        expected = [2.0 / 11.0, 4.0 / 11.0, 5.0 / 11.0]
+        assert w_after == expected, f"Dirichlet α increment drifted: {expected} vs {w_after}"
+
+        skin.destroy_state(sid)
+        print("PASS: dirichlet-categorical conjugate (dispatch-path pinned, α[1]+=1 exact)")
+    finally:
+        skin.shutdown()
+
+
+def test_normal_gamma_conjugate():
+    """NormalGamma + NormalGammaLikelihood conjugate: closed-form κ/μ/α/β update.
+
+    Prior: κ=1, μ=0, α=2, β=2. Obs: r=2.0.
+    Posterior: κ_n = 2, μ_n = (1·0 + 2)/2 = 1.0, α_n = 2.5,
+               β_n = 2 + 1·(2−0)²/(2·2) = 2 + 1 = 3.0. All exact.
+    """
+    skin = SkinClient()
+    try:
+        skin.initialize()
+        sid = skin.create_state(type="normal_gamma", kappa=1.0, mu=0.0, alpha=2.0, beta=2.0)
+        m_before = skin.mean(sid)
+        assert m_before == 0.0, f"NormalGamma mean = μ = 0.0, got {m_before}"
+
+        kernel = {"type": "normal_gamma"}
+        path = skin._dispatch_path(sid, kernel)
+        assert path == "conjugate", f"Expected 'conjugate', got {path!r}"
+
+        skin.condition(sid, kernel=kernel, observation=2.0)
+        m_after = skin.mean(sid)
+        # Posterior mean is μ_n = 1.0 exact.
+        assert m_after == 1.0, f"NormalGamma posterior μ_n = 1.0 exact, got {m_after}"
+
+        skin.destroy_state(sid)
+        print("PASS: normal-gamma conjugate (dispatch-path pinned, μ_n exact)")
+    finally:
+        skin.shutdown()
+
+
+def test_gamma_exponential_conjugate():
+    """Gamma-Exponential conjugate (net-new in Move 4): α+1, β+obs.
+
+    Prior: Gamma(2, 3) — mean α/β = 2/3 exact. Obs: λ_obs = 4.0.
+    Posterior: Gamma(3, 7) — mean 3/7 exact.
+    """
+    skin = SkinClient()
+    try:
+        skin.initialize()
+        sid = skin.create_state(type="gamma", alpha=2.0, beta=3.0)
+        m_before = skin.mean(sid)
+        assert m_before == 2.0 / 3.0, f"Gamma(2,3) mean = 2/3, got {m_before}"
+
+        kernel = {"type": "exponential"}
+        path = skin._dispatch_path(sid, kernel)
+        assert path == "conjugate", f"Expected 'conjugate', got {path!r}"
+
+        skin.condition(sid, kernel=kernel, observation=4.0)
+        m_after = skin.mean(sid)
+        # Gamma(3, 7) mean = 3/7 exact.
+        assert m_after == 3.0 / 7.0, f"Gamma posterior mean = 3/7 exact, got {m_after}"
+
+        skin.destroy_state(sid)
+        print("PASS: gamma-exponential conjugate (dispatch-path pinned, net-new fast-path)")
+    finally:
+        skin.shutdown()
+
+
 def test_unknown_state_id():
     """Operations on a never-registered state_id return StateNotFound (-32000)."""
     skin = SkinClient()
@@ -549,6 +710,18 @@ if __name__ == "__main__":
     test_dirichlet_roundtrip()
     print()
     test_v1_snapshot_fails_loudly()
+    print()
+    test_beta_bernoulli_conjugate()
+    print()
+    test_flat_likelihood_no_op()
+    print()
+    test_gaussian_normal_conjugate()
+    print()
+    test_dirichlet_categorical_conjugate()
+    print()
+    test_normal_gamma_conjugate()
+    print()
+    test_gamma_exponential_conjugate()
     print()
     test_unknown_state_id()
     print()

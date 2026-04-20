@@ -289,6 +289,62 @@ function build_kernel(spec, state_id::Union{String, Nothing}=nothing)
         resolved_args = [resolve_arg(a) for a in args]
         fn(resolved_args...)
 
+    elseif t == "flat"
+        # Flat likelihood: no-op conjugate for BetaMeasure. Any source/target
+        # shape with a declared likelihood_family = Flat() is recognised by
+        # maybe_conjugate(::BetaPrevision, ...). Declared here over
+        # Interval(0,1) → Finite(0,1) for parity with the bernoulli kernel.
+        source = Interval(0.0, 1.0)
+        target = Finite([0.0, 1.0])
+        Kernel(source, target,
+            θ -> error("generate not used"),
+            (θ, o) -> 0.0;
+            likelihood_family = Flat())
+
+    elseif t == "categorical"
+        # Dirichlet-Categorical conjugate kernel. Categories are Float64
+        # labels [0.0, 1.0, …, k-1] to match the skin's create_state for
+        # DirichletMeasure. The Categorical likelihood marker carries the
+        # category list as a Finite so maybe_conjugate(::DirichletPrevision,
+        # ...) can look up obs→idx at update time.
+        cats = Finite(collect(Float64, spec["categories"]))
+        k = length(cats.values)
+        source = Simplex(k)
+        target = cats
+        Kernel(source, target,
+            _ -> error("generate not used"),
+            (θ, o) -> begin
+                idx = findfirst(==(o), cats.values)
+                idx === nothing ? -Inf : log(max(θ[idx], 1e-300))
+            end;
+            likelihood_family = Categorical(cats))
+
+    elseif t == "normal_gamma"
+        # Normal-Gamma conjugate kernel. The hypothesis h = (μ, σ²) is
+        # drawn from NormalGammaMeasure (see `draw(::NormalGammaMeasure)`);
+        # the likelihood is N(o; μ, σ²). Density is used by
+        # log_predictive's generic fallback even though the posterior
+        # goes through the conjugate registry.
+        source = Euclidean(1)
+        target = Euclidean(1)
+        Kernel(source, target,
+            _ -> error("generate not used"),
+            (h, o) -> begin
+                μ, σ² = h[1], h[2]
+                -0.5 * log(2π * σ²) - 0.5 * (o - μ)^2 / σ²
+            end;
+            likelihood_family = NormalGammaLikelihood())
+
+    elseif t == "exponential"
+        # Gamma-Exponential conjugate kernel. Rate λ ∈ ℝ₊; observation
+        # o ∈ ℝ₊. Log-density log(λ) - λo.
+        source = PositiveReals()
+        target = PositiveReals()
+        Kernel(source, target,
+            λ -> error("generate not used"),
+            (λ, o) -> log(max(λ, 1e-300)) - λ * o;
+            likelihood_family = Exponential())
+
     else
         error("unknown kernel type: $t")
     end
