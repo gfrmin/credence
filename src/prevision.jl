@@ -30,7 +30,7 @@ module Previsions
 
 export Prevision, TestFunction, Indicator, apply, expect
 export Identity, Projection, NestedProjection, Tabular, LinearCombination, OpaqueClosure
-export BetaPrevision, TaggedBetaPrevision, GaussianPrevision, GammaPrevision, CategoricalPrevision, DirichletPrevision, NormalGammaPrevision
+export BetaPrevision, TaggedBetaPrevision, GaussianPrevision, GammaPrevision, CategoricalPrevision, DirichletPrevision, NormalGammaPrevision, ProductPrevision
 # At Move 2, `Ontology`'s `Functional` hierarchy is aliased onto these
 # types (`const Functional = TestFunction` plus `import ..Previsions:
 # Identity, …`), so both modules export the same bindings (they resolve
@@ -323,6 +323,22 @@ struct NormalGammaPrevision <: Prevision
         β > 0 || error("β must be positive")
         new(κ, μ, α, β)
     end
+end
+
+"""
+    ProductPrevision(factors::Vector) <: Prevision
+
+Prevision for an independent joint over a product space. Holds the factors
+as a Vector of Measure (not Vector of Prevision) — consumers access
+`m.factors[i]` expecting a Measure; the shield forwards the vector by
+reference, preserving shared-reference semantics.
+
+Holding Measures-in-a-Prevision is the same pragmatic choice made for
+TaggedBetaPrevision — allocates nothing on access; a future cleanup
+can replace with Previsions + view reconstruction if perf justifies.
+"""
+struct ProductPrevision <: Prevision
+    factors::Vector
 end
 
 # ── apply — abstract evaluator ────────────────────────────────────────────
