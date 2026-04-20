@@ -14,8 +14,10 @@ from __future__ import annotations
 
 import json
 import logging
+import select
 import subprocess
 import sys
+import time
 from pathlib import Path
 from typing import Any
 
@@ -37,7 +39,7 @@ class SkinClient:
         self,
         julia: str = "julia",
         server_path: str | Path | None = None,
-        startup_timeout: float = 60.0,
+        startup_timeout: float = 120.0,
         project: str | Path | None = None,
     ):
         if server_path is None:
@@ -64,6 +66,62 @@ class SkinClient:
             stderr=subprocess.PIPE,
             text=True,
             bufsize=1,  # line-buffered
+        )
+        self._wait_for_ready()
+
+    def _wait_for_ready(self):
+        """Wait for the Julia skin server's startup-complete sentinel.
+
+        The server emits `{"status": "ready"}\\n` on stdout after all
+        module loading finishes, before entering the JSON-RPC accept
+        loop (`apps/skin/server.jl::main()`). This method reads stdout
+        until that line arrives, with `process.poll()` polled alongside
+        to detect early crash, and a generous ceiling
+        (`self._startup_timeout`, default 120s) that accommodates
+        cold-compile + loaded-runner variance. See issue #22 for the
+        class of lifecycle-budget failures this replaces.
+        """
+        assert self._process is not None
+        assert self._process.stdout is not None
+        deadline = time.monotonic() + self._startup_timeout
+        while time.monotonic() < deadline:
+            exit_code = self._process.poll()
+            if exit_code is not None:
+                stderr = ""
+                if self._process.stderr:
+                    stderr = self._process.stderr.read()
+                raise SkinError(
+                    -1,
+                    f"Skin process exited with code {exit_code} before "
+                    f"ready sentinel. stderr: {stderr}",
+                )
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                break
+            # Poll stdout with a short budget; loop re-checks process.poll().
+            readable, _, _ = select.select(
+                [self._process.stdout.fileno()], [], [], min(remaining, 1.0),
+            )
+            if not readable:
+                continue
+            line = self._process.stdout.readline()
+            if not line:
+                # EOF; process exited. Loop catches it via .poll() next iter.
+                continue
+            try:
+                msg = json.loads(line)
+            except json.JSONDecodeError:
+                # Not a JSON line (e.g. stray Julia warning to stdout).
+                # Shouldn't happen in practice — stderr captures warnings —
+                # but guard defensively.
+                continue
+            if isinstance(msg, dict) and msg.get("status") == "ready":
+                log.info("Skin process ready")
+                return
+        raise SkinError(
+            -1,
+            f"Skin process did not emit ready sentinel within "
+            f"{self._startup_timeout}s",
         )
 
     def _call(self, method: str, params: dict[str, Any] | None = None) -> Any:
@@ -121,25 +179,57 @@ class SkinClient:
         return self._call("initialize", params)
 
     def shutdown(self):
-        """Graceful shutdown.
+        """Bounded-time shutdown.
 
-        The 30s wait is sized for CI flake resistance on Julia processes
-        carrying a fully-initialised Credence depot and a loaded BDSL —
-        Julia shutdown is rarely instantaneous. A clean exit in practice
-        should be well under 10s; if shutdown ever takes longer than
-        that in real runs, treat it as a signal to investigate the
-        shutdown path (mutex held across the subprocess boundary, async
-        task not cancelled, etc.) rather than bumping this number
-        further. See issue #9.
+        Steps:
+          1. Send `shutdown` RPC (the server's main loop returns on receipt).
+          2. Close stdin to signal EOF (the server's `eachline(stdin)` loop
+             exits on EOF even if the RPC path didn't land cleanly).
+          3. `wait(timeout=5)` for clean exit.
+          4. If still alive: `terminate()` (SIGTERM), `wait(timeout=5)`.
+          5. If still alive: `kill()` (SIGKILL), `wait(timeout=2)`.
+
+        Total ceiling ~12s; guaranteed to complete (SIGKILL cannot be
+        ignored). Replaces the earlier 30s `wait-after-terminate` pattern
+        that flaked under cold-compile + loaded-runner variance (issue #22,
+        matching class as #9's teardown-path flake). Per the repo precedent,
+        further timeout bumps would be a signal that something in shutdown
+        regressed, not a budget inadequacy.
         """
+        if self._process is None:
+            return
+
         try:
             self._call("shutdown")
         except (SkinError, BrokenPipeError):
             pass
-        if self._process:
+
+        # Close stdin so the server's `eachline(stdin)` loop sees EOF and exits,
+        # even if the shutdown RPC path didn't land (e.g. broken pipe).
+        try:
+            if self._process.stdin:
+                self._process.stdin.close()
+        except (BrokenPipeError, OSError):
+            pass
+
+        try:
+            self._process.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            log.info("Skin process did not exit cleanly; sending SIGTERM")
             self._process.terminate()
-            self._process.wait(timeout=30)
-            self._process = None
+            try:
+                self._process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                log.warning("Skin process ignored SIGTERM; sending SIGKILL")
+                self._process.kill()
+                try:
+                    self._process.wait(timeout=2)
+                except subprocess.TimeoutExpired:
+                    log.error(
+                        "Skin process still alive after SIGKILL+2s; giving up"
+                    )
+
+        self._process = None
 
     def __del__(self):
         if self._process and self._process.poll() is None:
