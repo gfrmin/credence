@@ -1172,6 +1172,18 @@ function condition(m::NormalGammaMeasure, k::Kernel, observation)
     condition(m::Measure, k, observation)
 end
 
+function condition(m::GammaMeasure, k::Kernel, observation)
+    # Move 4: (GammaPrevision, Exponential) is net-new fast-path — no
+    # legacy condition method existed. Registry lookup; fallback to
+    # generic particle path for any other kernel.
+    cp = maybe_conjugate(m.prevision, k)
+    if cp !== nothing
+        updated = update(cp, observation).prior
+        return GammaMeasure(m.space, updated.alpha, updated.beta)
+    end
+    condition(m::Measure, k, observation)
+end
+
 function _condition_by_grid(m::BetaMeasure, k::Kernel, observation; n::Int=64)
     grid = collect(range(m.space.lo + 1e-10, m.space.hi - 1e-10, length=n))
     logw = Float64[]
