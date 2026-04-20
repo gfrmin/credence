@@ -30,7 +30,7 @@ module Previsions
 
 export Prevision, TestFunction, Indicator, apply, expect
 export Identity, Projection, NestedProjection, Tabular, LinearCombination, OpaqueClosure
-export BetaPrevision, TaggedBetaPrevision, GaussianPrevision, GammaPrevision
+export BetaPrevision, TaggedBetaPrevision, GaussianPrevision, GammaPrevision, CategoricalPrevision
 # At Move 2, `Ontology`'s `Functional` hierarchy is aliased onto these
 # types (`const Functional = TestFunction` plus `import ..Previsions:
 # Identity, …`), so both modules export the same bindings (they resolve
@@ -250,6 +250,38 @@ struct GammaPrevision <: Prevision
     function GammaPrevision(alpha::Float64, beta::Float64)
         alpha > 0 && beta > 0 || error("alpha and beta must be positive")
         new(alpha, beta)
+    end
+end
+
+"""
+    CategoricalPrevision(logw::Vector{Float64}) <: Prevision
+
+Prevision whose representing measure is categorical over a finite space,
+with log-weights `logw` normalised at construction time. The
+`CategoricalMeasure{T}` view wraps a `CategoricalPrevision` and forwards
+`m.logw` reads through its `getproperty` shield.
+
+The `logw` field is returned by reference through the shield — see the
+shared-reference contract in docs/posture-3/move-3-design.md §3. In
+practice `logw` is never mutated post-construction (the normalisation
+is one-shot in the constructor), but the contract is maintained for
+consistency with MixtureMeasure's `components` / `log_weights` where
+in-place mutation is a real consumer pattern.
+
+Not parametric on the atom type — the type connection lives at the
+Measure level (`CategoricalMeasure{T}.space::Finite{T}`). `logw` values
+stand alone as a probability vector.
+"""
+struct CategoricalPrevision <: Prevision
+    logw::Vector{Float64}
+
+    function CategoricalPrevision(logw::Vector{Float64})
+        if all(lw -> lw == -Inf, logw)
+            error("measure has zero total mass — all hypotheses impossible")
+        end
+        max_lw = maximum(logw)
+        log_total = max_lw + log(sum(exp.(logw .- max_lw)))
+        new(logw .- log_total)
     end
 end
 
