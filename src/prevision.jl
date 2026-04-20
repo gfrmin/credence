@@ -30,6 +30,7 @@ module Previsions
 
 export Prevision, TestFunction, Indicator, apply, expect
 export Identity, Projection, NestedProjection, Tabular, LinearCombination, OpaqueClosure
+export BetaPrevision
 # At Move 2, `Ontology`'s `Functional` hierarchy is aliased onto these
 # types (`const Functional = TestFunction` plus `import ..Previsions:
 # Identity, …`), so both modules export the same bindings (they resolve
@@ -178,6 +179,28 @@ subtypes), not at the field level. See `docs/posture-3/move-1-design.md`
 """
 struct Indicator{E} <: TestFunction
     event::E
+end
+
+# ── Concrete Prevision subtypes (Move 3) ──────────────────────────────────
+
+"""
+    BetaPrevision(alpha::Float64, beta::Float64) <: Prevision
+
+Prevision whose representing measure is Beta(α, β) on [0, 1]. The
+`BetaMeasure` view wraps a `BetaPrevision` and forwards `m.alpha`,
+`m.beta` reads through its `getproperty` shield (see `src/ontology.jl`).
+
+Move 3 declares this as a shell; Move 4 adds it as the Prior-type in
+`ConjugatePrevision{BetaPrevision, Bernoulli}` for the conjugate registry.
+"""
+struct BetaPrevision <: Prevision
+    alpha::Float64
+    beta::Float64
+
+    function BetaPrevision(alpha::Float64, beta::Float64)
+        alpha > 0 && beta > 0 || error("alpha and beta must be positive")
+        new(alpha, beta)
+    end
 end
 
 # ── apply — abstract evaluator ────────────────────────────────────────────

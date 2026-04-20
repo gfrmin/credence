@@ -365,5 +365,47 @@ end
 
 println()
 println("="^60)
+println("Stratum 1 — Measure getproperty shield (Move 3)")
+println("="^60)
+
+# ── Shield: BetaMeasure field reads forward to BetaPrevision ──
+# Move 3 refactors BetaMeasure to wrap BetaPrevision; consumer reads of
+# `m.alpha` and `m.beta` are forwarded via Base.getproperty. These tests
+# assert the forwarding preserves the underlying values bit-exactly.
+let m = BetaMeasure(Interval(0.0, 1.0), 2.0, 3.0)
+    check("BetaMeasure.alpha forwards via shield",
+          m.alpha === 2.0, "got $(m.alpha) of type $(typeof(m.alpha))")
+    check("BetaMeasure.beta forwards via shield",
+          m.beta === 3.0, "got $(m.beta) of type $(typeof(m.beta))")
+    check("BetaMeasure.space preserved on Measure (not forwarded)",
+          m.space === Interval(0.0, 1.0), "got $(m.space)")
+    check("BetaMeasure.prevision exposed via shield default branch",
+          m.prevision isa Credence.Previsions.BetaPrevision,
+          "got $(typeof(m.prevision))")
+    check("BetaMeasure propertynames includes forwarded + native fields",
+          Set(propertynames(m)) == Set((:alpha, :beta, :space, :prevision)),
+          "got $(propertynames(m))")
+end
+
+# ── Shield: mean/variance go through the forwarding transparently ──
+# The method bodies `mean(m::BetaMeasure) = m.alpha / (m.alpha + m.beta)`
+# (src/ontology.jl:129) continue to work unchanged; the shield is
+# invisible to them.
+let m = BetaMeasure(Interval(0.0, 1.0), 2.0, 3.0)
+    check("mean(BetaMeasure) uses shield reads, bit-exact",
+          mean(m) == 2.0 / 5.0, "got $(mean(m))")
+    check("variance(BetaMeasure) uses shield reads",
+          isapprox(variance(m), 2.0 * 3.0 / (5.0^2 * 6.0); atol=1e-14),
+          "got $(variance(m))")
+end
+
+# (Shared-reference contract test for Vector-typed fields — MixtureMeasure
+# `.components` and `.log_weights` — lands in the MixtureMeasure refactor
+# commit. That test exercises the contract named in
+# docs/posture-3/move-3-design.md §3 and R4: shield returns references,
+# not copies; `push!(m.components, ...)` mutates the underlying vector.)
+
+println()
+println("="^60)
 println("ALL STRATUM-1 TESTS PASSED")
 println("="^60)

@@ -24,6 +24,7 @@ module Ontology
 # so `using .Previsions, .Ontology` in Credence is unambiguous.
 import ..Previsions: TestFunction, Identity, Projection, NestedProjection,
                      Tabular, LinearCombination, OpaqueClosure, expect
+import ..Previsions: BetaPrevision
 
 export Space, Finite, Interval, ProductSpace, Simplex, Euclidean, PositiveReals, support
 export Measure, CategoricalMeasure, BetaMeasure, TaggedBetaMeasure, GaussianMeasure, GammaMeasure, ExponentialMeasure, DirichletMeasure, NormalGammaMeasure, ProductMeasure, MixtureMeasure
@@ -102,21 +103,44 @@ function weights(m::CategoricalMeasure)
 end
 
 # ── Beta: continuous on [0,1] ──
+#
+# Move 3: `BetaMeasure` is now a thin wrapper around `BetaPrevision`. The
+# `Base.getproperty` shield below forwards `m.alpha` and `m.beta` reads
+# to the underlying prevision so existing consumer code (m.alpha /
+# (m.alpha + m.beta), etc.) works unchanged. The shield MUST return
+# values by direct dereference, not copies or wrappers — see the
+# shared-reference contract in test_prevision_unit.jl
+# (test_shared_reference_contract). Breaking that invariant silently
+# corrupts the push!(state.belief.components, ...) pattern in
+# apps/skin/server.jl:549,552.
 
 struct BetaMeasure <: Measure
+    prevision::BetaPrevision
     space::Interval
-    alpha::Float64
-    beta::Float64
 
     function BetaMeasure(space::Interval, alpha::Float64, beta::Float64)
         space.lo == 0.0 && space.hi == 1.0 || error("BetaMeasure requires [0,1]")
-        alpha > 0 && beta > 0 || error("alpha and beta must be positive")
-        new(space, alpha, beta)
+        new(BetaPrevision(alpha, beta), space)
     end
 end
 
 BetaMeasure(α::Float64, β::Float64) = BetaMeasure(Interval(0.0, 1.0), α, β)
 BetaMeasure() = BetaMeasure(1.0, 1.0)
+
+# `getproperty` shield: see shared-reference contract in
+# test/test_prevision_unit.jl (test_shared_reference_contract).
+# Do NOT defensively copy.
+function Base.getproperty(m::BetaMeasure, s::Symbol)
+    if s === :alpha
+        return getfield(m, :prevision).alpha
+    elseif s === :beta
+        return getfield(m, :prevision).beta
+    else
+        return getfield(m, s)
+    end
+end
+
+Base.propertynames(::BetaMeasure) = (:alpha, :beta, :space, :prevision)
 
 # ── TaggedBeta: program-indexed Beta for per-component kernel dispatch ──
 
