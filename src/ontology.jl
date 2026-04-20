@@ -31,6 +31,7 @@ export Space, Finite, Interval, ProductSpace, Simplex, Euclidean, PositiveReals,
 export Measure, CategoricalMeasure, BetaMeasure, TaggedBetaMeasure, GaussianMeasure, GammaMeasure, ExponentialMeasure, DirichletMeasure, NormalGammaMeasure, ProductMeasure, MixtureMeasure
 export Kernel, FactorSelector, kernel_source, kernel_target, kernel_params
 export LikelihoodFamily, LeafFamily, PushOnly, BetaBernoulli, Flat, FiringByTag, DispatchByComponent, DepthCapExceeded
+export NormalNormal, Categorical, NormalGammaLikelihood, Exponential
 export Event, TagSet, FeatureEquals, FeatureInterval, Conjunction, Disjunction, Complement
 export indicator_kernel, feature_value, BOOLEAN_SPACE
 export Functional, Identity, Projection, NestedProjection, Tabular, LinearCombination, OpaqueClosure
@@ -432,6 +433,29 @@ struct Flat <: LeafFamily end
 # clear error, since TaggedBetaMeasure conditioning requires a declared
 # leaf or routing family.
 struct PushOnly <: LikelihoodFamily end
+
+# Move 4: Gaussian-Normal conjugate pair. Carries the observation noise
+# stdev sigma_obs. Legacy kernels passed this via `params[:sigma_obs]`
+# + `likelihood_family = PushOnly()`; new kernels declare directly via
+# `likelihood_family = NormalNormal(sigma_obs)`. maybe_conjugate matches
+# either shape for backward compat.
+struct NormalNormal <: LeafFamily
+    sigma_obs::Float64
+end
+
+# Move 4: Dirichlet-Categorical conjugate pair. No carried params; the
+# observation is the category value (looked up in DirichletMeasure's
+# categories at update time).
+struct Categorical <: LeafFamily end
+
+# Move 4: NormalGamma conjugate pair. No carried params; the update
+# uses the prior's (κ, μ, α, β) hyperparameters and the scalar obs.
+struct NormalGammaLikelihood <: LeafFamily end
+
+# Move 4: Gamma-Exponential conjugate pair (net-new fast-path). No
+# carried params; Exponential observations are positive reals consumed
+# by the Gamma update as (shape+1, rate+obs).
+struct Exponential <: LeafFamily end
 
 # Fire/not-fire routing by component tag. Tags in `fires` use
 # `when_fires`; all other tags use `when_not`. This is the declarative
@@ -924,6 +948,34 @@ end
 
 function update(cp::ConjugatePrevision{BetaPrevision, Flat}, obs)
     cp  # no-op
+end
+
+# ── (GaussianPrevision, NormalNormal) — replaces ontology.jl:949-961 ──
+#
+# Precision-weighted posterior under known observation noise. Accepts
+# kernels constructed either with `likelihood_family = NormalNormal(σ)`
+# (forward-looking) or with `params = Dict(:sigma_obs => σ)` +
+# `likelihood_family = PushOnly()` (legacy, used by existing tests).
+# Both paths are treated as conjugate.
+
+function maybe_conjugate(p::GaussianPrevision, k::Kernel)
+    if k.likelihood_family isa NormalNormal
+        return ConjugatePrevision(p, k.likelihood_family)
+    elseif k.params !== nothing && haskey(k.params, :sigma_obs)
+        sigma_obs = k.params[:sigma_obs]::Float64
+        return ConjugatePrevision(p, NormalNormal(sigma_obs))
+    end
+    nothing
+end
+
+function update(cp::ConjugatePrevision{GaussianPrevision, NormalNormal}, obs)
+    sigma_obs = cp.likelihood.sigma_obs
+    τ_prior = 1.0 / cp.prior.sigma^2
+    τ_obs = 1.0 / sigma_obs^2
+    τ_post = τ_prior + τ_obs
+    μ_post = (τ_prior * cp.prior.mu + τ_obs * Float64(obs)) / τ_post
+    σ_post = 1.0 / sqrt(τ_post)
+    ConjugatePrevision(GaussianPrevision(μ_post, σ_post), cp.likelihood)
 end
 
 function condition(m::CategoricalMeasure{T}, k::Kernel, observation) where T

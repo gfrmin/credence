@@ -111,6 +111,65 @@ let k = Kernel(Interval(0.0, 1.0), Finite([0, 1]),
           "got α=$(updated_anything.alpha), β=$(updated_anything.beta)")
 end
 
+# ── (GaussianPrevision, NormalNormal) ──
+#
+# Precision-weighted posterior. Tests both the new likelihood_family
+# pattern (NormalNormal(sigma_obs)) and the legacy params-based pattern
+# for backward compat.
+
+let k_new = Kernel(Euclidean(1), Euclidean(1),
+                   h -> GaussianMeasure(Euclidean(1), h, 1.0),
+                   (h, o) -> -0.5 * (o - h)^2;
+                   likelihood_family = NormalNormal(1.0))
+    using Credence: GaussianPrevision
+
+    p = GaussianPrevision(0.0, 1.0)
+
+    check("GaussianPrevision + NormalNormal (new likelihood_family) → :conjugate",
+          _dispatch_path(p, k_new) === :conjugate,
+          "got $(_dispatch_path(p, k_new))")
+
+    cp = maybe_conjugate(p, k_new)
+    check("maybe_conjugate returns ConjugatePrevision{GaussianPrevision, NormalNormal}",
+          cp isa ConjugatePrevision{GaussianPrevision, NormalNormal},
+          "got $(typeof(cp))")
+
+    # N(0,1) + obs=2.0, σ_obs=1.0 → τ_prior=1, τ_obs=1, τ_post=2
+    # μ_post = (1*0 + 1*2) / 2 = 1.0; σ_post = 1/√2
+    updated = update(cp, 2.0).prior
+    check("GaussianPrevision(0, 1) + obs=2.0, σ_obs=1 → μ_post = 1.0 (exact: 2/2)",
+          updated.mu == 1.0, "got μ=$(updated.mu)")
+    check("GaussianPrevision(0, 1) + obs=2.0, σ_obs=1 → σ_post = 1/√2 (atol=1e-12)",
+          isapprox(updated.sigma, 1.0 / sqrt(2.0); atol=1e-12),
+          "got σ=$(updated.sigma)")
+end
+
+# Legacy params-based pattern: existing Gaussian kernels pass
+# `params = Dict(:sigma_obs => σ)` + `likelihood_family = PushOnly()`.
+# maybe_conjugate must match this path too for backward compat.
+let k_legacy = Kernel(Euclidean(1), Euclidean(1),
+                      h -> GaussianMeasure(Euclidean(1), h, 1.0),
+                      (h, o) -> -0.5 * (o - h)^2;
+                      params = Dict{Symbol,Any}(:sigma_obs => 1.0),
+                      likelihood_family = PushOnly())
+    using Credence: GaussianPrevision
+
+    p = GaussianPrevision(0.0, 1.0)
+
+    check("GaussianPrevision + legacy params-based kernel → :conjugate (backward compat)",
+          _dispatch_path(p, k_legacy) === :conjugate,
+          "got $(_dispatch_path(p, k_legacy))")
+
+    cp = maybe_conjugate(p, k_legacy)
+    check("legacy path produces ConjugatePrevision{GaussianPrevision, NormalNormal}",
+          cp isa ConjugatePrevision{GaussianPrevision, NormalNormal},
+          "got $(typeof(cp))")
+
+    updated = update(cp, 2.0).prior
+    check("legacy path matches new-path result (μ_post=1.0)",
+          updated.mu == 1.0, "got μ=$(updated.mu)")
+end
+
 # ── TaggedBetaPrevision: must NOT match as conjugate (transitional scaffolding) ──
 #
 # Per PR #19's Move 1 revision addendum (commit 6dce5e4), TaggedBetaMeasure
