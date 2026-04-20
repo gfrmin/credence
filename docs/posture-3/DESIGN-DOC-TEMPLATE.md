@@ -70,6 +70,8 @@ For each risk, give:
 
 Risks the master plan named for this move are repeated here with current-state additions.
 
+**Suggested practice for moves that refactor consumer-visible types:** include a pre-emptive grep step under the relevant risk entry. Run `grep -rn '<pattern>'` across `src/`, `test/`, `apps/`, `docs/`; list each hit and its disposition (mechanical replacement / no edit needed / needs attention). Example: Move 2's grep for `<: Functional`, `isa Functional`, `::Functional` when aliasing the `Functional` hierarchy onto `TestFunction`. Not mandatory — not every risk benefits from a grep — but the default is: if you're renaming or aliasing a type that appears in method signatures or runtime checks, grep for it before the PR opens. Moves that don't touch consumer-visible types (e.g. cosmetic adaptations) don't need the grep.
+
 ## 7. Verification cadence
 
 Which test files run at end of the corresponding code PR. Cite the bash invocations explicitly so reviewers can reproduce.
