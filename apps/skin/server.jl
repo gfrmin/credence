@@ -14,6 +14,7 @@ representation — only the ID.
 push!(LOAD_PATH, joinpath(@__DIR__, "..", "..", "src"))
 using Credence
 using Credence: expect, condition, push_measure, draw, density
+using Credence: _dispatch_path
 using Credence: weights, mean, variance, prune, truncate, logsumexp
 using Credence: CategoricalMeasure, BetaMeasure, TaggedBetaMeasure
 using Credence: GaussianMeasure, GammaMeasure, DirichletMeasure
@@ -477,6 +478,8 @@ function handle_request(method::String, params, id)
         handle_replace_factor(params)
     elseif method == "n_factors"
         handle_n_factors(params)
+    elseif method == "_dispatch_path"
+        handle_dispatch_path(params)
     else
         throw(MethodNotFound(string(method)))
     end
@@ -628,6 +631,25 @@ function handle_n_factors(params)
     state = get_state(id)
     state isa ProductMeasure || error("n_factors requires a ProductMeasure, got $(typeof(state))")
     Dict("n_factors" => length(state.factors))
+end
+
+# ── Move 4: _dispatch_path observability hook (underscore-prefixed, test-only) ──
+# Returns "conjugate" if the (state, kernel) pair matches a registered
+# conjugate entry in the ConjugatePrevision registry; "particle" otherwise.
+# Does NOT mutate state or execute an update. Used by Stratum-2 tests to
+# assert registry-dispatch decisions explicitly — silent registry misses
+# would fall through to particle and produce correct values for the wrong
+# reason without this hook.
+#
+# Accepts a Measure state; the shield forwards to the prevision-level
+# `_dispatch_path` declared in src/prevision.jl.
+
+function handle_dispatch_path(params)
+    id = string(params["state_id"])
+    state = get_state(id)
+    kernel = build_kernel(params["kernel"])
+    path = _dispatch_path(state.prevision, kernel)
+    Dict("path" => string(path))
 end
 
 function handle_condition(params)

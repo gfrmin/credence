@@ -25,6 +25,7 @@ module Ontology
 import ..Previsions: TestFunction, Identity, Projection, NestedProjection,
                      Tabular, LinearCombination, OpaqueClosure, expect
 import ..Previsions: BetaPrevision, TaggedBetaPrevision, GaussianPrevision, GammaPrevision, CategoricalPrevision, DirichletPrevision, NormalGammaPrevision, ProductPrevision, MixturePrevision
+import ..Previsions: ConjugatePrevision, maybe_conjugate, update, _dispatch_path
 
 export Space, Finite, Interval, ProductSpace, Simplex, Euclidean, PositiveReals, support
 export Measure, CategoricalMeasure, BetaMeasure, TaggedBetaMeasure, GaussianMeasure, GammaMeasure, ExponentialMeasure, DirichletMeasure, NormalGammaMeasure, ProductMeasure, MixtureMeasure
@@ -877,6 +878,42 @@ expect(m::MixtureMeasure, o::OpaqueClosure; kwargs...) = expect(m, o.f; kwargs..
 # Bayesian inversion: prior × kernel × observation → posterior
 # P(h|o) ∝ P(o|h) · P(h)
 # The ONE learning mechanism.
+
+# ── Conjugate registry (Move 4) ──────────────────────────────────────────
+#
+# `maybe_conjugate(p::Prevision, k::Kernel)` dispatches on the Prior type
+# and returns a `ConjugatePrevision` when a closed-form update exists.
+# `update(cp::ConjugatePrevision{Prior, Likelihood}, obs)` applies that
+# update. The `Likelihood` type parameter is the kernel's
+# `likelihood_family` type or a pair-specific marker.
+#
+# The facade that routes `condition` through this registry lives further
+# down (per-Measure-subtype method bodies); this section only declares
+# the per-pair methods.
+#
+# For transitional scaffolding: TaggedBetaPrevision does NOT get a
+# `maybe_conjugate` method — the per-tag routing loop in
+# `condition(::TaggedBetaMeasure, ...)` handles it until Move 5's
+# `MixturePrevision` lands. See move-4-design.md §3 and R3.
+
+# ── Pair: (BetaPrevision, BetaBernoulli) — replaces src/ontology.jl:891-904 ──
+
+function maybe_conjugate(p::BetaPrevision, k::Kernel)
+    if k.likelihood_family isa BetaBernoulli
+        return ConjugatePrevision(p, k.likelihood_family)
+    end
+    nothing
+end
+
+function update(cp::ConjugatePrevision{BetaPrevision, BetaBernoulli}, obs)
+    if obs == 1 || obs == 1.0 || obs === true
+        ConjugatePrevision(BetaPrevision(cp.prior.alpha + 1.0, cp.prior.beta), cp.likelihood)
+    elseif obs == 0 || obs == 0.0 || obs === false
+        ConjugatePrevision(BetaPrevision(cp.prior.alpha, cp.prior.beta + 1.0), cp.likelihood)
+    else
+        error("BetaBernoulli update: obs must be ∈ {0, 1, true, false}, got $obs")
+    end
+end
 
 function condition(m::CategoricalMeasure{T}, k::Kernel, observation) where T
     new_logw = copy(m.logw)
