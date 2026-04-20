@@ -320,6 +320,12 @@ Programs whose predicates don't fire return `log(0.5)`, not `0.0`. A non-firing 
 
 ## Development commands
 
+### Merge authority
+
+Claude Code merges PRs on this repo when CI is green and the author has approved the content in conversation. This applies to both code and docs-only PRs. There is no separate human reviewer role — the author/Claude conversation loop *is* the review. When both gates are satisfied (CI green; author approval on record), use `gh pr merge <N> --rebase` to land. Rebase-merge matches the linear-history convention on master (cf. Posture 2's 7-gate sequence, Posture 3 Move 0's 3-commit PR #16).
+
+### Test + example commands
+
 Run tests:
     julia test/test_core.jl             # Core DSL tests
     julia test/test_flat_mixture.jl     # Flat mixture tests
