@@ -24,7 +24,7 @@ module Ontology
 # so `using .Previsions, .Ontology` in Credence is unambiguous.
 import ..Previsions: TestFunction, Identity, Projection, NestedProjection,
                      Tabular, LinearCombination, OpaqueClosure, expect
-import ..Previsions: BetaPrevision, TaggedBetaPrevision, GaussianPrevision, GammaPrevision, CategoricalPrevision, DirichletPrevision, NormalGammaPrevision, ProductPrevision
+import ..Previsions: BetaPrevision, TaggedBetaPrevision, GaussianPrevision, GammaPrevision, CategoricalPrevision, DirichletPrevision, NormalGammaPrevision, ProductPrevision, MixturePrevision
 
 export Space, Finite, Interval, ProductSpace, Simplex, Euclidean, PositiveReals, support
 export Measure, CategoricalMeasure, BetaMeasure, TaggedBetaMeasure, GaussianMeasure, GammaMeasure, ExponentialMeasure, DirichletMeasure, NormalGammaMeasure, ProductMeasure, MixtureMeasure
@@ -346,25 +346,34 @@ end
 
 # ── Mixture: weighted combination ──
 
+# Move 3: wraps MixturePrevision. Shield forwards :components and
+# :log_weights — BOTH returned by reference. See the shared-reference
+# contract in test/test_prevision_unit.jl :: test_shared_reference_contract
+# and docs/posture-3/move-3-design.md §3 and R4. The contract is
+# load-bearing for apps/skin/server.jl:549,552 which push! through the
+# shield. Do NOT defensively copy.
+
 struct MixtureMeasure <: Measure
+    prevision::MixturePrevision
     space::Space
-    components::Vector{Measure}
-    log_weights::Vector{Float64}
 
     function MixtureMeasure(space::Space, components::Vector{<:Measure}, log_weights::Vector{Float64})
-        length(components) == length(log_weights) || error("components and weights must match")
-        length(components) > 0 || error("mixture must have at least one component")
-        if all(lw -> lw == -Inf, log_weights)
-            error("mixture has zero total mass — all components impossible")
-        end
-        max_lw = maximum(log_weights)
-        log_total = max_lw + log(sum(exp.(log_weights .- max_lw)))
-        new(space, Vector{Measure}(components), log_weights .- log_total)
+        new(MixturePrevision(Vector{Measure}(components), log_weights), space)
     end
 end
 
 MixtureMeasure(components::Vector{<:Measure}, log_weights::Vector{Float64}) =
     MixtureMeasure(components[1].space, components, log_weights)
+
+function Base.getproperty(m::MixtureMeasure, s::Symbol)
+    if s === :components || s === :log_weights
+        return getproperty(getfield(m, :prevision), s)
+    else
+        return getfield(m, s)
+    end
+end
+
+Base.propertynames(::MixtureMeasure) = (:components, :log_weights, :space, :prevision)
 
 function weights(m::MixtureMeasure)
     max_lw = maximum(m.log_weights)
