@@ -24,7 +24,7 @@ module Ontology
 # so `using .Previsions, .Ontology` in Credence is unambiguous.
 import ..Previsions: TestFunction, Identity, Projection, NestedProjection,
                      Tabular, LinearCombination, OpaqueClosure, expect
-import ..Previsions: BetaPrevision, TaggedBetaPrevision, GaussianPrevision
+import ..Previsions: BetaPrevision, TaggedBetaPrevision, GaussianPrevision, GammaPrevision
 
 export Space, Finite, Interval, ProductSpace, Simplex, Euclidean, PositiveReals, support
 export Measure, CategoricalMeasure, BetaMeasure, TaggedBetaMeasure, GaussianMeasure, GammaMeasure, ExponentialMeasure, DirichletMeasure, NormalGammaMeasure, ProductMeasure, MixtureMeasure
@@ -222,19 +222,30 @@ weights(m::DirichletMeasure) = m.alpha ./ sum(m.alpha)
 mean(m::DirichletMeasure) = weights(m)
 
 # ── Gamma: continuous on PositiveReals ──
+#
+# Move 3: wraps GammaPrevision; `m.alpha` and `m.beta` forward via
+# the getproperty shield. Do NOT defensively copy; see contract test.
 
 struct GammaMeasure <: Measure
+    prevision::GammaPrevision
     space::PositiveReals
-    alpha::Float64  # shape
-    beta::Float64   # rate
 
     function GammaMeasure(space::PositiveReals, alpha::Float64, beta::Float64)
-        alpha > 0 && beta > 0 || error("alpha and beta must be positive")
-        new(space, alpha, beta)
+        new(GammaPrevision(alpha, beta), space)
     end
 end
 
 GammaMeasure(α::Float64, β::Float64) = GammaMeasure(PositiveReals(), α, β)
+
+function Base.getproperty(m::GammaMeasure, s::Symbol)
+    if s === :alpha || s === :beta
+        return getproperty(getfield(m, :prevision), s)
+    else
+        return getfield(m, s)
+    end
+end
+
+Base.propertynames(::GammaMeasure) = (:alpha, :beta, :space, :prevision)
 
 mean(m::GammaMeasure) = m.alpha / m.beta
 

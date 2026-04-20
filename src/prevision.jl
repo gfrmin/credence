@@ -30,7 +30,7 @@ module Previsions
 
 export Prevision, TestFunction, Indicator, apply, expect
 export Identity, Projection, NestedProjection, Tabular, LinearCombination, OpaqueClosure
-export BetaPrevision, TaggedBetaPrevision, GaussianPrevision
+export BetaPrevision, TaggedBetaPrevision, GaussianPrevision, GammaPrevision
 # At Move 2, `Ontology`'s `Functional` hierarchy is aliased onto these
 # types (`const Functional = TestFunction` plus `import ..Previsions:
 # Identity, …`), so both modules export the same bindings (they resolve
@@ -234,6 +234,23 @@ The `GaussianMeasure` view wraps a `GaussianPrevision` and forwards
 struct GaussianPrevision <: Prevision
     mu::Float64
     sigma::Float64
+end
+
+"""
+    GammaPrevision(alpha::Float64, beta::Float64) <: Prevision
+
+Prevision whose representing measure is Gamma(α, β) on positive reals
+(shape α, rate β). The `GammaMeasure` view wraps a `GammaPrevision` and
+forwards `m.alpha`, `m.beta` reads through its `getproperty` shield.
+"""
+struct GammaPrevision <: Prevision
+    alpha::Float64
+    beta::Float64
+
+    function GammaPrevision(alpha::Float64, beta::Float64)
+        alpha > 0 && beta > 0 || error("alpha and beta must be positive")
+        new(alpha, beta)
+    end
 end
 
 # ── apply — abstract evaluator ────────────────────────────────────────────
