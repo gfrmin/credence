@@ -380,6 +380,40 @@ CI: `.github/workflows/publish-image.yml` runs core Julia tests,
 `credence_router` + `credence_agents` pytest (excluding test_live.py),
 and publishes the Docker image.
 
+## Repo conventions for Claude Code sessions
+
+This repo is single-maintainer. The author/Claude conversation loop *is* the review — there is no separate human reviewer role. The conventions below codify how Claude Code operates across sessions so that future sessions (including ones on different machines without access to the author's `~/.claude/`) can pick up where prior sessions left off.
+
+### Merge authority
+
+Claude Code merges PRs on this repo when two gates are satisfied:
+1. CI is green.
+2. The author (Guy) has approved the PR content in conversation.
+
+Both gates together constitute the review. When both are satisfied, merge via `gh pr merge <N> --rebase`. This has happened seven times during Posture 2 and was exercised on Posture 3 Move 0 (PR #16); it is the normal path, not an escalation. An explicit "merge it" or equivalent from the author counts as the in-conversation approval.
+
+### Rebase-merge for linear master history
+
+Use `--rebase` (not `--merge` or `--squash`) so individual commits from the branch land on master unchanged. The Posture 2 sequence (7 gates) and Posture 3 Move 0 (3 commits) both preserve their commit histories this way. Squash-merge only when the branch's commit history is genuinely noise (rare for this repo).
+
+### Multi-move branches: design-doc before code
+
+When a branch structures work as a sequence of moves (Posture 3's 8-move plan is the canonical example), each move lands as a design-doc PR followed by a code PR. The mandatory design-doc template lives at `docs/<branch-family>/DESIGN-DOC-TEMPLATE.md` (see `docs/posture-3/DESIGN-DOC-TEMPLATE.md`). Reviewers reject design docs that omit "Open design questions" or fill it with boilerplate.
+
+The branch's master plan lives at `docs/<branch-family>/master-plan.md` as the durable, in-repo copy. Historical drafts may also be kept under the author's session notes (`~/.claude/plans/`) but that location is session-external and not guaranteed available to future sessions on other machines. **If you are working on Posture 3 (branch `de-finetti/migration`), read `docs/posture-3/master-plan.md` before touching code.**
+
+### Test fixtures are commit-pinned
+
+When a refactor changes a serialised schema (or any reference state), capture fixtures from a specific named SHA and record that SHA in `test/fixtures/README.md`. Fixtures are never regenerated to fix loading bugs — fix the load code. See `test/fixtures/README.md` for the provenance protocol.
+
+### Session memory is user-level, not in-repo
+
+Claude Code sessions maintain persistent memory at `~/.claude/projects/<hash>/memory/` with `MEMORY.md` as the index. This is *user-level* and private to the author; it is not in the repo. Conventions derived from session feedback are saved there for the author's own future sessions; durable conventions that future Claude Code sessions (including first-time sessions) must know about are lifted into this CLAUDE.md file. This section is where those lifted conventions live.
+
+### Lint pragmas and precedent slugs
+
+Inline `# credence-lint: allow — precedent:<slug> — <reason>` pragmas sanction grey-zone violations. Unknown slugs and missing reasons fail the lint; the slug catalogue lives in the Precedents section above. This is *not* a new convention — it predates the Posture 2/3 work — but is worth naming here because it is one of the session-level mechanisms a new Claude Code session needs to know exists.
+
 ## Project structure
 
     src/                          Tier 1: DSL core
