@@ -1014,6 +1014,15 @@ end
 function main()
     log_msg("Credence skin server starting...")
 
+    # Startup-complete sentinel (issue #22). All `using Credence` / module
+    # loading above has completed; emit a JSON line on stdout so the
+    # Python client can detect readiness with `process.poll()` safeguard
+    # instead of relying on a fixed timeout that misfires under cold-
+    # compile + loaded-runner variance. The matching read lives in
+    # `apps/skin/client.py::SkinClient._wait_for_ready()`.
+    println(stdout, JSON3.write(Dict("status" => "ready")))
+    flush(stdout)
+
     for line in eachline(stdin)
         isempty(strip(line)) && continue
 
