@@ -1063,18 +1063,26 @@ function condition(m::CategoricalMeasure{T}, k::Kernel, observation) where T
 end
 
 function condition(m::BetaMeasure, k::Kernel, observation)
-    # Conjugate path: Beta-Bernoulli requires Interval → Finite with exactly 2 outcomes
+    # Move 4: try the ConjugatePrevision registry first. Beta-Bernoulli
+    # and Beta-Flat are registered (see maybe_conjugate(::BetaPrevision,
+    # ...) above). Legacy structural dispatch (Interval → Finite with 2
+    # outcomes but no explicit BetaBernoulli family) remains below for
+    # kernels constructed without declaring likelihood_family.
+    cp = maybe_conjugate(m.prevision, k)
+    if cp !== nothing
+        updated = update(cp, observation).prior
+        return BetaMeasure(m.space, updated.alpha, updated.beta)
+    end
+    # Legacy structural path: Interval → Finite(0,1) kernel without
+    # declared BetaBernoulli family — synthesize the conjugate pair.
     if k.source isa Interval && k.target isa Finite && length(k.target.values) == 2
         if observation == 1 || observation == 1.0 || observation == true
-            BetaMeasure(m.space, m.alpha + 1.0, m.beta)
+            return BetaMeasure(m.space, m.alpha + 1.0, m.beta)
         elseif observation == 0 || observation == 0.0 || observation == false
-            BetaMeasure(m.space, m.alpha, m.beta + 1.0)
-        else
-            _condition_by_grid(m, k, observation)
+            return BetaMeasure(m.space, m.alpha, m.beta + 1.0)
         end
-    else
-        _condition_by_grid(m, k, observation)
     end
+    _condition_by_grid(m, k, observation)
 end
 
 struct DepthCapExceeded <: Exception
@@ -1121,41 +1129,44 @@ function condition(m::TaggedBetaMeasure, k::Kernel, observation)
 end
 
 function condition(m::GaussianMeasure, k::Kernel, observation)
-    # Conjugate path: Normal-Normal requires Euclidean → Euclidean with declared σ_obs
-    if k.source isa Euclidean && k.target isa Euclidean &&
-       k.params !== nothing && haskey(k.params, :sigma_obs)
-        sigma_obs = k.params[:sigma_obs]::Float64
-        tau_prior = 1.0 / m.sigma^2
-        tau_obs = 1.0 / sigma_obs^2
-        tau_post = tau_prior + tau_obs
-        mu_post = (tau_prior * m.mu + tau_obs * observation) / tau_post
-        sigma_post = 1.0 / sqrt(tau_post)
-        return GaussianMeasure(m.space, mu_post, sigma_post)
+    # Move 4: try the ConjugatePrevision registry first. Covers both
+    # `likelihood_family = NormalNormal(σ)` and the legacy `params =
+    # Dict(:sigma_obs => σ)` paths.
+    cp = maybe_conjugate(m.prevision, k)
+    if cp !== nothing
+        updated = update(cp, observation).prior
+        return GaussianMeasure(m.space, updated.mu, updated.sigma)
     end
     _condition_by_grid(m, k, observation)
 end
 
 function condition(m::DirichletMeasure, k::Kernel, observation)
+    # Move 4: try the ConjugatePrevision registry first (kernels that
+    # explicitly declare likelihood_family = Categorical(cats)).
+    cp = maybe_conjugate(m.prevision, k)
+    if cp !== nothing
+        updated = update(cp, observation).prior
+        return DirichletMeasure(m.space, m.categories, updated.alpha)
+    end
+    # Legacy structural match: Simplex → Finite kernel without an
+    # explicit Categorical family. Synthesize Categorical(m.categories)
+    # at the facade level — the Measure carries the category labels;
+    # the Prevision does not.
     k.source isa Simplex && k.target isa Finite ||
         error("DirichletMeasure condition requires a Categorical kernel (Simplex → Finite)")
-
-    idx = findfirst(==(observation), m.categories.values)
-    idx !== nothing || error("observation $observation not in categories $(m.categories.values)")
-
-    new_alpha = copy(m.alpha)
-    new_alpha[idx] += 1.0
-    DirichletMeasure(m.space, m.categories, new_alpha)
+    synthetic_cp = ConjugatePrevision(m.prevision, Categorical(m.categories))
+    updated = update(synthetic_cp, observation).prior
+    DirichletMeasure(m.space, m.categories, updated.alpha)
 end
 
 function condition(m::NormalGammaMeasure, k::Kernel, observation)
-    # Conjugate fast-path: Normal likelihood with Normal-Gamma prior
-    if k.params !== nothing && haskey(k.params, :normal_gamma)
-        r = Float64(observation)
-        κₙ = m.κ + 1.0
-        μₙ = (m.κ * m.μ + r) / κₙ
-        αₙ = m.α + 0.5
-        βₙ = m.β + m.κ * (r - m.μ)^2 / (2.0 * κₙ)
-        return NormalGammaMeasure(m.space, κₙ, μₙ, αₙ, βₙ)
+    # Move 4: try the ConjugatePrevision registry first. Covers both
+    # `likelihood_family = NormalGammaLikelihood()` and the legacy
+    # `params[:normal_gamma]` paths.
+    cp = maybe_conjugate(m.prevision, k)
+    if cp !== nothing
+        updated = update(cp, observation).prior
+        return NormalGammaMeasure(m.space, updated.κ, updated.μ, updated.α, updated.β)
     end
     # Non-conjugate: importance sampling fallback
     condition(m::Measure, k, observation)
