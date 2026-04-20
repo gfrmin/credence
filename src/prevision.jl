@@ -28,12 +28,13 @@ See `docs/posture-3/master-plan.md` for the full branch plan.
 """
 module Previsions
 
-export Prevision, TestFunction, Indicator, apply
-# Not exported: Identity, Projection, NestedProjection, Tabular,
-# LinearCombination, OpaqueClosure. They clash with the current `Functional`
-# subtype names in `Ontology`; Move 2 aliases Ontology's versions onto these
-# and exports unify at that point. Qualified access `Prevision.Identity` is
-# available for sites that need the new declarations now.
+export Prevision, TestFunction, Indicator, apply, expect
+export Identity, Projection, NestedProjection, Tabular, LinearCombination, OpaqueClosure
+# At Move 2, `Ontology`'s `Functional` hierarchy is aliased onto these
+# types (`const Functional = TestFunction` plus `import ..Previsions:
+# Identity, …`), so both modules export the same bindings (they resolve
+# to the same objects via `===`). `Credence` brings them into scope via
+# both `using .Previsions` and `using .Ontology` without ambiguity.
 
 # ── Prevision ─────────────────────────────────────────────────────────────
 
@@ -91,32 +92,47 @@ struct Identity <: TestFunction end
     Projection(index::Int) <: TestFunction
 
 Selects the `index`-th factor of a product-structured point (e.g. an atom
-from a `ProductMeasure` over a `ProductSpace`).
+from a `ProductMeasure` over a `ProductSpace`). `index` must be >= 1.
 """
 struct Projection <: TestFunction
-    index::Int
+    index::Int  # 1-based index into ProductMeasure factors
+    function Projection(index::Int)
+        index >= 1 || throw(ArgumentError("Projection.index must be >= 1, got $index"))
+        new(index)
+    end
 end
 
 """
     NestedProjection(indices::Vector{Int}) <: TestFunction
 
 Selects a nested factor through a path of indices — walks successive
-`ProductSpace` levels, terminating at a scalar leaf.
+`ProductSpace` levels, terminating at a scalar leaf. `indices` must be
+non-empty and each index must be >= 1.
 """
 struct NestedProjection <: TestFunction
-    indices::Vector{Int}
+    indices::Vector{Int}  # 1-based
+    function NestedProjection(indices::Vector{Int})
+        isempty(indices) && throw(ArgumentError("NestedProjection requires at least one index"))
+        all(i -> i >= 1, indices) ||
+            throw(ArgumentError("NestedProjection.indices must all be >= 1, got $indices"))
+        new(indices)
+    end
 end
 
 """
     Tabular(values::Vector{Float64}) <: TestFunction
 
 A tabulated test function over a finite space: value at atom `i` is
-`values[i]`. Length must match the space's atom count at dispatch time
-(enforced by the `expect(::CategoricalPrevision, ::Tabular)` method in
-Move 2).
+`values[i]`. `values` must be non-empty. Length must match the space's
+atom count at dispatch time (enforced by the `expect(::CategoricalMeasure,
+::Tabular)` method).
 """
 struct Tabular <: TestFunction
     values::Vector{Float64}
+    function Tabular(values::Vector{Float64})
+        isempty(values) && throw(ArgumentError("Tabular requires non-empty values"))
+        new(values)
+    end
 end
 
 """
@@ -175,5 +191,28 @@ implementation. This declaration exists so that Move 2's additions are
 method-level (on an already-declared function), not type-level.
 """
 function apply end
+
+# ── expect — the definitional operator ────────────────────────────────────
+
+"""
+    expect(p::Prevision, f::TestFunction) → ℝ
+    expect(m::Measure, f::TestFunction) → ℝ
+
+Integration against a prevision / measure. In the de Finettian view,
+`expect` is not a derived operation but the *definition* of what a
+prevision is: a prevision is the operator that assigns a real number to
+each test function in its declared space. `expect(p, f) = p(f)`.
+
+The declaration here exists so methods in `ontology.jl` (Measure
+subtype × TestFunction subtype dispatches, plus the `Function`-argument
+quadrature and Monte Carlo fallbacks) extend a single generic. Move 2
+adds the import in `ontology.jl` (`import ..Previsions: expect`) so the
+existing 16 dispatch methods attach to this declaration.
+
+Subsequent moves (3-6) add new Prevision subtypes with their own `expect`
+methods; Move 7 inverts the derivation (`expect(p, f)` becomes the
+primitive, `condition(p, k, obs)` derived via `Indicator(ObservationEvent(k, obs))`).
+"""
+function expect end
 
 end # module Previsions
