@@ -50,14 +50,14 @@ Every `docs/posture-3/move-N-design.md` PR must include the following sections. 
 
   **Grounds-for-reopen:** if Move 0 lands as just README + decision log with a stub paper-draft, the PR is reopened. The paper being the gating artifact means it has to exist in concrete form from day one, not materialise gradually.
 
-## Move 1 — `Prevision` primitive type + `TestFunctionSpace`
+## Move 1 — `Prevision` primitive type + `TestFunction` hierarchy
 
 **Files to create:**
-- `src/prevision.jl` (~200 lines) — `abstract type Prevision end`, `TestFunction` hierarchy, `TestFunctionSpace`, `apply(f::TestFunction, s)` evaluator.
+- `src/prevision.jl` (~150 lines) — `abstract type Prevision end`, `TestFunction` hierarchy, `apply(f::TestFunction, s)` evaluator. (Move 1 ships no `TestFunctionSpace` container — see `docs/posture-3/move-1-design.md` §5.1 for the three-option analysis that settled on option (c), defer to Move 5 if ever needed.)
 
 **Files to modify:**
 - `src/Credence.jl:18-19` — add `include("prevision.jl")` *before* `include("ontology.jl")`. Order matters: Measure becomes a view over Prevision, so Prevision must load first.
-- `src/Credence.jl` exports — add `Prevision`, `TestFunction`, `TestFunctionSpace`, `Indicator`, and stub forwards for the migrated `Identity`/`Projection`/etc. (which become `TestFunction` subtypes in Move 2).
+- `src/Credence.jl` exports — add `Prevision`, `TestFunction`, `Indicator`, and stub forwards for the migrated `Identity`/`Projection`/etc. (which become `TestFunction` subtypes in Move 2).
 
 **TestFunction hierarchy (Move 1 declares; Move 2 migrates the existing Functional types into it):**
 ```

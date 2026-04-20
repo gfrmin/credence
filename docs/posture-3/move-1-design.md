@@ -8,24 +8,23 @@ Master plan reference: `docs/posture-3/master-plan.md` § "Move 1 — Prevision 
 
 ## 1. Purpose
 
-Declare the abstract `Prevision` primitive type, the `TestFunction` hierarchy, and the `TestFunctionSpace` container. Establish `src/prevision.jl` as the file that subsequent moves extend — Move 2 adds the `expect` dispatch, Move 4 adds `ConjugatePrevision{Prior, Likelihood}`, Move 5 adds `MixturePrevision` and `ExchangeablePrevision`, Move 6 adds `ParticlePrevision` and `QuadraturePrevision`, Move 7 adds the primary form of `condition`. Move 1 *only* declares the abstract hierarchy and the `TestFunctionSpace` container; no dispatch, no consumer churn, no behaviour change.
+Declare the abstract `Prevision` primitive type and the `TestFunction` hierarchy. Establish `src/prevision.jl` as the file that subsequent moves extend with dispatch (Move 2), conjugate pairs (Move 4), mixture and exchangeability (Move 5), execution-layer strategies (Move 6), and event-primary conditioning (Move 7). Move 1 *only* declares the abstract hierarchy; no dispatch, no consumer churn, no behaviour change.
 
 The point of doing this as a standalone PR is that every subsequent move depends on these declarations loading before `src/ontology.jl`, and getting the include order wrong is the kind of fast-to-fix-now, slow-to-fix-later mistake that warrants its own PR.
 
 ## 2. Files touched
 
 **New:**
-- `src/prevision.jl` (~200 lines). Declares:
+- `src/prevision.jl` (~150 lines — shrinks with no `TestFunctionSpace`). Declares:
   - `abstract type Prevision end` with the coherence-axiom docstring (de Finetti 1974; Walley 1991).
   - `abstract type TestFunction end` with the operator-action docstring.
   - Concrete `TestFunction` subtype shells (Move 2 migrates the Functional subtypes into these): `Identity`, `Projection(index::Int)`, `NestedProjection(indices::Vector{Int})`, `Tabular(values::Vector{Float64})`, `LinearCombination(terms::Vector{Tuple{Float64, TestFunction}}, offset::Float64)`, `OpaqueClosure(f::Function)`. These are declared in Move 1 so that Move 2's migration is purely about wiring `expect` dispatch, not about creating types.
   - `Indicator(e::Event)` — new subtype bridging to Posture 2's `Event` hierarchy (loaded from `ontology.jl` for now; moves to `event.jl` if we ever split).
-  - `struct TestFunctionSpace` — the declared domain a Prevision acts on. Fields TBD pending §5 Open design questions.
   - `function apply end` — abstract evaluator `apply(f::TestFunction, s) → ℝ`. Methods land in Move 2.
 
 **Modified:**
 - `src/Credence.jl:18-19`. Add `include("prevision.jl")` **before** `include("ontology.jl")`. Order matters: Measure becomes a view over Prevision in Move 3, so `Prevision` must be a loadable name when `ontology.jl` starts parsing.
-- `src/Credence.jl` export list. Add `Prevision`, `TestFunction`, `Identity`, `Projection`, `NestedProjection`, `Tabular`, `LinearCombination`, `OpaqueClosure`, `Indicator`, `TestFunctionSpace`, `apply`. Note: `Identity`, `Projection`, etc. currently exist in `Ontology` — the Move 1 shells in `prevision.jl` are the *new* authoritative declarations; Move 2 turns the `Ontology` versions into aliases.
+- `src/Credence.jl` export list. Add `Prevision`, `TestFunction`, `Identity`, `Projection`, `NestedProjection`, `Tabular`, `LinearCombination`, `OpaqueClosure`, `Indicator`, `apply`. Note: `Identity`, `Projection`, etc. currently exist in `Ontology` — the Move 1 shells in `prevision.jl` are the *new* authoritative declarations; Move 2 turns the `Ontology` versions into aliases.
 
 **Not touched in Move 1:**
 - No existing `expect` methods move. No `condition` dispatch changes. No consumer code changes. The `Ontology` module's `Functional` type and its concrete subtypes (`Identity`, `Projection`, etc.) remain in place and functional; Move 1 simply introduces *parallel* declarations in `Prevision` that Move 2 then unifies.
@@ -49,7 +48,6 @@ expect(m, Identity())  # returns 2/5 = 0.4
 f = Identity()                          # this is now a TestFunction subtype
                                         # (plus still a Functional subtype via
                                         # the alias Move 2 will add)
-ts = TestFunctionSpace(...)             # Move 1 declares the container
 # apply(f, some_h)                      # abstract method; Move 2 adds dispatch
 ```
 
@@ -59,9 +57,12 @@ Move 1's worked example is therefore: "trace why declaring `TestFunction` *now* 
 
 ## 5. Open design questions
 
-### 5.1 (GENUINE) `TestFunctionSpace` parametric vs field
+### 5.1 (GENUINE) The `TestFunctionSpace` container: parametric, field, or defer to Move 5
 
-**The question.** Should `TestFunctionSpace` be parametric on the Space type:
+**The question.** Where does the metadata about "which test functions a prevision acts on, and under what closure" live?
+
+**(a) Parametric `TestFunctionSpace{S <: Space}`.** Type-structural dispatch on source space:
+
 ```julia
 struct TestFunctionSpace{S <: Space}
     source::S
@@ -69,22 +70,27 @@ struct TestFunctionSpace{S <: Space}
     closure::Symbol    # :linear, :bounded_measurable, :polynomial_k
 end
 ```
-or carry the Space as an abstract field:
-```julia
-struct TestFunctionSpace
-    source::Space
-    basis::Vector{TestFunction}
-    closure::Symbol
-end
-```
 
-**Trade-off:**
-- **Parametric form** preserves type-structural dispatch: `TestFunctionSpace{Interval}` is a different type from `TestFunctionSpace{Finite{T}}`, so a future `apply(f, s, ::TestFunctionSpace{Interval})` method dispatches by type, not by runtime check. Catches space/test-function mismatches at compile time. Cost: Julia type parameter explosion when mixing (rare; we don't currently mix).
-- **Field form** trades type-structural dispatch for the ability to have test function spaces spanning multiple base spaces (e.g. a joint distribution's test functions that navigate a `ProductSpace`). Simpler to write; slower dispatch.
+*Cost — propagation.* A `Prevision` subtype carrying one of these must itself be parametric: `BetaPrevision{Interval}`, `ExchangeablePrevision{S}(component_space::S, ...)`. That threads `S` through the Move 4 conjugate registry's key type `(typeof(p), k.likelihood_family)`, through the Move 5 `decompose` return type, and through every `expect` method signature in Move 2. Consequential across five subsequent moves; not a local decision.
 
-**Recommendation:** parametric. The Posture 3 reconstruction's whole argument is that declared structure in the type system catches dispatch mismatches that field-based structure can't. Making `TestFunctionSpace` parametric is coherent with that argument. The concrete mixing case that field form serves — `ProductSpace` test functions — is already handled by `NestedProjection`, which navigates nested product structure at the TestFunction level, not the Space level.
+**(b) Field-based `TestFunctionSpace` with `source::Space` as an abstract field.** Swap-at-runtime friendly; dispatch falls back to abstract `Space` checks at call time.
 
-**Invitation to argue.** Is there a case in Moves 3-7 where a field-based `TestFunctionSpace` is cleaner? Specifically: does `ExchangeablePrevision(component_space, prior_on_components)` from Move 5 want a field-based space so the `component_space` can be swapped without reconstructing the prevision's type? If yes, the trade-off re-opens.
+*Cost — defeats the declared-structure argument.* Posture 3's whole argument is that declared structure in the type system catches mismatches runtime inference misses. A field-based container has to check `source::Space` compatibility at dispatch, which is exactly what the reconstruction is reconstructing away from. If we want (b), the honest question is why we introduced `TestFunctionSpace` at all — it becomes a documentation-only object the type system ignores.
+
+**(c) No `TestFunctionSpace` at Move 1.** Ship just the `TestFunction` hierarchy. The space is inferred at dispatch from the `Measure`/`Prevision` argument in `expect(m, f)`, exactly as the current `Functional` semantics work. `Identity()`, `Projection(1)`, etc. carry no source reference; they never have. Defer `TestFunctionSpace` to the first move with a real consumer — if ever.
+
+*Cost — one line of §1 and one bullet of §2 in this design doc drop out.* Nothing else changes.
+
+**Stance on `ExchangeablePrevision.component_space` (Move 5): parametric.** The email agent's 22-program belief has a fixed `Program` component space; grammar perturbation grows the pool within the same space, never morphs. No post-Posture-3 application on the drawing board has a swap-at-runtime use case. `ExchangeablePrevision{S <: Space}(component_space::S, prior_on_components)` wins — type-structural dispatch downstream, no type-parameter cost actually paid by a real consumer. This commits Move 5 and lets Move 1's decision flow from it.
+
+**Move 1 decision: (c).** No `TestFunctionSpace` at Move 1. Reasoning:
+
+- At Move 1, *no consumer exists.* `expect(m, f::TestFunction)` at Move 2 takes a TestFunction directly; no container consulted. Auto-generated Stratum-1 tests iterate over Measure × TestFunction pairs; no container. `BetaPrevision(α, β)` at Move 3 doesn't carry one.
+- At Move 5, *maybe a consumer.* If `ExchangeablePrevision`'s `decompose` method wants to carry basis+closure metadata explicitly, `TestFunctionSpace` lands then, parametric on `S <: Space` to match `ExchangeablePrevision`'s committed stance. If `decompose` turns out not to need it, `TestFunctionSpace` never lands at all — which is cleaner than carrying speculative infrastructure for five moves.
+- (a) is speculative parametric propagation through five moves on the basis of "might be useful at Move 5 maybe."
+- (b) undermines Posture 3's declared-structure argument and makes the container dispatch-inert.
+
+**Invitation to argue.** The strongest counter-argument I can see is "`TestFunctionSpace` as documentation of intent, even if no code consumes it." If a reviewer thinks basis+closure metadata is load-bearing at Move 1 for some reason not yet named, surface it. Otherwise (c) is a genuine scope reduction.
 
 ### 5.2 Fold Move 1 into Move 2?
 
@@ -108,7 +114,7 @@ Move 1 is genuinely slim — abstract declarations only. An alternative structur
 
 **Risk R2 (low).** Export name clash with `Ontology.Identity`, `Ontology.Projection`, etc. — the Move 1 `TestFunction` subtypes share names with existing `Functional` subtypes. If both are exported under the same name without qualification, `using Credence` becomes ambiguous. *Caught by:* `julia -e 'push!(LOAD_PATH, "src"); using Credence; Identity'` must print a concrete type unambiguously. *Mitigation now:* Move 1 exports the *new* `TestFunction` subtypes under `Prevision.Identity` etc.; Move 2's alias step resolves the clash by making `Ontology.Identity` an alias for `Prevision.Identity`. Until then, `Credence.jl` re-exports only the `Prevision` versions; `Ontology` versions stay module-local.
 
-**Risk R3 (low).** The `TestFunctionSpace` parametric-vs-field decision is wrong. *Caught by:* Move 3+ reveals the field form was needed (e.g. for swappable `component_space` in `ExchangeablePrevision`). *Mitigation:* changing a struct from parametric to field (or vice versa) in a later move is a small surgical diff (one struct decl, maybe a few constructor call sites). Not worth blocking Move 1 to pre-decide.
+**Risk R3 (low).** The Move 5 decision to make `ExchangeablePrevision` parametric on `component_space` turns out wrong — e.g. a later application requires swap-at-runtime. *Blast radius if wrong:* the parametric-on-S type parameter has propagated into whatever subset of `ExchangeablePrevision`'s methods and subtypes Moves 5-8 produce; reversing it is a type-signature rewrite across those methods, not a local edit. *Caught by:* the first application whose use case requires swappable `component_space` — not found yet; speculative. *Mitigation now:* the stance is committed in §5.1 explicitly, so if Move 5 rediscovers the question, it's a re-litigation against a documented decision, not a fresh one. Move 1 itself carries no `TestFunctionSpace`, so there is no parametric-vs-field scaffolding at Move 1 to unwind if the Move 5 decision reverses; the risk is scoped to Moves 5-8.
 
 ## 7. Verification cadence
 
