@@ -170,6 +170,41 @@ let k_legacy = Kernel(Euclidean(1), Euclidean(1),
           updated.mu == 1.0, "got μ=$(updated.mu)")
 end
 
+# ── (DirichletPrevision, Categorical) ──
+#
+# Carries category labels in the Categorical marker — necessary because
+# the update needs idx = position-in-categories, and at the Prevision
+# level there's no access to the Measure's categories field.
+
+let cats = Finite([:a, :b, :c])
+    k = Kernel(Simplex(3), cats,
+               θ -> CategoricalMeasure(cats),
+               (θ, o) -> log(max(θ[findfirst(==(o), cats.values)], 1e-300));
+               likelihood_family = Categorical(cats))
+    using Credence: DirichletPrevision
+
+    p = DirichletPrevision([2.0, 3.0, 5.0])
+
+    check("DirichletPrevision + Categorical → :conjugate",
+          _dispatch_path(p, k) === :conjugate,
+          "got $(_dispatch_path(p, k))")
+
+    cp = maybe_conjugate(p, k)
+    check("maybe_conjugate returns ConjugatePrevision{DirichletPrevision, Categorical{Symbol}}",
+          cp isa ConjugatePrevision{DirichletPrevision, Categorical{Symbol}},
+          "got $(typeof(cp))")
+
+    # Observing :b (idx 2) → α[2] += 1
+    updated = update(cp, :b).prior
+    check("DirichletPrevision([2,3,5]) + obs=:b (idx 2) → α = [2, 4, 5] (==)",
+          updated.alpha == [2.0, 4.0, 5.0], "got α=$(updated.alpha)")
+
+    # Observing :a (idx 1) → α[1] += 1
+    updated_a = update(cp, :a).prior
+    check("DirichletPrevision([2,3,5]) + obs=:a → α = [3, 3, 5] (==)",
+          updated_a.alpha == [3.0, 3.0, 5.0], "got α=$(updated_a.alpha)")
+end
+
 # ── TaggedBetaPrevision: must NOT match as conjugate (transitional scaffolding) ──
 #
 # Per PR #19's Move 1 revision addendum (commit 6dce5e4), TaggedBetaMeasure

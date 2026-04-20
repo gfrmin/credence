@@ -443,10 +443,17 @@ struct NormalNormal <: LeafFamily
     sigma_obs::Float64
 end
 
-# Move 4: Dirichlet-Categorical conjugate pair. No carried params; the
-# observation is the category value (looked up in DirichletMeasure's
-# categories at update time).
-struct Categorical <: LeafFamily end
+# Move 4: Dirichlet-Categorical conjugate pair. Carries the category
+# labels because the `update` step needs to look up the observation's
+# index, and at the Prevision level (where update lives) there's no
+# access to the Measure's `.categories` field. Minor semantic impurity
+# (a label list in a Likelihood) accepted for registry cleanliness;
+# legacy kernels that don't carry this field are handled at Phase 3's
+# Measure-level condition facade by synthesizing a `Categorical(cat)`
+# marker from the Measure's own `.categories`.
+struct Categorical{T} <: LeafFamily
+    categories::Finite{T}
+end
 
 # Move 4: NormalGamma conjugate pair. No carried params; the update
 # uses the prior's (κ, μ, α, β) hyperparameters and the scalar obs.
@@ -976,6 +983,26 @@ function update(cp::ConjugatePrevision{GaussianPrevision, NormalNormal}, obs)
     μ_post = (τ_prior * cp.prior.mu + τ_obs * Float64(obs)) / τ_post
     σ_post = 1.0 / sqrt(τ_post)
     ConjugatePrevision(GaussianPrevision(μ_post, σ_post), cp.likelihood)
+end
+
+# ── (DirichletPrevision, Categorical) — replaces ontology.jl:964-974 ──
+#
+# Posterior update: α[idx] += 1 where idx is the observation's position
+# in the category list carried by the Categorical likelihood marker.
+
+function maybe_conjugate(p::DirichletPrevision, k::Kernel)
+    if k.likelihood_family isa Categorical
+        return ConjugatePrevision(p, k.likelihood_family)
+    end
+    nothing
+end
+
+function update(cp::ConjugatePrevision{DirichletPrevision, Categorical{T}}, obs) where T
+    idx = findfirst(==(obs), cp.likelihood.categories.values)
+    idx !== nothing || error("observation $obs not in categories $(cp.likelihood.categories.values)")
+    new_alpha = copy(cp.prior.alpha)
+    new_alpha[idx] += 1.0
+    ConjugatePrevision(DirichletPrevision(new_alpha), cp.likelihood)
 end
 
 function condition(m::CategoricalMeasure{T}, k::Kernel, observation) where T
