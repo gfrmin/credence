@@ -271,6 +271,162 @@ def test_snapshot_restore():
         skin.shutdown()
 
 
+def test_mixture_roundtrip():
+    """MixtureMeasure of 3 TaggedBeta components: create, snapshot, restore, bit-exact."""
+    skin = SkinClient()
+    try:
+        skin.initialize()
+
+        sid = skin.create_state(
+            type="mixture",
+            components=[
+                {"type": "tagged_beta", "tag": 0, "alpha": 2.0, "beta": 3.0},
+                {"type": "tagged_beta", "tag": 1, "alpha": 5.0, "beta": 1.0},
+                {"type": "tagged_beta", "tag": 2, "alpha": 1.0, "beta": 4.0},
+            ],
+            log_weights=[0.0, 0.0, 0.0],
+        )
+        w_before = skin.weights(sid)
+        print(f"Pre-snapshot weights: {w_before}")
+
+        data = skin.snapshot_state(sid)
+        sid2 = skin.restore_state(data)
+
+        w_after = skin.weights(sid2)
+        # Weights are normalised via logsumexp — bit-exact round-trip
+        # holds when the snapshot encoder doesn't reorder pairwise sums.
+        assert w_before == w_after, f"weights drifted: {w_before} vs {w_after}"
+
+        skin.destroy_state(sid)
+        skin.destroy_state(sid2)
+        print("PASS: mixture roundtrip (3 TaggedBeta components, weights bit-exact)")
+    finally:
+        skin.shutdown()
+
+
+def test_normal_gamma_roundtrip():
+    """NormalGammaMeasure with explicit κ, μ, α, β: create, snapshot, restore, mean survives."""
+    skin = SkinClient()
+    try:
+        skin.initialize()
+
+        sid = skin.create_state(
+            type="normal_gamma",
+            kappa=2.0,
+            mu=1.5,
+            alpha=3.0,
+            beta=4.0,
+        )
+        m_before = skin.mean(sid)
+        assert m_before == 1.5, f"NormalGamma mean is μ=1.5, got {m_before}"
+
+        data = skin.snapshot_state(sid)
+        sid2 = skin.restore_state(data)
+
+        m_after = skin.mean(sid2)
+        assert m_before == m_after, f"NormalGamma round-trip drift: {m_before} vs {m_after}"
+
+        skin.destroy_state(sid)
+        skin.destroy_state(sid2)
+        print("PASS: normal_gamma roundtrip (mean = μ, bit-exact)")
+    finally:
+        skin.shutdown()
+
+
+def test_gamma_roundtrip():
+    """GammaMeasure with shape α and rate β: create, snapshot, restore, bit-exact."""
+    skin = SkinClient()
+    try:
+        skin.initialize()
+
+        sid = skin.create_state(type="gamma", alpha=3.0, beta=2.0)
+        # Gamma(α, β) mean = α/β = 1.5 — exact.
+        m_before = skin.mean(sid)
+        assert m_before == 1.5, f"Gamma(3,2) mean = 3/2, got {m_before}"
+
+        data = skin.snapshot_state(sid)
+        sid2 = skin.restore_state(data)
+
+        m_after = skin.mean(sid2)
+        assert m_before == m_after, f"Gamma round-trip drift: {m_before} vs {m_after}"
+
+        skin.destroy_state(sid)
+        skin.destroy_state(sid2)
+        print("PASS: gamma roundtrip (mean = α/β, bit-exact)")
+    finally:
+        skin.shutdown()
+
+
+def test_dirichlet_roundtrip():
+    """DirichletMeasure with concentration α: create, snapshot, restore, weights bit-exact."""
+    skin = SkinClient()
+    try:
+        skin.initialize()
+
+        sid = skin.create_state(type="dirichlet", alpha=[2.0, 3.0, 5.0])
+        w_before = skin.weights(sid)
+        # Dirichlet mean = α / sum(α) — exact under integer α.
+        assert w_before == [0.2, 0.3, 0.5], f"expected [0.2, 0.3, 0.5], got {w_before}"
+
+        data = skin.snapshot_state(sid)
+        sid2 = skin.restore_state(data)
+
+        w_after = skin.weights(sid2)
+        assert w_before == w_after, f"Dirichlet weights drifted: {w_before} vs {w_after}"
+
+        skin.destroy_state(sid)
+        skin.destroy_state(sid2)
+        print("PASS: dirichlet roundtrip (weights = α/sum(α), bit-exact)")
+    finally:
+        skin.shutdown()
+
+
+def test_v1_snapshot_fails_loudly():
+    """A v1 snapshot blob (pre-Move-3 struct layout) must fail loudly on restore.
+
+    The fixture `apps/skin/test_skin_fixtures/beta_v1.b64` is a BetaMeasure
+    snapshot from master SHA bf74f98 (pre-Move-3). Post-Move-3, the struct
+    layout changed (BetaMeasure now wraps BetaPrevision); Julia's
+    Serialization on v1 bytes raises TypeError because `new(Interval,
+    Float64, Float64)` doesn't match the new `new(BetaPrevision, Interval)`
+    layout. That TypeError must surface as a SkinError to the client —
+    silent corruption or silent success would be worse than a loud
+    failure.
+
+    Users with v1 snapshots reinitialise. The skin server is not a
+    persistence-migration layer. See `apps/skin/test_skin_fixtures/
+    README.md` for the fixture protocol.
+    """
+    fixture_path = Path(__file__).parent / "test_skin_fixtures" / "beta_v1.b64"
+    assert fixture_path.exists(), f"v1 fixture missing: {fixture_path}"
+    v1_blob = fixture_path.read_text().strip()
+
+    skin = SkinClient()
+    try:
+        skin.initialize()
+
+        with pytest.raises(SkinError) as info:
+            skin.restore_state(v1_blob)
+
+        # Must be a loud failure — not silent corruption. The specific
+        # code today is -32603 (generic internal error); the important
+        # invariants are (a) it raises, (b) the raise names something
+        # informative pointing at the struct change / package mismatch.
+        # Julia's Serialization surfaces this as either TypeError (direct
+        # struct-new mismatch) or KeyError (package identity hash lookup
+        # failure); both are legitimate "loud failure" shapes.
+        err_msg = str(info.value)
+        informative_markers = [
+            "BetaPrevision", "TypeError", "type", "KeyError",
+            "Credence", "PkgId", "deserialize",
+        ]
+        assert any(m in err_msg for m in informative_markers), \
+            f"v1 snapshot failure didn't mention any expected shape marker: {err_msg}"
+        print(f"PASS: v1 snapshot fails loudly with informative error: {err_msg[:120]}")
+    finally:
+        skin.shutdown()
+
+
 def test_unknown_state_id():
     """Operations on a never-registered state_id return StateNotFound (-32000)."""
     skin = SkinClient()
@@ -383,6 +539,16 @@ if __name__ == "__main__":
     test_router_roundtrip()
     print()
     test_snapshot_restore()
+    print()
+    test_mixture_roundtrip()
+    print()
+    test_normal_gamma_roundtrip()
+    print()
+    test_gamma_roundtrip()
+    print()
+    test_dirichlet_roundtrip()
+    print()
+    test_v1_snapshot_fails_loudly()
     print()
     test_unknown_state_id()
     print()
