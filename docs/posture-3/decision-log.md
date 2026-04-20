@@ -27,6 +27,17 @@ Rejected alternatives:
 - **(a) Both, Measure-as-view canonical** — too conservative; the email-agent paper case study reads naturally in prevision language ("programs are the ergodic components of an `ExchangeablePrevision`"), awkwardly in measure language. The framework's contribution is the prevision-first reconstruction; making it invisible understates the work.
 - **(c) Prevision only, deprecate Measure** — too much churn for a single branch; risks silent breakage in the long tail of consumer call sites enumerated in the master plan. Reserve as a possible follow-up after the body work lands.
 
+### Fallback-to-(a) conditions during implementation
+
+(b) is a *default for each new call site*, not an all-or-nothing commitment across the codebase. During Move 3 specifically, two concrete triggers fall individual consumers back to the (a) treatment (Measure-as-view canonical; no prevision-level rewrite) without reopening the decision for Moves 4–8:
+
+1. **Consumer-site count.** If more than ~5 consumer sites require bespoke handling to read Measure fields through the Prevision wrapper — i.e. the `Base.getproperty` forwarding shield on Measure doesn't cleanly cover the access pattern — those sites stay on the pure (a) path. The threshold is deliberately soft; the intent is "if this refactor starts feeling like a rewrite, stop and take the view".
+2. **Persistence type-pinning.** If the Move 3 schema-v2 migration cannot round-trip without type-pinning that leaks Prevision structure into application code (e.g. the v2 format requires consumers to know about `BetaPrevision` to deserialise correctly), the affected load paths fall back to (a): Measure stays as the serialised primitive, Prevision is reconstructed on load as a private view, and consumers see only Measure.
+
+A fallback under either trigger is a site-local decision recorded in the Move 3 design doc's "Files touched" section with a one-line justification ("consumer X stays on (a) because …"). It does not amend Decision 2 itself; new code written after Move 3 still defaults to (b). The fallback is an acknowledgement that the operational equivalence contract is load-bearing, and that forcing (b) onto a site where (a) is mechanically cleaner would risk silent breakage for no paper-value gain.
+
+Moves 4 through 8 proceed under (b) unless the Move 3 design doc records a systematic fallback that invalidates the assumption (e.g. "after triage, 80% of existing consumers need (a)"). In that case the fallback is not a per-site concession but a structural finding, and Decision 2 itself is revisited in a followup amendment PR.
+
 ## Decision 3 — Scope boundary: Julia core + tests + SPEC/CLAUDE/paper
 
 In scope on this branch:
@@ -37,7 +48,7 @@ In scope on this branch:
 - `docs/posture-3/` — design docs, paper draft, decision log, audits.
 
 Out of scope on this branch:
-- `apps/skin/server.jl` — JSON-RPC API surface (Measure handles, condition/expect/push calls) is preserved bit-for-bit. Verified by `python -m skin.test_skin` smoke runs at end of Moves 3, 4, 6, 7.
+- `apps/skin/server.jl` — user-facing JSON-RPC API (non-underscore-prefixed methods: `condition`, `expect`, `weights`, `mean`, `optimise`, `factor`, `snapshot_state`, etc.) is preserved bit-for-bit. Verified by `python -m skin.test_skin` smoke runs at end of Moves 3, 4, 6, 7. **Internal observability hooks are explicitly permitted:** `_dispatch_path` (Move 4, exposes which branch — conjugate-registry vs particle — a given `(state, kernel)` pair routes through) and `_set_seed` (Move 6, pins the particle RNG for test reproducibility) are underscore-prefixed to mark them as test-only; each is documented in its move's design doc. Adding new internal hooks during the reconstruction is not a scope breach provided they follow the same convention (underscore prefix, design-doc documentation, no production caller).
 - `apps/python/*` — Python bindings, credence_router, credence_agents, bayesian_if are untouched.
 - Body work — Gmail connection, Telegram loop, persistence beyond the Move-3 schema migration.
 
