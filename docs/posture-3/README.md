@@ -14,13 +14,11 @@ The deliverable is the operational substrate for a paper — *"A de Finettian fo
 
 See `decision-log.md` for the four settled decisions that bound this branch's scope. See `paper-draft.md` for the work in progress that this branch is making true. See `DESIGN-DOC-TEMPLATE.md` for the structure every move design doc must follow.
 
-## Posture-2 dependency
+## Posture-2 dependency — resolved
 
-This branch waits for `de-finetti/posture-2-events` to merge to master before any Move 7 work lands. **Crucially: only Move 7 is gated on that merge.** Moves 1 through 6 touch no code paths Posture 2 is in flight on, and proceed in true parallel with Posture 2's remaining PR sequence.
+Posture 2 is on master; this branch rebased onto the post-merge master on 2026-04-20. Move 7 inherits the `Event` type, `indicator_kernel`, and the sibling form of `condition(m, e::Event)` (gate-2) from master rather than redefining them. Move 7's job is then to refactor the sibling form into the *primary* form — the de Finettian philosophical pivot of Posture 3.
 
-If you are reading this and tempted to serialise the whole Posture 3 sequence behind Posture 2, don't — that's a four-week loss for no gain. The dependency is real but narrow.
-
-After Posture 2 fully merges, this branch rebases onto master. Move 7 inherits the `Event` type from master rather than redefining it; it then refactors `condition(p, e::Event)` from sibling-form (Posture 2's gate-2) to primary-form (Posture 3's philosophical pivot).
+Historical note (for the record): earlier iterations of this plan scoped Posture 3 to run in parallel with Posture 2's final merge queue, with only Move 7 gated on the merge. That sequencing concern is now moot; all eight moves of Posture 3 proceed linearly.
 
 ## Eight moves, one paper
 
@@ -32,7 +30,7 @@ After Posture 2 fully merges, this branch rebases onto master. Move 7 inherits t
 | 4. Conjugate dispatch as type-structural registry | Replace ~200 lines of case-analytic `condition`; Strata-2 tests open | Medium | 3 |
 | 5. MixturePrevision + ExchangeablePrevision | New types; representation theorem as method | Medium | 1, 4 |
 | 6. Execution layer refactor (particle especially) | ParticlePrevision, QuadraturePrevision; deterministic seed preserved | **High** | 4, 5 |
-| 7. `condition` as conditional prevision (event-primary) | Inverts the dispatch hierarchy; SPEC.md §1 + CLAUDE.md update | Low | 6, **Posture 2 merged** |
+| 7. `condition` as conditional prevision (event-primary) | Inverts the dispatch hierarchy; SPEC.md §1 + CLAUDE.md update | Low | 6 |
 | 8. Grammar + program-space adaptation; paper draft complete | Mostly cosmetic ontology renames; final paper-section pass | Low | 7 |
 
 Each move opens with a `move-N-design.md` docs-only PR following the template, then a code PR. All design docs include an "Open design questions" section as a grounds-for-rejection requirement.
@@ -49,9 +47,9 @@ The current particle path constructs `CategoricalMeasure(Finite(samples), log_we
 
 ### Cadence guardrail removal — deliberate
 
-Earlier iterations of the master plan included a "one move per week minimum, one per fortnight maximum" cadence guardrail. It has been **deliberately removed**. Artificial pace pressure incentivises shipping over halting, which is exactly the opposite of what the "halt and escalate" rule wants to protect. The natural throttles are reviewer attention and the parallelism with Posture 2's merge sequence; both are adequate given everything else this plan gates (design-doc-before-code, end-of-PR test green-light, halt-the-line on operational equivalence breaks).
+Earlier iterations of the master plan included a "one move per week minimum, one per fortnight maximum" cadence guardrail. It has been **deliberately removed**. Artificial pace pressure incentivises shipping over halting, which is exactly the opposite of what the "halt and escalate" rule wants to protect. The natural throttle is reviewer attention, which is adequate given everything else this plan gates (design-doc-before-code, end-of-PR test green-light, halt-the-line on operational equivalence breaks).
 
-The implication is that the branch's pace is reviewer-driven, not author-driven. If reviewer attention slows, the branch slows; that is the intended behaviour. If `de-finetti/posture-2-events` merges quickly and reviewer attention is plentiful, the branch may move faster than the rough sequencing in the table above implies. The risk to manage: branch rot vs master if the sequence stretches very long. Mitigation: rebase onto master after every upstream merge, not just the Posture 2 merge.
+The implication is that the branch's pace is reviewer-driven, not author-driven. If reviewer attention slows, the branch slows; that is the intended behaviour. The risk to manage: branch rot vs master if the sequence stretches very long. Mitigation: rebase onto master after every upstream merge that touches src/ ontology or program-space code.
 
 ## Verification
 

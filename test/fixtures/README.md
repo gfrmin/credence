@@ -6,7 +6,7 @@ This protocol exists because fixture regeneration silently invalidates migration
 
 ## Planned fixtures
 
-The following fixtures are planned but **not yet captured**. They are captured immediately before Move 3's code PR opens, after `de-finetti/posture-2-events` fully merges to master. Posture 2's gate-7 (`946a30f`) touches Measure-adjacent code; capturing fixtures before that merge would freeze a pre-Posture-2 v1 shape that doesn't match what real users will have on disk after Posture 2 ships.
+The following fixtures are planned but **not yet captured**. They will be captured immediately before Move 3's code PR opens, from master at its then-current tip. Posture 2 is already merged into master (gate-7 landed as `7b08576`); the v1 shape that real users have on disk is the post-Posture-2 shape, which is what these fixtures must represent.
 
 ### `agent_state_v1.jls` — planned
 

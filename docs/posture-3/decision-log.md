@@ -4,20 +4,20 @@ The four decisions settled before any code or design-doc work begins. Each is re
 
 ## Decision 1 — Posture 2 sequencing
 
-This branch waits for `de-finetti/posture-2-events` to merge to master before any Move 7 work lands.
+**Resolved: Posture 2 is on master.** This branch rebased onto the post-merge master on 2026-04-20; Move 0 sits directly atop gate-7.
 
-Posture 2 has 7 gates committed:
-- `983dc3f` gate-1: Event types and `indicator_kernel`
-- `35f68d9` gate-2: `condition(::Measure, ::Event)` sibling form
-- `f48d619` gate-3: `test/test_events.jl` and MixtureMeasure zero-mass guard
-- `ec18eee` gate-4: equivalence test — `condition(m, e) ≡ condition(m, indicator_kernel(e), true)`
-- `46501da` gate-5: rewrite `compute_eu_primitive` via `condition(m, TagSet(...))`
-- `a2d47dc` gate-6: CLAUDE.md event-conditioning precedent + corpus good_ examples
-- `946a30f` gate-7: SPEC.md §1.0 Foundations + §6.3 Connections.events
+Posture 2's 7 gates, as they landed on master:
+- `1d54b94` gate-1: Event types and `indicator_kernel`
+- `2d42ddb` gate-2: `condition(::Measure, ::Event)` sibling form
+- `326cbdb` gate-3: `test/test_events.jl` and MixtureMeasure zero-mass guard
+- `5c7f63f` gate-4: equivalence test — `condition(m, e) ≡ condition(m, indicator_kernel(e), true)`
+- `0c182bb` gate-5: rewrite `compute_eu_primitive` via `condition(m, TagSet(...))`
+- `c85e879` gate-6: CLAUDE.md event-conditioning precedent + corpus good_ examples
+- `7b08576` gate-7: SPEC.md §1.0 Foundations + §6.3 Connections.events
 
-After Posture 2 fully merges, this branch rebases onto master. Move 7 (`condition` as conditional prevision, primary form) inherits Event from master rather than redefining it.
+Move 7 (`condition` as conditional prevision, primary form) inherits Event from master rather than redefining it. The historical sequencing concern — Moves 1-6 proceeding in parallel with Posture 2's in-flight PR sequence — is moot now that the merge is done; all eight moves of Posture 3 proceed linearly on this branch.
 
-**Crucially: only Move 7 is gated on Posture 2.** Moves 1 through 6 touch no code paths Posture 2 is in flight on, and proceed in true parallel with Posture 2's remaining PR sequence.
+(Previously an open decision question: whether to wait for Posture 2, cherry-pick in, or redesign Event from scratch. Settled by waiting; resolved by the merge.)
 
 ## Decision 2 — Application interaction style: (b) Both, Prevision preferred for new code
 
