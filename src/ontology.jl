@@ -24,7 +24,7 @@ module Ontology
 # so `using .Previsions, .Ontology` in Credence is unambiguous.
 import ..Previsions: TestFunction, Identity, Projection, NestedProjection,
                      Tabular, LinearCombination, OpaqueClosure, expect
-import ..Previsions: BetaPrevision, TaggedBetaPrevision, GaussianPrevision, GammaPrevision, CategoricalPrevision
+import ..Previsions: BetaPrevision, TaggedBetaPrevision, GaussianPrevision, GammaPrevision, CategoricalPrevision, DirichletPrevision
 
 export Space, Finite, Interval, ProductSpace, Simplex, Euclidean, PositiveReals, support
 export Measure, CategoricalMeasure, BetaMeasure, TaggedBetaMeasure, GaussianMeasure, GammaMeasure, ExponentialMeasure, DirichletMeasure, NormalGammaMeasure, ProductMeasure, MixtureMeasure
@@ -215,18 +215,30 @@ variance(m::GaussianMeasure) = m.sigma^2
 
 # ── Dirichlet: distribution over the probability simplex ──
 
+# Move 3: wraps DirichletPrevision; `m.alpha` forwards via the shield
+# (Vector returned by reference — shared-reference contract).
+
 struct DirichletMeasure <: Measure
+    prevision::DirichletPrevision
     space::Simplex
     categories::Finite     # the category labels the probability vectors are about
-    alpha::Vector{Float64} # concentration parameters, length k
 
     function DirichletMeasure(space::Simplex, categories::Finite, alpha::Vector{Float64})
         space.k == length(categories.values) == length(alpha) ||
             error("simplex dimension, categories, and alpha must all have the same length")
-        all(a -> a > 0, alpha) || error("all alpha must be positive")
-        new(space, categories, alpha)
+        new(DirichletPrevision(alpha), space, categories)
     end
 end
+
+function Base.getproperty(m::DirichletMeasure, s::Symbol)
+    if s === :alpha
+        return getproperty(getfield(m, :prevision), s)
+    else
+        return getfield(m, s)
+    end
+end
+
+Base.propertynames(::DirichletMeasure) = (:alpha, :space, :categories, :prevision)
 
 weights(m::DirichletMeasure) = m.alpha ./ sum(m.alpha)
 mean(m::DirichletMeasure) = weights(m)
