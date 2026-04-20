@@ -47,7 +47,7 @@ export factor, replace_factor
 export condition, expect, push_measure, density, log_density_at, log_predictive, log_marginal
 export draw
 export weights, mean, variance, prune, truncate, logsumexp
-export save_state, load_state
+export save_state, load_state, MigrationError
 export initial_rel_state, initial_cov_state, marginalize_betas, update_beta_state
 export extract_reliability_means
 
