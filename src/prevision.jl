@@ -30,7 +30,7 @@ module Previsions
 
 export Prevision, TestFunction, Indicator, apply, expect
 export Identity, Projection, NestedProjection, Tabular, LinearCombination, OpaqueClosure
-export BetaPrevision, TaggedBetaPrevision, GaussianPrevision, GammaPrevision, CategoricalPrevision
+export BetaPrevision, TaggedBetaPrevision, GaussianPrevision, GammaPrevision, CategoricalPrevision, DirichletPrevision
 # At Move 2, `Ontology`'s `Functional` hierarchy is aliased onto these
 # types (`const Functional = TestFunction` plus `import ..Previsions:
 # Identity, …`), so both modules export the same bindings (they resolve
@@ -282,6 +282,23 @@ struct CategoricalPrevision <: Prevision
         max_lw = maximum(logw)
         log_total = max_lw + log(sum(exp.(logw .- max_lw)))
         new(logw .- log_total)
+    end
+end
+
+"""
+    DirichletPrevision(alpha::Vector{Float64}) <: Prevision
+
+Prevision whose representing measure is Dirichlet(α) on the simplex Δ^(k-1).
+The `DirichletMeasure` view wraps a `DirichletPrevision` and forwards
+`m.alpha` reads through its `getproperty` shield. The alpha vector is
+returned by reference (shared-reference contract).
+"""
+struct DirichletPrevision <: Prevision
+    alpha::Vector{Float64}
+
+    function DirichletPrevision(alpha::Vector{Float64})
+        all(a -> a > 0, alpha) || error("all alpha must be positive")
+        new(alpha)
     end
 end
 
