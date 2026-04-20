@@ -24,7 +24,7 @@ module Ontology
 # so `using .Previsions, .Ontology` in Credence is unambiguous.
 import ..Previsions: TestFunction, Identity, Projection, NestedProjection,
                      Tabular, LinearCombination, OpaqueClosure, expect
-import ..Previsions: BetaPrevision, TaggedBetaPrevision, GaussianPrevision, GammaPrevision
+import ..Previsions: BetaPrevision, TaggedBetaPrevision, GaussianPrevision, GammaPrevision, CategoricalPrevision
 
 export Space, Finite, Interval, ProductSpace, Simplex, Euclidean, PositiveReals, support
 export Measure, CategoricalMeasure, BetaMeasure, TaggedBetaMeasure, GaussianMeasure, GammaMeasure, ExponentialMeasure, DirichletMeasure, NormalGammaMeasure, ProductMeasure, MixtureMeasure
@@ -76,25 +76,35 @@ support(s::Finite) = s.values
 abstract type Measure end
 
 # ── Categorical: finite discrete ──
+#
+# Move 3: wraps CategoricalPrevision; `m.logw` forwards via the shield.
+# Normalisation of logw happens inside CategoricalPrevision's constructor.
+# The Vector returned by `m.logw` is by reference — shared-reference
+# contract in play; see test/test_prevision_unit.jl :: test_shared_
+# reference_contract (lands with MixtureMeasure).
 
 struct CategoricalMeasure{T} <: Measure
+    prevision::CategoricalPrevision
     space::Finite{T}
-    logw::Vector{Float64}
 
     function CategoricalMeasure{T}(space::Finite{T}, logw::Vector{Float64}) where T
         length(space.values) == length(logw) || error("space and weights must match")
-        # Handle all -Inf (impossible)
-        if all(lw -> lw == -Inf, logw)
-            error("measure has zero total mass — all hypotheses impossible")
-        end
-        max_lw = maximum(logw)
-        log_total = max_lw + log(sum(exp.(logw .- max_lw)))
-        new{T}(space, logw .- log_total)
+        new{T}(CategoricalPrevision(logw), space)
     end
 end
 
 CategoricalMeasure(s::Finite{T}, logw::Vector{Float64}) where T = CategoricalMeasure{T}(s, logw)
 CategoricalMeasure(s::Finite{T}) where T = CategoricalMeasure{T}(s, fill(0.0, length(s.values)))
+
+function Base.getproperty(m::CategoricalMeasure, s::Symbol)
+    if s === :logw
+        return getproperty(getfield(m, :prevision), s)
+    else
+        return getfield(m, s)
+    end
+end
+
+Base.propertynames(::CategoricalMeasure) = (:logw, :space, :prevision)
 
 function weights(m::CategoricalMeasure)
     max_lw = maximum(m.logw)
