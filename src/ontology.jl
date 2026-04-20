@@ -14,6 +14,17 @@ Axiom-constrained functions (behaviour frozen, interface negotiable):
 """
 module Ontology
 
+# ── Move 2: unify Functional hierarchy onto Previsions.TestFunction ──
+# The `Functional` abstract type and its concrete subtypes (`Identity`,
+# `Projection`, `NestedProjection`, `Tabular`, `LinearCombination`,
+# `OpaqueClosure`) were previously declared in this file. Move 2 replaces
+# them with imports from `Previsions` plus `const Functional = TestFunction`.
+# The re-exports below (line continuing `Functional, Identity, ...`) now
+# resolve via alias; `Ontology.Identity === Previsions.Identity` is `true`,
+# so `using .Previsions, .Ontology` in Credence is unambiguous.
+import ..Previsions: TestFunction, Identity, Projection, NestedProjection,
+                     Tabular, LinearCombination, OpaqueClosure, expect
+
 export Space, Finite, Interval, ProductSpace, Simplex, Euclidean, PositiveReals, support
 export Measure, CategoricalMeasure, BetaMeasure, TaggedBetaMeasure, GaussianMeasure, GammaMeasure, ExponentialMeasure, DirichletMeasure, NormalGammaMeasure, ProductMeasure, MixtureMeasure
 export Kernel, FactorSelector, kernel_source, kernel_target, kernel_params
@@ -647,58 +658,21 @@ function expect(m::MixtureMeasure, f::Function)
 end
 
 # ================================================================
-# Functional: structured integrands for expect
+# Functional: alias for Previsions.TestFunction
 # ================================================================
-# A Functional declares the algebraic structure of the function being
-# integrated, so expect can dispatch to closed-form computation. Same
-# principle as Kernel for condition: structure enables dispatch.
-# OpaqueClosure is the fallback that forfeits fast paths.
+# The `Functional` abstract type and its concrete subtypes are declared
+# in `src/prevision.jl`'s `Previsions` module (imported at the top of
+# this file). `const Functional = TestFunction` preserves the legacy
+# name for existing consumers; the types are identical via alias
+# (`Functional === TestFunction`, `Identity === Previsions.Identity`,
+# etc.). A future cleanup pass collapses the aliases; the Posture 3
+# master plan scopes that as post-Move-8 work.
+#
+# The `expect` dispatch methods below attach to `Previsions.expect`
+# (imported as `expect`); the Functional and TestFunction method
+# signatures resolve to the same types.
 
-abstract type Functional end
-
-struct Identity <: Functional end
-
-struct Projection <: Functional
-    index::Int  # 1-based index into ProductMeasure factors
-    function Projection(index::Int)
-        index >= 1 || throw(ArgumentError("Projection.index must be >= 1, got $index"))
-        new(index)
-    end
-end
-
-# Recursively navigates nested ProductMeasures. indices[1] picks the top
-# level, indices[2] the next, and so on. Terminating at a leaf yields
-# Identity() on that leaf.
-struct NestedProjection <: Functional
-    indices::Vector{Int}  # 1-based
-    function NestedProjection(indices::Vector{Int})
-        isempty(indices) && throw(ArgumentError("NestedProjection requires at least one index"))
-        all(i -> i >= 1, indices) ||
-            throw(ArgumentError("NestedProjection.indices must all be >= 1, got $indices"))
-        new(indices)
-    end
-end
-
-struct Tabular <: Functional
-    values::Vector{Float64}
-    function Tabular(values::Vector{Float64})
-        isempty(values) && throw(ArgumentError("Tabular requires non-empty values"))
-        new(values)
-    end
-end
-
-# terms is (coefficient, sub_functional) pairs. Sub-functionals carry the
-# structural information needed to reach their target — no implicit
-# flat-index convention. LinearCombination is algebra-only.
-struct LinearCombination <: Functional
-    terms::Vector{Tuple{Float64, Functional}}
-    offset::Float64
-end
-
-# Fallback wrapping a bare Julia function. Works but forfeits fast paths.
-struct OpaqueClosure <: Functional
-    f::Function
-end
+const Functional = TestFunction
 
 # ── Dispatch: closed-form cases on leaf measures ──
 expect(m::BetaMeasure, ::Identity)     = m.alpha / (m.alpha + m.beta)
