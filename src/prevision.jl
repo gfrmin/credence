@@ -30,7 +30,7 @@ module Previsions
 
 export Prevision, TestFunction, Indicator, apply, expect
 export Identity, Projection, NestedProjection, Tabular, LinearCombination, OpaqueClosure
-export BetaPrevision, TaggedBetaPrevision, GaussianPrevision, GammaPrevision, CategoricalPrevision, DirichletPrevision, NormalGammaPrevision, ProductPrevision
+export BetaPrevision, TaggedBetaPrevision, GaussianPrevision, GammaPrevision, CategoricalPrevision, DirichletPrevision, NormalGammaPrevision, ProductPrevision, MixturePrevision
 # At Move 2, `Ontology`'s `Functional` hierarchy is aliased onto these
 # types (`const Functional = TestFunction` plus `import ..Previsions:
 # Identity, …`), so both modules export the same bindings (they resolve
@@ -339,6 +339,43 @@ can replace with Previsions + view reconstruction if perf justifies.
 """
 struct ProductPrevision <: Prevision
     factors::Vector
+end
+
+"""
+    MixturePrevision(components::Vector, log_weights::Vector{Float64}) <: Prevision
+
+Prevision for a coherent convex combination of component previsions.
+Holds components (as Vector of Measure — same pragmatic impurity as
+ProductPrevision) and log-weights (normalised at construction).
+
+**Shared-reference contract (load-bearing).** Both `components` and
+`log_weights` are returned by reference through the `MixtureMeasure`
+shield. Consumer code that does
+`push!(state.belief.components, new_comp)` at
+`apps/skin/server.jl:549,552` (and `push!(state.belief.log_weights,
+new_lw)`) depends on this; breaking the contract by defensively copying
+silently corrupts state (push! succeeds on the copy, original is
+unchanged, no test-site error). The contract test in
+`test/test_prevision_unit.jl` (`test_shared_reference_contract`)
+asserts the invariant directly. See docs/posture-3/move-3-design.md §3
+and R4 for the full rationale; future Moves 5/6 inherit this pattern
+for MixturePrevision's own component updates and ParticlePrevision's
+sample arrays.
+"""
+struct MixturePrevision <: Prevision
+    components::Vector
+    log_weights::Vector{Float64}
+
+    function MixturePrevision(components::Vector, log_weights::Vector{Float64})
+        length(components) == length(log_weights) || error("components and weights must match")
+        length(components) > 0 || error("mixture must have at least one component")
+        if all(lw -> lw == -Inf, log_weights)
+            error("mixture has zero total mass — all components impossible")
+        end
+        max_lw = maximum(log_weights)
+        log_total = max_lw + log(sum(exp.(log_weights .- max_lw)))
+        new(components, log_weights .- log_total)
+    end
 end
 
 # ── apply — abstract evaluator ────────────────────────────────────────────

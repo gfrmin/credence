@@ -399,11 +399,57 @@ let m = BetaMeasure(Interval(0.0, 1.0), 2.0, 3.0)
           "got $(variance(m))")
 end
 
-# (Shared-reference contract test for Vector-typed fields — MixtureMeasure
-# `.components` and `.log_weights` — lands in the MixtureMeasure refactor
-# commit. That test exercises the contract named in
-# docs/posture-3/move-3-design.md §3 and R4: shield returns references,
-# not copies; `push!(m.components, ...)` mutates the underlying vector.)
+# ── SHARED-REFERENCE CONTRACT TEST (load-bearing, Move 3) ──
+# Per docs/posture-3/move-3-design.md §3 and R4: the MixtureMeasure
+# `getproperty` shield returns `.components` and `.log_weights` by
+# reference — mutations via `push!` must be visible on subsequent reads
+# through the shield. The apps/skin/server.jl:549,552 sites depend on
+# this. A future refactor that defensively copies silently breaks those
+# sites (push! succeeds on the copy, original unchanged, no test-site
+# error). This test guards against that regression.
+#
+# `test_shared_reference_contract` is the test name that the invariant
+# comment on MixtureMeasure's `Base.getproperty` in src/ontology.jl
+# references by name (executable-documentation pattern: comment names
+# the test, test asserts the invariant; breaking either breaks both).
+
+function test_shared_reference_contract()
+    c1 = BetaMeasure(Interval(0.0, 1.0), 2.0, 3.0)
+    c2 = BetaMeasure(Interval(0.0, 1.0), 5.0, 5.0)
+    m = MixtureMeasure(Interval(0.0, 1.0), Measure[c1, c2], [log(1.0), log(1.0)])
+
+    # Read .components through the shield.
+    comps = m.components
+    check("MixtureMeasure.components returns 2 components pre-mutation",
+          length(comps) == 2, "got $(length(comps))")
+
+    # Mutate in place — push! a new component.
+    push!(comps, BetaMeasure(Interval(0.0, 1.0), 1.0, 1.0))
+
+    # Read .components through the shield again; mutation must be visible.
+    check("MixtureMeasure.components shows the push!'d component (shared-reference contract)",
+          length(m.components) == 3,
+          "got $(length(m.components)); shield defensively copied? Breaks apps/skin/server.jl:549")
+
+    # Same for .log_weights.
+    lws = m.log_weights
+    original_length = length(lws)
+    push!(lws, log(0.5))
+    check("MixtureMeasure.log_weights shows the push!'d weight (shared-reference contract)",
+          length(m.log_weights) == original_length + 1,
+          "got $(length(m.log_weights)); shield defensively copied? Breaks apps/skin/server.jl:552")
+
+    # Invariant: the shield-returned vectors ARE the underlying
+    # prevision vectors (object identity), not copies.
+    check("MixtureMeasure.components === prevision.components (object identity)",
+          m.components === m.prevision.components,
+          "shield constructs a new vector on each access")
+    check("MixtureMeasure.log_weights === prevision.log_weights (object identity)",
+          m.log_weights === m.prevision.log_weights,
+          "shield constructs a new vector on each access")
+end
+
+test_shared_reference_contract()
 
 println()
 println("="^60)
