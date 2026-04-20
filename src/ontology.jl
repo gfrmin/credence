@@ -24,7 +24,7 @@ module Ontology
 # so `using .Previsions, .Ontology` in Credence is unambiguous.
 import ..Previsions: TestFunction, Identity, Projection, NestedProjection,
                      Tabular, LinearCombination, OpaqueClosure, expect
-import ..Previsions: BetaPrevision, TaggedBetaPrevision
+import ..Previsions: BetaPrevision, TaggedBetaPrevision, GaussianPrevision
 
 export Space, Finite, Interval, ProductSpace, Simplex, Euclidean, PositiveReals, support
 export Measure, CategoricalMeasure, BetaMeasure, TaggedBetaMeasure, GaussianMeasure, GammaMeasure, ExponentialMeasure, DirichletMeasure, NormalGammaMeasure, ProductMeasure, MixtureMeasure
@@ -175,12 +175,30 @@ mean(m::TaggedBetaMeasure) = mean(m.beta)
 variance(m::TaggedBetaMeasure) = variance(m.beta)
 
 # ── Gaussian: continuous on interval ──
+#
+# Move 3: wraps GaussianPrevision; `m.mu` and `m.sigma` forward via
+# the getproperty shield. See the shared-reference contract in
+# test/test_prevision_unit.jl :: test_shared_reference_contract
+# (lands with MixtureMeasure). Do NOT defensively copy.
 
 struct GaussianMeasure <: Measure
+    prevision::GaussianPrevision
     space::Euclidean
-    mu::Float64
-    sigma::Float64
+
+    function GaussianMeasure(space::Euclidean, mu::Float64, sigma::Float64)
+        new(GaussianPrevision(mu, sigma), space)
+    end
 end
+
+function Base.getproperty(m::GaussianMeasure, s::Symbol)
+    if s === :mu || s === :sigma
+        return getproperty(getfield(m, :prevision), s)
+    else
+        return getfield(m, s)
+    end
+end
+
+Base.propertynames(::GaussianMeasure) = (:mu, :sigma, :space, :prevision)
 
 mean(m::GaussianMeasure) = m.mu
 variance(m::GaussianMeasure) = m.sigma^2
