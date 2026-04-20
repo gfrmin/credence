@@ -114,7 +114,7 @@ RPC methods covered today (✓) vs exposed in `client.py` but uncovered (✗):
 
 | Gap | Move-7 design doc sub-task |
 |-----|----------------------------|
-| No `condition_on_event` RPC test. | Add `test_condition_on_event`: create a MixtureMeasure with several tagged components, call the new `condition_on_event` RPC with a TagSet event, assert the posterior weights are the same as `condition(m, indicator_kernel(TagSet(...)), true)` would produce — bit-exact, since gate-4 of Posture 2 already established this equivalence. |
+| No `condition_on_event` RPC test. | Add `test_condition_on_event`: create a MixtureMeasure with several tagged components, call the new `condition_on_event` RPC with a TagSet event, assert the posterior weights are the same as `condition(m, indicator_kernel(TagSet(...)), true)` would produce — bit-exact, since Posture 2's gate-4 (`5c7f63f`, now on master) already established this equivalence. |
 | No event-equivalence test on the wire. | Add `test_event_kernel_equivalence`: two side-by-side conditions of the same prior, one via `condition` with the indicator kernel and one via `condition_on_event` with the bare event; assert resulting state IDs have bit-exactly equal weights. |
 | The Move 7 design-doc Socratic ("does ObservationEvent belong in the Event hierarchy?") may resolve in either direction. | If the Socratic resolves toward "ObservationEvent is *not* an Event, parametric update is a sibling primitive," then `condition_on_event` does not subsume the kernel form and the test design above is correct as stated. If it resolves toward "ObservationEvent is an Event, kernel form is sugar," then the test design adds a third case asserting that `condition` via the kernel form goes through the event path internally. |
 
