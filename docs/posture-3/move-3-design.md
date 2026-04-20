@@ -32,8 +32,9 @@ This is the move where "Measure as view" becomes operational. Moves 4–7 extend
   - A `prevision::<X>Prevision` field (replacing the direct parameter fields).
   - A `space::<X>Space` field (kept on the Measure for clean `support(m::Measure)` dispatch).
   - A validating outer constructor that takes the same arguments as today, constructs the Prevision internally, and wraps.
-  - `Base.getproperty(m::<X>Measure, s::Symbol)` forwarding `:alpha`, `:beta`, etc. to `getfield(m, :prevision).<s>`. Explicit `if-elseif-else` chain per Measure subtype; default branch is `getfield(m, s)` to preserve `m.prevision`, `m.space` access.
+  - `Base.getproperty(m::<X>Measure, s::Symbol)` forwarding `:alpha`, `:beta`, etc. to `getfield(m, :prevision).<s>`. Explicit `if-elseif-else` chain per Measure subtype; default branch is `getfield(m, s)` to preserve `m.prevision`, `m.space` access. **Returns references, not copies — see §3's shared-reference contract and R4's mitigation**; a comment on each `getproperty` definition points at `test/test_prevision_unit.jl`'s contract test so the invariant is visible to anyone modifying the shield.
   - `Base.propertynames(m::<X>Measure)` extended with the forwarded names.
+- `test/test_prevision_unit.jl` — extended with the shared-reference contract test (§3): construct a MixtureMeasure, read `.components` via the shield, `push!` in place, assert the new length visible on a second read. Guards against the defensive-copy regression class named in R4.
 - `src/ontology.jl` method bodies at lines 128-180 (`mean`, `variance`, `weights` etc.) and 604-770 (`expect` methods) — unchanged: they continue to reference `m.alpha`, `m.beta`, etc., which now resolve through the forwarding shield.
 - `src/persistence.jl` — adds schema-version handling:
   - `save_state(path, state)` includes `__SCHEMA_VERSION = 2` in the serialised payload.
@@ -46,7 +47,41 @@ This is the move where "Measure as view" becomes operational. Moves 4–7 extend
 
 ## 3. Behaviour preserved
 
-**Tolerances per §3 of the Move 2 design doc (extended for Move 3):**
+### Shared-reference contract (reusable shield property)
+
+The shield returns **references to underlying fields, not copies.** `Base.getproperty(m::BetaMeasure, :alpha)` returns the `Float64` field directly; `Base.getproperty(m::MixtureMeasure, :components)` returns the underlying `Vector{Measure}` by reference; mutations to that vector (`push!`, `empty!`, index assignment) are visible to both the Measure view and the underlying Prevision because they share the same backing vector.
+
+**This is a contract, not an implementation detail.** Two sites today depend on it:
+
+- `apps/skin/server.jl:549` — `push!(state.belief.components, <new_component>)` during a mixture manipulation handler.
+- `apps/skin/server.jl:552` — `push!(state.belief.log_weights, <new_logw>)` on the same handler path.
+
+If the shield ever changes to return defensive copies — e.g. `getproperty(m, :components)` returns `copy(m.prevision.components)` — these `push!` calls succeed on the copy and the original state is silently unchanged. No error, no test failure at the mutation site; the corruption surfaces much later when the state is read and the components are missing or stale. This is the category of silent-corruption bug that's hardest to diagnose; the shield must not introduce it.
+
+**Reusable property for future moves touching the shield:** Move 5's `MixturePrevision` will add component-update methods; Move 6's `ParticlePrevision` will want in-place reweighting on sample arrays. Both sit under the same shield. Framing "shield preserves shared-reference semantics" as a contract now means future moves inherit the pattern and don't re-litigate defensive-copying per subtype.
+
+**Contract test** (new in this PR, extending `test/test_prevision_unit.jl`):
+
+```julia
+# Construct a MixtureMeasure with two components.
+c1 = BetaMeasure(Interval(0.0, 1.0), 2.0, 3.0)
+c2 = BetaMeasure(Interval(0.0, 1.0), 5.0, 5.0)
+m = MixtureMeasure(Interval(0.0, 1.0), [c1, c2], [log(1.0), log(1.0)])
+# Read .components through the shield; mutate in place; read again.
+comps = m.components
+push!(comps, BetaMeasure(Interval(0.0, 1.0), 1.0, 1.0))
+@assert length(m.components) == 3  # mutation visible through the shield
+# Same for .log_weights.
+lws = m.log_weights
+push!(lws, log(1.0))
+@assert length(m.log_weights) == 3
+```
+
+Four lines of actual logic, guards against the entire defensive-copy-regression class.
+
+### Tolerances
+
+Per §3 of the Move 2 design doc (extended for Move 3):
 
 - **Stratum-1 closed-form cases:** `==` unchanged. `expect(::BetaMeasure, ::Identity)` still returns `m.alpha / (m.alpha + m.beta)`; the field lookup resolves through the shield to the same Float64 values; same arithmetic; same result.
 - **Stratum-1 quadrature cases:** `isapprox(atol=1e-14)` unchanged.
@@ -184,14 +219,16 @@ The immutability-enforcement concern that motivates B/C is real, but the master 
 
 - **Total: 351 across 29 files.**
 - **Category (a) — covered by `getproperty` shield transparently: ~349 (99.4%).** The overwhelming majority: `m.alpha`, `m.beta`, `m.components[i]`, `state.belief.log_weights`, `comp.beta.alpha`, etc., throughout `src/ontology.jl` (75), `src/host_helpers.jl` (14), `src/program_space/agent_state.jl` (14), `src/eval.jl` (1), tests (~159), `apps/julia/*` (~55), `apps/python/*` (~14), `apps/skin/*` (18). All through `getproperty`.
-- **Category (b) — edge cases worth noting: 2, neither a hard failure.**
-  1. `push!(state.belief.components, ...)` at `apps/skin/server.jl:549` and `push!(state.belief.log_weights, ...)` at `apps/skin/server.jl:552`. Relies on shared-reference semantics; resolved by OQ 5.1's recommendation (option A, no defensive copy) which explicitly supports this pattern.
-  2. `getfield(cpd, :measure).alpha` at `apps/julia/pomdp_agent/src/probability/cpd.jl:67`. The `getfield` escapes the CPD wrapper's own `getproperty` (to avoid recursion); once past that, `.alpha` on the returned `DirichletMeasure` goes through the Move 3 shield normally. Not a real (b) — the `getfield` doesn't touch Measure's shield.
+- **Category (a) with explicit reasoning (worth pinning):**
+  1. `push!(state.belief.components, ...)` at `apps/skin/server.jl:549` and `push!(state.belief.log_weights, ...)` at `apps/skin/server.jl:552`. **Reasoning:** the shield returns the underlying Vector by reference, not a copy (per §3's shared-reference contract). `push!` on the returned vector mutates the prevision's backing storage; the mutation is visible on subsequent reads. Covered by (a); the contract test in §3 guards against future regression.
+  2. `getfield(cpd, :measure).alpha` at `apps/julia/pomdp_agent/src/probability/cpd.jl:67`. **Reasoning:** the `getfield` deliberately escapes the CPD wrapper's own `getproperty` (that's exactly what `getfield` is for — it avoids the `getproperty(cpd, :counts)` branch's recursion risk). Once past that, `.alpha` is invoked on the returned `DirichletMeasure` and resolves through the Measure-level `getproperty` chain — which the Move 3 shield covers normally. Two-stage access, both stages covered, but by different shields. Covered by (a).
 - **Category (c) — mutations: 0.** No `m.alpha = x` patterns; `grep -n '\.(field)\s*=[^=]'` returned no matches; `setfield!` on Measure types not found.
 
 Go/no-go gate result: **GO.** The 99.4% / ~0% / 0% ratio clears the plan's ≥90%/<15%/0 thresholds with margin.
 
 **Risk R3 (medium): persistence migration fails on a v1 fixture.** The v1 → v2 migration walks the AgentState replacing old Measure structs with wrapped forms. Possible failure modes: (i) a field is renamed in the migration that consumers expect to find; (ii) the `MixtureMeasure` component reconstruction drops a tag; (iii) Julia's `Serialization` module handles the renamed struct as-if-unknown. *Caught by:* `test/test_persistence.jl` loading the commit-pinned v1 fixtures and asserting recorded expected values — `==` on integer-accumulated α/β, `atol=1e-14` on derived quantities. *Mitigation now:* the fixture-driven test is mandatory in this PR (per `test/fixtures/README.md` provenance protocol); synthetic round-trip tests do not catch migration bugs because they don't exercise the migration codepath.
+
+**Risk R4 (medium): future refactor defensively copies in the shield without realising two consumer sites depend on shared-reference semantics.** A later session, seeing `Base.getproperty(m, :components)` returning an internal mutable Vector, decides to "harden encapsulation" by returning `copy(m.prevision.components)`. The `push!` sites at `apps/skin/server.jl:549,552` silently break — `push!` succeeds on the copy, the original state is unchanged, no error fires. Corruption surfaces later when a read through the shield returns stale components. *Caught by:* the contract test added to `test/test_prevision_unit.jl` in §3 (construct MixtureMeasure, read .components via shield, `push!` in place, assert new length visible through a second shield read). Four lines; guards against the entire class. *Mitigation now:* the §3 shared-reference contract is named explicitly with a code comment on the `Base.getproperty` definitions pointing at the test file, so the invariant is visible to anyone modifying the shield. A future move touching the shield (Move 5 MixturePrevision updates, Move 6 ParticlePrevision reweighting) inherits the contract and the test rather than re-deriving it.
 
 ## 7. Verification cadence
 
