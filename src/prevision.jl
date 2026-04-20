@@ -30,7 +30,7 @@ module Previsions
 
 export Prevision, TestFunction, Indicator, apply, expect
 export Identity, Projection, NestedProjection, Tabular, LinearCombination, OpaqueClosure
-export BetaPrevision
+export BetaPrevision, TaggedBetaPrevision
 # At Move 2, `Ontology`'s `Functional` hierarchy is aliased onto these
 # types (`const Functional = TestFunction` plus `import ..Previsions:
 # Identity, …`), so both modules export the same bindings (they resolve
@@ -201,6 +201,27 @@ struct BetaPrevision <: Prevision
         alpha > 0 && beta > 0 || error("alpha and beta must be positive")
         new(alpha, beta)
     end
+end
+
+"""
+    TaggedBetaPrevision(tag::Int, beta) <: Prevision
+
+Prevision for a tag-bearing Beta component in a mixture. Holds a tag and
+the underlying Beta. The `beta` field holds a `BetaMeasure` (not a raw
+`BetaPrevision`) so that consumer code accessing `m.beta.alpha` via the
+`TaggedBetaMeasure` shield receives a BetaMeasure and its shield handles
+the subsequent `.alpha` access. This preserves the existing consumer
+idiom without reconstructing a BetaMeasure wrapper on each access.
+
+(Note: holding a Measure inside a Prevision is a minor semantic
+impurity — the de Finettian purist view would wrap a BetaPrevision
+here. The pragmatic choice preserves 0 consumer edits and allocates
+nothing on access; a future cleanup pass can replace with BetaPrevision
++ view-reconstruction if the performance profile justifies.)
+"""
+struct TaggedBetaPrevision <: Prevision
+    tag::Int
+    beta::Any  # BetaMeasure — forward declaration before BetaMeasure loads in ontology.jl
 end
 
 # ── apply — abstract evaluator ────────────────────────────────────────────
