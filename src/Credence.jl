@@ -39,6 +39,7 @@ export Space, Finite, Interval, ProductSpace, Simplex, Euclidean, PositiveReals,
 export Measure, CategoricalMeasure, BetaMeasure, TaggedBetaMeasure, GaussianMeasure, GammaMeasure, ExponentialMeasure, DirichletMeasure, NormalGammaMeasure, ProductMeasure, MixtureMeasure
 export Kernel, FactorSelector, kernel_source, kernel_target
 export LikelihoodFamily, LeafFamily, PushOnly, BetaBernoulli, Flat, FiringByTag, DispatchByComponent, DepthCapExceeded
+export NormalNormal, Categorical, NormalGammaLikelihood, Exponential
 export Event, TagSet, FeatureEquals, FeatureInterval, Conjunction, Disjunction, Complement
 export indicator_kernel, feature_value, BOOLEAN_SPACE
 export Functional, Identity, Projection, NestedProjection, Tabular, LinearCombination, OpaqueClosure
