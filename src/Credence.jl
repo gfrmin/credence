@@ -16,6 +16,7 @@
 module Credence
 
 include("parse.jl")
+include("prevision.jl")
 include("ontology.jl")
 include("eval.jl")
 include("persistence.jl")
@@ -27,6 +28,7 @@ include("program_space/perturbation.jl")
 include("program_space/agent_state.jl")
 
 using .Parse
+using .Previsions
 using .Ontology
 import .Ontology: truncate  # resolve ambiguity with Base.truncate
 using .Eval
@@ -40,6 +42,7 @@ export LikelihoodFamily, LeafFamily, PushOnly, BetaBernoulli, Flat, FiringByTag,
 export Event, TagSet, FeatureEquals, FeatureInterval, Conjunction, Disjunction, Complement
 export indicator_kernel, feature_value, BOOLEAN_SPACE
 export Functional, Identity, Projection, NestedProjection, Tabular, LinearCombination, OpaqueClosure
+export Prevision, TestFunction, Indicator, apply
 export factor, replace_factor
 export condition, expect, push_measure, density, log_density_at, log_predictive, log_marginal
 export draw
