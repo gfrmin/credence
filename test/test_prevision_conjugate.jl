@@ -78,6 +78,39 @@ let k = Kernel(Interval(0.0, 1.0), Finite([0, 1]),
           "got β=$(update(cp, false).prior.beta)")
 end
 
+# ── (BetaPrevision, Flat) — no-op ──
+#
+# A Flat kernel's likelihood does not depend on the Beta parameter;
+# the posterior equals the prior. The registry handles this as a
+# registered conjugate entry (the update is the identity function).
+
+let k = Kernel(Interval(0.0, 1.0), Finite([0, 1]),
+               h -> CategoricalMeasure(Finite([0, 1])),
+               (h, o) -> 0.0;  # flat log-density
+               likelihood_family = Flat())
+    p = BetaPrevision(2.0, 3.0)
+
+    check("BetaPrevision + Flat → :conjugate",
+          _dispatch_path(p, k) === :conjugate,
+          "got $(_dispatch_path(p, k))")
+
+    cp = maybe_conjugate(p, k)
+    check("maybe_conjugate returns ConjugatePrevision{BetaPrevision, Flat}",
+          cp isa ConjugatePrevision{BetaPrevision, Flat},
+          "got $(typeof(cp))")
+
+    updated = update(cp, 1).prior
+    check("BetaPrevision(2, 3) × Flat → BetaPrevision(2, 3) (unchanged, ==)",
+          updated.alpha == 2.0 && updated.beta == 3.0,
+          "got α=$(updated.alpha), β=$(updated.beta)")
+
+    # Flat is observation-agnostic: any obs leaves the prior unchanged.
+    updated_anything = update(cp, 0.7).prior
+    check("BetaPrevision × Flat is obs-agnostic (arbitrary obs → same posterior)",
+          updated_anything.alpha == 2.0 && updated_anything.beta == 3.0,
+          "got α=$(updated_anything.alpha), β=$(updated_anything.beta)")
+end
+
 # ── TaggedBetaPrevision: must NOT match as conjugate (transitional scaffolding) ──
 #
 # Per PR #19's Move 1 revision addendum (commit 6dce5e4), TaggedBetaMeasure

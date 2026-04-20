@@ -901,6 +901,8 @@ expect(m::MixtureMeasure, o::OpaqueClosure; kwargs...) = expect(m, o.f; kwargs..
 function maybe_conjugate(p::BetaPrevision, k::Kernel)
     if k.likelihood_family isa BetaBernoulli
         return ConjugatePrevision(p, k.likelihood_family)
+    elseif k.likelihood_family isa Flat
+        return ConjugatePrevision(p, k.likelihood_family)
     end
     nothing
 end
@@ -913,6 +915,15 @@ function update(cp::ConjugatePrevision{BetaPrevision, BetaBernoulli}, obs)
     else
         error("BetaBernoulli update: obs must be ∈ {0, 1, true, false}, got $obs")
     end
+end
+
+# (BetaPrevision, Flat) — no-op. A Flat likelihood does not depend on the
+# Beta parameter; the posterior is the prior unchanged. Replaces the
+# no-op path at src/ontology.jl:612-613 (inside TaggedBetaMeasure
+# routing) for direct BetaPrevision + Flat kernel matches.
+
+function update(cp::ConjugatePrevision{BetaPrevision, Flat}, obs)
+    cp  # no-op
 end
 
 function condition(m::CategoricalMeasure{T}, k::Kernel, observation) where T
