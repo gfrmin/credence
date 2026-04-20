@@ -31,6 +31,7 @@ module Previsions
 export Prevision, TestFunction, Indicator, apply, expect
 export Identity, Projection, NestedProjection, Tabular, LinearCombination, OpaqueClosure
 export BetaPrevision, TaggedBetaPrevision, GaussianPrevision, GammaPrevision, CategoricalPrevision, DirichletPrevision, NormalGammaPrevision, ProductPrevision, MixturePrevision
+export ConjugatePrevision, maybe_conjugate, update, _dispatch_path
 # At Move 2, `Ontology`'s `Functional` hierarchy is aliased onto these
 # types (`const Functional = TestFunction` plus `import ..Previsions:
 # Identity, …`), so both modules export the same bindings (they resolve
@@ -412,5 +413,78 @@ methods; Move 7 inverts the derivation (`expect(p, f)` becomes the
 primitive, `condition(p, k, obs)` derived via `Indicator(ObservationEvent(k, obs))`).
 """
 function expect end
+
+# ── ConjugatePrevision registry (Move 4) ──────────────────────────────────
+
+"""
+    ConjugatePrevision{Prior, Likelihood}(prior::Prior, likelihood::Likelihood)
+
+Parametric wrapper representing a (Prior, Likelihood) pair for which a
+closed-form posterior update exists. Moves the case-analytic conjugate
+dispatch in `condition` into a type-structural registry: adding a pair
+is adding one `update` method, not editing a branch in a central
+function.
+
+Per Move 4 design doc §5.1, the registry is method-based (Julia's
+method table *is* the registry). `maybe_conjugate(p, k)` is the lookup
+function; methods specialised on (Prior, Likelihood) pairs return a
+`ConjugatePrevision` when the pair matches, `nothing` otherwise. `update`
+is dispatched on the parametric type to apply the conjugate update in
+closed form.
+
+The `Likelihood` type parameter is the kernel's `likelihood_family`
+type or a pair-specific marker (for pairs where the existing kernel
+dispatches on `params` rather than `likelihood_family`).
+"""
+struct ConjugatePrevision{Prior, Likelihood} <: Prevision
+    prior::Prior
+    likelihood::Likelihood
+end
+
+"""
+    maybe_conjugate(p::Prevision, k::Kernel) → Union{ConjugatePrevision, Nothing}
+
+Registry lookup. Returns a `ConjugatePrevision{Prior, Likelihood}` if
+the (prior, kernel) pair has a registered closed-form update; `nothing`
+otherwise (caller falls through to particle/grid).
+
+Default method returns `nothing`; specific methods on (Prior, Likelihood)
+type pairs are declared in `ontology.jl` where the `Prior` and
+`Likelihood` types are in scope. A `nothing` return is NOT an error —
+it's the standard "not conjugate; use particle" path.
+
+The TaggedBetaPrevision case specifically returns `nothing` as
+transitional scaffolding until Move 5's `MixturePrevision` takes over
+per-component routing. See `docs/posture-3/move-4-design.md` §3 and R3.
+"""
+maybe_conjugate(p::Prevision, k) = nothing
+
+"""
+    update(cp::ConjugatePrevision{Prior, Likelihood}, obs) → ConjugatePrevision
+
+Apply the closed-form conjugate update for the (Prior, Likelihood) pair.
+Returns a new `ConjugatePrevision` with the updated prior; caller
+typically takes `.prior` to extract the posterior Prevision.
+
+Specialised methods attach per (Prior, Likelihood) pair in `ontology.jl`.
+No default method — calling `update` on an unregistered pair is a
+MethodError, which is the expected behaviour (the registry should not
+have returned a ConjugatePrevision without a matching update method).
+"""
+function update end
+
+"""
+    _dispatch_path(p::Prevision, k::Kernel) → Symbol
+
+Observability hook (Move 4 §5.2). Returns `:conjugate` if
+`maybe_conjugate(p, k)` matches, `:particle` otherwise. Underscore-
+prefixed per the repo conventions (see `CLAUDE.md` §Repo conventions §
+Scope boundary): test-only surface, not a production API.
+
+Used in Stratum-2 tests to pin dispatch-path decisions explicitly —
+without it, a silent registry miss would fall through to particle and
+produce the correct value for the wrong reason.
+"""
+_dispatch_path(p::Prevision, k) = maybe_conjugate(p, k) === nothing ? :particle : :conjugate
 
 end # module Previsions

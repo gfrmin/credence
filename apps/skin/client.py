@@ -345,6 +345,22 @@ class SkinClient:
         result = self._call("n_factors", {"state_id": state_id})
         return result["n_factors"]
 
+    def _dispatch_path(self, state_id: str, kernel: dict) -> str:
+        """Dispatch-path observability hook (underscore-prefixed, test-only).
+
+        Returns "conjugate" if the (state, kernel) pair matches a registered
+        conjugate entry in the ConjugatePrevision registry; "particle"
+        otherwise. Does NOT mutate state. Used by Stratum-2 skin-smoke
+        tests to pin registry-dispatch decisions explicitly.
+
+        See docs/posture-3/move-4-design.md §5.2 for the contract.
+        """
+        result = self._call("_dispatch_path", {
+            "state_id": state_id,
+            "kernel": kernel,
+        })
+        return result["path"]
+
     # ── Program-space operations (Tier 2) ──
 
     def enumerate(
