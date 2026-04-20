@@ -24,7 +24,7 @@ module Ontology
 # so `using .Previsions, .Ontology` in Credence is unambiguous.
 import ..Previsions: TestFunction, Identity, Projection, NestedProjection,
                      Tabular, LinearCombination, OpaqueClosure, expect
-import ..Previsions: BetaPrevision, TaggedBetaPrevision, GaussianPrevision, GammaPrevision, CategoricalPrevision, DirichletPrevision, NormalGammaPrevision
+import ..Previsions: BetaPrevision, TaggedBetaPrevision, GaussianPrevision, GammaPrevision, CategoricalPrevision, DirichletPrevision, NormalGammaPrevision, ProductPrevision
 
 export Space, Finite, Interval, ProductSpace, Simplex, Euclidean, PositiveReals, support
 export Measure, CategoricalMeasure, BetaMeasure, TaggedBetaMeasure, GaussianMeasure, GammaMeasure, ExponentialMeasure, DirichletMeasure, NormalGammaMeasure, ProductMeasure, MixtureMeasure
@@ -304,19 +304,37 @@ Base.propertynames(::NormalGammaMeasure) = (:κ, :μ, :α, :β, :space, :previsi
 mean(m::NormalGammaMeasure) = m.μ
 
 # ── Product: independent joint ──
+#
+# Move 3: wraps ProductPrevision; `m.factors` forwards via the shield
+# (Vector returned by reference — shared-reference contract applies).
+# Consumer code that uses `m.factors[i]` or `replace_factor(m, i, f)`
+# continues to work; the latter already constructs a new ProductMeasure,
+# so no in-place mutation concern. Direct `push!(m.factors, ...)` is not
+# a pattern in the current codebase but would be supported by the
+# shared-reference contract if it appeared.
 
 struct ProductMeasure <: Measure
+    prevision::ProductPrevision
     space::ProductSpace
-    factors::Vector{Measure}
 
     function ProductMeasure(space::ProductSpace, factors::Vector{<:Measure})
         length(space.factors) == length(factors) || error("space and factors must match")
-        new(space, Vector{Measure}(factors))
+        new(ProductPrevision(Vector{Measure}(factors)), space)
     end
 end
 
 ProductMeasure(factors::Vector{<:Measure}) =
     ProductMeasure(ProductSpace(Space[f.space for f in factors]), factors)
+
+function Base.getproperty(m::ProductMeasure, s::Symbol)
+    if s === :factors
+        return getproperty(getfield(m, :prevision), s)
+    else
+        return getfield(m, s)
+    end
+end
+
+Base.propertynames(::ProductMeasure) = (:factors, :space, :prevision)
 
 factor(m::ProductMeasure, i::Int) = m.factors[i]
 
