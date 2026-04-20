@@ -24,7 +24,7 @@ module Ontology
 # so `using .Previsions, .Ontology` in Credence is unambiguous.
 import ..Previsions: TestFunction, Identity, Projection, NestedProjection,
                      Tabular, LinearCombination, OpaqueClosure, expect
-import ..Previsions: BetaPrevision
+import ..Previsions: BetaPrevision, TaggedBetaPrevision
 
 export Space, Finite, Interval, ProductSpace, Simplex, Euclidean, PositiveReals, support
 export Measure, CategoricalMeasure, BetaMeasure, TaggedBetaMeasure, GaussianMeasure, GammaMeasure, ExponentialMeasure, DirichletMeasure, NormalGammaMeasure, ProductMeasure, MixtureMeasure
@@ -143,12 +143,31 @@ end
 Base.propertynames(::BetaMeasure) = (:alpha, :beta, :space, :prevision)
 
 # ── TaggedBeta: program-indexed Beta for per-component kernel dispatch ──
+#
+# Move 3: TaggedBetaMeasure wraps a TaggedBetaPrevision carrying the tag
+# and the underlying BetaMeasure. Consumer code `m.tag` and `m.beta`
+# reads forward via the shield; `m.beta.alpha` walks through the
+# TaggedBetaMeasure shield → BetaMeasure → BetaMeasure's own shield →
+# BetaPrevision.alpha. Two shield hops; both transparent.
 
 struct TaggedBetaMeasure <: Measure
-    space::Interval           # always [0,1]
-    tag::Int                  # program/component index — immutable identity
-    beta::BetaMeasure         # the actual Beta distribution
+    prevision::TaggedBetaPrevision
+    space::Interval
+
+    function TaggedBetaMeasure(space::Interval, tag::Int, beta::BetaMeasure)
+        new(TaggedBetaPrevision(tag, beta), space)
+    end
 end
+
+function Base.getproperty(m::TaggedBetaMeasure, s::Symbol)
+    if s === :tag || s === :beta
+        return getproperty(getfield(m, :prevision), s)
+    else
+        return getfield(m, s)
+    end
+end
+
+Base.propertynames(::TaggedBetaMeasure) = (:tag, :beta, :space, :prevision)
 
 mean(m::BetaMeasure) = m.alpha / (m.alpha + m.beta)
 variance(m::BetaMeasure) = m.alpha * m.beta / ((m.alpha + m.beta)^2 * (m.alpha + m.beta + 1))
