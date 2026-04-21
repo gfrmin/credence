@@ -31,6 +31,7 @@ module Previsions
 export Prevision, TestFunction, Indicator, apply, expect
 export Identity, Projection, NestedProjection, Tabular, LinearCombination, OpaqueClosure
 export BetaPrevision, TaggedBetaPrevision, GaussianPrevision, GammaPrevision, CategoricalPrevision, DirichletPrevision, NormalGammaPrevision, ProductPrevision, MixturePrevision
+export ExchangeablePrevision, decompose
 export ConjugatePrevision, maybe_conjugate, update, _dispatch_path
 # At Move 2, `Ontology`'s `Functional` hierarchy is aliased onto these
 # types (`const Functional = TestFunction` plus `import ..Previsions:
@@ -378,6 +379,37 @@ struct MixturePrevision <: Prevision
         new(components, log_weights .- log_total)
     end
 end
+
+"""
+    ExchangeablePrevision(component_space::Space, prior_on_components::Prevision) <: Prevision
+
+Declares exchangeability as a first-class type. An
+`ExchangeablePrevision` represents an exchangeable sequence of
+observations in `component_space` generated i.i.d. under a latent
+parameter whose prior is `prior_on_components`. De Finetti's
+representation theorem guarantees such a prevision decomposes as a
+mixture of i.i.d. ergodic components; `decompose` computes that
+mixture.
+
+Move 5 ships this type with known-limited test coverage (simplest
+representation-theorem case — Dirichlet prior over a Finite component
+space, per §5.1 R3 scoping). Hierarchical / multi-component
+correctness is the email-agent migration follow-up's burden, not
+Move 5's.
+"""
+struct ExchangeablePrevision <: Prevision
+    component_space  # Space
+    prior_on_components::Prevision
+end
+
+"""
+    decompose(p::ExchangeablePrevision) :: MixturePrevision
+
+Apply the representation theorem: return the `MixturePrevision`
+corresponding to the exchangeable `p`. Methods attach in `ontology.jl`
+where the concrete component Measure types are in scope.
+"""
+function decompose end
 
 # ── apply — abstract evaluator ────────────────────────────────────────────
 
