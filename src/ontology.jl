@@ -1090,18 +1090,39 @@ struct DepthCapExceeded <: Exception
 end
 Base.showerror(io::IO, e::DepthCapExceeded) = print(io, "DepthCapExceeded: ", e.msg)
 
-function condition(m::TaggedBetaMeasure, k::Kernel, observation)
-    # See LikelihoodFamily declaration for the routing vocabulary.
-    fam = k.likelihood_family
+# ── Move 5: LikelihoodFamily routing helper (semantically owned by
+#           MixturePrevision; physically lives here because LikelihoodFamily
+#           subtypes are declared in this file and Previsions loads first).
+#           Pure function; no side effects.
+
+"""
+    _resolve_likelihood_family(fam::LikelihoodFamily, component) -> LeafFamily
+
+Unwrap `FiringByTag` / `DispatchByComponent` routers against a specific
+`component` (a Measure) to reach a leaf family (`BetaBernoulli`, `Flat`,
+etc.). Depth cap of 8 catches accidental self-referential
+`DispatchByComponent` closures.
+
+Rejects `PushOnly` at entry with the same error the pre-Move-5
+`condition(::TaggedBetaMeasure, …)` produced.
+
+This helper is the load-bearing primitive of Move 5's routing
+relocation. Pre-Move-5 the unwrap loop lived inline inside
+`condition(::TaggedBetaMeasure, …)`; post-Move-5 it's called by both
+the TaggedBetaMeasure facade (for standalone-measure conditioning,
+§5.3 delegate posture) and `condition(p::MixturePrevision, …)` (the
+per-component coordinator).
+"""
+function _resolve_likelihood_family(fam::LikelihoodFamily, component)
     fam isa PushOnly && error(
         "condition called on a push-only kernel (likelihood_family = PushOnly()). " *
         "Declare a leaf family (BetaBernoulli, Flat, or via FiringByTag/DispatchByComponent) " *
         "at Kernel construction.")
     for _ in 1:8  # depth cap — catches accidental self-referential DispatchByComponent
         if fam isa FiringByTag
-            fam = m.tag in fam.fires ? fam.when_fires : fam.when_not
+            fam = component.tag in fam.fires ? fam.when_fires : fam.when_not
         elseif fam isa DispatchByComponent
-            fam = fam.classify(m)
+            fam = fam.classify(component)
         else
             break
         end
@@ -1109,6 +1130,28 @@ function condition(m::TaggedBetaMeasure, k::Kernel, observation)
     (fam isa FiringByTag || fam isa DispatchByComponent) &&
         throw(DepthCapExceeded(
             "LikelihoodFamily unwrap did not reach a leaf within depth cap (got $(typeof(fam)))"))
+    fam
+end
+
+"""
+    _with_resolved_family(k::Kernel, fam::LikelihoodFamily) -> Kernel
+
+Return a new Kernel with the same source/target/generate/log_density/
+factor_selector/params as `k`, but with `likelihood_family` replaced by
+`fam`. Used after `_resolve_likelihood_family` has unwrapped a
+FiringByTag/DispatchByComponent router to a leaf family, so Move 4's
+registry dispatch (`maybe_conjugate`) sees the concrete leaf family
+directly.
+"""
+function _with_resolved_family(k::Kernel, fam::LikelihoodFamily)
+    Kernel(k.source, k.target, k.generate, k.log_density;
+           factor_selector = k.factor_selector,
+           params = k.params,
+           likelihood_family = fam)
+end
+
+function condition(m::TaggedBetaMeasure, k::Kernel, observation)
+    fam = _resolve_likelihood_family(k.likelihood_family, m)
 
     # Call for side effects: domain kernels populate per-tag caches in
     # k.params. Return value is consumed later by _predictive_ll at the
