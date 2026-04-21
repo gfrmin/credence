@@ -63,7 +63,7 @@ export ProductionRule, Grammar, compute_grammar_complexity
 export Program, CompiledKernel, SubprogramFrequencyTable
 export THRESHOLDS
 export expr_complexity, expanded_complexity
-export enumerate_programs
+export enumerate_programs, enumerate_programs_as_prevision
 export compile_kernel, compile_expr, evaluate_predicate
 export analyse_posterior_subtrees, extract_subtrees
 export propose_nonterminal, perturb_grammar
