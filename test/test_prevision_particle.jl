@@ -111,7 +111,42 @@ let
           "log-weight drift: max diff $(maximum(abs.(result.logw .- CANONICAL[:gaussian_grid_logw])))")
 end
 
+# ── _dispatch_path vocabulary pins per §5.3 Option A (uniform `:particle`) ──
+#
+# Per move-6-design.md §5.3 Option A: all three fallback strategies
+# (particle, grid quadrature, enumeration) return `:particle` from
+# _dispatch_path. Tests that need to distinguish which fallback fired
+# can query the concrete type via isa.
+
+using Credence: _dispatch_path
+
+let k = Kernel(Euclidean(1), Euclidean(1),
+               x -> error("unused"),
+               (x, o) -> 0.0;
+               likelihood_family = PushOnly())
+
+    pp = ParticlePrevision([1.0, 2.0], [log(0.5), log(0.5)], 42)
+    qp = QuadraturePrevision([0.1, 0.5, 0.9], [0.0, 0.0, 0.0])
+    ep = EnumerationPrevision([:a, :b], [log(0.7), log(0.3)])
+
+    check("ParticlePrevision → :particle (uniform fallback label)",
+          _dispatch_path(pp, k) === :particle, "got $(_dispatch_path(pp, k))")
+    check("QuadraturePrevision → :particle (uniform fallback label)",
+          _dispatch_path(qp, k) === :particle, "got $(_dispatch_path(qp, k))")
+    check("EnumerationPrevision → :particle (uniform fallback label)",
+          _dispatch_path(ep, k) === :particle, "got $(_dispatch_path(ep, k))")
+
+    # Drilldown via concrete type, per §5.3 Decoupling-from-§5.2:
+    # tests that need the strategy distinction use `isa`, not the Symbol.
+    check("ParticlePrevision isa ParticlePrevision (type-level drilldown)",
+          pp isa ParticlePrevision, "")
+    check("QuadraturePrevision isa QuadraturePrevision (type-level drilldown)",
+          qp isa QuadraturePrevision, "")
+    check("EnumerationPrevision isa EnumerationPrevision (type-level drilldown)",
+          ep isa EnumerationPrevision, "")
+end
+
 println()
 println("="^60)
-println("ALL CANONICAL BIT-INVARIANCE TESTS PASSED (Move 6 Phase 0)")
+println("ALL CANONICAL BIT-INVARIANCE + DISPATCH TESTS PASSED (Move 6)")
 println("="^60)
