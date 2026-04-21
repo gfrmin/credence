@@ -192,7 +192,7 @@ Tag-indexed exchangeability (the email case) decomposes into per-tag-class ergod
 
 Four execution strategies need Prevision-aware refactor: conjugate (done in Move 4), quadrature, **particle**, and enumeration.
 
-**Particle is where the risk lives.** Current `_condition_particle` and the `_condition_by_grid` paths (`src/ontology.jl:660-684,848-860`) construct CategoricalMeasure of sampled points with importance weights. The Posture 3 plan introduces `ParticlePrevision` as a Prevision subtype.
+**Particle is where the risk lives.** The `_condition_particle` importance-sampling fallback (`src/ontology.jl:1497` as of Move 6 Phase 1, introduced by the R4 rename) and the `_condition_by_grid` paths (`src/ontology.jl:1242,1254`) construct CategoricalMeasure of sampled points with importance weights. Move 6 replaces that representation with typed Prevision subtypes (`ParticlePrevision`, `QuadraturePrevision`) wrapped by a CategoricalMeasure facade for consumer-surface compatibility.
 
 **Files to modify:**
 - `src/prevision.jl` — add `ParticlePrevision`, `QuadraturePrevision`. `ParticlePrevision` carries samples + log-weights + the seeded RNG strategy.

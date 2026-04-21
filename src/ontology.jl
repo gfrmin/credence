@@ -1484,18 +1484,31 @@ function condition(m::ProductMeasure, k::Kernel, obs; kwargs...)
     MixtureMeasure(m.space, new_components, new_log_wts)
 end
 
-function _condition_product_fallback(m::ProductMeasure, k::Kernel, obs; n_particles::Int=1000)
+# ── General importance-sampling fallback: `_condition_particle` ──
+#
+# Move 6 R4 (per move-6-design.md §6 R4): introduces `_condition_particle`
+# as the named particle-fallback function, aligning with the master-plan
+# vocabulary. Prior to Move 6 the same body was duplicated inside two
+# call sites (`_condition_product_fallback` for ProductMeasure, and the
+# unnamed `condition(m::Measure, …; n_particles)` generic). The two
+# delegates below preserve existing dispatch; future Move 6 phases
+# refactor `_condition_particle`'s body to construct a ParticlePrevision
+# before wrapping in CategoricalMeasure.
+
+function _condition_particle(m::Measure, k::Kernel, obs; n_particles::Int=1000)
     samples = [draw(m) for _ in 1:n_particles]
     log_weights = Float64[k.log_density(s, obs) for s in samples]
     CategoricalMeasure(Finite(samples), log_weights)
 end
 
+function _condition_product_fallback(m::ProductMeasure, k::Kernel, obs; kwargs...)
+    _condition_particle(m, k, obs; kwargs...)
+end
+
 # ── General condition fallback: importance sampling ──
 
 function condition(m::Measure, k::Kernel, obs; n_particles::Int=1000)
-    samples = [draw(m) for _ in 1:n_particles]
-    log_weights = Float64[k.log_density(s, obs) for s in samples]
-    CategoricalMeasure(Finite(samples), log_weights)
+    _condition_particle(m, k, obs; n_particles=n_particles)
 end
 
 # ── condition — sibling form taking an Event directly ──
