@@ -106,6 +106,29 @@ Assertion tolerances: `==` on α/β (integer/literal values from construction); 
 
 **Invalidation conditions:** as above.
 
+---
+
+### `particle_canonical_v1.jls` — Move 6 capture-before-refactor
+
+**Source SHA:** `173411b` (Move 5 tip, pre-Move-6 refactor).
+**Captured:** 2026-04-22.
+**Julia version:** 1.11.x (CI-pinned).
+**Purpose:** Canonical particle-path and grid-quadrature outputs under `Random.seed!(42)`, captured before Move 6's particle/quadrature refactor begins. The test `test/test_prevision_particle.jl` asserts `==` against these values throughout the Move 6 code PR; any `==` failure in a subsequent Move 6 commit is a halt-the-line signal that the refactor introduced a seed-consumption reorder or arithmetic reassociation.
+
+Contents (a Dict{Symbol, Any}):
+- `:source_sha` — string pinning the capture SHA.
+- `:julia_version` — Julia version used to capture; canonical values are bit-identical only under this version.
+- `:gamma_generic_samples` — 50 Float64s, from `condition(GammaMeasure(2.0, 3.0), k_pushonly, 2.5; n_particles=50)` under seed 42.
+- `:gamma_generic_logw` — 50 Float64s, matching log_weights.
+- `:beta_grid_values` — 64 Float64s from `_condition_by_grid(BetaMeasure(2.0, 3.0), k_pushonly, 0.5)`.
+- `:beta_grid_logw` — 64 Float64s, matching log_weights.
+- `:gaussian_grid_values` — 64 Float64s from `_condition_by_grid(GaussianMeasure(Euclidean(1), 0.0, 1.0), k_pushonly, 1.5)`.
+- `:gaussian_grid_logw` — 64 Float64s, matching log_weights.
+
+Assertion tolerance: `==`. Seeded Monte Carlo under fixed seed produces bit-identical outputs run-to-run; the only legitimate drift is floating-point reassociation from constructor changes, which Move 6's refactor is specifically designed to avoid.
+
+**Invalidation conditions:** Julia version change (RNG implementation differences); intentional change to the `draw` / log-density evaluation order (which would be a Move 6 design-doc amendment); any change to the canonical GammaMeasure / BetaMeasure / GaussianMeasure constructors that affects storage layout. If invalidated, a new fixture (`particle_canonical_v2.jls`) captures at the SHA that introduced the change; the v1 file stays as-is for backward-compat verification.
+
 ## Loading these fixtures
 
 `test/test_persistence.jl` (created in Move 3) loads each fixture in v2 code and asserts the resulting object's weights/parameters/structure match the recorded expected values. The test file documents which fixture covers which load codepath; if a new load codepath is added later, a new fixture covers it (do not extend an existing fixture's expectations).
