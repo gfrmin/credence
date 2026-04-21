@@ -1224,8 +1224,12 @@ function condition(m::NormalGammaMeasure, k::Kernel, observation)
         updated = update(cp, observation).prior
         return NormalGammaMeasure(m.space, updated.κ, updated.μ, updated.α, updated.β)
     end
-    # Non-conjugate: importance sampling fallback
-    condition(m::Measure, k, observation)
+    # Non-conjugate: importance sampling fallback. Call _condition_particle
+    # directly — `condition(m::Measure, k, observation)` would be a type
+    # assertion interpreted as a recursive call on typeof(m) = NormalGammaMeasure,
+    # causing infinite recursion. (Pre-Move-6 bug latent until Move 6 Phase 6's
+    # skin smoke first exercised a non-conjugate path through this facade.)
+    _condition_particle(m, k, observation)
 end
 
 function condition(m::GammaMeasure, k::Kernel, observation)
@@ -1237,7 +1241,9 @@ function condition(m::GammaMeasure, k::Kernel, observation)
         updated = update(cp, observation).prior
         return GammaMeasure(m.space, updated.alpha, updated.beta)
     end
-    condition(m::Measure, k, observation)
+    # Same fix as NormalGammaMeasure above: call _condition_particle
+    # directly to avoid infinite recursion.
+    _condition_particle(m, k, observation)
 end
 
 function _condition_by_grid(m::BetaMeasure, k::Kernel, observation; n::Int=64)
