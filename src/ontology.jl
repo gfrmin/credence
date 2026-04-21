@@ -26,6 +26,7 @@ import ..Previsions: TestFunction, Identity, Projection, NestedProjection,
                      Tabular, LinearCombination, OpaqueClosure, expect
 import ..Previsions: BetaPrevision, TaggedBetaPrevision, GaussianPrevision, GammaPrevision, CategoricalPrevision, DirichletPrevision, NormalGammaPrevision, ProductPrevision, MixturePrevision
 import ..Previsions: ExchangeablePrevision, decompose
+import ..Previsions: ParticlePrevision, QuadraturePrevision, EnumerationPrevision
 import ..Previsions: ConjugatePrevision, maybe_conjugate, update, _dispatch_path
 
 export Space, Finite, Interval, ProductSpace, Simplex, Euclidean, PositiveReals, support
@@ -1495,10 +1496,24 @@ end
 # refactor `_condition_particle`'s body to construct a ParticlePrevision
 # before wrapping in CategoricalMeasure.
 
-function _condition_particle(m::Measure, k::Kernel, obs; n_particles::Int=1000)
+function _condition_particle(m::Measure, k::Kernel, obs; n_particles::Int=1000, seed::Int=0)
     samples = [draw(m) for _ in 1:n_particles]
     log_weights = Float64[k.log_density(s, obs) for s in samples]
-    CategoricalMeasure(Finite(samples), log_weights)
+    # Move 6 Phase 3: construct ParticlePrevision first, then wrap in
+    # CategoricalMeasure facade. The wrap preserves the Measure-surface
+    # API (consumer code reads .logw, .space.values, weights(), mean()
+    # unchanged). The ParticlePrevision carries the seed for
+    # reproducibility auditing (not used by computation).
+    #
+    # Bit-identity: the facade's log_weights are the same Vector
+    # reference as pp.log_weights (shared-reference contract,
+    # precedent #2). CategoricalMeasure normalises via logsumexp;
+    # ParticlePrevision normalises via logsumexp too — so the Vector
+    # handed to CategoricalMeasure is already normalised. Double
+    # normalisation is idempotent in exact arithmetic, and Phase 0's
+    # canonical-bit-invariance test is the tripwire for any FP drift.
+    pp = ParticlePrevision(samples, log_weights, seed)
+    CategoricalMeasure(Finite(pp.samples), pp.log_weights)
 end
 
 function _condition_product_fallback(m::ProductMeasure, k::Kernel, obs; kwargs...)
