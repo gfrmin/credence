@@ -49,7 +49,7 @@ Per `precedents.md` §4:
 ### Verification invariants
 
 1. The pre-Move-6 test suite must pass with identical results post-refactor: every `test/test_*.jl` file that exercises a particle or grid path (grid_world, email_agent, rss, program_space) asserts equality at `rtol=1e-10` today; Move 6 tightens where possible to `==`, but a test that passes at `rtol=1e-10` is the minimum.
-2. The new `test/test_prevision_particle.jl` asserts `_dispatch_path == :particle` on non-conjugate Beta + Categorical-kernel conditioning, `_dispatch_path == :quadrature` on BetaMeasure + non-registered continuous kernel (forces grid), `_dispatch_path == :enumeration` on program-space enumeration.
+2. The new `test/test_prevision_particle.jl` asserts `_dispatch_path == :particle` on any non-conjugate fallback path (importance-sampling, grid quadrature, or program-space enumeration — all three return the uniform fallback label per §5.3). Per-strategy drilldown, if a specific test needs it, queries the concrete Prevision subtype directly (`isa ParticlePrevision`, `isa QuadraturePrevision`, `isa EnumerationPrevision`) rather than pattern-matching on distinct Symbols.
 3. Per-seed reproducibility: `Random.seed!(42); condition(m, k, obs)` produces the same `ParticlePrevision` at byte-level across runs. The seed-consumption order is part of the invariant; shifting a `randn()` call inside the refactor breaks the test.
 
 ### Behaviour NOT preserved
@@ -108,9 +108,12 @@ condition(mix, k, obs)
 #                                                          :mixed fires).
 #
 #    Halt-the-line: if any component returns :conjugate unexpectedly, the
-#    registry fired for a pair that shouldn't have — bug. If any returns a
-#    different fallback strategy (:quadrature, :enumeration), the dispatch
-#    routed to the wrong execution path — bug.
+#    registry fired for a pair that shouldn't have — bug. Per §5.3 the
+#    fallback label is uniform :particle across the three strategies;
+#    tests that need to assert "this specific path took quadrature, not
+#    importance-sampling" check the concrete Prevision subtype via
+#    isa ParticlePrevision / isa QuadraturePrevision rather than the
+#    Symbol.
 
 # 5. Inside each per-component condition call (src/ontology.jl generic
 #    fallback, lines 1495-1498 post-Move-6):
@@ -178,7 +181,7 @@ Two technical reasons:
 
 2. **The three strategies have genuinely different structural invariants.** Particle carries `(samples, log_weights, seed)` — the seed is load-bearing for reproducibility. Quadrature carries `(grid, log_weights)` — no seed, deterministic grid. Enumeration carries `(enumerated_paths, log_weights)` — paths are depth-bounded AST shapes with their own grammar-derived invariants. Collapsing to a single `state::NamedTuple` field forces runtime checks for "does this strategy have a seed?" / "does this strategy have a grid?" that the type system can express directly with three types.
 
-**Invitation to argue.** If `_dispatch_path` evolves (see §5.3) to treat all three as indistinguishable fallbacks at the rollup level, the case for a unified type strengthens — the distinction between strategies becomes observability-only, not structural. Option B shrinks three implementations to one with a dispatch tag. Commit to A; revisit if §5.3 collapses the strategy distinction.
+**Invitation to argue.** Option B becomes correct if Julia's multiple-dispatch on three distinct types proves measurable at particle-heavy hot paths under profiling. Not expected — dispatch is a compile-time-resolvable method-table lookup, and the three types' methods are non-overlapping — but profile if Move 6 surfaces a hot-path bottleneck at the dispatch level. §5.2 is independent of §5.3: the type decision reflects structural invariants; the Symbol decision reflects observability needs. A change to one doesn't cascade to the other.
 
 ### 5.3 (substantive) `_dispatch_path` vocabulary extension
 
@@ -188,15 +191,17 @@ Move 4 committed `:conjugate` / `:particle` for the base Prevision hook; Move 5 
 - **Option B (distinct labels):** `:conjugate` / `:particle` / `:quadrature` / `:enumeration` / `:mixed`. Each strategy gets its own label.
 - **Option C (two-tier):** `:conjugate` / `:fallback` at the rollup level; tests that need fallback-type drill down via per-Prevision `_dispatch_path` on the concrete type.
 
-**Recommendation: B (distinct labels).**
+**Recommendation: A (uniform `:particle`).**
 
 Two technical reasons:
 
-1. **The three strategies have different performance and correctness characteristics, which tests may legitimately pin.** A test asserting "this conditioning path MUST hit quadrature, not particle, because grid reproducibility is the bit-exact tripwire" needs `:quadrature` as a distinguishable label. A rollup that collapses all fallbacks to `:particle` (Option A) or `:fallback` (Option C) forces such tests to inspect the underlying type directly — bypassing the observability hook the precedent established. Given the precedents.md §5 contract names `_dispatch_path` as "test-only observability for dispatch-path decisions," over-specifying the vocabulary serves the precedent; under-specifying fights it.
+1. **No planned test in Moves 6, 7, or 8 requires distinguishing `:quadrature` from `:particle` from `:enumeration`.** The assertions that tests actually want to make against `_dispatch_path` are "did the conjugate path fire?" (halt-the-line on silent registry miss, per precedent #5) and "did a fallback fire?" (for non-conjugate cases). The strategies share the "non-conjugate fallback" category that tests assert against; the further distinction between quadrature and particle and enumeration doesn't correspond to a test condition anyone has named. A speculative "future test might want to pin quadrature specifically" is not a current consumer, and precedent #7 (§5 reasoning strength) rules against committing vocabulary on speculative need.
 
-2. **Vocabulary drift is cheaper to fix at introduction than after consumers pattern-match.** precedents.md §6 (vocabulary pins) names the cost: design-doc vocabulary that doesn't match code is discovered at review and is a cheap fix if caught then, expensive if compounded across moves. Move 6 introduces three strategies; committing to three labels now means the design-doc-to-code pin is set once. Committing to `:particle` (Option A) now and expanding later is a breaking vocabulary change — any test asserting `== :particle` against quadrature paths would need rewriting.
+2. **Adding labels later is a one-line change; removing them is breaking.** If after Move 6 a consumer genuinely needs to distinguish fallback strategies, extending the vocabulary is additive — new Symbols that no existing test pattern-matches on. Conversely, committing to three distinct labels now and having downstream tests pattern-match on `:particle` vs `:quadrature` locks a vocabulary that can't be collapsed without rewriting tests. Defer the specificity until a consumer actually needs it.
 
-**Invitation to argue.** If Moves 7 and 8 turn out not to need the fine-grained vocabulary — if no test pattern-matches on `:quadrature` vs `:particle` specifically — Option B is over-specified. Collapsing to A or C in a follow-up is a vocabulary-pins-precedent-violating change but a contained one. Default to B now; collapse in a follow-up if usage data after Move 8 shows the distinction is unused.
+**Decoupling from §5.2.** The type system already distinguishes the three strategies (§5.2 Option A: three distinct Prevision subtypes). Observability and dispatch are separate concerns — the Symbol label summarises "did the conjugate path miss?", the type tells you which fallback fired if anyone needs to drill down. Drilldown is already available via `_dispatch_path(p.components[i], k)` on the concrete component, same as Move 5's per-component pattern. Three types + one fallback label is coherent; the additional labels in Option B would duplicate information the type system already carries.
+
+**Invitation to argue.** Option B becomes correct if a concrete consumer surfaces within Move 6's code PR or Moves 7/8's design docs — a test case whose assertion cannot be expressed without distinguishing the fallback strategies at the observability level. Extending the vocabulary in that PR is additive; no prior test pattern-matches on the extended labels, so the extension is one-line. Default to A; promote to B when a consumer demands the distinction, not when the distinction sounds useful.
 
 ## 6. Risk + mitigation
 
@@ -223,6 +228,8 @@ Go/no-go gate: **GO.** One naming drift flagged below as R4 — non-blocking but
 **Risk R3 (medium): Prevision-subtype wrapper-getproperty consistency.** Move 3's `getproperty` shield on `MixtureMeasure` forwards `.components` and `.log_weights` to the underlying `MixturePrevision`. Move 6 introduces three new wrapping cases: `CategoricalMeasure` wrapping `ParticlePrevision` (samples → space.values + log_weights → logw), `CategoricalMeasure` wrapping `QuadraturePrevision` (grid → space.values + log_weights → logw), `CategoricalMeasure` wrapping `EnumerationPrevision`. Each needs a shield entry; each needs a contract test in `test/test_prevision_particle.jl` (precedent #3: invariant-comment-names-test). *Caught by:* contract tests per the precedent #2 pattern — construct, read-through-shield, mutate-in-place (log_weights only — samples don't mutate under importance reweighting), re-read, assert. If Move 6 opts for Option A in §5.1 (new-value return, not in-place), the contract test narrows to reference-identity between wrapper `.logw` and underlying `.log_weights`.
 
 **Risk R4 (low): naming drift between master plan (`_condition_particle`) and master code (`_condition_product_fallback` + generic fallback).** The master plan references `_condition_particle` as the name of the fallback function; the actual master code at `src/ontology.jl:1487-1490, 1495-1498` uses `_condition_product_fallback` (for ProductMeasure) and an unnamed `condition(m::Measure, k, obs; n_particles)` (the generic one). Move 6 can either (a) rename to `_condition_particle` as part of the refactor — aligning master-plan vocabulary with code — or (b) keep the existing names and update the master plan to reflect what the code actually says. *Recommendation: rename to `_condition_particle` in the code PR.* Two-line change; restores master-plan-to-code parity; the vocabulary-pins precedent (precedents.md §6) argues for doing it at the refactor moment rather than deferring.
+
+**Rename scope, explicit.** Master-plan-to-code parity isn't preserved by renaming only the code — the plan document is consumed by future sessions reading master, and a stale plan re-introduces the drift when those sessions re-read. The rename commit touches both: `src/ontology.jl` (rename the two fallback functions + any internal call sites) *and* `docs/posture-3/master-plan.md` (currently references `_condition_particle` at lines 136 and 195; either update the line to name the new function or leave the plan's forward-looking reference pointing at the now-existing name). Pre-rename grep to run at code-PR time: `grep -n '_condition_particle\|_condition_product_fallback' src/ docs/ test/` and include every hit's resolution in the same commit. A rename commit that leaves the plan stale is a half-fix that the next session reads and re-drifts from.
 
 **Risk R5 (medium): skin smoke extensions arrive under existing test_skin.py surface.** The Move 0 skin audit names `test_particle_path`, `test_grid_fallback`, `test_particle_snapshot` as Move 6 additions plus a `_set_seed(seed)` RPC for deterministic Python-side seeding. The audit explicitly calls out that deferring any of these to follow-up is "a recipe for a silent break post-merge." *Caught by:* skin smoke tests extended in the Move 6 code PR (6b), not as follow-up; halt-the-line condition in §7. *Investigation posture if skin smoke fails:* check whether (a) the JSON-RPC shape of the particle posterior changed (post-Move-6 `CategoricalMeasure` wrapping `ParticlePrevision` should serialise identically), (b) the seed threading through the RPC boundary is deterministic, (c) the shield for the new wrapping case fires correctly on `weights`/`mean`/field access over the wire.
 
@@ -271,7 +278,7 @@ python -m skin.test_skin
 
 - Any `test/test_prevision_particle.jl` Stratum-2 `==` failure on seeded-MC bit-invariance — the R1 class; investigate per R1 posture.
 - Any existing test regression below `rtol=1e-10` (Stratum 3).
-- Any `_dispatch_path` vocabulary assertion failure on the new labels (`:quadrature`, `:enumeration`).
+- Any `_dispatch_path` vocabulary assertion failure — per §5.3 the labels are `:conjugate` / `:particle` / `:mixed`; a silent registry miss flips `:conjugate` to `:particle` or `:mixed`.
 - Any skin smoke failure at the extended RPC surface.
 - Any POMDP agent test failure — the POMDP package exercises particle paths through MCTS rollouts; its continued-green signal is one of the strongest indicators a refactor didn't break anything at a distance.
 
