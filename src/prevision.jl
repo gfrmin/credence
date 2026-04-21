@@ -32,6 +32,7 @@ export Prevision, TestFunction, Indicator, apply, expect
 export Identity, Projection, NestedProjection, Tabular, LinearCombination, OpaqueClosure
 export BetaPrevision, TaggedBetaPrevision, GaussianPrevision, GammaPrevision, CategoricalPrevision, DirichletPrevision, NormalGammaPrevision, ProductPrevision, MixturePrevision
 export ExchangeablePrevision, decompose
+export ParticlePrevision, QuadraturePrevision, EnumerationPrevision
 export ConjugatePrevision, maybe_conjugate, update, _dispatch_path
 # At Move 2, `Ontology`'s `Functional` hierarchy is aliased onto these
 # types (`const Functional = TestFunction` plus `import ..Previsions:
@@ -410,6 +411,107 @@ corresponding to the exchangeable `p`. Methods attach in `ontology.jl`
 where the concrete component Measure types are in scope.
 """
 function decompose end
+
+"""
+    ParticlePrevision(samples::Vector, log_weights::Vector{Float64}, seed::Int) <: Prevision
+
+Move 6: typed carrier for importance-sampling posteriors. `samples`
+holds the drawn hypotheses (one per particle; type depends on the
+sampled Measure — Float64, tuples, Vectors, Symbols, etc.).
+`log_weights` is the per-particle log importance weight, normalised at
+construction via logsumexp. `seed` records the RNG seed that produced
+the samples, for reproducibility auditing — not used by any computation,
+but load-bearing for the seeded-MC `==` precedent (see
+`docs/posture-3/precedents.md` §4).
+
+**Shared-reference contract inherited from Move 3** (precedent #2):
+`samples` and `log_weights` are returned by reference through the
+`CategoricalMeasure` wrapper's `getproperty` shield; defensive copying
+breaks the shared-reference semantics that downstream Measure-surface
+readers depend on. See `test/test_prevision_particle.jl` — contract
+tests confirm the shield.
+
+At Move 6 Phase 2 the struct is declared additively: it exists as a
+type but no code path constructs it yet. Phase 3 wires
+`_condition_particle` to construct a `ParticlePrevision` wrapped by
+`CategoricalMeasure(Finite(samples), log_weights)` for consumer-
+surface compatibility. Phase 0's canonical-bit-invariance test is the
+tripwire across the refactor.
+"""
+struct ParticlePrevision <: Prevision
+    samples::Vector
+    log_weights::Vector{Float64}
+    seed::Int
+
+    function ParticlePrevision(samples::Vector, log_weights::Vector{Float64}, seed::Int)
+        length(samples) == length(log_weights) || error("particles and weights must match")
+        length(samples) > 0 || error("particle set must be non-empty")
+        if all(lw -> lw == -Inf, log_weights)
+            error("particle set has zero total mass — all particles impossible")
+        end
+        max_lw = maximum(log_weights)
+        log_total = max_lw + log(sum(exp.(log_weights .- max_lw)))
+        new(samples, log_weights .- log_total, seed)
+    end
+end
+
+"""
+    QuadraturePrevision(grid::Vector{Float64}, log_weights::Vector{Float64}) <: Prevision
+
+Move 6: typed carrier for deterministic grid-quadrature posteriors.
+`grid` holds the deterministic quadrature points; `log_weights` the
+per-point log weights (typically `log_density_at(prior, x) +
+log_density(kernel, x, obs)`), normalised at construction via logsumexp.
+
+No `seed` field — quadrature is deterministic (range over an interval
+with fixed endpoints and fixed n), and reproducibility doesn't depend
+on RNG state. Stratum-2 tolerance per `precedents.md` §4 is
+`atol=1e-14`; the grid is bit-identical across refactors because the
+range is a deterministic `collect(range(lo, hi; length=n))`.
+"""
+struct QuadraturePrevision <: Prevision
+    grid::Vector{Float64}
+    log_weights::Vector{Float64}
+
+    function QuadraturePrevision(grid::Vector{Float64}, log_weights::Vector{Float64})
+        length(grid) == length(log_weights) || error("grid and weights must match")
+        length(grid) > 0 || error("quadrature grid must be non-empty")
+        if all(lw -> lw == -Inf, log_weights)
+            error("quadrature posterior has zero total mass")
+        end
+        max_lw = maximum(log_weights)
+        log_total = max_lw + log(sum(exp.(log_weights .- max_lw)))
+        new(grid, log_weights .- log_total)
+    end
+end
+
+"""
+    EnumerationPrevision(enumerated::Vector, log_weights::Vector{Float64}) <: Prevision
+
+Move 6: typed carrier for exhaustive-enumeration posteriors (primarily
+program-space enumeration per `src/program_space/enumeration.jl`).
+`enumerated` holds the enumerated items (programs, AST shapes, etc.);
+`log_weights` the per-item log weights, normalised at construction via
+logsumexp.
+
+Enumeration is deterministic under fixed iteration order; Stratum-2
+tolerance per `precedents.md` §4 is `==`.
+"""
+struct EnumerationPrevision <: Prevision
+    enumerated::Vector
+    log_weights::Vector{Float64}
+
+    function EnumerationPrevision(enumerated::Vector, log_weights::Vector{Float64})
+        length(enumerated) == length(log_weights) || error("items and weights must match")
+        length(enumerated) > 0 || error("enumeration set must be non-empty")
+        if all(lw -> lw == -Inf, log_weights)
+            error("enumeration posterior has zero total mass")
+        end
+        max_lw = maximum(log_weights)
+        log_total = max_lw + log(sum(exp.(log_weights .- max_lw)))
+        new(enumerated, log_weights .- log_total)
+    end
+end
 
 # ── apply — abstract evaluator ────────────────────────────────────────────
 
