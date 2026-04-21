@@ -1249,7 +1249,11 @@ function _condition_by_grid(m::BetaMeasure, k::Kernel, observation; n::Int=64)
         !isnan(ll) || error("density returned NaN for hypothesis $i")
         push!(logw, lp + ll)
     end
-    CategoricalMeasure(Finite(grid), logw)
+    # Move 6 Phase 4: construct QuadraturePrevision first, then wrap in
+    # CategoricalMeasure facade. Double-logsumexp-normalisation is
+    # idempotent at Float64 precision (confirmed by Phase 0 tripwire).
+    qp = QuadraturePrevision(grid, logw)
+    CategoricalMeasure(Finite(qp.grid), qp.log_weights)
 end
 
 function _condition_by_grid(m::GaussianMeasure, k::Kernel, observation; n::Int=64)
@@ -1263,7 +1267,8 @@ function _condition_by_grid(m::GaussianMeasure, k::Kernel, observation; n::Int=6
         !isnan(ll) || error("density returned NaN for hypothesis $i")
         push!(logw, lp + ll)
     end
-    CategoricalMeasure(Finite(grid), logw)
+    qp = QuadraturePrevision(grid, logw)
+    CategoricalMeasure(Finite(qp.grid), qp.log_weights)
 end
 
 log_density_at(m::BetaMeasure, x) = (m.alpha - 1) * log(x) + (m.beta - 1) * log(1 - x)
