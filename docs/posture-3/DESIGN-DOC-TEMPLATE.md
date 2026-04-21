@@ -4,6 +4,8 @@ Every `docs/posture-3/move-N-design.md` PR uses this structure. Reviewers reject
 
 The template exists because design-doc-before-code earns its keep only if the docs surface real arguments rather than restating the implementation prose. If a section feels like sugar around an already-decided implementation, treat that as a signal that the move is either smaller than it looked or already done — not a signal to ship the design doc.
 
+See `docs/posture-3/precedents.md` — the reference file for recurring patterns; consult before drafting §5 Open design questions and §6 Risk + mitigation, where most precedents apply.
+
 ---
 
 ## 1. Purpose
