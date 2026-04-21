@@ -25,6 +25,7 @@ module Ontology
 import ..Previsions: TestFunction, Identity, Projection, NestedProjection,
                      Tabular, LinearCombination, OpaqueClosure, expect
 import ..Previsions: BetaPrevision, TaggedBetaPrevision, GaussianPrevision, GammaPrevision, CategoricalPrevision, DirichletPrevision, NormalGammaPrevision, ProductPrevision, MixturePrevision
+import ..Previsions: ExchangeablePrevision, decompose
 import ..Previsions: ConjugatePrevision, maybe_conjugate, update, _dispatch_path
 
 export Space, Finite, Interval, ProductSpace, Simplex, Euclidean, PositiveReals, support
@@ -1403,6 +1404,37 @@ end
 # delegates to the underlying prevision (or in the mixture case, to the
 # per-component rollup above).
 _dispatch_path(m::MixtureMeasure, k::Kernel) = _dispatch_path(m.prevision, k)
+
+# Move 5 §5.1 Option A: ExchangeablePrevision ships with simplest-case
+# decompose (Dirichlet prior over a Finite component space → one ergodic
+# component per category, weighted by Dirichlet marginal αᵢ/Σα). The
+# hierarchical / multi-component correctness burden lives in the
+# email-agent migration follow-up PR per §5.1 R3 scoping.
+function decompose(p::ExchangeablePrevision)
+    p.prior_on_components isa DirichletPrevision ||
+        error("decompose: only Dirichlet priors supported at Move 5 (§5.1 R3 scoping); got $(typeof(p.prior_on_components))")
+    p.component_space isa Finite ||
+        error("decompose: only Finite component_space supported at Move 5; got $(typeof(p.component_space))")
+
+    α = p.prior_on_components.alpha
+    total = sum(α)
+    cats = p.component_space.values
+    k = length(cats)
+
+    k == length(α) ||
+        error("decompose: component_space has $k categories but Dirichlet prior has $(length(α)) components")
+
+    components = Measure[]
+    log_weights = Float64[]
+    for i in 1:k
+        # Ergodic component i: degenerate CategoricalMeasure on cats[i].
+        log_w_per_cat = fill(-Inf, k)
+        log_w_per_cat[i] = 0.0
+        push!(components, CategoricalMeasure(p.component_space, log_w_per_cat))
+        push!(log_weights, log(α[i] / total))
+    end
+    MixturePrevision(components, log_weights)
+end
 
 # ── ProductMeasure condition: structured factored update ──
 

@@ -44,6 +44,7 @@ export Event, TagSet, FeatureEquals, FeatureInterval, Conjunction, Disjunction, 
 export indicator_kernel, feature_value, BOOLEAN_SPACE
 export Functional, Identity, Projection, NestedProjection, Tabular, LinearCombination, OpaqueClosure
 export Prevision, TestFunction, Indicator, apply
+export MixturePrevision, ExchangeablePrevision, decompose
 export factor, replace_factor
 export condition, expect, push_measure, density, log_density_at, log_predictive, log_marginal
 export draw
