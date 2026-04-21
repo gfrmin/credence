@@ -1150,26 +1150,37 @@ function _with_resolved_family(k::Kernel, fam::LikelihoodFamily)
            likelihood_family = fam)
 end
 
+# Move 5 §5.3 Option A: delegate. The Measure-surface API
+# (condition(::TaggedBetaMeasure, …)) is a public contract; this method
+# stays to preserve it. The body resolves the LikelihoodFamily and
+# forwards to Move 4's registry via the inner BetaMeasure, then
+# re-wraps with the original tag. No per-Beta arithmetic lives here
+# anymore — every conjugate update goes through `maybe_conjugate` / `update`.
 function condition(m::TaggedBetaMeasure, k::Kernel, observation)
     fam = _resolve_likelihood_family(k.likelihood_family, m)
+    resolved_k = _with_resolved_family(k, fam)
 
-    # Call for side effects: domain kernels populate per-tag caches in
-    # k.params. Return value is consumed later by _predictive_ll at the
-    # mixture level, not by dispatch here.
+    # Side effect: domain kernels populate per-tag caches in k.params.
+    # Return value is consumed later by _predictive_ll at the mixture level.
     k.log_density(m, observation)
 
-    if fam isa BetaBernoulli
-        if observation == 1 || observation == 1.0 || observation == true
-            TaggedBetaMeasure(m.space, m.tag, BetaMeasure(m.beta.space, m.beta.alpha + 1.0, m.beta.beta))
-        else
-            TaggedBetaMeasure(m.space, m.tag, BetaMeasure(m.beta.space, m.beta.alpha, m.beta.beta + 1.0))
-        end
-    elseif fam isa Flat
-        m
-    else
-        error("condition(::TaggedBetaMeasure, k, obs): unsupported likelihood_family $(typeof(fam))")
-    end
+    new_beta = condition(m.beta, resolved_k, observation)
+    TaggedBetaMeasure(m.space, m.tag, new_beta)
 end
+
+"""
+    _conjugacy_prevision(component) -> Prevision
+
+Return the prevision Move 4's `maybe_conjugate` registry keys on for a
+given mixture component. For `TaggedBetaMeasure` this is the inner
+`BetaPrevision` (TaggedBetaMeasure → inner BetaMeasure → BetaPrevision);
+for other Measures it's the component's own `.prevision`.
+
+Used by `_dispatch_path(p::MixturePrevision, k)` to query each
+component's dispatch path after resolving its LikelihoodFamily.
+"""
+_conjugacy_prevision(m::TaggedBetaMeasure) = m.beta.prevision
+_conjugacy_prevision(m::Measure) = m.prevision
 
 function condition(m::GaussianMeasure, k::Kernel, observation)
     # Move 4: try the ConjugatePrevision registry first. Covers both
@@ -1347,13 +1358,15 @@ function log_predictive(m::CategoricalMeasure, k::Kernel, obs)
     _predictive_ll(m, k, obs)
 end
 
-function condition(m::MixtureMeasure, k::Kernel, obs)
+# Move 5: MixturePrevision now owns per-component routing and weight
+# reassembly; the MixtureMeasure facade is a thin shim.
+function condition(p::MixturePrevision, k::Kernel, obs)
     new_components = Measure[]
     new_log_wts = Float64[]
-    for (i, comp) in enumerate(m.components)
+    for (i, comp) in enumerate(p.components)
         pred_ll = _predictive_ll(comp, k, obs)
         conditioned = condition(comp, k, obs)
-        base_lw = m.log_weights[i] + pred_ll
+        base_lw = p.log_weights[i] + pred_ll
         if conditioned isa MixtureMeasure
             for (j, sub) in enumerate(conditioned.components)
                 push!(new_components, sub)
@@ -1364,8 +1377,32 @@ function condition(m::MixtureMeasure, k::Kernel, obs)
             push!(new_log_wts, base_lw)
         end
     end
-    MixtureMeasure(m.space, new_components, new_log_wts)
+    MixturePrevision(Vector{Measure}(new_components), new_log_wts)
 end
+
+function condition(m::MixtureMeasure, k::Kernel, obs)
+    new_p = condition(m.prevision, k, obs)
+    MixtureMeasure(m.space, new_p.components, new_p.log_weights)
+end
+
+# Move 5 §5.4: single-Symbol rollup observability for mixture dispatch.
+# `:conjugate` iff every component routes conjugate under its resolved
+# LikelihoodFamily; else `:mixed`. Per-component drilldown goes through
+# `_dispatch_path(m.components[i], k)` at the test call site using
+# Move 4's per-Prevision hook.
+function _dispatch_path(p::MixturePrevision, k::Kernel)
+    for comp in p.components
+        fam = _resolve_likelihood_family(k.likelihood_family, comp)
+        resolved_k = _with_resolved_family(k, fam)
+        _dispatch_path(_conjugacy_prevision(comp), resolved_k) === :conjugate || return :mixed
+    end
+    :conjugate
+end
+
+# Forwarder for the Measure-surface: _dispatch_path(m::Measure, k) →
+# delegates to the underlying prevision (or in the mixture case, to the
+# per-component rollup above).
+_dispatch_path(m::MixtureMeasure, k::Kernel) = _dispatch_path(m.prevision, k)
 
 # ── ProductMeasure condition: structured factored update ──
 
