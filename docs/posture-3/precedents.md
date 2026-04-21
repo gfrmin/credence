@@ -22,7 +22,7 @@ This file is a working reference, not a constitution. It records patterns that a
 
 **Where established.** Move 3 design doc §3 and §6 R4 named this as a durable contract. The contract test lives at `test/test_prevision_unit.jl :: test_shared_reference_contract`.
 
-**The rule.** When a Measure wraps a Prevision behind a `Base.getproperty` shield, the shield MUST return references to underlying fields — not copies. `push!` on a returned `Vector` must mutate the backing storage. The `getproperty` definitions carry a comment naming the contract test; the contract test asserts the invariant by constructing, reading through the shield, mutating in place, and re-reading to confirm the mutation is visible.
+**The rule.** When a Measure wraps a Prevision behind a `Base.getproperty` shield, the shield returns references to underlying fields, not copies — `push!` on a returned `Vector` mutates the backing storage. The contract is load-bearing: consumer sites depend on the shared-reference semantics (e.g. the skin server's in-place component appends). The `getproperty` definitions carry a comment naming the contract test; the contract test asserts the invariant by constructing, reading through the shield, mutating in place, and re-reading to confirm the mutation is visible.
 
 **When it applies.** Any move that adds a new `Base.getproperty` shield or extends an existing one — Move 5's MixtureMeasure shield inherited the contract (components + log_weights by reference); future Moves 6/7/8 that add Prevision subtypes with Measure wrappers will too.
 
@@ -65,7 +65,7 @@ This file is a working reference, not a constitution. It records patterns that a
 
 **Where established.** Move 4 design doc §5.2 committed the hook: underscore-prefixed, state-free, query-only, returns `Symbol`. Move 5 §5.4 extended for composite types (rollup).
 
-**The rule.** `_dispatch_path(p, k)` is a test-only observability hook. At the Prevision level (Move 4): returns `:conjugate` if `maybe_conjugate(p, k)` matches, `:particle` otherwise. At the MixturePrevision level (Move 5): returns `:conjugate` iff every component routes conjugate under its resolved LikelihoodFamily, else `:mixed`. Never mutates state. Never appears in production code paths — only in test assertions that pin dispatch-path decisions explicitly. Tests assert `_dispatch_path(p, k) == :expected` **before** the value assertion in every conjugate-path test, because a silent registry miss would still produce the correct value via particle convergence — the dispatch-path check is the tripwire.
+**The rule.** `_dispatch_path(p, k)` is a test-only observability hook. At the Prevision level (Move 4): returns `:conjugate` if `maybe_conjugate(p, k)` matches, `:particle` otherwise. At the MixturePrevision level (Move 5): returns `:conjugate` iff every component routes conjugate under its resolved LikelihoodFamily, else `:mixed`. The hook is state-free by construction and lives outside production code paths — callers are test assertions pinning dispatch-path decisions explicitly. The discipline Move 4 established: the `_dispatch_path == :expected` assertion comes **before** the value assertion in each conjugate-path test, because a silent registry miss still produces the correct value via particle convergence, so the dispatch-path check is the tripwire.
 
 **When it applies.** Every new conjugate pair (Move 4-style) or routing primitive (Move 5) ships with `_dispatch_path` coverage in the Stratum-2 corpus. Move 6 will extend for particle/quadrature; Move 7 for event-primary `condition` paths.
 
@@ -77,7 +77,7 @@ This file is a working reference, not a constitution. It records patterns that a
 
 **Where established.** Move 5 established the spot-check discipline after review surfaced the risk of `Symbol` / type-name drift between §5.4's committed vocabulary (`:conjugate`, `:mixed`) and the code implementation. Spot-check performed at code PR review time.
 
-**The rule.** Symbols, type names, and method names committed explicitly in a design doc's §5 (Open design questions) or §2 (Files touched) must appear **identically** in the code. When a design doc commits "returns `:mixed` as the honest partial-coverage label," the code returns the Symbol `:mixed` — not `:partial`, `:mixed_dispatch`, or similar near-synonyms. Spot-check is a review step on every code PR whose corresponding design doc committed specific vocabulary: `grep -n '<symbol>\|<type>' src/ test/ docs/posture-3/move-N-design.md` and confirm consistency.
+**The rule.** Symbols, type names, and method names committed explicitly in a design doc's §5 (Open design questions) or §2 (Files touched) appear identically in the code that implements them. When a design doc commits "returns `:mixed` as the honest partial-coverage label," the code that lands returns the Symbol `:mixed` — not `:partial`, `:mixed_dispatch`, or similar near-synonyms. The spot-check that catches drift at code PR review: `grep -n '<symbol>\|<type>' src/ test/ docs/posture-3/move-N-design.md` and confirm consistency across the three sources.
 
 **When it applies.** Every code PR that lands after a design-doc PR that committed specific names. The drift risk is highest when the design doc and code PRs are separated by days or weeks — the mental model that produced the design-doc name has cooled by the time the code is written, and a slightly different name can feel natural.
 
@@ -89,7 +89,7 @@ This file is a working reference, not a constitution. It records patterns that a
 
 **Where established.** Review of the first drafts of Moves 1 §5.1, 2 §5.1, 2 §5.3, and 5 §5.1 surfaced a consistent pattern: first-draft Socratic recommendations reach for plausible-but-weak reasoning (appeal-to-authority, plan-adherence, process convention) before the strongest available technical reason. Review catches the pattern; the drafting instruction below internalises it.
 
-**The rule.** When drafting §5 recommendations, list the reasons that support the chosen position. For each, ask: "is this technical or meta?" *Technical* means what the code gains, what invariant is preserved, what downstream work is enabled or prevented. *Meta* means appeals to authority (master plan says so), plan-adherence (committed scope is easier to defend), process convention (reopening signals the plan is negotiable), or procedural defensibility. **Drop the meta reasons.** Keep only the technical ones. If dropping leaves fewer than two technical reasons, the recommendation is weaker than it looked — either strengthen or soften to tentative.
+**The rule.** When drafting §5 recommendations, listing the reasons that support the chosen position and asking "is this technical or meta?" for each is the drafting step that catches the pattern early. *Technical* means what the code gains, what invariant is preserved, what downstream work is enabled or prevented. *Meta* means appeals to authority (master plan says so), plan-adherence (committed scope is easier to defend), process convention (reopening signals the plan is negotiable), or procedural defensibility. Reviews consistently strip the meta reasons and leave the technical ones standing, so drafting in that shape saves a revision cycle. If dropping meta leaves fewer than two technical reasons, the recommendation is weaker than it looked — strengthen, or soften to tentative.
 
 **When it applies.** §5 Open design questions in every move design doc. Recommendations with three-plus reasons often have meta-padding; two strong technical reasons is sufficient and preferred.
 
@@ -103,7 +103,7 @@ This file is a working reference, not a constitution. It records patterns that a
 
 **Where established.** Moves 3 (12 commits), 4 (8 commits), and 5 (4 commits) all followed the pattern. CLAUDE.md §Repo conventions → Rebase-merge for linear master history preserves the individual commits on master; the master-plan §Commit cadence guardrails mandates "every session ends with a green test suite, even mid-refactor."
 
-**The rule.** Multi-phase moves commit per-phase, not per-PR. Each commit leaves the branch with a green test suite; each commit is individually bisectable; each commit is small enough to reviewfast. Rebase-merge (not squash-merge) preserves the commit history on master so bisect is useful across the merge boundary.
+**The rule.** In multi-phase moves, commits land per-phase rather than batched at the end. Each commit leaves the branch with a green test suite; each commit is individually bisectable; each commit is small enough to review quickly. Rebase-merge (not squash-merge) preserves the commit history on master so bisect stays useful across the merge boundary.
 
 **When it applies.** Every multi-phase code PR. The phase boundary is "a coherent subset of the move's work that can be tested to green on its own," not an arbitrary line. Moves with genuinely atomic scope (small refactors, docs-only PRs) commit once; moves with sequenced work (Moves 3–5) commit per phase.
 
@@ -131,7 +131,7 @@ This file is a working reference, not a constitution. It records patterns that a
 
 **Where established.** Move 0 established the audit practice with `docs/posture-3/move-0-skin-surface-audit.md`. Moves 3 and 4 applied it — each scoped its skin smoke test extensions at design-doc time, not at code PR time. Master plan §Verification names the discipline.
 
-**The rule.** Any move claiming "JSON-RPC API surface preserved" or "skin-invariant" must verify the claim at design-doc time: audit `apps/skin/test_skin.py` for coverage against the specific wire paths the move touches. If a smoke test doesn't exist for an affected path, extend `test_skin.py` in the same PR as the code change — not as a follow-up. Move 0's audit is the baseline reference; subsequent moves extend it.
+**The rule.** Moves claiming "JSON-RPC API surface preserved" or "skin-invariant" verify the claim at design-doc time by auditing `apps/skin/test_skin.py` for coverage against the specific wire paths the move touches. When a smoke test doesn't exist for an affected path, the pattern that's worked: extend `test_skin.py` in the same PR as the code change rather than as a follow-up. Move 0's audit is the baseline reference; subsequent moves extend it with their own wire-path changes named explicitly.
 
 **When it applies.** Moves 3, 4, 6, 7 (master plan flags these as mandatory-skin-smoke); Moves 1, 2, 5, 8 are skin-invariant and smoke is optional. The audit at design-doc time forces the reviewer to confirm: (a) which wire paths change, (b) whether existing smoke covers them, (c) what new tests are needed.
 
