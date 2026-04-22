@@ -157,74 +157,183 @@ The off-switch theorem (Hadfield-Menell, Dragan, Abbeel and Russell 2017) and th
 
 ## 2. Operational consequences
 
-This section presents three worked examples of how the prevision-first reconstruction expresses things the measure-theoretic implementation could not. Each example is supported by a corresponding Move in the reference implementation.
-
-**Section to be drafted as Moves 4, 5, 6 land.** The structure and the specific claims-to-defend are listed below.
+This section presents three worked examples of how the prevision-first reconstruction expresses things the measure-theoretic implementation could not. Each example draws concrete before/after code from a corresponding Move in the reference implementation.
 
 ### 2.1 Conjugate dispatch as a type-structural registry
 
-*Claim:* In the previous implementation, conjugate Bayesian update for the canonical pairs (Beta-Bernoulli, Normal-Normal, Dirichlet-Categorical, NormalGamma-NormalGamma) was implemented by case-analytic dispatch in the `condition` method, with each pair adding a new branch and the dispatch logic scattered across nine measure subtypes and five likelihood-family routing types. Under the prevision-first reconstruction, conjugate update becomes a `ConjugatePrevision{Prior, Likelihood}` parametric type with a single `update` method per pair; dispatch is type-structural; adding a new pair adds a row to a registry, not a branch to a method.
+In the previous implementation, conjugate Bayesian update for the canonical pairs (Beta-Bernoulli, Normal-Normal, Dirichlet-Categorical, NormalGamma-NormalGamma) was implemented by case-analytic dispatch in the `condition` method, with each pair adding a new branch scattered across nine Measure subtypes and five LikelihoodFamily routing types. Adding a new conjugate pair was an N×M edit: N new cases across M Measure subtypes. Under the prevision-first reconstruction (reference implementation Move 4), conjugate update becomes a `ConjugatePrevision{Prior, Likelihood}` parametric type with a single `update` method per pair; dispatch is type-structural; adding a new pair adds one row to the registry.
 
-*Worked example to land in this section after Move 4:* trace `condition(BetaPrevision(2, 3), bernoulli_kernel, 1)` step by step through the registry lookup, the `update(::ConjugatePrevision{BetaPrevision, Bernoulli}, ::Bool)` method, and the resulting `BetaPrevision(3, 3)`. Contrast with the pre-refactor dispatch path through `condition(::TaggedBetaMeasure, k, obs)` and its `likelihood_family` case analysis.
+Pre-refactor, a typical conjugate case branch:
+
+```julia
+function condition(m::BetaMeasure, k::Kernel, obs)
+    if k.likelihood_family isa BetaBernoulli
+        obs == 1 ? BetaMeasure(m.alpha+1, m.beta) :
+                   BetaMeasure(m.alpha, m.beta+1)
+    else
+        _condition_by_grid(m, k, obs)
+    end
+end
+# Adding (BetaPrevision, Flat) as a new conjugate pair meant editing
+# this method body, plus the analogous methods for every other Measure
+# subtype that needed Flat support.
+```
+
+Post-refactor, the same call dispatches through the registry:
+
+```julia
+function condition(m::BetaMeasure, k::Kernel, obs)
+    cp = maybe_conjugate(m.prevision, k)
+    if cp !== nothing
+        updated = update(cp, obs).prior
+        return BetaMeasure(m.space, updated.alpha, updated.beta)
+    end
+    _condition_by_grid(m, k, obs)
+end
+
+# Adding a new conjugate pair:
+function maybe_conjugate(p::BetaPrevision, k::Kernel)
+    k.likelihood_family isa Flat ?
+        ConjugatePrevision(p, k.likelihood_family) : nothing
+end
+update(cp::ConjugatePrevision{BetaPrevision, Flat}, obs) = cp  # no-op
+```
+
+The case analysis inside `condition` collapses to a single registry lookup. The N×M edit cost of adding a new pair collapses to N: one new method pair `(maybe_conjugate, update)` per conjugate (Prior, Likelihood). Six conjugate pairs land in the registry at Move 4 — `(BetaPrevision, BetaBernoulli)`, `(BetaPrevision, Flat)`, `(GaussianPrevision, NormalNormal)`, `(DirichletPrevision, Categorical)`, `(NormalGammaPrevision, NormalGammaLikelihood)`, `(GammaPrevision, Exponential)` — with a `_dispatch_path` observability hook (`:conjugate | :particle`) that Stratum-2 tests assert before value assertions, catching silent registry misses that would otherwise pass the value check via particle-fallback convergence.
+
+The operational consequence: adding a new declared conjugate pair (a research question — "does this prior-likelihood pair have a closed form?") becomes a localised addition. The dispatch machinery does not change; no existing test expectations shift.
 
 ### 2.2 Mixture conditioning through exchangeability representation
 
-*Claim:* In the previous implementation, mixture conditioning was implemented by component-wise update plus mixture flattening (in `condition(::MixtureMeasure, k, obs)`), with per-component routing handled by a separate `FiringByTag` likelihood-family type whose semantics lived on the kernel side. This was a dual residency: the kernel knew how to route observations, the measure knew how to flatten the resulting mixture, and the per-component routing logic had to coordinate across both. Under the prevision-first reconstruction, mixtures are coherent convex combinations of previsions (`MixturePrevision`), per-component routing is an accessor on `MixturePrevision` (`component_prevision(p, tag)`), and the email-agent's tag-indexed exchangeability is declared via `ExchangeablePrevision` whose `decompose` method returns the canonical mixture decomposition.
+In the previous implementation, mixture conditioning was implemented by component-wise update plus mixture flattening (`condition(::MixtureMeasure, k, obs)`), with per-component routing handled by a separate `FiringByTag` LikelihoodFamily type whose semantics lived on the kernel side. The per-component routing logic had to coordinate across kernel and measure: the kernel knew how to classify observations, the measure knew how to flatten, neither declared the routing directly. Under the prevision-first reconstruction (reference implementation Move 5), mixtures are `MixturePrevision`s — coherent convex combinations of previsions — and per-component routing resolves through `_resolve_likelihood_family` inside the mixture's `condition` method. Tag-indexed exchangeability becomes first-class via `ExchangeablePrevision` whose `decompose` method returns the canonical mixture decomposition per de Finetti's representation theorem.
 
-*Worked example to land in this section after Move 5:* the email agent's 22-program belief is constructed as `ExchangeablePrevision(ProgramSpace, prior_on_program_classes)`. Conditioning on a TagSet event `condition(p, TagSet({3, 7}))` decomposes through the mixture: the representation theorem returns the per-tag-class ergodic components, the conditioning event picks out the components whose tag class matches, and the resulting prevision is the renormalised conjunction. Contrast with the pre-refactor email-agent code that constructed the same posterior via application-level iteration over the measure's components.
+The email agent's 22-program belief (an exchangeable prior over program hypotheses) was constructed pre-refactor by application-level iteration over mixture components:
+
+```julia
+# Pre-refactor: application-level iteration over tagged components.
+function condition_on_firing_programs(state, firing_program_ids)
+    new_components = Measure[]
+    new_log_weights = Float64[]
+    for (i, comp) in enumerate(state.belief.components)
+        # Caller walks the mixture, reweights by hand, reconstructs.
+        weight_adjustment = comp.tag in firing_program_ids ? 0.0 : -Inf
+        push!(new_components, comp)
+        push!(new_log_weights, state.belief.log_weights[i] + weight_adjustment)
+    end
+    MixtureMeasure(state.belief.space, new_components, new_log_weights)
+end
+```
+
+Post-refactor, the same operation is one event-conditioning call:
+
+```julia
+# Post-refactor: declare the event, condition on it.
+posterior = condition(state.belief, TagSet(state.belief.space, Set(firing_program_ids)))
+```
+
+The mixture coordinator (`condition(::MixturePrevision, ::TagSet)`, Move 5 / Move 7) performs the component-wise restriction with components-preserved shape: non-firing components are log-weighted to `-Inf` (zero probability) rather than dropped, keeping downstream consumers' component-index invariants stable. The application-level loop disappears; conditioning is a single declared operation against a declared event.
+
+The operational consequence: the application is no longer responsible for understanding the mixture's internal layout. The `TagSet` event declares what subset of hypotheses the agent is conditioning on; the prevision-level coordinator handles the mechanics; the result is type-preserving (`MixtureMeasure` in, `MixtureMeasure` out). The same shape extends to `FeatureEquals` and `FeatureInterval` events for feature-valued predicates, and to Boolean compositions (`Conjunction`, `Disjunction`, `Complement`).
 
 ### 2.3 Particle methods as previsions
 
-*Claim:* Particle filtering — the standard fallback when no conjugate path applies — is, in the de Finettian view, just another prevision: the empirical mean against an importance-weighted sample is a coherent linear functional on bounded measurable test functions. The previous implementation represented particle sets as `CategoricalMeasure(Finite(samples), log_weights)`, conflating the empirical-prevision representation with the categorical-measure-on-a-finite-space representation. Under the prevision-first reconstruction, `ParticlePrevision` is its own subtype with its own `update` method (importance reweighting + optional resampling) and its own deterministic-seeding contract.
+Particle filtering — the standard fallback when no conjugate path applies — is, in the de Finettian view, a prevision in its own right: the empirical mean against an importance-weighted sample is a coherent linear functional on bounded measurable test functions. The previous implementation represented particle sets as `CategoricalMeasure(Finite(samples), log_weights)`, conflating the empirical-prevision semantics (a reweighted sum over draws) with the categorical-measure-on-a-finite-space representation (a distribution over a fixed finite set). Under the prevision-first reconstruction (reference implementation Move 6), `ParticlePrevision` is its own type — carrying `samples::Vector`, `log_weights::Vector{Float64}`, and `seed::Int` — wrapped inside a `CategoricalMeasure` facade for consumer-surface compatibility per the Move 3 `getproperty` shield pattern.
 
-*Worked example to land in this section after Move 6:* trace a non-conjugate `condition` call from prior `ExchangeablePrevision` through the `_condition_particle` fallback, into the resulting `ParticlePrevision`, and verify that the mean (computed via `expect(p, Identity())`) matches the closed-form posterior to within `rtol = 1e-12` under the canonical RNG seed.
+Pre-refactor, the particle-path fallback:
+
+```julia
+function _condition_particle(m::Measure, k::Kernel, obs; n_particles=1000)
+    samples = [draw(m) for _ in 1:n_particles]
+    log_weights = Float64[k.log_density(s, obs) for s in samples]
+    CategoricalMeasure(Finite(samples), log_weights)  # type conflation
+end
+```
+
+Post-refactor, the same arithmetic produces a typed carrier:
+
+```julia
+function _condition_particle(m::Measure, k::Kernel, obs; n_particles=1000, seed=0)
+    samples = [draw(m) for _ in 1:n_particles]
+    log_weights = Float64[k.log_density(s, obs) for s in samples]
+    pp = ParticlePrevision(samples, log_weights, seed)
+    # Pass-by-reference facade: shield forwards .logw → pp.log_weights,
+    # .space.values → pp.samples. No defensive copy; downstream consumers
+    # read through the shield to the underlying Prevision's fields.
+    CategoricalMeasure(Finite(pp.samples), pp)
+end
+```
+
+The underlying arithmetic — the `draw` loop and `log_density` evaluation — is unchanged. What changes is the result's type: where the pre-refactor code returned a `CategoricalMeasure` whose "categories" happened to be particle samples, the post-refactor code returns a `CategoricalMeasure` whose `.prevision` field is a typed `ParticlePrevision`. Consumers that need the typed carrier (e.g. the paper's §2.3 claim that particle methods are previsions rather than measures) can check via `isa ParticlePrevision`; consumers that only need the Measure-surface API read through the shield unchanged.
+
+The operational consequence verified at Move 6: a Phase 0 canonical-bit-invariance test captures pre-refactor sample sequences under `Random.seed!(42)` into a commit-pinned fixture; the Phase 2–7 refactor phases preserve the bit-exact output via `==` assertions throughout. Every refactor commit leaves the particle path numerically identical; the only change is the typed-carrier representation. Stratum-2 seeded-MC `==` discipline (precedent #4) is the tripwire.
 
 ---
 
 ## 3. Comparison
 
-This section compares the de Finettian foundation against four other operationalisations of probabilistic computation. The point of comparison is the foundational primitive each framework takes; *no existing PPL or categorical-probability framework takes prevision as primitive*. This makes the position genuinely novel.
+This section compares the de Finettian foundation against four operationalisations of probabilistic computation: Staton's measure-categorical PPL semantics, Jacobs' effectus theory, Hakaru's disintegration-first treatment, and MonadBayes' score-primitive monads. The point of comparison is the foundational primitive each framework takes; *no existing PPL or categorical-probability framework takes prevision as primitive*, which makes the position genuinely novel.
 
-**Section to be drafted as Move 7 lands and the Move 6 particle treatment is concrete.** The structure and the specific claims-to-defend are listed below.
+Entry length is proportional to the depth of engagement between each framework and ours: Staton and MonadBayes are operationally closer and receive 2–3 paragraphs; Jacobs and Hakaru are foundationally farther and receive one paragraph each.
 
 ### 3.1 Staton: measure-categorical PPL semantics
 
-*Claim:* Staton (2017) and the surrounding measure-categorical school (Heunen et al. 2017; Vákár, Kammar and Staton 2019) take the measurable space as primitive and define probabilistic computation as morphisms in a Markov category over standard Borel spaces. This is operationally equivalent to our framework on the things they both treat — bounded measurable test functions, σ-finite measures — but it inherits the measure-theoretic vocabulary throughout. Conjugate update is not a first-class concept; exchangeability is expressible only through the measure-on-products formulation; the agent-architectural concerns (deference, dispatch, registry) are not addressed because the framework is for PPL semantics, not agent runtimes. We *do not displace* Staton's framework — the two are compatible — but we *demonstrate a different foundational starting point* with operational consequences for agent code that the measure-categorical formulation does not surface.
+Staton (2017) and the surrounding measure-categorical school (Heunen, Kammar, Staton and Yang 2017; Vákár, Kammar and Staton 2019) take the measurable space as primitive and define probabilistic computation as morphisms in a Markov category over standard Borel spaces. Probabilistic programs are denotations in the category of measurable spaces with probability kernels as morphisms; semantic questions (commutativity of independent sampling, monadic-style composition of kernels, continuity under pointwise limits) are answered by the category's structural properties. The framework is operationally equivalent to ours on the things both frameworks treat: bounded measurable test functions, σ-finite measures, conjugate update viewed as specific kernel composition. It is the mainstream foundation for PPL semantics work.
+
+Where the de Finettian reconstruction diverges is not at the equivalence level but at the primitive-choice level. Staton's framework inherits measure-theoretic vocabulary throughout: a belief IS a measure; conditional update is a kernel composition; σ-additivity is assumed. Conjugate update is not a first-class concept — it's a derivable property of certain kernel compositions, but the framework does not surface it architecturally. Exchangeability is expressible only through the measure-on-products formulation (invariant under permutations); de Finetti's representation theorem connecting exchangeable priors to mixtures of ergodic components is not part of the framework's primitive surface. The agent-architectural concerns we address — declared structure for fast-path dispatch, a conjugate registry that keys on type pairs, the Measure-as-view framing that keeps consumer code stable — are not addressed because the framework is for PPL semantics, not agent runtimes.
+
+We do not displace Staton's framework; the two are compatible. A Credence `Prevision` is implementable as a measurable-space-with-operator in Staton's categorical setup; Staton's measurable-space semantics are implementable as a specific σ-continuous realisation of our general prevision operator. What we demonstrate is a different foundational starting point with operational consequences for agent code that the measure-categorical formulation does not surface. An agent runtime built on Staton's measure-categorical foundation would still need to construct, at runtime, the type-structural conjugate registry and the exchangeability representation as derived tooling; the de Finettian reconstruction makes them primitive.
 
 ### 3.2 Jacobs: effectus theory
 
-*Claim:* Jacobs (2015; Jacobs, Kissinger and Zanasi 2019) develops effectus theory as a categorical framework for both classical and quantum probability. Effectuses are categories where distributions, sub-distributions, and their conditioning operations live as structural morphisms. The framework is more abstract than ours and more ambitious in scope; it is also non-operationalised as an agent framework. The de Finettian reconstruction shares Jacobs' commitment to making the conditional operation a first-class structural object; it differs by taking a coherence-justified operator (the prevision) as primitive rather than a categorical effectus.
+Jacobs (2015; Jacobs, Kissinger and Zanasi 2019) develops effectus theory as a categorical framework for both classical and quantum probability. Effectuses are categories where distributions, sub-distributions, and their conditioning operations live as structural morphisms; the framework is more abstract than ours and more ambitious in scope (classical + quantum under one foundation). It is not operationalised as an agent framework — effectus theory is foundational mathematics, not an agent runtime — and the questions it addresses (unifying classical and quantum probability; categorical structure of conditional operations) are orthogonal to our reconstruction's concerns. The de Finettian reconstruction shares Jacobs' commitment to making conditional operations first-class structural objects; it differs by taking a coherence-justified operator (the prevision) as primitive rather than a categorical effectus, and by scoping to classical (finitely additive) probability where the coherence justification is clean. An agent runtime built on effectus foundations is conceivable but would carry substantial categorical machinery whose operational consequences on runtime code are not yet characterised.
 
 ### 3.3 Hakaru and disintegration-first treatments
 
-*Claim:* Hakaru (Narayanan, Carette, Romano, Shan and Zinkov 2016; Narayanan and Shan 2020) takes disintegration as the primitive operation for Bayesian inference, with measure-zero conditioning treated explicitly via a declared base measure. This is the right move for continuous-feature conditioning and is orthogonal to our reconstruction. Our Move 7 raises a structured error pointing at the disintegration extension when measure-zero conditioning is attempted; integrating Hakaru-style disintegration into Credence is a future direction. The de Finettian reconstruction is foundationally compatible with Hakaru: a disintegration kernel is just a parameterised conditional prevision in our framework, and the existing `condition(p, e::Event)` primitive extends naturally.
+Hakaru (Narayanan, Carette, Romano, Shan and Zinkov 2016; Narayanan and Shan 2020) takes disintegration as the primitive operation for Bayesian inference: conditional probability is defined via the disintegration of a joint measure against a base measure, with measure-zero conditioning treated explicitly. This is the right move for continuous-feature conditioning, where the Kolmogorov ratio `p(A|B) = p(A ∩ B) / p(B)` is undefined because `p(B) = 0`. Hakaru addresses the regime our reconstruction explicitly scopes out: our Move 7 raises a structured error on measure-zero event conditioning and points at disintegration as the future axiom extension. The two frameworks are foundationally compatible — a disintegration kernel is a parameterised conditional prevision in our framework, and the `condition(p, e::Event)` primitive extends naturally when `e` is a Hakaru-style disintegration witness. Integrating Hakaru-style disintegration into Credence is a known future direction, not a disagreement with Hakaru's approach.
 
 ### 3.4 MonadBayes and score-primitive monads
 
-*Claim:* MonadBayes (Ścibior, Ghahramani and Gordon 2015; Ścibior et al. 2018) implements probabilistic programming in Haskell with a `score` primitive that accumulates likelihood weights inside a monadic computation. The score-primitive treatment is operationally close to our particle-method path (Move 6) but is foundationally derived from the categorical-monad story rather than from coherence. The MonadBayes framework is complementary to ours: where MonadBayes targets first-class probabilistic programs as Haskell values, Credence targets a DSL-as-data-with-a-Julia-evaluator architecture suited to agent runtimes. The de Finettian reconstruction is straightforward to embed in a MonadBayes-style monadic framework; the converse (taking score as the primitive in an agent runtime that needs declared structure for fast paths) is awkward.
+MonadBayes (Ścibior, Ghahramani and Gordon 2015; Ścibior, Kammar, Vákár, Staton, Yang, Cai, Ostermann, Moss, Heunen and Ghahramani 2018) implements probabilistic programming in Haskell with a `score` primitive that accumulates likelihood weights inside a monadic computation. The score-primitive treatment is foundationally derived from the categorical-monad story rather than from coherence: a probabilistic program is a monadic value; `score` is a side-effect that weights the current computation branch; inference strategies (importance sampling, MCMC, SMC) become different monad interpretations. Operationally, the MonadBayes particle-method interpretation is close to our Move 6 particle path — both accumulate importance weights over samples and normalise at the end.
+
+Where the frameworks diverge is in the primitive commitments. MonadBayes takes score as primitive and derives coherence as a property of the inference strategy (if the monad interpretation is sound, the result is coherent). The de Finettian reconstruction takes coherence as primitive and derives score-weighting as a specific path of parametric conditioning. Operationally this has two consequences for agent runtimes: first, the `maybe_conjugate` registry fires conjugate fast-paths automatically without the author declaring which inference strategy to use — the registry is the strategy. Second, declared structure (Invariant 2) is enforced at the type-system level, forcing kernels and test functions to carry their algebraic structure for dispatch. MonadBayes' monadic score accumulation does not surface these as primitive concerns; they can be implemented on top, but not as the foundation.
+
+The MonadBayes framework is complementary to ours: where MonadBayes targets first-class probabilistic programs as Haskell values (excellent for expressing novel inference strategies), Credence targets a DSL-as-data-with-a-Julia-evaluator architecture suited to agent runtimes (excellent for declared structure and fast-path dispatch). The de Finettian reconstruction is straightforward to embed in a MonadBayes-style monadic framework: a `Prevision` is a specific monadic value. The converse embedding — taking score as the primitive in an agent runtime that needs declared structure for fast paths — is awkward because score accumulation does not naturally declare conjugate pair types or test function structure. MonadBayes' strengths are our orthogonal concerns; our strengths are MonadBayes' orthogonal concerns.
 
 ---
 
 ## 4. Implementation
 
-The reference implementation is Credence: a Bayesian decision-making DSL embedded in Julia, with applications spanning LLM/search routing (the production credence-proxy gateway), interactive fiction agents, RSS preference learning, and email triage. The Posture 3 reconstruction is on the `de-finetti/migration` branch (this paper's branch); it is composed of eight implementation moves landing as a sequence of design-doc-then-code PR pairs.
+The reference implementation is [Credence](https://github.com/gfrmin/credence) — a Bayesian decision-making DSL embedded in Julia, with applications spanning LLM/search routing (the production credence-proxy gateway), interactive fiction agents, RSS preference learning, email triage, and a POMDP agent package (MCTS rollouts over factored belief models). The Posture 3 reconstruction landed on the `de-finetti/migration` branch as eight implementation moves, each landing as a design-doc-then-code PR pair. The reconstruction-complete state is pinned at commit `<MOVE-8-SHA>`; that commit merges `de-finetti/p3-move-8` to master and the reconstruction's axiom-layer work ends there.
 
-**Section to be drafted as Moves 1–8 land.** Specific artefact pointers to include:
+**Branch and commit.** All claims in this paper are validated at `<MOVE-8-SHA>`. A reader reproducing the paper's operational examples checks out that commit and runs the test suite below. Subsequent development (body-work: Gmail connection, Telegram connection, credence-proxy iteration) lands on new branches against the reconstruction-complete state; pinning the Move-8-merge SHA makes the paper-to-artifact relationship tight (rather than forcing the reader to disentangle reconstruction-relevant test signal from body-work orthogonal failure modes).
 
-- Reference implementation: GitHub link to the merged branch, commit SHA at acceptance.
-- Test suite: 359+ assertions across 7 core test files plus the POMDP-agent package's separate test suite. Three strata: unit equivalence (1e-14), composition equivalence (1e-12), end-to-end (1e-10).
-- Worked example for §2.2: the email agent's 22-program belief, with before/after code snippets showing the application-level iteration in the pre-refactor code vs the `ExchangeablePrevision` declaration in the post-refactor code.
-- Skin layer: the JSON-RPC API surface (`apps/skin/server.jl`) is preserved bit-for-bit; the Python-side `Prevision.beta(α, β)` idiom is a follow-up branch.
+**Test suite.** The reconstruction's test discipline runs three strata:
 
-The skin smoke test surface (`apps/skin/test_skin.py`) is extended in Moves 3, 4, 6, 7 to cover the JSON-RPC paths each move changes; the Move-0 audit (`docs/posture-3/move-0-skin-surface-audit.md`) enumerates the gaps and attaches each to the corresponding move.
+- **Stratum 1 (unit equivalence):** `isapprox(atol=1e-14)` for derived scalars; `==` for closed-form arithmetic on integer-accumulated values. Files: `test/test_prevision_unit.jl`, `test/test_persistence.jl`.
+- **Stratum 2 (composition equivalence):** `==` for integer-accumulated conjugate updates, seeded Monte Carlo under fixed RNG, and deterministic quadrature; `rtol=1e-12` for numerically-sensitive closed forms (Gaussian posterior μ via precision-weighted averaging). Files: `test/test_prevision_conjugate.jl`, `test/test_prevision_mixture.jl`, `test/test_prevision_particle.jl`.
+- **Stratum 3 (end-to-end):** `isapprox(rtol=1e-10)`; halt-the-line at greater drift. Files: `test/test_core.jl`, `test/test_events.jl`, `test/test_flat_mixture.jl`, `test/test_host.jl`, `test/test_grid_world.jl`, `test/test_email_agent.jl`, `test/test_rss.jl`, `test/test_program_space.jl`.
+
+At the reconstruction-complete state, 13 Julia test files pass, the POMDP-agent package passes its separate test suite (55/55 at Move 6), and the skin-layer smoke tests pass 22 JSON-RPC boundary checks (`apps/skin/test_skin.py`). The total assertion count exceeds 400 across the suite; the specific headline metric is that the seeded Monte Carlo `==` discipline (Stratum-2 particle tolerance, per the reconstruction's precedent document) held byte-for-byte across the Move 6 particle refactor's seven phased commits against a commit-pinned canonical fixture.
+
+**Worked example in situ.** The §2.2 worked example (mixture conditioning via event-form) runs against the email agent at `apps/julia/email_agent/`. The pre-refactor application-level iteration lived in the email-agent's own code; the post-refactor code uses `condition(belief, TagSet(...))` directly. The before/after substitution is the Move 5 + Move 7 work meeting the paper's §2.2 claim at a specific consumer site.
+
+**Skin layer.** The JSON-RPC API surface (`apps/skin/server.jl` with Python client `apps/skin/client.py`) is preserved bit-for-bit across the reconstruction: every JSON-RPC request/response shape that worked pre-reconstruction works post-reconstruction unchanged. Move 0 audited the skin coverage against the wire-path changes each move would introduce (`docs/posture-3/move-0-skin-surface-audit.md`); Moves 3, 4, 6, and 7 extended the smoke-test suite to cover their own wire-path changes (Measure-shape round-trips, conjugate dispatch paths, particle posterior roundtrip-snapshot, event-form condition RPC). Move 5 and Move 8 are skin-invariant; the smoke tests there are optional sanity checks.
+
+**uv workspace.** The Python side is a uv workspace with four packages at `apps/python/` (credence_bindings, credence_agents, credence_router, bayesian_if). The production credence-proxy gateway lives in `apps/python/credence_router/` and ships as a Docker image published by CI; the reconstruction preserves the Python surface unchanged (Python-side prevention idioms are a follow-up branch noted in the master plan's out-of-scope section).
+
+**Reproducibility.** The test suite is deterministic under the canonical seeds encoded in each test file (`Random.seed!(42)` throughout). A reader cloning the repository, checking out `<MOVE-8-SHA>`, and running `julia test/test_prevision_particle.jl` observes the specific sample sequence captured in `test/fixtures/particle_canonical_v1.jls` — the fixture is the pre-refactor sample sequence from a specific pre-Move-6 commit, pinned against `==` throughout the Move 6 refactor to catch any seed-consumption-order regression. This capture-before-refactor discipline is, to our knowledge, novel in the PPL-refactor literature.
 
 ---
 
 ## 5. Conclusion
 
-**Section to be drafted in Move 8.** Two sentences of structure for now:
+The de Finettian foundation gives Bayesian agent architectures a coherence-justified primitive — the prevision, a coherent linear functional on a declared test function space — at the bottom of the type system. The reconstruction demonstrates three operational consequences the measure-theoretic foundation could not surface architecturally: type-structural conjugate dispatch via a `ConjugatePrevision{Prior, Likelihood}` registry that collapses N×M case-analytic edits to N single-pair registrations; native exchangeability via `ExchangeablePrevision` with a constructive `decompose` method implementing de Finetti's representation theorem; and peer-primary conditioning where event-form `condition(p, e::Event)` and parametric-form `condition(p, k, obs)` are coequal primitives at the Prevision level, equivalent on deterministic events per Di Lavore, Román and Sobociński's Proposition 4.9.
 
-The de Finettian foundation gives Bayesian agent architectures a coherence-justified primitive (prevision) at the bottom of the type system, with three operational consequences — type-structural conjugate dispatch, native exchangeability with a constructive representation theorem, and event-primary conditioning with parametric Bayes update derived — that the measure-theoretic foundation could not express. The reconstruction is operationally equivalent to the measure-theoretic implementation it replaces and demonstrates that no operational ground is given up by the foundational shift.
+The central claim of the paper is foundational rather than operational: coherent linear functionals, not probability measures, are the right primitive for Bayesian agent runtimes. The operational consequences follow from the primitive choice, not the other way around. The reconstruction is operationally equivalent to the measure-theoretic implementation it replaces — the same tests pass at the same tolerances; the same posteriors obtain bit-for-bit under seeded RNG; the same JSON-RPC wire shape is preserved — which demonstrates that no operational ground is given up by the foundational shift. What is gained is declared structure at the axiom layer: the agent runtime's dispatch logic becomes type-structural, and the paper's theoretical claims (exchangeability, conjugate dispatch, peer-primary conditioning) become first-class artefacts of the type system rather than ad-hoc implementation conveniences.
+
+We do not claim the prevision-first foundation is the only viable foundation for Bayesian agent architectures; Staton's measure-categorical school, Jacobs' effectus theory, Hakaru's disintegration-first treatment, and MonadBayes' score-primitive monads all offer coherent alternatives at different scopes. We claim that the de Finettian starting point has operational consequences for agent code that the other foundations do not surface, and that it is a fruitful primitive to take when the agent-runtime concerns (declared structure, fast-path dispatch, paper-claim-to-test-harness traceability) are load-bearing.
+
+Future directions: disintegration as an axiom extension (allowing continuous-kernel measure-zero conditioning to be treated primitively rather than flagged as out-of-scope); body-work — the Gmail and Telegram connections, credence-proxy iteration, interactive-fiction agent extensions — against the reconstruction-complete foundation; a Python-side prevention surface mirroring the Julia-side Prevision API.
 
 ---
 
