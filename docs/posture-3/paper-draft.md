@@ -1,6 +1,6 @@
 # A de Finettian foundation for Bayesian agent architectures
 
-**Status:** draft complete across §1–§5. Reference implementation pinned at `<MOVE-8-SHA>` on master (Posture 3 Move 8 merge). Passes the paper-completion audit: every section is prose-complete; §2 worked examples carry pre/post code snippets; §3 comparisons follow proportional-length shape (Staton and MonadBayes 2–3 paragraphs, Jacobs and Hakaru one each); references are alphabetised and arXiv identifiers verified.
+**Status:** draft complete across §1–§5. Reference implementation pinned at `6ebec0767ab6231afdfc6367bbffe5856762c9a9` on master (Posture 3 Move 8 merge). Passes the paper-completion audit: every section is prose-complete; §2 worked examples carry pre/post code snippets; §3 comparisons follow proportional-length shape (Staton and MonadBayes 2–3 paragraphs, Jacobs and Hakaru one each); references are alphabetised and arXiv identifiers verified.
 
 **Target venue:** AISTATS 2027 or NeurIPS workshop 2026 fast-track. Submission expected ~October 2026.
 
@@ -307,9 +307,9 @@ The MonadBayes framework is complementary to ours: where MonadBayes targets firs
 
 ## 4. Implementation
 
-The reference implementation is [Credence](https://github.com/gfrmin/credence) — a Bayesian decision-making DSL embedded in Julia, with applications spanning LLM/search routing (the production credence-proxy gateway), interactive fiction agents, RSS preference learning, email triage, and a POMDP agent package (MCTS rollouts over factored belief models). The Posture 3 reconstruction landed on the `de-finetti/migration` branch as eight implementation moves, each landing as a design-doc-then-code PR pair. The reconstruction-complete state is pinned at commit `<MOVE-8-SHA>`; that commit merges `de-finetti/p3-move-8` to master and the reconstruction's axiom-layer work ends there.
+The reference implementation is [Credence](https://github.com/gfrmin/credence) — a Bayesian decision-making DSL embedded in Julia, with applications spanning LLM/search routing (the production credence-proxy gateway), interactive fiction agents, RSS preference learning, email triage, and a POMDP agent package (MCTS rollouts over factored belief models). The Posture 3 reconstruction landed on the `de-finetti/migration` branch as eight implementation moves, each landing as a design-doc-then-code PR pair. The reconstruction-complete state is pinned at commit `6ebec0767ab6231afdfc6367bbffe5856762c9a9`; that commit merges `de-finetti/p3-move-8` to master and the reconstruction's axiom-layer work ends there.
 
-**Branch and commit.** All claims in this paper are validated at `<MOVE-8-SHA>`. A reader reproducing the paper's operational examples checks out that commit and runs the test suite below. Subsequent development (body-work: Gmail connection, Telegram connection, credence-proxy iteration) lands on new branches against the reconstruction-complete state; pinning the Move-8-merge SHA makes the paper-to-artifact relationship tight (rather than forcing the reader to disentangle reconstruction-relevant test signal from body-work orthogonal failure modes).
+**Branch and commit.** All claims in this paper are validated at `6ebec0767ab6231afdfc6367bbffe5856762c9a9`. A reader reproducing the paper's operational examples checks out that commit and runs the test suite below. Subsequent development (body-work: Gmail connection, Telegram connection, credence-proxy iteration) lands on new branches against the reconstruction-complete state; pinning the Move-8-merge SHA makes the paper-to-artifact relationship tight (rather than forcing the reader to disentangle reconstruction-relevant test signal from body-work orthogonal failure modes).
 
 **Test suite.** The reconstruction's test discipline runs three strata:
 
@@ -325,7 +325,7 @@ At the reconstruction-complete state, 13 Julia test files pass, the POMDP-agent 
 
 **uv workspace.** The Python side is a uv workspace with four packages at `apps/python/` (credence_bindings, credence_agents, credence_router, bayesian_if). The production credence-proxy gateway lives in `apps/python/credence_router/` and ships as a Docker image published by CI; the reconstruction preserves the Python surface unchanged (Python-side prevision idioms are a follow-up branch noted in the master plan's out-of-scope section).
 
-**Reproducibility.** The test suite is deterministic under the canonical seeds encoded in each test file (`Random.seed!(42)` throughout). A reader cloning the repository, checking out `<MOVE-8-SHA>`, and running `julia test/test_prevision_particle.jl` observes the specific sample sequence captured in `test/fixtures/particle_canonical_v1.jls` — the fixture is the pre-refactor sample sequence from a specific pre-Move-6 commit, pinned against `==` throughout the Move 6 refactor to catch any seed-consumption-order regression. We have not encountered this capture-before-refactor discipline in the PPL-refactor literature; it may have precedent we are unaware of.
+**Reproducibility.** The test suite is deterministic under the canonical seeds encoded in each test file (`Random.seed!(42)` throughout). A reader cloning the repository, checking out `6ebec0767ab6231afdfc6367bbffe5856762c9a9`, and running `julia test/test_prevision_particle.jl` observes the specific sample sequence captured in `test/fixtures/particle_canonical_v1.jls` — the fixture is the pre-refactor sample sequence from a specific pre-Move-6 commit, pinned against `==` throughout the Move 6 refactor to catch any seed-consumption-order regression. We have not encountered this capture-before-refactor discipline in the PPL-refactor literature; it may have precedent we are unaware of.
 
 ---
 
