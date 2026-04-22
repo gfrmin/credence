@@ -594,8 +594,14 @@ adds the import in `ontology.jl` (`import ..Previsions: expect`) so the
 existing 16 dispatch methods attach to this declaration.
 
 Subsequent moves (3-6) add new Prevision subtypes with their own `expect`
-methods; Move 7 inverts the derivation (`expect(p, f)` becomes the
-primitive, `condition(p, k, obs)` derived via `Indicator(ObservationEvent(k, obs))`).
+methods; Move 7 elevates `condition` to the Prevision level as a peer
+primary primitive alongside the parametric `condition(p, k::Kernel, obs)`
+form. See `docs/posture-3/move-7-design.md` §5.1 for the Option B
+commitment: both forms are peer primaries at the Prevision level;
+event-form and parametric-form are equivalent on deterministic events
+(Di Lavore–Román–Sobociński "Partial Markov Categories", Proposition
+4.9, arXiv:2502.03477); continuous-kernel general equivalence requires
+disintegration (out of scope per master plan).
 """
 function expect end
 

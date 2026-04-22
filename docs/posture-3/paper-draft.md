@@ -79,23 +79,22 @@ Bayesian update is, in the de Finettian view, *conditional prevision* — a prim
 
 $$p(f \mid e) \;=\; \frac{p(f \cdot \mathbf{1}_e)}{p(\mathbf{1}_e)}, \quad \text{when } p(\mathbf{1}_e) > 0.$$
 
-This is the form `condition` takes in the reconstruction:
+The reconstruction implements this with two peer primary forms of `condition` at the Prevision level:
 
 ```
-condition(p::Prevision, e::Event) → Prevision
+condition(p::Prevision, e::Event) → Prevision       # event-form primary
+condition(p::Prevision, k::Kernel, obs) → Prevision # parametric-form primary
 ```
 
-The conditioning object is an event. The result is a new prevision, the *conditional prevision* given that event. This is the de Finettian primitive: $P(\cdot \mid \cdot)$ is defined directly, not derived from an unconditional measure via a ratio of integrals.
+The conditioning object is either an event (a declared structural predicate over the hypothesis space) or a kernel–observation pair. Both forms are primitive at the Prevision level; neither derives from the other. The reconstruction's Move 7 explicitly considered whether parametric-form could be derived from event-form via an `ObservationEvent(k, obs)` construction — unifying both paths under a single event-primary primitive — and rejected the reduction on two grounds.
 
-Parametric Bayesian update — the form most familiar to PPL practitioners, in which we condition on the observation that a kernel emitted a value — is one *derived instance* of conditional prevision. Given a prior prevision $p$ and a kernel $k$ emitting observations from each $h$, conditioning on the observation $o$ is equivalent to conditioning on the event "this kernel emitted this observation":
+First, the Event hierarchy's members (`TagSet`, `FeatureEquals`, `FeatureInterval`, `Conjunction`, `Disjunction`, `Complement`) are *structural predicates over a space*: each declares a subset of the hypothesis space, and `p(\mathbf{1}_e)` is well-defined as an expectation against that indicator. An `ObservationEvent(k, obs)` would carry a kernel and an observation value — a likelihood-structured object, categorically different from a subset-of-space predicate. Forcing it into the Event hierarchy strains the declared-structure discipline.
 
-$$\mathrm{condition}(p, k, o) \;=\; \mathrm{condition}(p, \mathrm{ObservationEvent}(k, o)).$$
+Second, and load-bearing: for continuous observation spaces with stochastic kernels — the common case for real-valued likelihoods — the event $\{k \text{ emits exactly } o\}$ has Lebesgue measure zero. Event-conditioning requires $p(\mathbf{1}_e) > 0$ to be well-defined; continuous observations violate this. Reducing parametric-form to event-form in that regime requires **disintegration**, which gives a coherent conditional prevision even when the conditioning event has zero mass. Disintegration is out of scope for this reconstruction (Narayanan and Shan 2020 survey the implementation approaches; its integration into the axiom layer is a separate axiom extension). Claiming parametric-form derives from event-form absent disintegration ships sugar over a mathematically undefined reduction.
 
-Whether `ObservationEvent` belongs in the `Event` hierarchy is a real design question — the structural events (TagSet, FeatureEquals, FeatureInterval) are predicates over a space, while `ObservationEvent` is a likelihood-structured witness — and the design doc for the reconstruction's Move 7 takes a position on it explicitly rather than asserting derivation by fiat.
+The peer-primary framing is the honest alternative. The two forms are **provably equivalent on deterministic events** (Di Lavore, Román, Sobociński 2025, Proposition 4.9: Pearl's and Jeffrey's updates coincide for deterministic observations); in that regime the parametric-form $\mathrm{condition}(p, k, o)$ can be computed by constructing the indicator kernel of $\{k \text{ emits } o\}$ and conditioning on it via the event-form. The reconstruction's code path exploits this equivalence for deterministic cases (Posture 2's `indicator_kernel(e)` expansion); continuous cases go through the parametric-form primary directly, consulting the conjugate registry (§2.1) for closed-form updates or the particle method (§2.2) for non-conjugate fallbacks.
 
-The implementation retains both forms. `condition(p, e::Event)` is the primitive; `condition(p, k, o)` is the derived form, equivalent under coherence to the primitive applied to the appropriate observation event. The conjugate registry (§2.1) sits *inside* the conditional-prevision evaluation path: when $p$ and the implied likelihood structure form a registered conjugate pair, the registry returns the closed-form posterior; otherwise the path falls through to the particle method (§2.2). Both are evaluation strategies for the same axiom-constrained operation, not alternative axioms.
-
-What this buys: conditioning on measure-zero events (the case where the Kolmogorov ratio is undefined) acquires a clean failure semantics — the implementation raises a structured error pointing at the disintegration extension (Narayanan and Shan 2020), which is the principled treatment for that case, rather than silently returning NaN. Disintegration is not in scope for this reconstruction, but the error path makes the boundary explicit.
+What this framing buys: conditioning on measure-zero events acquires clean failure semantics — the event-form primary raises a structured error pointing at the disintegration extension, rather than silently returning NaN or masking the boundary. The parametric-form handles continuous-observation conditioning where it is mathematically well-defined. Full unification under one primitive awaits the disintegration extension.
 
 ---
 
@@ -237,6 +236,7 @@ The de Finettian foundation gives Bayesian agent architectures a coherence-justi
 - Cox, R. T. (1946). Probability, frequency, and reasonable expectation. *American Journal of Physics* 14(1).
 - de Finetti, B. (1937). La prévision: ses lois logiques, ses sources subjectives. *Annales de l'Institut Henri Poincaré* 7.
 - de Finetti, B. (1974). *Theory of Probability* (2 vols). Wiley.
+- Di Lavore, E., Román, M. and Sobociński, P. (2025). Partial Markov categories. *arXiv preprint* arXiv:2502.03477.
 - Fritz, T. (2020). A synthetic approach to Markov kernels, conditional independence and theorems on sufficient statistics. *Advances in Mathematics* 370.
 - Hadfield-Menell, D., Russell, S., Abbeel, P. and Dragan, A. (2016). Cooperative inverse reinforcement learning. *NeurIPS*.
 - Hadfield-Menell, D., Dragan, A., Abbeel, P. and Russell, S. (2017). The off-switch game. *IJCAI*.
