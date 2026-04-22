@@ -278,6 +278,25 @@ class SkinClient:
             "observation": observation,
         })
 
+    def condition_on_event(self, state_id: str, event: dict) -> dict:
+        """Event-form Bayesian inversion (Move 7).
+
+        Delegates to the Prevision-level `condition(p, e::Event)` primary
+        form. Event dict shape matches build_event in server.jl:
+          {"type": "tag_set", "tags": [1, 3], "space": ...}
+          {"type": "feature_equals", "feature": "x", "value": ...}
+          {"type": "feature_interval", "feature": "x", "lo": 0.0, "hi": 0.5}
+          {"type": "conjunction", "left": ..., "right": ...}
+          {"type": "disjunction", "left": ..., "right": ...}
+          {"type": "complement", "inner": ...}
+
+        Updates state in place. Returns {"state_id": <id>}.
+        """
+        return self._call("condition_on_event", {
+            "state_id": state_id,
+            "event": event,
+        })
+
     def weights(self, state_id: str) -> list[float]:
         """Normalized probability weights."""
         result = self._call("weights", {"state_id": state_id})

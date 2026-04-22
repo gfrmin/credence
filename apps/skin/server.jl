@@ -14,6 +14,7 @@ representation — only the ID.
 push!(LOAD_PATH, joinpath(@__DIR__, "..", "..", "src"))
 using Credence
 using Credence: expect, condition, push_measure, draw, density
+using Credence: Event, TagSet, FeatureEquals, FeatureInterval, Conjunction, Disjunction, Complement
 using Credence: _dispatch_path
 using Credence: weights, mean, variance, prune, truncate, logsumexp
 using Credence: CategoricalMeasure, BetaMeasure, TaggedBetaMeasure
@@ -496,6 +497,8 @@ function handle_request(method::String, params, id)
         handle_restore_state(params)
     elseif method == "condition"
         handle_condition(params)
+    elseif method == "condition_on_event"
+        handle_condition_on_event(params)
     elseif method == "weights"
         handle_weights(params)
     elseif method == "mean"
@@ -706,6 +709,56 @@ function handle_dispatch_path(params)
     kernel = build_kernel(params["kernel"])
     path = _dispatch_path(state.prevision, kernel)
     Dict("path" => string(path))
+end
+
+# Move 7 Phase 5: event-spec builder for condition_on_event RPC.
+# Mirrors build_kernel's dispatch-on-type shape. Posture 2's Event
+# hierarchy is Boolean-composable; this builder handles the structural
+# types + binary compositions.
+function build_event(spec)
+    t = spec["type"]
+    if t == "tag_set"
+        tags = Set{Int}(Int(x) for x in spec["tags"])
+        # TagSet requires a Space; the skin's conventional space for
+        # tagged mixtures is Interval(0,1). Callers may specify
+        # "space" explicitly if a different Space is needed.
+        space = haskey(spec, "space") ? build_space(spec["space"]) : Interval(0.0, 1.0)
+        TagSet(space, tags)
+    elseif t == "feature_equals"
+        space = haskey(spec, "space") ? build_space(spec["space"]) : Interval(0.0, 1.0)
+        FeatureEquals(space, Symbol(spec["feature"]), spec["value"])
+    elseif t == "feature_interval"
+        space = haskey(spec, "space") ? build_space(spec["space"]) : Interval(0.0, 1.0)
+        FeatureInterval(space, Symbol(spec["feature"]),
+                        Float64(spec["lo"]), Float64(spec["hi"]))
+    elseif t == "conjunction"
+        Conjunction(build_event(spec["left"]), build_event(spec["right"]))
+    elseif t == "disjunction"
+        Disjunction(build_event(spec["left"]), build_event(spec["right"]))
+    elseif t == "complement"
+        Complement(build_event(spec["inner"]))
+    else
+        error("unknown event type: $t")
+    end
+end
+
+function handle_condition_on_event(params)
+    id = string(params["state_id"])
+    state = get_state(id)
+    event = try
+        build_event(params["event"])
+    catch e
+        _wrap_dsl("build_event failed")(e)
+    end
+
+    new_state = try
+        condition(state, event)
+    catch e
+        _wrap_inf("condition_on_event failed")(e)
+    end
+    STATE_REGISTRY[id] = new_state
+
+    Dict{String, Any}("state_id" => id)
 end
 
 function handle_condition(params)
