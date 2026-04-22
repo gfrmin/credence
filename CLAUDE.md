@@ -57,23 +57,32 @@ modify beliefs, the implementation can disagree with itself
 level. A4 is the invariant that prevents the theorems from
 being violated in code.
 
-## The frozen layer: three types
+## The frozen layer: four types
 
-The DSL has exactly three kinds of object. These are the
-ontology of Bayesian decision theory. They do not change.
+The DSL has exactly four kinds of object. These are the
+ontology of Bayesian decision theory under the de Finettian
+framing Posture 3 landed. They do not change.
 
-    Space   — a set of possibilities
-    Measure — a probability distribution over a space
-    Kernel  — a conditional distribution between two spaces
+    Space      — a set of possibilities
+    Prevision  — a coherent linear functional on a declared test
+                 function space (de Finetti 1974; Whittle 1992)
+    Event      — a structural predicate over a Space
+    Kernel     — a conditional distribution between two spaces
+
+Measure is a declared view over Prevision, not a frozen primitive
+(Move 3 wrapped Measures around Previsions; Move 7 made the view
+relationship constitutional). The Measure surface is preserved for
+consumer-facing API; internally, Prevision is the object beliefs
+are coherent linear functionals on.
 
 Everything else — every operation, every combinator, every
-named concept — is a function over these three types.
+named concept — is a function over these four types.
 
-What is frozen: the three types and their semantics. What
+What is frozen: the four types and their semantics. What
 is NOT frozen: the constructor roster below. Named
-distributions and space types may be added (and are),
-provided the added item respects the semantics of its type.
-The lists below are current vocabulary, not a closed set.
+distributions, space types, and Event subtypes may be added
+(and are), provided the added item respects the semantics of
+its type. The lists below are current vocabulary, not a closed set.
 
 ### Space constructors
 
@@ -159,7 +168,8 @@ Tests, examples, documentation, host drivers.
 
 ## What Claude Code may NOT change
 
-The three types: Space, Measure, Kernel.
+The four frozen types: Space, Prevision, Event, Kernel. Measure as a
+declared view over Prevision is preserved but not itself frozen.
 
 The axiom constraints: condition must be Bayesian inversion,
 expect must be integration, no other function may modify
@@ -187,7 +197,7 @@ What applications do instead: **declare** data (Spaces, Measures, Kernels, Funct
 
 Direct consequences of Invariant 1:
 
-- *No second learning mechanism.* Only `condition` changes beliefs. Forget, decay, exploration bonuses, ad-hoc reweighting violate the topological face even if written inside `src/`. If the world changes, encode drift-rate in the hypothesis space so `condition` can learn it.
+- *No second learning mechanism.* Only `condition` changes beliefs. Forget, decay, exploration bonuses, ad-hoc reweighting violate the topological face even if written inside `src/`. If the world changes, encode drift-rate in the hypothesis space so `condition` can learn it. Under Move 7's event-primary elevation, `condition` has two primary forms at the Prevision level — event-form (`condition(p, e::Event)`) and parametric-form (`condition(p, k::Kernel, obs)`) — as peer primitives; neither derives from the other. They are provably equivalent on deterministic events (Di Lavore–Román–Sobociński "Partial Markov Categories", Proposition 4.9, arXiv:2502.03477). Full reduction via disintegration is out of scope per the Posture 3 master plan.
 - *No second decision mechanism.* Only EU-maximisation selects actions. Epsilon-greedy, UCB, Thompson sampling are not forbidden as *concepts* — they may emerge as EU-optimal strategies when computational cost enters the utility function — but they cannot be hard-coded as mechanisms outside EU-max.
 - *No random mutation in place of subprogram extraction.* Changes to the hypothesis space are weight-changes in disguise and must derive from `src/`-computed posterior analysis. `propose_nonterminal` requires a `SubprogramFrequencyTable`, only constructable by `analyse_posterior_subtrees`; the type system enforces the dependency.
 - *No host-side reimplementation.* `condition`, `expect`, `optimise`, `value`, `push`, `density` have one implementation each, in the ontology module. Hosts call; hosts do not reimplement.
