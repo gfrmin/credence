@@ -247,7 +247,7 @@ function build_kernel(spec, state_id::Union{String, Nothing}=nothing)
                     correct = recommended == true_label
                     correct_cache[tag] = correct
                     p = mean(m_or_θ.beta)
-                    correct ? log(max(p, 1e-300)) : log(max(1.0 - p, 1e-300))
+                    correct ? log(max(p, 1e-300)) : log(max(1.0 - p, 1e-300))  # credence-lint: allow — precedent:posterior-iteration — inline Bernoulli log-density; tracked in issue #39
                 else
                     obs == 1.0 ? log(max(m_or_θ, 1e-300)) : log(max(1.0 - m_or_θ, 1e-300))
                 end
@@ -1105,10 +1105,10 @@ function handle_eu_interact(params)
         # p(rec is correct) = mean_j, p(rec is wrong) = 1 - mean_j
         for (label, _) in rewards
             p_label = if rec == label
-                w[j] * mean_j
+                w[j] * mean_j  # credence-lint: allow — precedent:posterior-iteration — mixture label prob by hand; tracked in issue #39
             else
                 # If there are only 2 labels, the other gets 1-mean_j
-                w[j] * (1.0 - mean_j) / max(length(rewards) - 1, 1)
+                w[j] * (1.0 - mean_j) / max(length(rewards) - 1, 1)  # credence-lint: allow — precedent:posterior-iteration — mixture label prob by hand; tracked in issue #39
             end
             label_probs[label] = get(label_probs, label, 0.0) + p_label
         end

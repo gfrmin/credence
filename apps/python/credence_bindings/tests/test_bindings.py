@@ -118,7 +118,7 @@ def test_expect_identity():
     s = Space.finite([0.3, 0.7])
     m = Measure.uniform(s)
     result = expect(m, lambda h: float(h))
-    assert abs(result - 0.5) < 1e-10
+    assert abs(result - 0.5) < 1e-10  # credence-lint: allow — precedent:test-oracle — uniform on {0.3, 0.7} mean = 0.5
 
 
 # ── Draw tests ──
