@@ -22,6 +22,7 @@ module Ontology
 # The re-exports below (line continuing `Functional, Identity, ...`) now
 # resolve via alias; `Ontology.Identity === Previsions.Identity` is `true`,
 # so `using .Previsions, .Ontology` in Credence is unambiguous.
+import ..Previsions: Prevision
 import ..Previsions: TestFunction, Identity, Projection, NestedProjection,
                      Tabular, LinearCombination, OpaqueClosure, expect
 import ..Previsions: BetaPrevision, TaggedBetaPrevision, GaussianPrevision, GammaPrevision, CategoricalPrevision, DirichletPrevision, NormalGammaPrevision, ProductPrevision, MixturePrevision
@@ -88,21 +89,57 @@ abstract type Measure end
 # reference_contract (lands with MixtureMeasure).
 
 struct CategoricalMeasure{T} <: Measure
-    prevision::CategoricalPrevision
+    prevision::Prevision    # Move 6 Phase 7: widened from CategoricalPrevision.
+                            # Allows ParticlePrevision / QuadraturePrevision /
+                            # EnumerationPrevision carriers to survive past the
+                            # wrapping step, per move-6-design.md §5.1 Option A
+                            # and §4.5's typed-carrier trace. The shield below
+                            # routes `.logw` and `.space.values` to whichever
+                            # underlying Prevision shape is stored.
     space::Finite{T}
 
     function CategoricalMeasure{T}(space::Finite{T}, logw::Vector{Float64}) where T
         length(space.values) == length(logw) || error("space and weights must match")
         new{T}(CategoricalPrevision(logw), space)
     end
+
+    # Move 6 Phase 7: pass-by-reference constructor for the three fallback
+    # Prevision subtypes. Stores `p` directly — no fresh normalisation, no
+    # defensive copy. Contract test: test_prevision_particle.jl ::
+    # test_*_shared_reference (§5.1 Option A narrowed form: wrapper .logw
+    # === underlying .log_weights; wrapper .space.values === underlying
+    # .samples/.grid/.enumerated). Consumer reads through the shield resolve
+    # to the Prevision's fields; breaking the reference identity silently
+    # corrupts downstream consumer state in the same class as precedent #2.
+    function CategoricalMeasure{T}(space::Finite{T}, p::Prevision) where T
+        new{T}(p, space)
+    end
 end
 
 CategoricalMeasure(s::Finite{T}, logw::Vector{Float64}) where T = CategoricalMeasure{T}(s, logw)
 CategoricalMeasure(s::Finite{T}) where T = CategoricalMeasure{T}(s, fill(0.0, length(s.values)))
+CategoricalMeasure(s::Finite{T}, p::Prevision) where T = CategoricalMeasure{T}(s, p)
 
+# Shared-reference contract — see Move 3 precedent #2 and test
+# test_prevision_particle.jl :: test_*_shared_reference. `.logw` and
+# `.space.values` return the underlying Prevision's fields by reference.
+# Shield entries for each Prevision shape the CategoricalMeasure may wrap:
+#   - CategoricalPrevision: .logw → p.logw (existing, Move 3)
+#   - ParticlePrevision:    .logw → p.log_weights, .space.values === p.samples
+#   - QuadraturePrevision:  .logw → p.log_weights, .space.values === p.grid
+#   - EnumerationPrevision: .logw → p.log_weights, .space.values === p.enumerated
+# Do NOT defensively copy — downstream consumers (skin server push!, paper
+# §2.3 drilldown, Move 7 event-conditioning path) depend on reference identity.
 function Base.getproperty(m::CategoricalMeasure, s::Symbol)
     if s === :logw
-        return getproperty(getfield(m, :prevision), s)
+        p = getfield(m, :prevision)
+        if p isa CategoricalPrevision
+            return p.logw
+        else
+            # ParticlePrevision / QuadraturePrevision / EnumerationPrevision
+            # all store the field under the name `log_weights`.
+            return p.log_weights
+        end
     else
         return getfield(m, s)
     end
@@ -1255,11 +1292,12 @@ function _condition_by_grid(m::BetaMeasure, k::Kernel, observation; n::Int=64)
         !isnan(ll) || error("density returned NaN for hypothesis $i")
         push!(logw, lp + ll)
     end
-    # Move 6 Phase 4: construct QuadraturePrevision first, then wrap in
-    # CategoricalMeasure facade. Double-logsumexp-normalisation is
-    # idempotent at Float64 precision (confirmed by Phase 0 tripwire).
+    # Move 6 Phase 7: construct QuadraturePrevision and wrap by reference.
+    # Same pattern as _condition_particle — the pass-by-reference
+    # CategoricalMeasure constructor keeps the QuadraturePrevision alive
+    # past this call. Shield resolves .logw → qp.log_weights (by ref).
     qp = QuadraturePrevision(grid, logw)
-    CategoricalMeasure(Finite(qp.grid), qp.log_weights)
+    CategoricalMeasure(Finite(qp.grid), qp)
 end
 
 function _condition_by_grid(m::GaussianMeasure, k::Kernel, observation; n::Int=64)
@@ -1274,7 +1312,7 @@ function _condition_by_grid(m::GaussianMeasure, k::Kernel, observation; n::Int=6
         push!(logw, lp + ll)
     end
     qp = QuadraturePrevision(grid, logw)
-    CategoricalMeasure(Finite(qp.grid), qp.log_weights)
+    CategoricalMeasure(Finite(qp.grid), qp)
 end
 
 log_density_at(m::BetaMeasure, x) = (m.alpha - 1) * log(x) + (m.beta - 1) * log(1 - x)
@@ -1452,7 +1490,7 @@ end
 
 function condition(m::ProductMeasure, k::Kernel, obs; kwargs...)
     fs = k.factor_selector
-    fs === nothing && return _condition_product_fallback(m, k, obs; kwargs...)
+    fs === nothing && return _condition_particle(m, k, obs; kwargs...)
 
     d = fs.discrete_index
     cat = m.factors[d]::CategoricalMeasure
@@ -1498,37 +1536,31 @@ end
 
 # ── General importance-sampling fallback: `_condition_particle` ──
 #
-# Move 6 R4 (per move-6-design.md §6 R4): introduces `_condition_particle`
-# as the named particle-fallback function, aligning with the master-plan
-# vocabulary. Prior to Move 6 the same body was duplicated inside two
-# call sites (`_condition_product_fallback` for ProductMeasure, and the
-# unnamed `condition(m::Measure, …; n_particles)` generic). The two
-# delegates below preserve existing dispatch; future Move 6 phases
-# refactor `_condition_particle`'s body to construct a ParticlePrevision
-# before wrapping in CategoricalMeasure.
+# Move 6 R4 (per move-6-design.md §6 R4): `_condition_particle` is the
+# named particle-fallback function aligning with the master-plan
+# vocabulary. Phase 1 introduced it as the canonical name; Phase 7
+# removed the residual `_condition_product_fallback` delegate — the
+# single in-tree caller at `condition(::ProductMeasure, k, obs)`
+# migrated to call this function directly. One name, one canonical path.
 
 function _condition_particle(m::Measure, k::Kernel, obs; n_particles::Int=1000, seed::Int=0)
     samples = [draw(m) for _ in 1:n_particles]
     log_weights = Float64[k.log_density(s, obs) for s in samples]
-    # Move 6 Phase 3: construct ParticlePrevision first, then wrap in
-    # CategoricalMeasure facade. The wrap preserves the Measure-surface
-    # API (consumer code reads .logw, .space.values, weights(), mean()
-    # unchanged). The ParticlePrevision carries the seed for
-    # reproducibility auditing (not used by computation).
+    # Move 6 Phase 7: construct ParticlePrevision and wrap it inside
+    # CategoricalMeasure by reference. The pass-by-reference CategoricalMeasure
+    # constructor (widened `prevision` field + dedicated Prevision ctor) keeps
+    # the ParticlePrevision alive past this call; consumer reads through the
+    # shield resolve to pp.log_weights and pp.samples without copying.
     #
-    # Bit-identity: the facade's log_weights are the same Vector
-    # reference as pp.log_weights (shared-reference contract,
-    # precedent #2). CategoricalMeasure normalises via logsumexp;
-    # ParticlePrevision normalises via logsumexp too — so the Vector
-    # handed to CategoricalMeasure is already normalised. Double
-    # normalisation is idempotent in exact arithmetic, and Phase 0's
-    # canonical-bit-invariance test is the tripwire for any FP drift.
+    # Bit-identity: ParticlePrevision's constructor normalises log_weights via
+    # logsumexp. The resulting Vector is stored by reference; the Finite space
+    # also wraps pp.samples by reference. No double-normalisation — the pre-
+    # Move-6-Phase-7 pattern (which passed pp.log_weights into a fresh
+    # CategoricalPrevision) has been removed. Phase 0's canonical-bit-
+    # invariance test remains the tripwire for any seed-consumption reorder
+    # or arithmetic reassociation.
     pp = ParticlePrevision(samples, log_weights, seed)
-    CategoricalMeasure(Finite(pp.samples), pp.log_weights)
-end
-
-function _condition_product_fallback(m::ProductMeasure, k::Kernel, obs; kwargs...)
-    _condition_particle(m, k, obs; kwargs...)
+    CategoricalMeasure(Finite(pp.samples), pp)
 end
 
 # ── General condition fallback: importance sampling ──

@@ -678,6 +678,60 @@ def test_grid_fallback_roundtrip():
         skin.shutdown()
 
 
+def test_particle_snapshot():
+    """ParticlePrevision survives snapshot+restore across the JSON-RPC boundary.
+
+    Per Move 0 skin audit §Move 6 and Move 6 design doc §5.1 Option A:
+    now that CategoricalMeasure preserves the ParticlePrevision instance
+    by reference (Move 6 Phase 7 widened shield), a snapshot of a
+    particle-path posterior must serialise the ParticlePrevision (not a
+    fresh CategoricalPrevision) and restore it intact.
+
+    This is the load-bearing test of the §5.1 Option A contract at the
+    wire boundary: if snapshot silently defaulted to serialising a
+    CategoricalPrevision shape pre-Phase-7, but now serialises a
+    ParticlePrevision shape post-Phase-7, existing consumers attempting
+    to load old snapshots would fail (or vice versa). This test exercises
+    the post-Phase-7 round-trip; cross-version migration is out of scope
+    for Move 6 but named here so future Moves 7/8 design docs can
+    acknowledge it.
+
+    Assertions kept shape-level (weights-list length, weights-sum-to-1)
+    because the 1000-particle sample sequence in the subprocess is
+    non-deterministic without _set_seed RPC (bit-exact determinism is
+    covered Julia-side by test/test_prevision_particle.jl).
+    """
+    skin = SkinClient()
+    try:
+        skin.initialize()
+        sid = skin.create_state(type="gamma", alpha=2.0, beta=3.0)
+
+        # Force particle-path posterior via a non-registered kernel.
+        skin.condition(sid, kernel={"type": "gaussian_known_var", "variance": 1.0},
+                       observation=2.5)
+        w_before = skin.weights(sid)
+        assert len(w_before) == 1000, f"particle path → 1000 components, got {len(w_before)}"
+        sum_before = sum(w_before)
+        assert abs(sum_before - 1.0) < 1e-10, f"weights must sum to 1, got {sum_before}"
+
+        # Snapshot the particle-path posterior and restore.
+        blob = skin.snapshot_state(sid)
+        sid2 = skin.restore_state(blob)
+
+        w_after = skin.weights(sid2)
+        # Round-trip should preserve exact weights (Julia Serialization is
+        # bit-exact for Float64 Vectors; JSON-RPC base64 is lossless).
+        assert w_after == w_before, \
+            f"particle-path snapshot round-trip drifted: weights not ==; " \
+            f"sums before={sum_before:.12f} after={sum(w_after):.12f}"
+
+        skin.destroy_state(sid)
+        skin.destroy_state(sid2)
+        print(f"PASS: particle-path snapshot round-trip ({len(w_after)} particles, weights bit-exact)")
+    finally:
+        skin.shutdown()
+
+
 def test_unknown_state_id():
     """Operations on a never-registered state_id return StateNotFound (-32000)."""
     skin = SkinClient()
@@ -816,6 +870,8 @@ if __name__ == "__main__":
     test_particle_path_roundtrip()
     print()
     test_grid_fallback_roundtrip()
+    print()
+    test_particle_snapshot()
     print()
     test_unknown_state_id()
     print()
