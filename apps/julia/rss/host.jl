@@ -174,7 +174,7 @@ function build_dismiss_kernel(
                 tag = m_or_θ.tag
                 fires = tag in fires_set
                 p = mean(m_or_θ.beta)
-                fires ? log(max(1.0 - p, 1e-300)) : log(0.5)
+                fires ? log(max(1.0 - p, 1e-300)) : log(0.5)  # credence-lint: allow — precedent:posterior-iteration — inline Bernoulli log-density; tracked in issue #39
             else
                 log(max(1.0 - m_or_θ, 1e-300))
             end
@@ -280,7 +280,7 @@ function rank_articles(
             tbm = comp::TaggedBetaMeasure
             fires = state.compiled_kernels[j].evaluate(features, temporal_state) == :match
             p = mean(tbm.beta)
-            score += w[j] * (fires ? p : 0.5)
+            score += w[j] * (fires ? p : 0.5)  # credence-lint: allow — precedent:posterior-iteration — mixture relevance score by hand; tracked in issue #39
         end
         scores[entry_id] = score
     end

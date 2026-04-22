@@ -89,7 +89,7 @@ function run_bayesian_seed(tools::Vector{SimulatedTool},
             best_idx = argmax(w)
             submitted = Int(answer_measure.space.values[best_idx])
             p_correct = w[best_idx]
-            eu_submit = p_correct * REWARD_CORRECT + (1 - p_correct) * PENALTY_WRONG
+            eu_submit = p_correct * REWARD_CORRECT + (1 - p_correct) * PENALTY_WRONG  # credence-lint: allow — precedent:posterior-iteration — EU of submit by hand from argmax weight; tracked in issue #39
             if eu_submit > 0 || !allow_abstain
                 was_correct = submitted == q.correct_index
                 reward = was_correct ? REWARD_CORRECT : PENALTY_WRONG

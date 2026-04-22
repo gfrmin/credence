@@ -295,7 +295,7 @@ function run_eval(; rng_seed::Int=42, train_frac::Float64=0.7)
         tbm = state.belief.components[i]::TaggedBetaMeasure
         theta = mean(tbm.beta)
         g_id, _ = state.metadata[i]
-        println("  $(rank). w=$(round(w[i]*100, digits=2))% θ=$(round(theta, digits=3)) " *
+        println("  $(rank). w=$(round(w[i]*100, digits=2))% θ=$(round(theta, digits=3)) " *  # credence-lint: allow — precedent:display-arithmetic — percentage formatting for retrospective report
                 "g$(g_id) $(show_expr(p.expr))")
     end
 
@@ -304,7 +304,7 @@ function run_eval(; rng_seed::Int=42, train_frac::Float64=0.7)
     grammar_w = Dict{Int, Float64}()
     grammar_n = Dict{Int, Int}()
     for (i, (g_id, _)) in enumerate(state.metadata)
-        grammar_w[g_id] = get(grammar_w, g_id, 0.0) + w[i]
+        grammar_w[g_id] = get(grammar_w, g_id, 0.0) + w[i]  # credence-lint: allow — precedent:display-arithmetic — aggregating weights for display-only grammar distribution report
         grammar_n[g_id] = get(grammar_n, g_id, 0) + 1
     end
     for g_id in sort(collect(keys(grammar_w)))

@@ -243,7 +243,7 @@ Every precedent carries a stable **slug** — a short identifier used by the lin
 # credence-lint: allow — precedent:<slug> — <one-line reason>
 ```
 
-Both the slug and the reason are mandatory. Unknown slugs and missing reasons fail the lint. Novel cases unblock via a new precedent entry in this document (with its own slug) in the same PR — new escape hatches are constitutional amendments, not inline concessions. `grep -r 'credence-lint:' .` is a usable audit surface.
+Both the slug and the reason are mandatory. The pragma is recognised on the same line as the violation or on the immediately preceding comment-only line — whichever reads better at the call site. Unknown slugs and missing reasons fail the lint. Novel cases unblock via a new precedent entry in this document (with its own slug) in the same PR — new escape hatches are constitutional amendments, not inline concessions. `grep -r 'credence-lint:' .` is a usable audit surface.
 
 ### Grey zones
 
@@ -430,6 +430,13 @@ before pushing DSL-core changes.
 The lint tool lives at `tools/credence-lint/credence_lint.py` and is what
 mechanically enforces the precedent slugs
 (`# credence-lint: allow — precedent:<slug> — <reason>`).
+It runs two passes per file. Pass one is a same-line regex over the DSL
+return-value names. Pass two is taint analysis: Python files via stdlib
+`ast`, Julia files via a stateful line scanner that propagates taint
+through assignments, tuple unpacking, and `for`-loop targets (with `zip`
+positional precision). Both passes share the seed rule (DSL call returns
+are tainted) and stop at opaque function boundaries. `apps/julia/pomdp_agent/`
+is excluded — that package has its own `src/` and its own invariants.
 
 ## Repo conventions for Claude Code sessions
 

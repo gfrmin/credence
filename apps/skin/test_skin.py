@@ -22,7 +22,7 @@ def test_basic_inference():
         # Mean should be 0.5 — Beta(1,1) mean = 1/2 is bit-exact.
         m = skin.mean(sid)
         print(f"Prior mean: {m}")
-        assert m == 0.5, f"Expected 0.5 (exact), got {m}"
+        assert m == 0.5, f"Expected 0.5 (exact), got {m}"  # credence-lint: allow — precedent:test-oracle — Beta(1,1) uniform mean = 0.5 exact
 
         # Condition on observation=1 (success)
         result = skin.condition(sid, kernel={"type": "bernoulli"}, observation=1.0)
@@ -32,20 +32,20 @@ def test_basic_inference():
         # α,β is bit-exact, so == not abs() < tol.
         m = skin.mean(sid)
         print(f"Posterior mean after obs=1: {m}")
-        assert m == 2 / 3, f"Expected 2/3 (exact), got {m}"
+        assert m == 2 / 3, f"Expected 2/3 (exact), got {m}"  # credence-lint: allow — precedent:test-oracle — Beta(2,1) mean = 2/3 exact
 
         # Condition on another observation=1
         skin.condition(sid, kernel={"type": "bernoulli"}, observation=1.0)
         m = skin.mean(sid)
         print(f"Posterior mean after obs=1,1: {m}")
-        assert m == 3 / 4, f"Expected 3/4 (exact), got {m}"
+        assert m == 3 / 4, f"Expected 3/4 (exact), got {m}"  # credence-lint: allow — precedent:test-oracle — Beta(3,1) mean = 3/4 exact
 
         # Condition on observation=0 (failure)
         skin.condition(sid, kernel={"type": "bernoulli"}, observation=0.0)
         m = skin.mean(sid)
         print(f"Posterior mean after obs=1,1,0: {m}")
         # Beta(3,2) → mean = 3/5.
-        assert m == 3 / 5, f"Expected 3/5 (exact), got {m}"
+        assert m == 3 / 5, f"Expected 3/5 (exact), got {m}"  # credence-lint: allow — precedent:test-oracle — Beta(3,2) mean = 3/5 exact
 
         skin.destroy_state(sid)
         print("PASS: basic inference")
@@ -217,20 +217,20 @@ def test_router_roundtrip():
             function={"type": "projection", "index": 0},
         )
         print(f"E[theta_{{{action},2}}] after obs=0.9: {new_theta:.4f}")
-        assert new_theta > 0.5, f"Expected theta mean > 0.5 after obs 0.9, got {new_theta}"
+        assert new_theta > 0.5, f"Expected theta mean > 0.5 after obs 0.9, got {new_theta}"  # credence-lint: allow — precedent:test-oracle — Beta posterior mean shifts above prior 0.5 after positive obs
 
         # Other factors unchanged — Beta(1,1) mean is bit-exact 0.5.
         other_theta = skin.expect(
             skin.factor(skin.factor(state_updated, (action + 1) % n_providers), 0),
             function={"type": "projection", "index": 0},
         )
-        assert other_theta == 0.5, f"Other factor should be unchanged at 0.5 (exact), got {other_theta}"
+        assert other_theta == 0.5, f"Other factor should be unchanged at 0.5 (exact), got {other_theta}"  # credence-lint: allow — precedent:test-oracle — independent factor unchanged at prior mean 0.5 exact
         print("PASS: only the targeted factor was updated")
 
         # Re-decide: EU for the updated provider should have shifted up.
         action3, eu3 = skin.optimise(state_updated, actions_spec, pref)
         # updated EU for `action` = reward * (4*0.2*0.5 + 0.2*new_theta) - costs[action]
-        updated_eu_for_action = reward * (4 * 0.2 * 0.5 + 0.2 * new_theta) - costs[action]
+        updated_eu_for_action = reward * (4 * 0.2 * 0.5 + 0.2 * new_theta) - costs[action]  # credence-lint: allow — precedent:test-oracle — EU expanded by hand from per-factor means
         assert abs(eu3 - max(updated_eu_for_action, *(expected_eu[i] for i in range(n_providers) if i != action))) < 1e-10
         print(f"Re-decide: action={action3}, eu={eu3:.12f} (provider {action} shifted)")
 
@@ -262,7 +262,7 @@ def test_snapshot_restore():
         print(f"Mean before: {m_before}, after restore: {m_after}")
         # Serialisation round-trip of a BetaMeasure must be bit-exact —
         # any drift would mean precision loss in the snapshot encoder.
-        assert m_before == m_after, f"Snapshot round-trip drift: {m_before} vs {m_after}"
+        assert m_before == m_after, f"Snapshot round-trip drift: {m_before} vs {m_after}"  # credence-lint: allow — precedent:test-oracle — snapshot round-trip preserves bit-exact mean
 
         skin.destroy_state(sid)
         skin.destroy_state(sid2)
@@ -295,7 +295,7 @@ def test_mixture_roundtrip():
         w_after = skin.weights(sid2)
         # Weights are normalised via logsumexp — bit-exact round-trip
         # holds when the snapshot encoder doesn't reorder pairwise sums.
-        assert w_before == w_after, f"weights drifted: {w_before} vs {w_after}"
+        assert w_before == w_after, f"weights drifted: {w_before} vs {w_after}"  # credence-lint: allow — precedent:test-oracle — snapshot round-trip preserves bit-exact weights
 
         skin.destroy_state(sid)
         skin.destroy_state(sid2)
@@ -318,13 +318,13 @@ def test_normal_gamma_roundtrip():
             beta=4.0,
         )
         m_before = skin.mean(sid)
-        assert m_before == 1.5, f"NormalGamma mean is μ=1.5, got {m_before}"
+        assert m_before == 1.5, f"NormalGamma mean is μ=1.5, got {m_before}"  # credence-lint: allow — precedent:test-oracle — NormalGamma prior mean = μ = 1.5 exact
 
         data = skin.snapshot_state(sid)
         sid2 = skin.restore_state(data)
 
         m_after = skin.mean(sid2)
-        assert m_before == m_after, f"NormalGamma round-trip drift: {m_before} vs {m_after}"
+        assert m_before == m_after, f"NormalGamma round-trip drift: {m_before} vs {m_after}"  # credence-lint: allow — precedent:test-oracle — NormalGamma round-trip preserves bit-exact mean
 
         skin.destroy_state(sid)
         skin.destroy_state(sid2)
@@ -342,13 +342,13 @@ def test_gamma_roundtrip():
         sid = skin.create_state(type="gamma", alpha=3.0, beta=2.0)
         # Gamma(α, β) mean = α/β = 1.5 — exact.
         m_before = skin.mean(sid)
-        assert m_before == 1.5, f"Gamma(3,2) mean = 3/2, got {m_before}"
+        assert m_before == 1.5, f"Gamma(3,2) mean = 3/2, got {m_before}"  # credence-lint: allow — precedent:test-oracle — Gamma(3,2) mean = 3/2 exact
 
         data = skin.snapshot_state(sid)
         sid2 = skin.restore_state(data)
 
         m_after = skin.mean(sid2)
-        assert m_before == m_after, f"Gamma round-trip drift: {m_before} vs {m_after}"
+        assert m_before == m_after, f"Gamma round-trip drift: {m_before} vs {m_after}"  # credence-lint: allow — precedent:test-oracle — Gamma round-trip preserves bit-exact mean
 
         skin.destroy_state(sid)
         skin.destroy_state(sid2)
@@ -366,13 +366,13 @@ def test_dirichlet_roundtrip():
         sid = skin.create_state(type="dirichlet", alpha=[2.0, 3.0, 5.0])
         w_before = skin.weights(sid)
         # Dirichlet mean = α / sum(α) — exact under integer α.
-        assert w_before == [0.2, 0.3, 0.5], f"expected [0.2, 0.3, 0.5], got {w_before}"
+        assert w_before == [0.2, 0.3, 0.5], f"expected [0.2, 0.3, 0.5], got {w_before}"  # credence-lint: allow — precedent:test-oracle — Dirichlet weights match construction proportions exactly
 
         data = skin.snapshot_state(sid)
         sid2 = skin.restore_state(data)
 
         w_after = skin.weights(sid2)
-        assert w_before == w_after, f"Dirichlet weights drifted: {w_before} vs {w_after}"
+        assert w_before == w_after, f"Dirichlet weights drifted: {w_before} vs {w_after}"  # credence-lint: allow — precedent:test-oracle — Dirichlet round-trip preserves bit-exact weights
 
         skin.destroy_state(sid)
         skin.destroy_state(sid2)
@@ -445,7 +445,7 @@ def test_beta_bernoulli_conjugate():
 
         skin.condition(sid, kernel=kernel, observation=1.0)
         m = skin.mean(sid)
-        assert m == 3 / 6, f"Beta(3,3) mean = 3/6 (exact), got {m}"
+        assert m == 3 / 6, f"Beta(3,3) mean = 3/6 (exact), got {m}"  # credence-lint: allow — precedent:test-oracle — Beta(3,3) mean = 3/6 = 0.5 exact
 
         skin.destroy_state(sid)
         print("PASS: beta-bernoulli conjugate (dispatch-path pinned, α+1 exact)")
@@ -460,7 +460,7 @@ def test_flat_likelihood_no_op():
         skin.initialize()
         sid = skin.create_state(type="beta", alpha=4.0, beta=7.0)
         m_before = skin.mean(sid)
-        assert m_before == 4.0 / 11.0, f"Beta(4,7) mean = 4/11, got {m_before}"
+        assert m_before == 4.0 / 11.0, f"Beta(4,7) mean = 4/11, got {m_before}"  # credence-lint: allow — precedent:test-oracle — Beta(4,7) mean = 4/11 exact
 
         kernel = {"type": "flat"}
         path = skin._dispatch_path(sid, kernel)
@@ -469,7 +469,7 @@ def test_flat_likelihood_no_op():
         # Flat is obs-agnostic; any obs leaves α, β untouched.
         skin.condition(sid, kernel=kernel, observation=1.0)
         m_after = skin.mean(sid)
-        assert m_after == m_before, f"Flat no-op drifted: {m_before} → {m_after}"
+        assert m_after == m_before, f"Flat no-op drifted: {m_before} → {m_after}"  # credence-lint: allow — precedent:test-oracle — Flat-likelihood condition is no-op
 
         skin.destroy_state(sid)
         print("PASS: flat likelihood no-op (dispatch-path pinned, prior preserved)")
@@ -497,7 +497,7 @@ def test_gaussian_normal_conjugate():
 
         skin.condition(sid, kernel=kernel, observation=2.0)
         m = skin.mean(sid)
-        assert m == 1.0, f"Gaussian posterior μ = (τ_prior·0 + τ_obs·2)/2 = 1.0 exact, got {m}"
+        assert m == 1.0, f"Gaussian posterior μ = (τ_prior·0 + τ_obs·2)/2 = 1.0 exact, got {m}"  # credence-lint: allow — precedent:test-oracle — Gaussian posterior μ = 1.0 exact for unit precisions and obs=2
 
         skin.destroy_state(sid)
         print("PASS: gaussian-normal conjugate (dispatch-path pinned, μ_post exact)")
@@ -512,7 +512,7 @@ def test_dirichlet_categorical_conjugate():
         skin.initialize()
         sid = skin.create_state(type="dirichlet", alpha=[2.0, 3.0, 5.0])
         w_before = skin.weights(sid)
-        assert w_before == [0.2, 0.3, 0.5], f"expected [0.2, 0.3, 0.5], got {w_before}"
+        assert w_before == [0.2, 0.3, 0.5], f"expected [0.2, 0.3, 0.5], got {w_before}"  # credence-lint: allow — precedent:test-oracle — Dirichlet weights match construction proportions exactly
 
         # Observe category index 1 (label 1.0). Posterior α = [2, 4, 5].
         kernel = {"type": "categorical", "categories": [0.0, 1.0, 2.0]}
@@ -523,7 +523,7 @@ def test_dirichlet_categorical_conjugate():
         w_after = skin.weights(sid)
         # α/sum(α) = [2, 4, 5]/11
         expected = [2.0 / 11.0, 4.0 / 11.0, 5.0 / 11.0]
-        assert w_after == expected, f"Dirichlet α increment drifted: {expected} vs {w_after}"
+        assert w_after == expected, f"Dirichlet α increment drifted: {expected} vs {w_after}"  # credence-lint: allow — precedent:test-oracle — Dirichlet posterior α increments expected counts exactly
 
         skin.destroy_state(sid)
         print("PASS: dirichlet-categorical conjugate (dispatch-path pinned, α[1]+=1 exact)")
@@ -543,7 +543,7 @@ def test_normal_gamma_conjugate():
         skin.initialize()
         sid = skin.create_state(type="normal_gamma", kappa=1.0, mu=0.0, alpha=2.0, beta=2.0)
         m_before = skin.mean(sid)
-        assert m_before == 0.0, f"NormalGamma mean = μ = 0.0, got {m_before}"
+        assert m_before == 0.0, f"NormalGamma mean = μ = 0.0, got {m_before}"  # credence-lint: allow — precedent:test-oracle — NormalGamma prior mean = μ = 0.0 exact
 
         kernel = {"type": "normal_gamma"}
         path = skin._dispatch_path(sid, kernel)
@@ -552,7 +552,7 @@ def test_normal_gamma_conjugate():
         skin.condition(sid, kernel=kernel, observation=2.0)
         m_after = skin.mean(sid)
         # Posterior mean is μ_n = 1.0 exact.
-        assert m_after == 1.0, f"NormalGamma posterior μ_n = 1.0 exact, got {m_after}"
+        assert m_after == 1.0, f"NormalGamma posterior μ_n = 1.0 exact, got {m_after}"  # credence-lint: allow — precedent:test-oracle — NormalGamma posterior μ_n = 1.0 exact for unit precisions
 
         skin.destroy_state(sid)
         print("PASS: normal-gamma conjugate (dispatch-path pinned, μ_n exact)")
@@ -571,7 +571,7 @@ def test_gamma_exponential_conjugate():
         skin.initialize()
         sid = skin.create_state(type="gamma", alpha=2.0, beta=3.0)
         m_before = skin.mean(sid)
-        assert m_before == 2.0 / 3.0, f"Gamma(2,3) mean = 2/3, got {m_before}"
+        assert m_before == 2.0 / 3.0, f"Gamma(2,3) mean = 2/3, got {m_before}"  # credence-lint: allow — precedent:test-oracle — Gamma(2,3) mean = 2/3 exact
 
         kernel = {"type": "exponential"}
         path = skin._dispatch_path(sid, kernel)
@@ -580,7 +580,7 @@ def test_gamma_exponential_conjugate():
         skin.condition(sid, kernel=kernel, observation=4.0)
         m_after = skin.mean(sid)
         # Gamma(3, 7) mean = 3/7 exact.
-        assert m_after == 3.0 / 7.0, f"Gamma posterior mean = 3/7 exact, got {m_after}"
+        assert m_after == 3.0 / 7.0, f"Gamma posterior mean = 3/7 exact, got {m_after}"  # credence-lint: allow — precedent:test-oracle — Gamma(α+1,β+x) mean = 3/7 exact
 
         skin.destroy_state(sid)
         print("PASS: gamma-exponential conjugate (dispatch-path pinned, net-new fast-path)")
@@ -610,7 +610,7 @@ def test_particle_path_roundtrip():
         skin.initialize()
         sid = skin.create_state(type="gamma", alpha=2.0, beta=3.0)
         mean_before = skin.mean(sid)
-        assert mean_before == 2.0 / 3.0, f"Gamma(2,3) prior mean = 2/3, got {mean_before}"
+        assert mean_before == 2.0 / 3.0, f"Gamma(2,3) prior mean = 2/3, got {mean_before}"  # credence-lint: allow — precedent:test-oracle — Gamma(2,3) prior mean = 2/3 exact
 
         # Gaussian-style kernel on GammaMeasure falls through to _condition_particle
         # — GammaPrevision + PushOnly has no registered pair.
@@ -626,7 +626,7 @@ def test_particle_path_roundtrip():
         w = skin.weights(sid)
         assert isinstance(w, list), f"weights must be list, got {type(w)}"
         assert len(w) == 1000, f"particle path defaults to n_particles=1000, got {len(w)}"
-        weights_sum = sum(w)
+        weights_sum = sum(w)  # credence-lint: allow — precedent:test-oracle — Bernoulli mixture marginal weights sum to 1
         assert abs(weights_sum - 1.0) < 1e-10, f"weights must sum to 1, got {weights_sum}"
         assert all(wi >= 0.0 for wi in w), "all weights must be non-negative"
 
@@ -655,7 +655,7 @@ def test_grid_fallback_roundtrip():
         skin.initialize()
         sid = skin.create_state(type="beta", alpha=2.0, beta=3.0)
         mean_before = skin.mean(sid)
-        assert mean_before == 2.0 / 5.0, f"Beta(2,3) prior mean = 2/5, got {mean_before}"
+        assert mean_before == 2.0 / 5.0, f"Beta(2,3) prior mean = 2/5, got {mean_before}"  # credence-lint: allow — precedent:test-oracle — Beta(2,3) prior mean = 2/5 exact
 
         # gaussian_known_var on BetaMeasure: Euclidean source/target doesn't
         # match Beta's Interval, so no conjugate pair fires; falls through to
@@ -668,7 +668,7 @@ def test_grid_fallback_roundtrip():
         w = skin.weights(sid)
         assert isinstance(w, list), f"weights must be list, got {type(w)}"
         assert len(w) == 64, f"grid quadrature defaults to n=64, got {len(w)}"
-        weights_sum = sum(w)
+        weights_sum = sum(w)  # credence-lint: allow — precedent:test-oracle — Bernoulli mixture marginal weights sum to 1
         assert abs(weights_sum - 1.0) < 1e-10, f"weights must sum to 1, got {weights_sum}"
         assert all(wi >= 0.0 for wi in w), "all weights must be non-negative"
 
@@ -711,7 +711,7 @@ def test_particle_snapshot():
                        observation=2.5)
         w_before = skin.weights(sid)
         assert len(w_before) == 1000, f"particle path → 1000 components, got {len(w_before)}"
-        sum_before = sum(w_before)
+        sum_before = sum(w_before)  # credence-lint: allow — precedent:test-oracle — no-op condition preserves weight sum
         assert abs(sum_before - 1.0) < 1e-10, f"weights must sum to 1, got {sum_before}"
 
         # Snapshot the particle-path posterior and restore.
@@ -721,9 +721,9 @@ def test_particle_snapshot():
         w_after = skin.weights(sid2)
         # Round-trip should preserve exact weights (Julia Serialization is
         # bit-exact for Float64 Vectors; JSON-RPC base64 is lossless).
-        assert w_after == w_before, \
+        assert w_after == w_before, \  # credence-lint: allow — precedent:test-oracle — no-op condition preserves bit-exact weights
             f"particle-path snapshot round-trip drifted: weights not ==; " \
-            f"sums before={sum_before:.12f} after={sum(w_after):.12f}"
+            f"sums before={sum_before:.12f} after={sum(w_after):.12f}"  # credence-lint: allow — precedent:test-oracle — diagnostic message reports sum on no-op
 
         skin.destroy_state(sid)
         skin.destroy_state(sid2)
@@ -770,10 +770,10 @@ def test_condition_on_event():
         assert len(w_after) == 4, f"component count must be preserved, got {len(w_after)}"
         # Firing components (tags 1, 3) share the posterior mass equally;
         # non-firing (tags 2, 4) go to zero.
-        assert abs(w_after[0] - 0.5) < 1e-12, f"tag 1 → 0.5 expected, got {w_after[0]}"
-        assert w_after[1] == 0.0, f"tag 2 → 0.0 expected, got {w_after[1]}"
-        assert abs(w_after[2] - 0.5) < 1e-12, f"tag 3 → 0.5 expected, got {w_after[2]}"
-        assert w_after[3] == 0.0, f"tag 4 → 0.0 expected, got {w_after[3]}"
+        assert abs(w_after[0] - 0.5) < 1e-12, f"tag 1 → 0.5 expected, got {w_after[0]}"  # credence-lint: allow — precedent:test-oracle — tag 1 conditional mass = 0.5 exact
+        assert w_after[1] == 0.0, f"tag 2 → 0.0 expected, got {w_after[1]}"  # credence-lint: allow — precedent:test-oracle — tag 2 (excluded) conditional mass = 0.0 exact
+        assert abs(w_after[2] - 0.5) < 1e-12, f"tag 3 → 0.5 expected, got {w_after[2]}"  # credence-lint: allow — precedent:test-oracle — tag 3 conditional mass = 0.5 exact
+        assert w_after[3] == 0.0, f"tag 4 → 0.0 expected, got {w_after[3]}"  # credence-lint: allow — precedent:test-oracle — tag 4 (excluded) conditional mass = 0.0 exact
 
         skin.destroy_state(sid)
         print("PASS: condition_on_event (TagSet event → non-firing components zeroed)")
@@ -835,7 +835,7 @@ def test_event_kernel_equivalence():
         skin.condition_on_event(sid_kernel, event={"type": "tag_set", "tags": [1, 3]})
         w_kernel = skin.weights(sid_kernel)
 
-        assert w_event == w_kernel, \
+        assert w_event == w_kernel, \  # credence-lint: allow — precedent:test-oracle — event-form and parametric-form condition agree exactly (DLRS Prop. 4.9)
             f"event-form results diverged across identical states:\n" \
             f"  A: {w_event}\n  B: {w_kernel}"
 
@@ -928,8 +928,8 @@ def test_replace_factor_identity_pin():
         m0_orig = skin.mean(skin.factor(orig_id, 0))
         m2_orig = skin.mean(skin.factor(orig_id, 2))
         # Sanity: these are α/(α+β) exactly.
-        assert m0_orig == 2.0 / 5.0, f"m0_orig bit-exact check: {m0_orig}"
-        assert m2_orig == 1.0 / 6.0, f"m2_orig bit-exact check: {m2_orig}"
+        assert m0_orig == 2.0 / 5.0, f"m0_orig bit-exact check: {m0_orig}"  # credence-lint: allow — precedent:test-oracle — factor 0 prior mean = 2/5 exact
+        assert m2_orig == 1.0 / 6.0, f"m2_orig bit-exact check: {m2_orig}"  # credence-lint: allow — precedent:test-oracle — factor 2 prior mean = 1/6 exact
 
         # Replace factor 1 with a fresh Beta(7,2).
         new_f1 = skin.create_state(type="beta", alpha=7.0, beta=2.0)
@@ -938,12 +938,12 @@ def test_replace_factor_identity_pin():
         # Means of factors 0 and 2 in the new state must match orig exactly.
         m0_new = skin.mean(skin.factor(new_id, 0))
         m2_new = skin.mean(skin.factor(new_id, 2))
-        assert m0_new == m0_orig, f"factor 0 drifted: {m0_orig} → {m0_new}"
-        assert m2_new == m2_orig, f"factor 2 drifted: {m2_orig} → {m2_new}"
+        assert m0_new == m0_orig, f"factor 0 drifted: {m0_orig} → {m0_new}"  # credence-lint: allow — precedent:test-oracle — non-replaced factor preserved bit-exact
+        assert m2_new == m2_orig, f"factor 2 drifted: {m2_orig} → {m2_new}"  # credence-lint: allow — precedent:test-oracle — non-replaced factor preserved bit-exact
 
         # Factor 1 reflects the replacement.
         m1_new = skin.mean(skin.factor(new_id, 1))
-        assert m1_new == 7.0 / 9.0, f"factor 1 replacement: expected 7/9, got {m1_new}"
+        assert m1_new == 7.0 / 9.0, f"factor 1 replacement: expected 7/9, got {m1_new}"  # credence-lint: allow — precedent:test-oracle — replaced factor inherits new measure exactly
 
         print("PASS: replace_factor preserves sibling factors bit-exactly")
     finally:

@@ -5,8 +5,12 @@ regression suite. Each subdirectory is named for a precedent slug from
 `CLAUDE.md`. Files within are classified by filename:
 
 - `good_*.{py,jl}` — clean code. Lint must report zero violations.
-- `bad_*.{py,jl}` — expected violation. Lint must flag at least one line
-  with a diagnostic that references the appropriate precedent slug.
+- `bad_*.{py,jl}` — expected pass-one violation. Lint's grep-based pass
+  must flag at least one line with a diagnostic that references the
+  appropriate precedent slug.
+- `bad2_*.{py,jl}` — expected pass-two violation. The grep-based pass
+  is allowed to miss; the AST-based pass (Python) or the stateful
+  scanner (Julia) must flag.
 
 Every file carries a `# Role:` header so the lint can determine which
 sub-layer rule applies. Any brain/skin/body role yields the same rule
