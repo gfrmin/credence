@@ -33,6 +33,7 @@ export Identity, Projection, NestedProjection, Tabular, LinearCombination, Opaqu
 export BetaPrevision, TaggedBetaPrevision, GaussianPrevision, GammaPrevision, CategoricalPrevision, DirichletPrevision, NormalGammaPrevision, ProductPrevision, MixturePrevision
 export ExchangeablePrevision, decompose
 export ParticlePrevision, QuadraturePrevision, EnumerationPrevision
+export ConditionalPrevision
 export ConjugatePrevision, maybe_conjugate, update, _dispatch_path
 # At Move 2, `Ontology`'s `Functional` hierarchy is aliased onto these
 # types (`const Functional = TestFunction` plus `import ..Previsions:
@@ -512,6 +513,56 @@ struct EnumerationPrevision <: Prevision
         new(enumerated, log_weights .- log_total)
     end
 end
+
+"""
+    ConditionalPrevision(base::Prevision, event_predicate, mass::Float64) <: Prevision
+
+Move 7: lazy wrapper representing `base | event` under de Finetti / Whittle's
+conditional-prevision semantics. Used as the §5.3 Option B fallback when no
+closed-form event-restriction exists at the concrete (Prevision, Event)
+pair.
+
+Fields:
+  - `base::Prevision` — the prior, unconditioned.
+  - `event_predicate::Function` — closure `s -> Bool` capturing the event's
+    semantics. Stored as a predicate rather than an `Event` so prevision.jl
+    avoids circular dependency with ontology.jl's Event hierarchy.
+  - `mass::Float64` — cached `p(1_e) = expect(base, Indicator(e))`. Positive
+    by construction; the constructing `condition(p, e::Event)` method guards
+    against measure-zero events.
+
+Evaluation: `expect(cp, f) = expect(base, f · 1_e) / mass`. The product
+`f · 1_e` is evaluated via opaque closure.
+
+Type-stability caveat (move-7-design.md §5.3): `condition(p::Prevision,
+e::Event)` returns either a specialised closed-form Prevision (MixturePrevision
+restricted to firing tags, etc.) or a `ConditionalPrevision` wrapper. Callers
+requiring a specific concrete subtype must dispatch accordingly; generic-
+Prevision callers via `expect` are uniform across both return shapes.
+"""
+struct ConditionalPrevision <: Prevision
+    base::Prevision
+    event_predicate::Function
+    mass::Float64
+
+    function ConditionalPrevision(base::Prevision, event_predicate::Function, mass::Float64)
+        mass > 0 || error("ConditionalPrevision requires positive event mass; got $mass")
+        new(base, event_predicate, mass)
+    end
+end
+
+"""
+    condition(p::Prevision, e) → Prevision
+
+Event-form conditional prevision. Methods attach in `ontology.jl` where the
+`Event` hierarchy is in scope. Move 7 §5.1 committed to Option B: this
+Prevision-level form and the parametric `condition(p, k::Kernel, obs)` form
+are peer primary primitives; neither derives from the other.
+
+Closed-form specialisations exist for common pairs (e.g. `(MixturePrevision,
+TagSet)`); the generic case returns a `ConditionalPrevision` lazy wrapper.
+"""
+function condition end
 
 # ── apply — abstract evaluator ────────────────────────────────────────────
 

@@ -28,6 +28,8 @@ import ..Previsions: TestFunction, Identity, Projection, NestedProjection,
 import ..Previsions: BetaPrevision, TaggedBetaPrevision, GaussianPrevision, GammaPrevision, CategoricalPrevision, DirichletPrevision, NormalGammaPrevision, ProductPrevision, MixturePrevision
 import ..Previsions: ExchangeablePrevision, decompose
 import ..Previsions: ParticlePrevision, QuadraturePrevision, EnumerationPrevision
+import ..Previsions: ConditionalPrevision
+import ..Previsions: condition
 import ..Previsions: ConjugatePrevision, maybe_conjugate, update, _dispatch_path
 
 export Space, Finite, Interval, ProductSpace, Simplex, Euclidean, PositiveReals, support
@@ -1581,6 +1583,47 @@ end
 # rather than a kernel-observation pair.
 function condition(m::Measure, e::Event)
     condition(m, indicator_kernel(e), true)
+end
+
+# ── Move 7 Phase 1: Prevision-level condition(p, e::Event) ────────────────
+#
+# Elevates event-form conditioning to Prevision-level dispatch per §5.1
+# Option B: parametric form and event form are peer primary primitives.
+# Specialisations for common (Prevision, Event) pairs return closed-form
+# restricted previsions eagerly; the generic fallback routes through
+# indicator_kernel via a wrapping Measure that the Measure-level facade
+# (Phase 2) supplies.
+#
+# Phase 1 ships one closed-form specialisation: MixturePrevision + TagSet.
+# This covers the Posture 2 gate-7 test case and the most common
+# consumer-facing event-conditioning shape. Other (Prevision, Event)
+# pairs land in subsequent phases or as follow-up work.
+
+"""
+    condition(p::MixturePrevision, e::TagSet) → MixturePrevision
+
+Closed-form event-restriction: retain components whose tag is in `e.fires`,
+re-normalise log-weights. Type-preserving per §5.3 Option A eager-restriction.
+Zero-mass guard raises per Posture 2 gate-3 invariant.
+
+Components must be `TaggedBetaMeasure` — mixture components without a `tag`
+field cannot be restricted by a TagSet event, and return a loud error
+naming the concrete component type for diagnosis.
+"""
+function condition(p::MixturePrevision, e::TagSet)
+    mask = Vector{Bool}(undef, length(p.components))
+    for (i, comp) in enumerate(p.components)
+        if comp isa TaggedBetaMeasure
+            mask[i] = comp.tag in e.tags
+        else
+            error("condition(::MixturePrevision, ::TagSet): expected TaggedBetaMeasure components; got $(typeof(comp)) at index $i")
+        end
+    end
+
+    any(mask) ||
+        error("condition(::MixturePrevision, ::TagSet): zero-mass event — no component's tag is in tags=$(collect(e.tags))")
+
+    MixturePrevision(p.components[mask], p.log_weights[mask])
 end
 
 # ================================================================
