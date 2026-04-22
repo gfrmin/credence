@@ -1,6 +1,6 @@
 # A de Finettian foundation for Bayesian agent architectures
 
-**Status:** draft. Foundations sections (§1.1–§1.6) drafted in prose; operational consequences (§2), comparison (§3), implementation (§4), and conclusion (§5) appear as structured placeholders that name the specific claims each section will defend. Each subsequent move PR (Moves 1–8 of the Posture 3 reconstruction) updates this draft with whatever the move now justifies. Move 8's completion gate is "every section has prose, even rough."
+**Status:** draft complete across §1–§5. Reference implementation pinned at `<MOVE-8-SHA>` on master (Posture 3 Move 8 merge). Passes the paper-completion audit: every section is prose-complete; §2 worked examples carry pre/post code snippets; §3 comparisons follow proportional-length shape (Staton and MonadBayes 2–3 paragraphs, Jacobs and Hakaru one each); references are alphabetised and arXiv identifiers verified.
 
 **Target venue:** AISTATS 2027 or NeurIPS workshop 2026 fast-track. Submission expected ~October 2026.
 
