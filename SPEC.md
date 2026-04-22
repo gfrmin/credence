@@ -8,6 +8,8 @@
 
 The architecture rests on five axioms — the true bottom of the system, from which everything else is derived or learned. Each is grounded in a foundational result establishing its necessity.
 
+> **Restructure note (2026-04-22).** §1.0 was updated in Move 7 to reflect the Posture 3 peer-primary framing for `condition`; §1.1–§1.6 below retain their pre-Posture-3 operational shape. The subsections are either orthogonal to the prevision-primacy claim (§1.2 optimise, §1.3 complexity prior, §1.4 alignment, §1.6 admissibility) or compatible at their level of abstraction (§1.5 expect as integration is a σ-continuous realisation of the general prevision operator). §1.1 Bayes' rule notes the event-form sibling where relevant. A fuller §1.1–§1.6 restructure — matching the master plan's proposed §1.1 Coherence / §1.2 Prevision / §1.3 Conditional prevision / §1.4 Exchangeability / §1.5 Complexity prior / §1.6 Alignment shape — is scoped to Move 8.
+
 ### 1.0 Foundations: coherence, not measure
 
 Credence's axiomatic layer is justified by *coherence*, not by measure theory. The primary warrant for Bayesian updating is de Finetti's theorem (the Dutch-book argument, sharpened by Lewis 1999 for sequential coherence): an agent whose credences cannot be exploited by a well-informed book-maker must update by conditioning. Regazzini's finitely-additive extension (1985) shows this does not require σ-additivity — the coherence conditions are strictly finite. Kolmogorov's measure-theoretic foundations remain *useful* as a model for continuous-space machinery (Radon–Nikodym densities, disintegration, etc.) but they are not the reason the update rule is the update rule.
@@ -33,7 +35,7 @@ $$b_{t+1}(\theta) \propto P(o_t \mid \theta, a_t) \cdot b_t(\theta)$$
 
 This is the unique update rule satisfying diachronic coherence (Lewis 1999 — no sequence of bets can extract guaranteed money from an agent that updates this way). Amarante (2022) proved a stronger result: Bayes' rule is the unique rule for which updating and computing the predictive commute. Any other update rule either loses information or introduces inconsistency.
 
-The DSL primitive `condition(belief, kernel, observation)` implements this. The kernel encodes P(o | θ, a) — the observation model.
+The DSL primitive `condition(belief, kernel, observation)` implements this parametric form. The kernel encodes P(o | θ, a) — the observation model. Per §1.0 and Move 7, the parametric-form and event-form (`condition(belief, event)`) are peer primary primitives at the Prevision level; this subsection's `b_{t+1}(\theta) \propto P(o_t \mid \theta, a_t) \cdot b_t(\theta)` formula describes the parametric-form explicitly.
 
 ### 1.2 Expected utility maximisation (`optimise`)
 
