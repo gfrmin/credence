@@ -1582,7 +1582,36 @@ end
 # natural idiom for new code whose conditioning object is an event
 # rather than a kernel-observation pair.
 function condition(m::Measure, e::Event)
+    # Generic fallback (Posture 2 form). Specialised Measure+Event pairs
+    # that have a Prevision-level closed-form (added in Move 7 Phase 2)
+    # dispatch on their specific types; this generic method handles the
+    # remaining cases via indicator_kernel expansion.
     condition(m, indicator_kernel(e), true)
+end
+
+# ── Move 7 Phase 2: Measure-level facade delegates to Prevision-level ────
+#
+# For (Measure, Event) pairs whose underlying (Prevision, Event) has a
+# closed-form specialisation, the Measure-level method delegates to the
+# Prevision primary and wraps the result back in the Measure type. This
+# inverts the Posture 2 direction of delegation (Measure → Prevision)
+# while preserving the Posture 2 behaviour bit-for-bit for the common
+# cases.
+#
+# Julia's multiple dispatch handles the fallback automatically: pairs
+# without a Prevision closed-form hit the generic condition(m::Measure,
+# e::Event) above, which keeps the indicator_kernel expansion.
+
+"""
+    condition(m::MixtureMeasure, e::TagSet) → MixtureMeasure
+
+Delegates to the Prevision-level `condition(p::MixturePrevision, e::TagSet)`
+closed-form (Move 7 Phase 1), then wraps the restricted `MixturePrevision`
+in a `MixtureMeasure` with the original space. Type-preserving per §5.3.
+"""
+function condition(m::MixtureMeasure, e::TagSet)
+    new_p = condition(m.prevision, e)
+    MixtureMeasure(m.space, new_p.components, new_p.log_weights)
 end
 
 # ── Move 7 Phase 1: Prevision-level condition(p, e::Event) ────────────────
@@ -1602,28 +1631,37 @@ end
 """
     condition(p::MixturePrevision, e::TagSet) → MixturePrevision
 
-Closed-form event-restriction: retain components whose tag is in `e.fires`,
-re-normalise log-weights. Type-preserving per §5.3 Option A eager-restriction.
-Zero-mass guard raises per Posture 2 gate-3 invariant.
+Closed-form event-restriction: preserve all components, set log-weight to
+`-Inf` for non-firing components (tag not in `e.tags`), re-normalise through
+the `MixturePrevision` constructor. Type-preserving per §5.3 Option B.
+
+The components-preserved shape matches Posture 2's indicator-kernel
+expansion: `condition(m, indicator_kernel(e), true)` assigns `pred_ll =
+-Inf` to non-firing components, which the `MixturePrevision` constructor's
+logsumexp normalisation then drives to zero weight. Test assertions that
+depend on component-count invariance (test_events.jl TEST 7) rely on this
+shape — dropping non-firing components would change the representation
+even though the posterior distribution is equivalent.
 
 Components must be `TaggedBetaMeasure` — mixture components without a `tag`
 field cannot be restricted by a TagSet event, and return a loud error
-naming the concrete component type for diagnosis.
+naming the concrete component type for diagnosis. Zero-mass guard raises
+via `MixturePrevision` constructor when all components are non-firing.
 """
 function condition(p::MixturePrevision, e::TagSet)
-    mask = Vector{Bool}(undef, length(p.components))
+    new_lws = copy(p.log_weights)
     for (i, comp) in enumerate(p.components)
         if comp isa TaggedBetaMeasure
-            mask[i] = comp.tag in e.tags
+            if !(comp.tag in e.tags)
+                new_lws[i] = -Inf
+            end
         else
             error("condition(::MixturePrevision, ::TagSet): expected TaggedBetaMeasure components; got $(typeof(comp)) at index $i")
         end
     end
 
-    any(mask) ||
-        error("condition(::MixturePrevision, ::TagSet): zero-mass event — no component's tag is in tags=$(collect(e.tags))")
-
-    MixturePrevision(p.components[mask], p.log_weights[mask])
+    # MixturePrevision constructor raises on all-(-Inf) (zero-mass guard).
+    MixturePrevision(p.components, new_lws)
 end
 
 # ================================================================
