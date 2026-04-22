@@ -30,7 +30,14 @@ function default_env()
         # Their BEHAVIOUR is frozen (Bayesian inversion, integration,
         # composition, density). Their presence in the env is how the
         # DSL accesses them — not via special forms.
-        :condition => condition,
+        :condition    => condition,
+        Symbol("condition-on") => condition,   # Move 7 §2: event-form alias.
+                                                # `(condition-on m e)` dispatches
+                                                # to condition(m, e::Event); same
+                                                # Julia generic, different DSL name
+                                                # for consumers whose conditioning
+                                                # object is an event rather than
+                                                # a kernel-observation pair.
         :expect    => expect,
         :push      => push_measure,
         :density   => density,
