@@ -4,6 +4,15 @@
 Bundles the MixtureMeasure belief with its parallel arrays (metadata,
 compiled_kernels, all_programs). sync_prune!/sync_truncate! keep them
 in lock-step and reindex TaggedBetaMeasure tags.
+
+Under Posture 3's Measure-as-view framing (Move 3 wrapping; Move 7
+constitutional), the `belief::MixtureMeasure` field is the consumer-
+facing surface; internally the Measure wraps a MixturePrevision
+(see `src/prevision.jl`). The getproperty shield forwards
+`.components` and `.log_weights` to the underlying prevision by
+reference, preserving the shared-reference contract that
+`sync_prune!` and `sync_truncate!` depend on when mutating the
+belief in place.
 """
 
 using .Ontology
