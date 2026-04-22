@@ -146,10 +146,12 @@ Their interfaces are negotiable and will evolve.
 
     optimise   = argmax over actions of expect(measure, pref)
     value      = max over actions of expect(measure, pref)
+    eu         = expect(measure, pref(·, action))                    — EU of one action
     predictive = expect(measure, density(kernel, ·, obs))
     voi        = expect over obs of [value after condition] - value before
-    model      = packaging of measure + kernel (convenience)
-    problem    = packaging of model + actions + preference (convenience)
+    net-voi    = voi minus the cost of observing
+    model      = packaging of measure + kernel (convenience; Julia struct)
+    problem    = packaging of model + actions + preference (convenience; Julia struct)
 
 ## What Claude Code may change
 
@@ -352,13 +354,19 @@ Programs whose predicates don't fire return `log(0.5)`, not `0.0`. A non-firing 
 ## Development commands
 
 Run tests:
-    julia test/test_core.jl             # Core DSL tests
-    julia test/test_flat_mixture.jl     # Flat mixture tests
-    julia test/test_host.jl             # Host helper tests
-    julia test/test_program_space.jl    # Program-space tests (grammars, enumeration, perturbation)
-    julia test/test_grid_world.jl       # Grid-world domain tests
-    julia test/test_email_agent.jl      # Email agent domain tests
-    julia test/test_rss.jl              # RSS domain tests
+    julia test/test_core.jl                 # Core DSL tests
+    julia test/test_flat_mixture.jl         # Flat mixture tests
+    julia test/test_host.jl                 # Host helper tests
+    julia test/test_program_space.jl        # Program-space tests (grammars, enumeration, perturbation)
+    julia test/test_grid_world.jl           # Grid-world domain tests
+    julia test/test_email_agent.jl          # Email agent domain tests
+    julia test/test_rss.jl                  # RSS domain tests
+    julia test/test_events.jl               # Event hierarchy + indicator_kernel
+    julia test/test_persistence.jl          # Serialisation fixtures
+    julia test/test_prevision_unit.jl       # Prevision primitive unit tests
+    julia test/test_prevision_conjugate.jl  # Conjugate dispatch via maybe_conjugate
+    julia test/test_prevision_mixture.jl    # MixturePrevision routing
+    julia test/test_prevision_particle.jl   # Particle/grid backends
 
 Run POMDP agent tests:
     cd apps/julia/pomdp_agent && julia --project=. -e 'using Pkg; Pkg.test()'
@@ -406,10 +414,22 @@ credence-proxy (production gateway):
     PYTHON_JULIACALL_HANDLE_SIGNALS=yes credence-router serve
     docker build -t credence-proxy .                # same image CI publishes
 
-CI: `.github/workflows/publish-image.yml` runs core Julia tests,
-`uv sync --extra server --extra search --no-dev`, then
-`credence_router` + `credence_agents` pytest (excluding test_live.py),
-and publishes the Docker image.
+CI: `.github/workflows/publish-image.yml` has three jobs.
+**unit-tests** instantiates the Credence Julia project (`Pkg.instantiate` +
+`Pkg.precompile` — no `julia test/…` invocation), runs
+`uv sync --extra server --extra search --no-dev`, runs the credence-lint
+corpus self-test and `check apps/` pass, then runs `credence_router` +
+`credence_agents` pytest (excluding test_live.py).
+**smoke-build** builds the amd64 image and curls `/ready` against a
+running container before anything ships.
+**publish** (master + version-tag pushes only) builds multi-arch and
+pushes to GHCR.
+**Julia tests are NOT gated by CI** — run the `test/*.jl` files locally
+before pushing DSL-core changes.
+
+The lint tool lives at `tools/credence-lint/credence_lint.py` and is what
+mechanically enforces the precedent slugs
+(`# credence-lint: allow — precedent:<slug> — <reason>`).
 
 ## Repo conventions for Claude Code sessions
 
@@ -450,13 +470,17 @@ Inline `# credence-lint: allow — precedent:<slug> — <reason>` pragmas sancti
     src/                          Tier 1: DSL core
       Credence.jl                 Module entry point
       parse.jl                    S-expression parser
-      ontology.jl                 Three types + axiom-constrained functions
+      ontology.jl                 Space / Measure / Event / Kernel types +
+                                  axiom-constrained functions (condition, expect, push, density)
+      prevision.jl                Prevision primitive + TestFunction hierarchy
+                                  (de Finettian; dispatch target of Move 4–7 routing)
       eval.jl                     Evaluator / compiler (DSL → Julia calls)
-      stdlib.bdsl                 Standard library (optimise, value, voi, etc.)
+      stdlib.bdsl                 Standard library (optimise, value, eu, voi, net-voi, etc.)
       persistence.jl              Save/load agent state across sessions
       host_helpers.jl             Host-level reliability/coverage helpers
-      program_space/              Program-space extensions (grouped for cohesion)
-        ProgramSpace.jl           Module entry point
+      program_space/              Program-space extensions (grouped for cohesion;
+                                  loaded directly from Credence.jl — no separate
+                                  module entry point)
         types.jl                  AST types, Grammar, Program, CompiledKernel
         enumeration.jl            Bottom-up enumeration, complexity scoring
         compilation.jl            AST → closure compilation
@@ -468,14 +492,23 @@ Inline `# credence-lint: allow — precedent:<slug> — <reason>` pragmas sancti
       grid_agent.bdsl             Grid agent DSL
       router.bdsl                 Bayesian LLM/search routing (drives credence-proxy)
       host_credence_agent.jl      Julia host driver for credence agent
+      openclaw/                   OpenClaw evaluation integration (docker-compose)
     test/
-      test_core.jl                Core DSL tests (42 tests)
+      test_core.jl                Core DSL tests
       test_flat_mixture.jl        Flat mixture conditioning tests
       test_host.jl                Host helper tests
       test_program_space.jl       Program-space tests (enumeration, compilation, perturbation)
       test_grid_world.jl          Grid-world tests (full agent, regime change, meta-learning)
       test_email_agent.jl         Email agent domain tests
       test_rss.jl                 RSS domain tests
+      test_events.jl              Event hierarchy + indicator_kernel equivalence
+      test_persistence.jl         Serialisation + schema-version fixtures
+      test_prevision_unit.jl      Prevision primitive unit tests
+      test_prevision_conjugate.jl Conjugate dispatch (maybe_conjugate registry)
+      test_prevision_mixture.jl   MixturePrevision routing
+      test_prevision_particle.jl  Particle / grid backends
+      fixtures/                   Commit-pinned reference fixtures (see README.md
+                                  for SHA provenance protocol)
     apps/                         Everything built on top of the DSL — three sub-layers:
       julia/                      Brain-side applications (in-process DSL callers)
         DOMAIN_INTERFACE.md       Contract for apps/julia domains
@@ -498,12 +531,20 @@ Inline `# credence-lint: allow — precedent:<slug> — <reason>` pragmas sancti
         bayesian_if/              Interactive fiction agent
     docs/                         Additional documentation
       rss-preference-learning.md  RSS preference learning design
-    papers/                       Publication (credence.tex)
+      posture-3/                  De-Finettian migration: master-plan.md,
+                                  DESIGN-DOC-TEMPLATE.md, move-0…move-8 design docs,
+                                  paper-draft.md
+    papers/                       Publication drafts (paper1–4/, ablation/, drift/,
+                                  stationary/) + PAPERS-STRATEGY.md + RESULTS.md
+    tools/                        Repo-internal tooling
+      credence-lint/              Precedent-slug lint (enforces Invariants 1 & 2;
+                                  corpus self-test + `check apps/` pass in CI)
     data/                         Eval output artefacts (gitignored)
     Dockerfile                    credence-proxy container (published by CI)
-    SPEC.md                       Authoritative three-tier architecture spec
+    docker-compose.yml            Local credence-proxy stack
+    SPEC.md                       Authoritative architecture spec
     pyproject.toml                uv workspace root (4 members under apps/python/)
-    .github/workflows/            CI: publish-image.yml (tests + Docker publish)
+    .github/workflows/            CI: publish-image.yml (unit-tests + smoke-build + publish)
 
 DSL source files use the `.bdsl` extension.
 
@@ -535,36 +576,38 @@ Two-tier architecture. See SPEC.md for details.
     credence_bindings, credence_agents, credence_router (credence-proxy gateway),
     bayesian_if. The body talks to the skin, never to Measures directly.
 
-    ┌─────────────────────────────┐
-    │  Three types                │  FROZEN
-    │  Space, Measure, Kernel     │  (Grammar = a discrete Space constructor)
-    ├─────────────────────────────┤
-    │  Axiom-constrained fns      │  Behaviour frozen,
-    │  condition, expect, push    │  interface negotiable
-    ├─────────────────────────────┤
-    │  Standard library           │  MUTABLE
-    │  optimise, value, voi,      │  (perturb_grammar and agent-state
-    │  model, problem,            │   live here too — peers of voi, not
-    │  perturb_grammar,           │   a layer above it)
-    │  agent-state                │
-    ├─────────────────────────────┤
-    │  Julia execution layer      │  MUTABLE
-    │  Conjugate, quadrature,     │  (enumeration + compilation live
-    │  particle, heuristic,       │   here alongside conjugate dispatch)
-    │  enumeration, compilation   │
-    ├─────────────────────────────┤
-    │  Applications (apps/)       │  MUTABLE
-    │  brain-side  apps/julia/    │  (in-process DSL callers)
-    │  skin        apps/skin/     │  (JSON-RPC translation)
-    │  body        apps/python/   │  (user-facing surfaces)
-    └─────────────────────────────┘
+    ┌──────────────────────────────────┐
+    │  Four types                      │  FROZEN
+    │  Space, Prevision, Event, Kernel │  (Grammar = a discrete Space
+    │                                  │   constructor; Measure = view
+    │                                  │   over Prevision)
+    ├──────────────────────────────────┤
+    │  Axiom-constrained fns           │  Behaviour frozen,
+    │  condition, expect, push         │  interface negotiable
+    ├──────────────────────────────────┤
+    │  Standard library                │  MUTABLE
+    │  optimise, value, voi,           │  (perturb_grammar and agent-state
+    │  model, problem,                 │   live here too — peers of voi, not
+    │  perturb_grammar,                │   a layer above it)
+    │  agent-state                     │
+    ├──────────────────────────────────┤
+    │  Julia execution layer           │  MUTABLE
+    │  Conjugate, quadrature,          │  (enumeration + compilation live
+    │  particle, heuristic,            │   here alongside conjugate dispatch)
+    │  enumeration, compilation        │
+    ├──────────────────────────────────┤
+    │  Applications (apps/)            │  MUTABLE
+    │  brain-side  apps/julia/         │  (in-process DSL callers)
+    │  skin        apps/skin/          │  (JSON-RPC translation)
+    │  body        apps/python/        │  (user-facing surfaces)
+    └──────────────────────────────────┘
 
     Host (Julia): provides observations, executes actions,
     drives loops, manages persistent state. The DSL is pure.
 
 ## Authoritative spec
 
-credence-spec.md (in repo root)
+SPEC.md (in repo root)
 
 ## On metareasoning
 
@@ -604,4 +647,4 @@ are always bugs. The distinction is consent, not capability.
 
 ## One-line summary
 
-Three types, axiom-constrained functions, everything else is stdlib.
+Four types, axiom-constrained functions, everything else is stdlib.
