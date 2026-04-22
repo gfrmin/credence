@@ -337,10 +337,10 @@ Future directions: disintegration as an axiom extension (allowing continuous-ker
 
 ---
 
-## References (partial — to be completed in Move 8)
+## References
 
-- Aldous, D. (1985). Exchangeability and related topics. *École d'Été de Probabilités de Saint-Flour XIII*, Lecture Notes in Mathematics 1117. Springer.
 - Abdellaoui, M. and Wakker, P. P. (2020). Savage for dummies and experts. *Journal of Economic Theory* 186.
+- Aldous, D. (1985). Exchangeability and related topics. *École d'Été de Probabilités de Saint-Flour XIII*, Lecture Notes in Mathematics 1117. Springer.
 - Collazo, R. A., Görgen, C. and Smith, J. Q. (2018). *Chain Event Graphs.* Chapman & Hall/CRC.
 - Cox, R. T. (1946). Probability, frequency, and reasonable expectation. *American Journal of Physics* 14(1).
 - de Finetti, B. (1937). La prévision: ses lois logiques, ses sources subjectives. *Annales de l'Institut Henri Poincaré* 7.
@@ -349,8 +349,8 @@ Future directions: disintegration as an axiom extension (allowing continuous-ker
 - Fritz, T. (2020). A synthetic approach to Markov kernels, conditional independence and theorems on sufficient statistics. *Advances in Mathematics* 370.
 - Hadfield-Menell, D., Russell, S., Abbeel, P. and Dragan, A. (2016). Cooperative inverse reinforcement learning. *NeurIPS*.
 - Hadfield-Menell, D., Dragan, A., Abbeel, P. and Russell, S. (2017). The off-switch game. *IJCAI*.
-- Hewitt, E. and Savage, L. J. (1955). Symmetric measures on Cartesian products. *Trans. AMS* 80.
 - Heunen, C., Kammar, O., Staton, S. and Yang, H. (2017). A convenient category for higher-order probability theory. *LICS*.
+- Hewitt, E. and Savage, L. J. (1955). Symmetric measures on Cartesian products. *Trans. AMS* 80.
 - Hutter, M. (2005). *Universal Artificial Intelligence.* Springer.
 - Jacobs, B. (2015). New directions in categorical logic, for classical, probabilistic and quantum logic. *Logical Methods in Computer Science* 11(3).
 - Jacobs, B., Kissinger, A. and Zanasi, F. (2019). Causal inference by string diagram surgery. *FoSSaCS*.
