@@ -156,11 +156,9 @@ Technical case against elevation:
 - Adding to the frozen layer raises the bar for future extensions. If `Event`'s hierarchy needs to be extended (new predicate types; observation-witness types under a future disintegration framework), the extension is constitutional rather than stdlib.
 - `Measure` remaining "frozen" despite being a view is also defensible: consumer code treats Measure as primary; demoting to "view" in CLAUDE.md might produce confusion for readers coming from Kolmogorov-framed material.
 
-**Recommendation: elevate.** Two technical reasons:
+**Recommendation: elevate.** One technical reason, load-bearing:
 
-1. **Dispatch surface alignment.** A function whose primary dispatch is on a type should have that type in the frozen layer. Post-Move-7, `condition(p::Prevision, e::Event)` is a primary axiom-constrained form; `Event` dispatch is constitutional. Keeping `Event` stdlib while making it constitutional by usage is a framing-to-semantics mismatch.
-
-2. **Posture 3's reconstruction completes at Move 7.** The paper's §1 claims conditional prevision as primitive; §1.2 names `Prevision` as operator-valued; §1.3 requires `Event` as the conditioning object. CLAUDE.md's frozen layer should reflect the paper's claim — the frozen layer IS the repo's version of the paper's §1. Post-Move-7, the paper is the citable artifact; CLAUDE.md is the in-repo equivalent. Alignment is structural, not cosmetic.
+1. **Dispatch surface alignment.** A function whose primary dispatch is on a type should have that type in the frozen layer. Post-Move-7, `condition(p::Prevision, e::Event)` is a primary axiom-constrained form; `Event` dispatch is constitutional by usage. Keeping `Event` stdlib while making it constitutional by dispatch is a framing-to-semantics mismatch — the frozen layer defines what axiom-constrained functions dispatch on, and Event now qualifies.
 
 **Invitation to argue.** If a reviewer thinks `Event` should stay stdlib, the case would be that Event's hierarchy is narrow enough that constitutional protection over-specifies — `TagSet`, `FeatureEquals`, `FeatureInterval`, `Conjunction`, `Disjunction`, `Complement` are not "all possible events an agent might condition on," they're the six Posture 2 shipped. Future events (e.g. `WithinEpsilon(feature, value, ε)`) should be stdlib extensions. That argument is about extensibility, not about Event's current structural role. Respond by affirming that constitutional elevation is about the dispatch surface of the frozen functions, not about exhaustive enumeration of Event's subtypes — subtypes extend naturally under the constitutional frame.
 
@@ -180,21 +178,32 @@ Two technical reasons:
 
 2. **Lazy wrapper preserves generality for non-closed-form cases.** Continuous-space events (e.g. `FeatureInterval` on a continuous feature) don't always admit a closed-form restriction; lazy wrapping defers the computation to `expect` calls where the integrand determines the quadrature strategy.
 
-**Invitation to argue.** Option A (always lazy) is the simplest implementation — one code path — but sacrifices the type-preserving property for closed-form cases. Option C (always eager) would require implementing event-restriction for every Prevision subtype; lands more code for uncertain benefit. Commit B; the split is along a natural structural line (closed-form restriction ↔ eager return; non-closed-form ↔ lazy wrapper).
+**Type-stability trade-off named explicitly.** Option B trades consumer-side type-stability for type-preservation in closed-form cases. `condition(p::Prevision, e::Event)` returns `Prevision` but the concrete subtype varies by `(typeof(p), typeof(e))` — a `MixturePrevision` conditioned on `TagSet` returns `MixturePrevision`; the same prior conditioned on a continuous `FeatureInterval` returns `ConditionalPrevision`. Callers requiring a specific concrete subtype (e.g. `.components` access on `MixturePrevision`, or the isa-drilldown pattern from Move 6 §5.3) must dispatch accordingly; generic-Prevision callers using `expect` are unaffected because `expect` is uniform across subtypes. The trade is acceptable because most consumers already dispatch on the concrete type, but it is a real discipline cost — not hidden, not free.
+
+**Invitation to argue.** Option A (always lazy) is the simplest implementation — one code path, uniform return type — but sacrifices the type-preserving property for closed-form cases. If downstream consumer surveys in Moves 7/8 reveal that the isa-drilldown pattern is rarely exercised in practice, the type-stability argument for Option A strengthens. Option C (always eager) would require implementing event-restriction for every Prevision subtype; lands more code for uncertain benefit. Commit B; the split is along a natural structural line (closed-form restriction ↔ eager return; non-closed-form ↔ lazy wrapper), and the type-stability cost is explicit rather than surprising.
 
 ## 6. Risk + mitigation
 
 **Risk R1 (low): dispatch ambiguity between Measure-facade and Prevision-primary methods.** Move 7 adds `condition(p::Prevision, e::Event)` at the Prevision level; the existing `condition(m::Measure, e::Event)` becomes a facade delegating to the Prevision form. Julia's method-table must route correctly: a `condition(mix, e)` call where `mix isa MixtureMeasure` should hit the Measure facade, which delegates to the Prevision-level method on `mix.prevision`. *Caught by:* existing `test/test_events.jl` (35 assertions); Posture 2 gate-4 equivalence test at `test/test_core.jl`.
 
-**Risk R2 (low): pre-emptive grep for `condition(…, e::Event)` call sites.** Pattern search 2026-04-22 across `src/`, `test/`, `apps/`:
+**Risk R2 (low): pre-emptive grep for `condition(…, e::Event)` call sites + ObservationEvent pre-Option-B expectation check.** Pattern search 2026-04-22 across `src/`, `test/`, `apps/`, `docs/`:
 
 | Target | Hits | Category (a) | (b) | (c) |
 |--------|-----|--------------|-----|-----|
 | `condition(m, e::Event)` call sites (Measure-level sibling form) | 2 src + 3 test | All covered by the Measure facade delegating to the Prevision primary | 0 | 0 |
 | `condition(m::<Type>, k::Kernel, obs)` call sites (parametric form; unchanged under Option B) | 50+ across src/test/apps | All unchanged — parametric form is sibling primitive | 0 | 0 |
 | `indicator_kernel` call sites (Posture 2) | 1 src + 3 test | All unchanged — the Prevision-level primary uses `Indicator(e)` at the expect level, not `indicator_kernel(e)` as a kernel construction | 0 | 0 |
+| `ObservationEvent` references (expected zero under Option B) | 1 src + 4 doc | See disposition below | 0 | 0 |
 
-Go/no-go gate: **GO.** 100% (a); no consumer site affected by the Prevision-level elevation. The Measure-surface API is preserved bit-for-bit.
+**`ObservationEvent` disposition, per-hit.** Under Option B the type `ObservationEvent` does not exist; the grep confirms the expected state — zero executable call sites, no test references, no apps code.
+
+- `src/prevision.jl:547` — docstring comment in `function expect end` declaration reading "Move 7 inverts the derivation (`expect(p, f)` becomes the primitive, `condition(p, k, obs)` derived via `Indicator(ObservationEvent(k, obs))`)." **Needs one-line update in code PR 7b** to reflect Option B: either remove the forward-looking reference or reword as "Move 7 elevates `condition` to the Prevision level; see move-7-design.md §5.1 for the parametric-form-as-sibling-primitive resolution."
+- `docs/posture-3/master-plan.md:230–238` — master plan's Option A proposal. Historical/expected; the design doc's role is to resolve the Socratic the master plan posed. No update needed.
+- `docs/posture-3/paper-draft.md:92,94` — paper §2 currently echoes the master plan's Option A framing. **§1.3 amendment lands in code PR 7b** per §5.1 paper implication; these two lines rewrite at that point.
+- `docs/posture-3/move-0-skin-surface-audit.md:108,128` — Move 0's audit prose references the Socratic. Historical; no update needed.
+- `docs/posture-3/move-7-design.md` (this file) — expected; the design doc discusses Options A/B/C with `ObservationEvent` as the rejected type.
+
+Go/no-go gate: **GO.** 100% (a); the one executable reference (`src/prevision.jl:547` docstring) carries a known-update disposition for PR 7b rather than indicating any consumer site writing code against the rejected Option A framing.
 
 **Risk R3 (medium): paper §1.3 amendment required under Option B.** The paper draft currently echoes the master plan's Option A framing. Under the committed Option B, §1.3 must be reworded to frame parametric-form as a peer primary (not derived). *Mitigation:* paper-draft edit lands in the Move 7 code PR (7b), not as a follow-up — the paper-is-gating-artifact posture requires this. Reviewer of PR 7b checks that §1.3 names disintegration as the out-of-scope path to full reduction, and acknowledges parametric-form as sibling rather than derived.
 
