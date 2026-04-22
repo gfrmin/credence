@@ -8,7 +8,7 @@
 
 The architecture rests on five axioms — the true bottom of the system, from which everything else is derived or learned. Each is grounded in a foundational result establishing its necessity.
 
-> **Restructure note (2026-04-22).** §1.0 was updated in Move 7 to reflect the Posture 3 peer-primary framing for `condition`; §1.1–§1.6 below retain their pre-Posture-3 operational shape. The subsections are either orthogonal to the prevision-primacy claim (§1.2 optimise, §1.3 complexity prior, §1.4 alignment, §1.6 admissibility) or compatible at their level of abstraction (§1.5 expect as integration is a σ-continuous realisation of the general prevision operator). §1.1 Bayes' rule notes the event-form sibling where relevant. A fuller §1.1–§1.6 restructure — matching the master plan's proposed §1.1 Coherence / §1.2 Prevision / §1.3 Conditional prevision / §1.4 Exchangeability / §1.5 Complexity prior / §1.6 Alignment shape — is scoped to Move 8.
+§1.0 names the constitutional layer — Prevision is primitive, Measure is a declared view over Prevision (Move 3 wrapping; Move 7 constitutional). §1.1–§1.6 describe the operational layer — how specific axiom-derived operations realise the primitives (Bayes' rule via `condition`, EU maximisation via `optimise`, the complexity prior, the CIRL alignment commitment, `expect` as integration, Wald admissibility). Both layers are load-bearing; neither supersedes the other. A Move 8 audit confirmed no conflicts between §1.0's Posture 3 framing and §1.1–§1.6's operational phrasing — the subsections describe specific primitives whose semantics are preserved under the prevision-first reframing.
 
 ### 1.0 Foundations: coherence, not measure
 
