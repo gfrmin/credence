@@ -129,6 +129,26 @@ Assertion tolerance: `==`. Seeded Monte Carlo under fixed seed produces bit-iden
 
 **Invalidation conditions:** Julia version change (RNG implementation differences); intentional change to the `draw` / log-density evaluation order (which would be a Move 6 design-doc amendment); any change to the canonical GammaMeasure / BetaMeasure / GaussianMeasure constructors that affects storage layout. If invalidated, a new fixture (`particle_canonical_v2.jls`) captures at the SHA that introduced the change; the v1 file stays as-is for backward-compat verification.
 
+### `posture-3-capture/` — Posture 4 Move 0 invariance target
+
+**Source SHA:** `5c6a94e464225776e996d6f1f690219a0728ff35` (master tip after PR #43 merge — Posture 3 complete + Move 0 design-doc amendment).
+**Capture date:** 2026-04-24.
+**Julia version:** recorded in `posture-3-capture/manifest.toml[capture.julia_version]`.
+**Purpose:** Whole-suite behavioural invariance target for Posture 4 (`de-finetti/complete`). Every assertion in `test/test_*.jl` was captured by `scripts/capture-invariance.jl` at this SHA under the three-idiom / four-shape classification from `docs/posture-4/move-0-design.md` §3. Moves 1–10 verify against this capture at the declared per-shape tolerance semantics; any divergence halts the move.
+
+Categorically different from the other fixtures in this directory: the migration fixtures (`agent_state_v1.jls`, `email_agent_state_v1.jls`, `particle_canonical_v1.jls`) capture pre-migration *state shape* so load codepaths can be verified. This directory captures pre-branch *assertion values* so every test's post-condition can be verified across a ten-move refactor. Both follow the same commit-pinning discipline (never regenerate to fix a later-move bug); the contents are disjoint.
+
+Contents (see `posture-3-capture/README.md` for schema detail):
+- `strata-1.jls` / `strata-2.jls` / `strata-3.jls` — Exact + Tolerance assertions by stratum.
+- `directional.jls` — directional assertions (bare `<`, `<=`, `>`, `>=`).
+- `structural.jls` — structural assertions (`isa`, membership, predicate-form).
+- `failing.jls` — latent broken assertions (per Q4).
+- `manifest.toml` — per-idiom sorted listing + capture metadata + `bad2_corpus` inventory.
+
+Size: ~1.8 MB total. Larger than the KB-range ceiling the "Rules" section below sets for migration fixtures, but justified: this is one fixture covering 6118 unique site×value tuples across 13 test files, not a granular migration fixture. Splitting further would impose an artificial per-file structure on an inherently whole-suite invariance target.
+
+**Invalidation conditions:** a Move 0 follow-up PR amending the capture protocol (see `docs/posture-4/move-0-design.md`); Move 10's paper-reconciliation PR upgrading any `failing` assertions to passing (per Q4). Otherwise immutable.
+
 ## Loading these fixtures
 
 `test/test_persistence.jl` (created in Move 3) loads each fixture in v2 code and asserts the resulting object's weights/parameters/structure match the recorded expected values. The test file documents which fixture covers which load codepath; if a new load codepath is added later, a new fixture covers it (do not extend an existing fixture's expectations).
