@@ -160,9 +160,12 @@ Changes:
 - Delete their `getproperty` shields, constructors, exports.
 - Split `src/ontology.jl` into `spaces.jl`, `events.jl`, `kernels.jl`, `test_functions.jl`, `conjugate.jl`, `stdlib.jl` per the final-state module structure. This is the natural moment to perform the split because the file is being gutted regardless.
 - Introduce `src/stdlib.jl` with `mean(p) = expect(p, Identity())`, `probability(p, e) = expect(p, Indicator(e))`, `variance`, `weights`, `marginal`.
-- Introduce the `expect-through-accessor` lint slug.
+- Extend the existing `credence_lint.py` pass-two taint analysis (landed in PR #40) with the `expect-through-accessor` slug. This is an extension of the machinery already in `tools/credence-lint/`, not a from-scratch implementation.
+- Retire every posterior-iteration pragma site tracked by issue #39 (thirteen sites pragma'd as `# credence-lint: allow — precedent:posterior-iteration — tracked in issue #39`) via one of: the new stdlib one-liner (`mean`, `variance`, `probability`), a new `TestFunction` subtype (`Square`, `Power{n}`), or a declared-likelihood extension.
 
-This is the largest diff of the branch. It is also the simplest: if Moves 1–4 landed correctly, Move 5 is mostly deletion and file splits.
+**Halting condition.** If any of the thirteen issue-#39 sites remain pragma'd at the Move 5 tip, the stdlib is incomplete and Move 5 does not merge. The design doc for Move 5 must track every site's retirement mechanism (new stdlib one-liner, new `TestFunction` subtype, declared-likelihood extension) with evidence that the replacement compiles and produces the captured behavioural value within tolerance. Sites without a disciplined retirement path are evidence that the foundation is not yet ready for Measure deletion.
+
+This is the largest diff of the branch. It is also the simplest: if Moves 1–4 landed correctly and every issue-#39 site retires cleanly, Move 5 is mostly deletion and file splits.
 
 Behavioural capture: bit-exact against Move 0. Any regression is a bug in a prior move that Move 4 did not catch, and Move 5 halts until the regression is fixed at its source.
 
