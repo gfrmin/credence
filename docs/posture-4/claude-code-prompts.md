@@ -16,16 +16,18 @@ Tasks:
 
 2. The instrumentation must not modify test behaviour. The captured LHS value is the literal LHS of the assertion expression at the time of evaluation; the captured RHS is the RHS; the tolerance is whatever `atol` / `rtol` the assertion declared, defaulting to `==` (Stratum 1) if none is declared.
 
-3. Resolve open design questions 1–4 in the Move 0 design doc by picking the disciplined option in each case and documenting your choice in the fixture README. My priors:
+3. Extend the capture to include the `credence-lint` `bad2_*` corpus inventory. Each file at `tools/credence-lint/corpus/<slug>/bad2_*.{jl,py}` is captured with its slug trigger and expected detection (the pass-two taint analysis landed in PR #40). The manifest gains a `bad2_corpus` section listing, per file, the slug it triggers and the line range of the canonical violation. Moves 1–10 re-run the lint against the `bad2_*` corpus and assert every file still triggers its expected slug; if a refactor makes a `bad2_*` pattern structurally unrepresentable in the new type system, the lint appears to pass (nothing triggers it) but the discipline has silently eroded. The numerical-invariance capture is the behavioural complement; the `bad2_*` capture is the structural complement. Both are load-bearing for the ten-move sequence.
+
+4. Resolve open design questions 1–4 in the Move 0 design doc by picking the disciplined option in each case and documenting your choice in the fixture README. My priors:
 
    - Q1: Structural vs numerical equality — introduce the third axis. A `@test length(programs) == 22` assertion is captured as "structural:length==22" and compared via `==` regardless of stratum. Numerical assertions carry the tolerance.
    - Q2: Particle seed capture — the conservative answer. Capture the sample sequences downstream of every `Random.seed!` call site in `test/`.
    - Q3: Platform pinning — pin Linux x86_64 on the Docker image already used for the repo's CI. Record the exact Julia version and CPU string in the manifest.
    - Q4: Broken/flaky assertions — capture them in their current broken state with a `status = "broken"` manifest entry. Move 10 has explicit permission to upgrade broken → passing if the cleaner foundation fixes them.
 
-4. Run the double-verification from §4 of the design doc. Confirm the fixtures are stable across two clean-checkout runs. Commit the fixtures and the manifest.
+5. Run the double-verification from §4 of the design doc. Confirm the fixtures are stable across two clean-checkout runs. Commit the fixtures and the manifest.
 
-5. Open the PR against `de-finetti/complete` with the design doc and code together. The design doc is already written; your PR is the code that realises it. Do not modify `src/`, `apps/`, or any `test/test_*.jl` files.
+6. Open the PR against `de-finetti/complete` with the design doc and code together. The design doc is already written; your PR is the code that realises it. Do not modify `src/`, `apps/`, or any `test/test_*.jl` files.
 
 Before writing code, state in a preamble: which modules of the Julia ecosystem you intend to use for the instrumentation (`Test.Testset` customisation, `ReTest`, `Aqua`, a bespoke macro-walker), and why. The preamble should be under 200 words and should name one alternative you considered and rejected.
 
@@ -130,6 +132,8 @@ Open design questions:
 
 3. **Test output diff vs Move 0 capture.** Because tests are being rewritten against a new constructor surface, the Julia value constructed is different even when the semantic content is the same. The invariance check is behavioural — `expect(p, f)` returns the same number — not syntactic. The design doc must state explicitly how the Move 0 capture's invariance is preserved when the LHS of the captured assertion is a Measure field access (`m.alpha`) and the post-refactor test reads a Prevision field (`p.alpha`). Options: capture the value, not the expression; or update the capture to reference the Prevision-surface access. My prior: value, not expression. The capture protocol should have been value-based from Move 0; verify this.
 
+4. **Test-oracle policy for the 43 `test-oracle` pragma sites.** PR #40's pass-two taint analysis left 43 call sites pragma'd with `# credence-lint: allow — precedent:test-oracle — <reason>` — predominantly in `apps/skin/test_skin.py` and `test/test_prevision_*.jl`. These sites read structural fields (`m.alpha`, `p.log_weights[i]`) as part of test oracles against known closed-form posteriors. Move 4 rewrites every test. State the policy explicitly: do the oracle sites remain oracles against structural fields (current `test-oracle` pragma persists after the Measure → Prevision rename), or migrate to oracles against `expect` output (stricter — oracle becomes representation-independent — but tests become sensitive to representation-irrelevant implementation changes)? My prior: keep as structural oracles; the pragma is correct; the oracle's purpose is to catch drift in the *representation*, which a pure-`expect` oracle would miss. State the policy explicitly so it is not re-litigated per-site during the mechanical test migration.
+
 ---
 
 ## Prompt 8 — Move 4 code
@@ -148,7 +152,7 @@ Scope:
 - Delete: every `getproperty` shield, every Measure constructor, every Measure export in `src/Credence.jl`, the `Functional = TestFunction` alias.
 - Split `src/ontology.jl` into the six-file structure specified in `master-plan.md` §"New module structure": `spaces.jl`, `events.jl`, `kernels.jl`, `test_functions.jl`, `conjugate.jl`, `stdlib.jl`.
 - Introduce `src/stdlib.jl` with `mean`, `variance`, `probability`, `weights`, `marginal` as one-liners over `expect` per `decision-log.md` Decision 2.
-- Introduce the `expect-through-accessor` lint slug in `tools/credence-lint/`.
+- Extend the existing `credence_lint.py` pass-two taint analysis (landed in PR #40; see `tools/credence-lint/credence_lint.py` and `tools/credence-lint/corpus/posterior-iteration/`) with the `expect-through-accessor` slug. The thirteen posterior-iteration sites currently pragma'd under issue #39 (`# credence-lint: allow — precedent:posterior-iteration — tracked in issue #39`) are the test cases: the Move 5 design doc must track, per site, whether the site retires through the new stdlib (`mean`, `variance`, `probability` as one-liners over `expect`), through a new `TestFunction` subtype (`Square`, `Power{n}`), or through a declared-likelihood extension. If any of the thirteen remain pragma'd at the Move 5 tip, that is a signal the stdlib is incomplete and Move 5 halts until the stdlib covers every site.
 
 Open design questions:
 
@@ -158,7 +162,7 @@ Open design questions:
 
 3. **Module split granularity.** Six files per the master plan. Is this the right granularity — too fine (small files, one-concept-per-file, good navigation) or too coarse (keep `ontology.jl` but heavily trimmed)? I lean toward the split. Argue.
 
-4. **The lint slug.** `expect-through-accessor` flags call sites that read a Prevision's structural field to compute a probabilistic property. Implementation: a syntactic walker over `src/`, `apps/`, `test/` that flags `*.alpha`, `*.beta`, `*.log_weights` reads outside the module that defines the type. False positives: internal reads inside `expect` method bodies are legitimate; the lint must distinguish. State the false-positive mitigation.
+4. **The lint slug.** The Move 5 slug is an extension of the existing pass-two taint analysis (PR #40), not a from-scratch implementation; the question is how the pass-two walker distinguishes legitimate internal reads inside `expect` method bodies from call-site reads elsewhere. `expect-through-accessor` flags call sites that read a Prevision's structural field to compute a probabilistic property. Implementation: a syntactic walker over `src/`, `apps/`, `test/` that flags `*.alpha`, `*.beta`, `*.log_weights` reads outside the module that defines the type. False positives: internal reads inside `expect` method bodies are legitimate; the lint must distinguish. State the false-positive mitigation.
 
 This design doc receives extra scrutiny. Expect back-and-forth; do not merge until every open question has a landed answer and the pre-merge checklist in the master plan is green.
 
