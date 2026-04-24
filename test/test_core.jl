@@ -9,6 +9,8 @@ Verifies: type constructors, axiom-constrained functions
 
 push!(LOAD_PATH, joinpath(@__DIR__, "..", "src"))
 using Credence
+using Credence: BetaPrevision, GaussianPrevision, GammaPrevision, CategoricalPrevision  # Posture 4 Move 4
+using Credence.Ontology: wrap_in_measure  # Posture 4 Move 4
 
 println("=" ^ 60)
 println("TEST 1: Spaces are first-class typed objects")
@@ -415,7 +417,7 @@ using Random
 let
     Random.seed!(123)
     # BetaMeasure with a non-Bernoulli kernel (Interval → Finite with 3 outcomes)
-    m = BetaMeasure(2.0, 5.0)  # mean = 2/7 ≈ 0.286
+    m = wrap_in_measure(BetaPrevision(2.0, 5.0))  # mean = 2/7 ≈ 0.286
     obs_space = Finite([:low, :mid, :high])
     k = Kernel(Interval(0.0, 1.0), obs_space,
         θ -> (o -> begin
@@ -450,8 +452,8 @@ println("=" ^ 60)
 
 let
     Random.seed!(42)
-    beta = BetaMeasure(2.0, 3.0)  # mean = 0.4
-    cat = CategoricalMeasure(Finite([:a, :b, :c]))
+    beta = wrap_in_measure(BetaPrevision(2.0, 3.0))  # mean = 0.4
+    cat = CategoricalMeasure(Finite([:a, :b, :c]), CategoricalPrevision(fill(0.0, 3)))
     pm = ProductMeasure(Measure[beta, cat])
 
     s = draw(pm)
@@ -471,9 +473,9 @@ println("=" ^ 60)
 
 let
     Random.seed!(42)
-    cat = CategoricalMeasure(Finite([0, 1]))  # uniform over {0, 1}
-    theta0 = BetaMeasure(2.0, 2.0)  # mean = 0.5
-    theta1 = BetaMeasure(2.0, 2.0)  # mean = 0.5
+    cat = CategoricalMeasure(Finite([0, 1]), CategoricalPrevision(fill(0.0, 2)))  # uniform over {0, 1}
+    theta0 = wrap_in_measure(BetaPrevision(2.0, 2.0))  # mean = 0.5
+    theta1 = wrap_in_measure(BetaPrevision(2.0, 2.0))  # mean = 0.5
     pm = ProductMeasure(Measure[cat, theta0, theta1])
 
     # Kernel: if cat=0, Bernoulli(θ₀); if cat=1, Bernoulli(θ₁)
@@ -508,8 +510,8 @@ println("=" ^ 60)
 
 let
     Random.seed!(42)
-    b1 = BetaMeasure(3.0, 1.0)  # skewed high
-    b2 = BetaMeasure(1.0, 3.0)  # skewed low
+    b1 = wrap_in_measure(BetaPrevision(3.0, 1.0))  # skewed high
+    b2 = wrap_in_measure(BetaPrevision(1.0, 3.0))  # skewed low
     mix = MixtureMeasure(Interval(0.0, 1.0), Measure[b1, b2], [0.0, 0.0])  # equal weights
 
     # Bernoulli kernel on [0,1]
@@ -538,8 +540,8 @@ println("=" ^ 60)
 
 let
     Random.seed!(42)
-    b1 = BetaMeasure(4.0, 2.0)  # mean = 2/3
-    b2 = BetaMeasure(2.0, 4.0)  # mean = 1/3
+    b1 = wrap_in_measure(BetaPrevision(4.0, 2.0))  # mean = 2/3
+    b2 = wrap_in_measure(BetaPrevision(2.0, 4.0))  # mean = 1/3
     mix = MixtureMeasure(Interval(0.0, 1.0), Measure[b1, b2], [log(0.7), log(0.3)])
 
     # E[θ] = 0.7 * 2/3 + 0.3 * 1/3 ≈ 0.567
@@ -556,9 +558,9 @@ println("TEST 23: MixtureMeasure prune")
 println("=" ^ 60)
 
 let
-    b1 = BetaMeasure(5.0, 2.0)
-    b2 = BetaMeasure(1.0, 1.0)
-    b3 = BetaMeasure(2.0, 5.0)
+    b1 = wrap_in_measure(BetaPrevision(5.0, 2.0))
+    b2 = wrap_in_measure(BetaPrevision(1.0, 1.0))
+    b3 = wrap_in_measure(BetaPrevision(2.0, 5.0))
     # b1 dominant, b2 and b3 negligible
     mix = MixtureMeasure(Interval(0.0, 1.0), Measure[b1, b2, b3],
                          [0.0, -25.0, -30.0])
@@ -580,8 +582,8 @@ println("=" ^ 60)
 
 let
     Random.seed!(42)
-    b1 = BetaMeasure(3.0, 3.0)
-    b2 = BetaMeasure(1.0, 1.0)
+    b1 = wrap_in_measure(BetaPrevision(3.0, 3.0))
+    b2 = wrap_in_measure(BetaPrevision(1.0, 1.0))
     mix = MixtureMeasure(Interval(0.0, 1.0), Measure[b1, b2], [0.0, 0.0])
 
     for _ in 1:100
@@ -598,7 +600,7 @@ println("TEST 25: BetaMeasure + non-Bernoulli kernel → grid fallback")
 println("=" ^ 60)
 
 let
-    prior = BetaMeasure(2.0, 2.0)
+    prior = wrap_in_measure(BetaPrevision(2.0, 2.0))
     # 3-outcome kernel: NOT conjugate (not binary)
     obs_space = Finite([:low, :mid, :high])
     k = Kernel(Interval(0.0, 1.0), obs_space,
@@ -626,7 +628,7 @@ println("TEST 26: BetaMeasure + Bernoulli kernel → conjugate (unchanged)")
 println("=" ^ 60)
 
 let
-    prior = BetaMeasure(1.0, 1.0)
+    prior = wrap_in_measure(BetaPrevision(1.0, 1.0))
     obs_space = Finite([0.0, 1.0])
     k = Kernel(Interval(0.0, 1.0), obs_space,
         θ -> (o -> o == 1.0 ? log(θ) : log(1.0 - θ)),
@@ -645,7 +647,7 @@ println("TEST 27: GaussianMeasure + Normal kernel → conjugate")
 println("=" ^ 60)
 
 let
-    prior = GaussianMeasure(Euclidean(1), 0.0, 1.0)
+    prior = wrap_in_measure(GaussianPrevision(0.0, 1.0))
     # Normal-Normal kernel: σ_obs = 1.0
     sigma_obs = 1.0
     k = Kernel(Euclidean(1), Euclidean(1),
@@ -667,7 +669,7 @@ println("TEST 28: Gaussian precision-weighted mean (strong prior dominates)")
 println("=" ^ 60)
 
 let
-    prior = GaussianMeasure(Euclidean(1), 10.0, 0.5)  # tight prior at 10
+    prior = wrap_in_measure(GaussianPrevision(10.0, 0.5))  # tight prior at 10
     sigma_obs = 2.0
     k = Kernel(Euclidean(1), Euclidean(1),
         h -> (o -> -0.5 * ((o - h) / sigma_obs)^2),
@@ -690,7 +692,7 @@ println("=" ^ 60)
 let
     configs = [(0.0, 1.0, 1.0, 0.0), (5.0, 2.0, 0.5, 3.0), (-1.0, 0.1, 10.0, 100.0)]
     for (mu0, sig0, sig_obs, x) in configs
-        prior = GaussianMeasure(Euclidean(1), mu0, sig0)
+        prior = wrap_in_measure(GaussianPrevision(mu0, sig0))
         k = Kernel(Euclidean(1), Euclidean(1),
             h -> (o -> -0.5 * ((o - h) / sig_obs)^2),
             (h, o) -> -0.5 * ((o - h) / sig_obs)^2;
@@ -709,7 +711,7 @@ println("TEST 30: GaussianMeasure + non-Gaussian kernel → grid fallback")
 println("=" ^ 60)
 
 let
-    prior = GaussianMeasure(Euclidean(1), 0.0, 1.0)
+    prior = wrap_in_measure(GaussianPrevision(0.0, 1.0))
     # Kernel to Finite target: NOT Normal-Normal
     obs_space = Finite([:a, :b])
     k = Kernel(Euclidean(1), obs_space,
@@ -728,7 +730,7 @@ println("=" ^ 60)
 
 let
     # Euclidean → Euclidean but no params → must fall through to grid
-    prior = GaussianMeasure(Euclidean(1), 0.0, 1.0)
+    prior = wrap_in_measure(GaussianPrevision(0.0, 1.0))
     k = Kernel(Euclidean(1), Euclidean(1),
         h -> (o -> -0.5 * ((o - h) / 1.0)^2),
         (h, o) -> -0.5 * ((o - h) / 1.0)^2;
@@ -1010,15 +1012,15 @@ println("=" ^ 60)
 println("TEST 44: Identity on leaf measures — closed form")
 println("=" ^ 60)
 
-v = expect(BetaMeasure(3.0, 2.0), Identity())
+v = expect(wrap_in_measure(BetaPrevision(3.0, 2.0)), Identity())
 @assert abs(v - 0.6) < 1e-12  "Beta(3,2) Identity should be 0.6, got $v"
 println("PASSED: expect(Beta(3,2), Identity()) = ", v)
 
-v = expect(GammaMeasure(4.0, 2.0), Identity())
+v = expect(wrap_in_measure(GammaPrevision(4.0, 2.0)), Identity())
 @assert abs(v - 2.0) < 1e-12  "Gamma(4,2) Identity should be 2.0, got $v"
 println("PASSED: expect(Gamma(4,2), Identity()) = ", v)
 
-v = expect(GaussianMeasure(Euclidean(1), -1.5, 2.0), Identity())
+v = expect(wrap_in_measure(GaussianPrevision(-1.5, 2.0)), Identity())
 @assert abs(v - (-1.5)) < 1e-12  "Gaussian(-1.5,2) Identity should be -1.5, got $v"
 println("PASSED: expect(Gaussian(-1.5,2), Identity()) = ", v)
 println()
@@ -1027,7 +1029,7 @@ println("=" ^ 60)
 println("TEST 45: Projection on flat ProductMeasure")
 println("=" ^ 60)
 
-pm_flat = ProductMeasure(Measure[BetaMeasure(3.0, 2.0), BetaMeasure(1.0, 1.0)])
+pm_flat = ProductMeasure(Measure[wrap_in_measure(BetaPrevision(3.0, 2.0)), wrap_in_measure(BetaPrevision(1.0, 1.0))])
 v = expect(pm_flat, Projection(1))
 @assert abs(v - 0.6) < 1e-12  "Projection(1) should give mean of first factor 0.6, got $v"
 println("PASSED: expect(PM[Beta(3,2), Beta(1,1)], Projection(1)) = ", v)
@@ -1041,8 +1043,8 @@ println("=" ^ 60)
 println("TEST 46: NestedProjection through nested ProductMeasure")
 println("=" ^ 60)
 
-inner_a = ProductMeasure(Measure[BetaMeasure(3.0, 2.0), GammaMeasure(2.0, 0.5)])
-inner_b = ProductMeasure(Measure[BetaMeasure(1.0, 1.0), GammaMeasure(2.0, 0.5)])
+inner_a = ProductMeasure(Measure[wrap_in_measure(BetaPrevision(3.0, 2.0)), wrap_in_measure(GammaPrevision(2.0, 0.5))])
+inner_b = ProductMeasure(Measure[wrap_in_measure(BetaPrevision(1.0, 1.0)), wrap_in_measure(GammaPrevision(2.0, 0.5))])
 pm_nested = ProductMeasure(Measure[inner_a, inner_b])
 
 v = expect(pm_nested, NestedProjection([1, 1]))
@@ -1090,8 +1092,8 @@ println("TEST 48: MixtureMeasure recursion for any Functional")
 println("=" ^ 60)
 
 mix = MixtureMeasure(pm_flat.space,
-    Measure[ProductMeasure(Measure[BetaMeasure(3.0, 2.0), BetaMeasure(1.0, 1.0)]),
-            ProductMeasure(Measure[BetaMeasure(1.0, 1.0), BetaMeasure(3.0, 2.0)])],
+    Measure[ProductMeasure(Measure[wrap_in_measure(BetaPrevision(3.0, 2.0)), wrap_in_measure(BetaPrevision(1.0, 1.0))]),
+            ProductMeasure(Measure[wrap_in_measure(BetaPrevision(1.0, 1.0)), wrap_in_measure(BetaPrevision(3.0, 2.0))])],
     [log(0.75), log(0.25)])
 v = expect(mix, Projection(1))
 # 0.75 * 0.6 + 0.25 * 0.5 = 0.575
@@ -1183,8 +1185,8 @@ println("TEST 50: OpaqueClosure fallback delegates to bare-function method")
 println("=" ^ 60)
 
 # On BetaMeasure: OpaqueClosure should give same result as bare lambda (quadrature)
-bare_v = expect(BetaMeasure(3.0, 2.0), x -> x * x)
-wrap_v = expect(BetaMeasure(3.0, 2.0), OpaqueClosure(x -> x * x))
+bare_v = expect(wrap_in_measure(BetaPrevision(3.0, 2.0)), x -> x * x)
+wrap_v = expect(wrap_in_measure(BetaPrevision(3.0, 2.0)), OpaqueClosure(x -> x * x))
 @assert abs(bare_v - wrap_v) < 1e-12  "OpaqueClosure should match bare function: $bare_v vs $wrap_v"
 println("PASSED: OpaqueClosure on BetaMeasure matches bare function: ", wrap_v)
 
@@ -1201,7 +1203,7 @@ println("=" ^ 60)
 println("TEST 51: LikelihoodFamily dispatch — BetaBernoulli explicit")
 println("=" ^ 60)
 let
-    tbm = TaggedBetaMeasure(Interval(0.0, 1.0), 7, BetaMeasure(2.0, 3.0))
+    tbm = TaggedBetaMeasure(Interval(0.0, 1.0), 7, wrap_in_measure(BetaPrevision(2.0, 3.0)))
     k = Kernel(Interval(0.0, 1.0), Finite([0.0, 1.0]),
         _ -> error("not used"),
         (h, o) -> o == 1.0 ? log(max(h isa TaggedBetaMeasure ? mean(h.beta) : h, 1e-300)) :
@@ -1223,7 +1225,7 @@ println("=" ^ 60)
 println("TEST 52: LikelihoodFamily dispatch — Flat explicit")
 println("=" ^ 60)
 let
-    tbm = TaggedBetaMeasure(Interval(0.0, 1.0), 42, BetaMeasure(4.0, 6.0))
+    tbm = TaggedBetaMeasure(Interval(0.0, 1.0), 42, wrap_in_measure(BetaPrevision(4.0, 6.0)))
     k = Kernel(Interval(0.0, 1.0), Finite([0.0, 1.0]),
         _ -> error("not used"),
         (h, o) -> log(0.5);
@@ -1249,8 +1251,8 @@ let
                               log(max(1 - (h isa TaggedBetaMeasure ? mean(h.beta) : h), 1e-300));
         likelihood_family = DispatchByComponent(classify))
 
-    tbm_even = TaggedBetaMeasure(Interval(0.0, 1.0), 2, BetaMeasure(1.0, 1.0))
-    tbm_odd  = TaggedBetaMeasure(Interval(0.0, 1.0), 3, BetaMeasure(1.0, 1.0))
+    tbm_even = TaggedBetaMeasure(Interval(0.0, 1.0), 2, wrap_in_measure(BetaPrevision(1.0, 1.0)))
+    tbm_odd  = TaggedBetaMeasure(Interval(0.0, 1.0), 3, wrap_in_measure(BetaPrevision(1.0, 1.0)))
 
     post_even = condition(tbm_even, k, 1.0)
     post_odd  = condition(tbm_odd,  k, 1.0)
@@ -1267,7 +1269,7 @@ println("=" ^ 60)
 println("TEST 54: Error pin — PushOnly likelihood_family errors at condition")
 println("=" ^ 60)
 let
-    tbm = TaggedBetaMeasure(Interval(0.0, 1.0), 1, BetaMeasure(1.0, 1.0))
+    tbm = TaggedBetaMeasure(Interval(0.0, 1.0), 1, wrap_in_measure(BetaPrevision(1.0, 1.0)))
     k = Kernel(Interval(0.0, 1.0), Finite([0.0, 1.0]),
         _ -> error("not used"),
         (h, o) -> 0.0;
@@ -1291,7 +1293,7 @@ let
     # classify returns another DispatchByComponent → self-reference loop
     local k_ref
     classify(m) = k_ref.likelihood_family
-    tbm = TaggedBetaMeasure(Interval(0.0, 1.0), 1, BetaMeasure(1.0, 1.0))
+    tbm = TaggedBetaMeasure(Interval(0.0, 1.0), 1, wrap_in_measure(BetaPrevision(1.0, 1.0)))
     k_ref = Kernel(Interval(0.0, 1.0), Finite([0.0, 1.0]),
         _ -> error("not used"),
         (h, o) -> 0.0;
@@ -1313,7 +1315,7 @@ let
     # that routes to yet another DispatchByComponent — the mutual recursion.
     local k_ref
     classify(m) = DispatchByComponent(classify)
-    tbm = TaggedBetaMeasure(Interval(0.0, 1.0), 1, BetaMeasure(1.0, 1.0))
+    tbm = TaggedBetaMeasure(Interval(0.0, 1.0), 1, wrap_in_measure(BetaPrevision(1.0, 1.0)))
     k_ref = Kernel(Interval(0.0, 1.0), Finite([0.0, 1.0]),
         _ -> error("not used"),
         (h, o) -> 0.0;
@@ -1358,8 +1360,8 @@ println("=" ^ 60)
 let
     # Regression guard: without the explicit overload, dispatch was ambiguous
     # between expect(::MixtureMeasure, ::Functional) and expect(::Measure, ::OpaqueClosure).
-    b1 = BetaMeasure(3.0, 1.0)  # mean 0.75
-    b2 = BetaMeasure(1.0, 3.0)  # mean 0.25
+    b1 = wrap_in_measure(BetaPrevision(3.0, 1.0))  # mean 0.75
+    b2 = wrap_in_measure(BetaPrevision(1.0, 3.0))  # mean 0.25
     mix = MixtureMeasure(Interval(0.0, 1.0), Measure[b1, b2], [log(0.6), log(0.4)])
 
     f = θ -> θ^2
@@ -1378,7 +1380,7 @@ let
     # For Beta(2,4), E[Identity] = 2/6 = 1/3
     # inner EU = 2·(1/3) + 3 = 11/3
     # outer EU = 5·(11/3) + 1 = 58/3
-    b = BetaMeasure(2.0, 4.0)
+    b = wrap_in_measure(BetaPrevision(2.0, 4.0))
     inner = LinearCombination(Tuple{Float64, Functional}[(2.0, Identity())], 3.0)
     outer = LinearCombination(Tuple{Float64, Functional}[(5.0, inner)], 1.0)
     got = expect(b, outer)
@@ -1407,16 +1409,16 @@ println("=" ^ 60)
 println("TEST 59: ProductMeasure factor / replace_factor round-trip (Julia level)")
 println("=" ^ 60)
 let
-    b1 = BetaMeasure(3.0, 2.0)
-    b2 = BetaMeasure(1.0, 4.0)
-    b3 = BetaMeasure(5.0, 5.0)
+    b1 = wrap_in_measure(BetaPrevision(3.0, 2.0))
+    b2 = wrap_in_measure(BetaPrevision(1.0, 4.0))
+    b3 = wrap_in_measure(BetaPrevision(5.0, 5.0))
     pm = ProductMeasure(Measure[b1, b2, b3])
 
     @assert factor(pm, 1) === b1 "factor returns same object (identity)"
     @assert factor(pm, 2) === b2
     @assert factor(pm, 3) === b3
 
-    replacement = BetaMeasure(9.0, 1.0)
+    replacement = wrap_in_measure(BetaPrevision(9.0, 1.0))
     pm2 = replace_factor(pm, 2, replacement)
     @assert pm2 !== pm "replace_factor returns a new ProductMeasure"
     @assert factor(pm2, 2) === replacement

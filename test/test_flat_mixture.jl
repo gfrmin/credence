@@ -9,6 +9,8 @@ that dispatches per-component.
 
 push!(LOAD_PATH, joinpath(@__DIR__, "..", "src"))
 using Credence
+using Credence: BetaPrevision, GaussianPrevision, GammaPrevision, CategoricalPrevision  # Posture 4 Move 4
+using Credence.Ontology: wrap_in_measure  # Posture 4 Move 4
 using Random
 
 Random.seed!(42)
@@ -22,7 +24,7 @@ println("=" ^ 60)
 # Grammar 2: programs that predict enemy when sensor < 0.5
 let
     # 6 Beta(1,1) priors — one per (grammar, program)
-    components = Measure[BetaMeasure(1.0, 1.0) for _ in 1:6]
+    components = Measure[wrap_in_measure(BetaPrevision(1.0, 1.0)) for _ in 1:6]
     metadata = [(1,1), (1,2), (1,3), (2,1), (2,2), (2,3)]
 
     # Prior weights: 2^(-|G|) * 2^(-|P|)
@@ -99,7 +101,7 @@ println("=" ^ 60)
 # by building a kernel closure that dispatches on component index
 let
     n_components = 6
-    components = Measure[BetaMeasure(1.0, 1.0) for _ in 1:n_components]
+    components = Measure[wrap_in_measure(BetaPrevision(1.0, 1.0)) for _ in 1:n_components]
     metadata = [(1,1), (1,2), (1,3), (2,1), (2,2), (2,3)]
 
     # Equal prior weights for this test
@@ -110,12 +112,12 @@ let
     # We simulate this by having the BetaMeasure represent program confidence
     # and using different Beta priors
     components_diff = Measure[
-        BetaMeasure(8.0, 2.0),   # G1P1: high confidence enemy
-        BetaMeasure(6.0, 4.0),   # G1P2: moderate confidence
-        BetaMeasure(3.0, 7.0),   # G1P3: predicts food (wrong)
-        BetaMeasure(2.0, 8.0),   # G2P1: predicts food (wrong)
-        BetaMeasure(4.0, 6.0),   # G2P2: moderate, slightly food
-        BetaMeasure(1.0, 1.0),   # G2P3: no information
+        wrap_in_measure(BetaPrevision(8.0, 2.0)),   # G1P1: high confidence enemy
+        wrap_in_measure(BetaPrevision(6.0, 4.0)),   # G1P2: moderate confidence
+        wrap_in_measure(BetaPrevision(3.0, 7.0)),   # G1P3: predicts food (wrong)
+        wrap_in_measure(BetaPrevision(2.0, 8.0)),   # G2P1: predicts food (wrong)
+        wrap_in_measure(BetaPrevision(4.0, 6.0)),   # G2P2: moderate, slightly food
+        wrap_in_measure(BetaPrevision(1.0, 1.0)),   # G2P3: no information
     ]
     belief_diff = MixtureMeasure(Interval(0.0, 1.0), components_diff, log_prior)
 
@@ -150,8 +152,8 @@ println("=" ^ 60)
 
 let
     # Build a MixtureMeasure of BetaMeasures
-    b1 = BetaMeasure(3.0, 1.0)  # mean 0.75 — predicts enemy
-    b2 = BetaMeasure(1.0, 3.0)  # mean 0.25 — predicts food
+    b1 = wrap_in_measure(BetaPrevision(3.0, 1.0))  # mean 0.75 — predicts enemy
+    b2 = wrap_in_measure(BetaPrevision(1.0, 3.0))  # mean 0.25 — predicts food
     mix = MixtureMeasure(Interval(0.0, 1.0), Measure[b1, b2], [log(0.6), log(0.4)])
 
     k = Kernel(Interval(0.0, 1.0), Finite([0.0, 1.0]),
@@ -176,7 +178,7 @@ let
     println("PASSED: MixtureMeasure conditioned, weights = ", [round(wi, digits=4) for wi in w])
 
     # Test nested: MixtureMeasure inside MixtureMeasure
-    outer = MixtureMeasure(Interval(0.0, 1.0), Measure[mix, BetaMeasure(5.0, 1.0)], [0.0, 0.0])
+    outer = MixtureMeasure(Interval(0.0, 1.0), Measure[mix, wrap_in_measure(BetaPrevision(5.0, 1.0))], [0.0, 0.0])
     posterior_outer = condition(outer, k, 1.0)
     @assert posterior_outer isa MixtureMeasure
     println("PASSED: Nested MixtureMeasure conditioning works, $(length(posterior_outer.components)) components")
@@ -227,13 +229,13 @@ let
 
     # Different Beta priors: G1 programs predict well, G3 poorly
     components = Measure[
-        BetaMeasure(9.0, 1.0),   # G1P1: strong enemy predictor
-        BetaMeasure(7.0, 3.0),   # G1P2: good enemy predictor
-        BetaMeasure(5.0, 5.0),   # G2P1: neutral
-        BetaMeasure(4.0, 6.0),   # G2P2: slight food
-        BetaMeasure(6.0, 4.0),   # G2P3: slight enemy
-        BetaMeasure(2.0, 8.0),   # G3P1: strong food predictor
-        BetaMeasure(1.0, 9.0),   # G3P2: very strong food predictor
+        wrap_in_measure(BetaPrevision(9.0, 1.0)),   # G1P1: strong enemy predictor
+        wrap_in_measure(BetaPrevision(7.0, 3.0)),   # G1P2: good enemy predictor
+        wrap_in_measure(BetaPrevision(5.0, 5.0)),   # G2P1: neutral
+        wrap_in_measure(BetaPrevision(4.0, 6.0)),   # G2P2: slight food
+        wrap_in_measure(BetaPrevision(6.0, 4.0)),   # G2P3: slight enemy
+        wrap_in_measure(BetaPrevision(2.0, 8.0)),   # G3P1: strong food predictor
+        wrap_in_measure(BetaPrevision(1.0, 9.0)),   # G3P2: very strong food predictor
     ]
 
     belief = MixtureMeasure(Interval(0.0, 1.0), components, log_prior)
@@ -279,10 +281,10 @@ let
     # Programs 1,2 predicates "fire" (kernel returns Beta-Bernoulli ll)
     # Programs 3,4 predicates "don't fire" (kernel returns 0.0 — flat)
     comps = Measure[
-        TaggedBetaMeasure(Interval(0.0, 1.0), 1, BetaMeasure(1.0, 1.0)),
-        TaggedBetaMeasure(Interval(0.0, 1.0), 2, BetaMeasure(1.0, 1.0)),
-        TaggedBetaMeasure(Interval(0.0, 1.0), 3, BetaMeasure(1.0, 1.0)),
-        TaggedBetaMeasure(Interval(0.0, 1.0), 4, BetaMeasure(1.0, 1.0)),
+        TaggedBetaMeasure(Interval(0.0, 1.0), 1, wrap_in_measure(BetaPrevision(1.0, 1.0))),
+        TaggedBetaMeasure(Interval(0.0, 1.0), 2, wrap_in_measure(BetaPrevision(1.0, 1.0))),
+        TaggedBetaMeasure(Interval(0.0, 1.0), 3, wrap_in_measure(BetaPrevision(1.0, 1.0))),
+        TaggedBetaMeasure(Interval(0.0, 1.0), 4, wrap_in_measure(BetaPrevision(1.0, 1.0))),
     ]
     belief = MixtureMeasure(Interval(0.0, 1.0), comps, fill(0.0, 4))
 
@@ -371,10 +373,10 @@ println("=" ^ 60)
 let
     # Same setup as TEST 6: tags 1,2 fire; tags 3,4 don't.
     comps = Measure[
-        TaggedBetaMeasure(Interval(0.0, 1.0), 1, BetaMeasure(1.0, 1.0)),
-        TaggedBetaMeasure(Interval(0.0, 1.0), 2, BetaMeasure(1.0, 1.0)),
-        TaggedBetaMeasure(Interval(0.0, 1.0), 3, BetaMeasure(1.0, 1.0)),
-        TaggedBetaMeasure(Interval(0.0, 1.0), 4, BetaMeasure(1.0, 1.0)),
+        TaggedBetaMeasure(Interval(0.0, 1.0), 1, wrap_in_measure(BetaPrevision(1.0, 1.0))),
+        TaggedBetaMeasure(Interval(0.0, 1.0), 2, wrap_in_measure(BetaPrevision(1.0, 1.0))),
+        TaggedBetaMeasure(Interval(0.0, 1.0), 3, wrap_in_measure(BetaPrevision(1.0, 1.0))),
+        TaggedBetaMeasure(Interval(0.0, 1.0), 4, wrap_in_measure(BetaPrevision(1.0, 1.0))),
     ]
     belief = MixtureMeasure(Interval(0.0, 1.0), comps, fill(0.0, 4))
 
@@ -464,7 +466,7 @@ println("=" ^ 60)
 
 let
     comps = Measure[
-        TaggedBetaMeasure(Interval(0.0, 1.0), i, BetaMeasure(1.0, 1.0)) for i in 1:4
+        TaggedBetaMeasure(Interval(0.0, 1.0), i, wrap_in_measure(BetaPrevision(1.0, 1.0))) for i in 1:4
     ]
     belief = MixtureMeasure(Interval(0.0, 1.0), comps, fill(0.0, 4))
 
@@ -501,7 +503,7 @@ println("=" ^ 60)
 
 let
     comps = Measure[
-        TaggedBetaMeasure(Interval(0.0, 1.0), i, BetaMeasure(1.0, 1.0)) for i in 1:4
+        TaggedBetaMeasure(Interval(0.0, 1.0), i, wrap_in_measure(BetaPrevision(1.0, 1.0))) for i in 1:4
     ]
     belief = MixtureMeasure(Interval(0.0, 1.0), comps, fill(0.0, 4))
 

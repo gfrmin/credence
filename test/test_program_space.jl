@@ -8,6 +8,8 @@ compression payoff, enforcement tests. No grid-world simulation needed.
 
 push!(LOAD_PATH, joinpath(@__DIR__, "..", "src"))
 using Credence
+using Credence: BetaPrevision, GaussianPrevision, GammaPrevision, CategoricalPrevision  # Posture 4 Move 4
+using Credence.Ontology: wrap_in_measure  # Posture 4 Move 4
 using Credence: expect, condition, weights, mean
 using Credence: BetaMeasure, TaggedBetaMeasure, MixtureMeasure, Finite, Interval, Kernel, Measure
 using Credence: prune, truncate
@@ -271,13 +273,13 @@ let
     kernels = CompiledKernel[]
 
     for (pi, p) in enumerate(p1)
-        push!(components, BetaMeasure(1.0, 1.0))
+        push!(components, wrap_in_measure(BetaPrevision(1.0, 1.0)))
         push!(log_prior, -g1.complexity * log(2) - p.complexity * log(2))
         push!(metadata, (g1.id, pi))
         push!(kernels, compile_kernel(p, g1, pi))
     end
     for (pi, p) in enumerate(p2)
-        push!(components, BetaMeasure(1.0, 1.0))
+        push!(components, wrap_in_measure(BetaPrevision(1.0, 1.0)))
         push!(log_prior, -g2.complexity * log(2) - p.complexity * log(2))
         push!(metadata, (g2.id, pi))
         push!(kernels, compile_kernel(p, g2, pi))
@@ -320,7 +322,7 @@ println("TEST 9: Occam's Razor — simpler programs preferred with equal predict
 println("=" ^ 60)
 
 let
-    components = Measure[BetaMeasure(5.0, 2.0) for _ in 1:6]
+    components = Measure[wrap_in_measure(BetaPrevision(5.0, 2.0)) for _ in 1:6]
     complexities = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0]
     log_prior = [-c * log(2) for c in complexities]
 
@@ -425,7 +427,7 @@ let
     for g in grammars[1:5]
         programs = enumerate_programs(g, 3; action_space=[:a, :b])
         for (pi, p) in enumerate(programs)
-            push!(components, BetaMeasure(1.0, 1.0))
+            push!(components, wrap_in_measure(BetaPrevision(1.0, 1.0)))
             push!(log_prior, -g.complexity * log(2) - p.complexity * log(2))
             push!(metadata, (g.id, pi))
             push!(compiled, compile_kernel(p, g, pi))
@@ -670,7 +672,7 @@ let
     progs = Program[]
 
     for (pi, p) in enumerate(programs)
-        push!(components, TaggedBetaMeasure(Interval(0.0, 1.0), pi, BetaMeasure(1.0, 1.0)))
+        push!(components, TaggedBetaMeasure(Interval(0.0, 1.0), pi, wrap_in_measure(BetaPrevision(1.0, 1.0))))
         push!(log_prior, -g.complexity * log(2) - p.complexity * log(2))
         push!(meta, (g.id, pi))
         push!(ck, compile_kernel(p, g, pi))
@@ -735,7 +737,7 @@ let
         programs = enumerate_programs(g, 2; action_space=[:food, :enemy])
         for (pi, p) in enumerate(programs[1:min(3, length(programs))])
             idx += 1
-            push!(components, TaggedBetaMeasure(Interval(0.0, 1.0), idx, BetaMeasure(1.0, 1.0)))
+            push!(components, TaggedBetaMeasure(Interval(0.0, 1.0), idx, wrap_in_measure(BetaPrevision(1.0, 1.0))))
             push!(log_prior, grammar_weights_target[g.id])
             push!(meta, (g.id, pi))
             push!(ck, compile_kernel(p, g, pi))
