@@ -22,6 +22,8 @@
 
 push!(LOAD_PATH, "src")
 using Credence
+using Credence: BetaPrevision, GammaPrevision, GaussianPrevision  # Posture 4 Move 4: Prevision constructors
+using Credence.Ontology: wrap_in_measure  # Posture 4 Move 4: Measure-wrap helper for Measure-dispatch consumers
 using Random
 using Serialization
 
@@ -51,7 +53,7 @@ println("Fixture SHA: $(CANONICAL[:source_sha]); Julia $(CANONICAL[:julia_versio
 
 let
     Random.seed!(42)
-    m = GammaMeasure(2.0, 3.0)
+    m = wrap_in_measure(GammaPrevision(2.0, 3.0))
     k = Kernel(PositiveReals(), Euclidean(1),
                λ -> error("generate not used"),
                (λ, o) -> -0.5 * (o - λ)^2;
@@ -74,7 +76,7 @@ end
 
 let
     Random.seed!(42)  # not strictly needed for grid, but keep canonical path identical
-    m = BetaMeasure(2.0, 3.0)
+    m = wrap_in_measure(BetaPrevision(2.0, 3.0))
     k = Kernel(Interval(0.0, 1.0), Euclidean(1),
                θ -> error("generate not used"),
                (θ, o) -> -0.5 * (o - θ)^2;
@@ -96,7 +98,7 @@ end
 
 let
     Random.seed!(42)
-    m = GaussianMeasure(Euclidean(1), 0.0, 1.0)
+    m = wrap_in_measure(GaussianPrevision(0.0, 1.0))
     k = Kernel(Euclidean(1), Euclidean(1),
                μ -> error("generate not used"),
                (μ, o) -> log(max(o, 1e-300));

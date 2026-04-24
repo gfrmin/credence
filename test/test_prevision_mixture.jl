@@ -19,8 +19,9 @@
 push!(LOAD_PATH, "src")
 using Credence
 using Credence: _dispatch_path
-using Credence.Ontology: _resolve_likelihood_family, _with_resolved_family
+using Credence.Ontology: _resolve_likelihood_family, _with_resolved_family, wrap_in_measure  # Posture 4 Move 4
 using Credence.Previsions: DirichletPrevision
+using Credence: BetaPrevision, GaussianPrevision  # Posture 4 Move 4
 
 function check(name, cond, detail="")
     if cond
@@ -39,9 +40,9 @@ println("="^60)
 
 let
     # Three tagged components with distinct α,β and distinct tags.
-    comp1 = TaggedBetaMeasure(Interval(0.0, 1.0), 1, BetaMeasure(2.0, 3.0))
-    comp2 = TaggedBetaMeasure(Interval(0.0, 1.0), 2, BetaMeasure(5.0, 5.0))
-    comp3 = TaggedBetaMeasure(Interval(0.0, 1.0), 3, BetaMeasure(1.0, 4.0))
+    comp1 = TaggedBetaMeasure(Interval(0.0, 1.0), 1, BetaPrevision(2.0, 3.0))
+    comp2 = TaggedBetaMeasure(Interval(0.0, 1.0), 2, BetaPrevision(5.0, 5.0))
+    comp3 = TaggedBetaMeasure(Interval(0.0, 1.0), 3, BetaPrevision(1.0, 4.0))
     mix = MixtureMeasure(Interval(0.0, 1.0), [comp1, comp2, comp3], [0.0, 0.0, 0.0])
 
     k = Kernel(Interval(0.0, 1.0), Finite([0.0, 1.0]),
@@ -109,8 +110,8 @@ end
 let
     # Mixture with one TaggedBetaMeasure (routes conjugate) and one
     # GaussianMeasure (no registered pair for Bernoulli kernel).
-    c1 = TaggedBetaMeasure(Interval(0.0, 1.0), 1, BetaMeasure(2.0, 3.0))
-    c2 = GaussianMeasure(Euclidean(1), 0.0, 1.0)
+    c1 = TaggedBetaMeasure(Interval(0.0, 1.0), 1, BetaPrevision(2.0, 3.0))
+    c2 = wrap_in_measure(GaussianPrevision(0.0, 1.0))
     mix = MixtureMeasure(Interval(0.0, 1.0), Measure[c1, c2], [0.0, 0.0])
 
     k = Kernel(Interval(0.0, 1.0), Finite([0.0, 1.0]),
@@ -130,7 +131,7 @@ end
 let
     # All log_weights at -Inf → MixturePrevision constructor errors.
     raised = try
-        MixturePrevision(Measure[BetaMeasure(1.0, 1.0)], [-Inf])
+        MixturePrevision(Measure[wrap_in_measure(BetaPrevision(1.0, 1.0))], [-Inf])
         false
     catch e
         occursin("zero total mass", sprint(showerror, e))
@@ -222,9 +223,9 @@ let
     # branching). TaggedBetaMeasure flattening is exercised by the
     # master-plan gate-4 MixtureMeasure flattening path, asserted
     # indirectly via test_flat_mixture.jl.
-    comp1 = BetaMeasure(2.0, 2.0)
-    inner_c1 = BetaMeasure(1.0, 1.0)
-    inner_c2 = BetaMeasure(3.0, 2.0)
+    comp1 = wrap_in_measure(BetaPrevision(2.0, 2.0))
+    inner_c1 = wrap_in_measure(BetaPrevision(1.0, 1.0))
+    inner_c2 = wrap_in_measure(BetaPrevision(3.0, 2.0))
     comp2 = MixtureMeasure(Interval(0.0, 1.0), Measure[inner_c1, inner_c2], [0.0, 0.0])
 
     outer = MixtureMeasure(Interval(0.0, 1.0), Measure[comp1, comp2], [0.0, 0.0])
