@@ -128,29 +128,20 @@ CategoricalMeasure(s::Finite{T}) where T = CategoricalMeasure{T}(s, fill(0.0, le
 CategoricalMeasure(s::Finite{T}, p::Prevision) where T = CategoricalMeasure{T}(s, p)
 
 # Shared-reference contract — see Move 3 precedent #2 and test
-# test_prevision_particle.jl :: test_*_shared_reference. `.logw` and
-# `.space.values` return the underlying Prevision's fields by reference.
-# Shield entries for each Prevision shape the CategoricalMeasure may wrap:
-#   - CategoricalPrevision: .logw → p.log_weights (Posture 4 Move 1 rename)
-#   - ParticlePrevision:    .logw → p.log_weights, .space.values === p.samples
-#   - QuadraturePrevision:  .logw → p.log_weights, .space.values === p.grid
-#   - EnumerationPrevision: .logw → p.log_weights, .space.values === p.enumerated
-# Do NOT defensively copy — downstream consumers (skin server push!, paper
-# §2.3 drilldown, Move 7 event-conditioning path) depend on reference identity.
-#
-# Phase 1 note: post-rename all five log-mass carriers store the field
-# under `log_weights`. The branch-on-subtype logic is retained in Phase 1
-# to scope the rename cleanly; Phase 2 collapses it to a one-line forward.
+# test_prevision_particle.jl :: test_*_shared_reference. `.logw`
+# returns the underlying Prevision's `log_weights` field by reference.
+# Post-Move-1, all five log-mass carriers (CategoricalPrevision,
+# ParticlePrevision, QuadraturePrevision, EnumerationPrevision,
+# MixturePrevision) store under the unified `log_weights` name, so the
+# shield's branch-on-stored-subtype dispatch collapses to a single
+# forward. Do NOT defensively copy — downstream consumers (skin server
+# push!, paper §2.3 drilldown, Move 7 event-conditioning path) depend on
+# reference identity.
 function Base.getproperty(m::CategoricalMeasure, s::Symbol)
     if s === :logw
-        p = getfield(m, :prevision)
-        if p isa CategoricalPrevision
-            return p.log_weights
-        else
-            # ParticlePrevision / QuadraturePrevision / EnumerationPrevision
-            # all store the field under the name `log_weights`.
-            return p.log_weights
-        end
+        # DEPRECATED: forwarded for Moves 2–4 consumer compatibility;
+        # retired in Move 5 with CategoricalMeasure itself.
+        return getfield(m, :prevision).log_weights
     else
         return getfield(m, s)
     end

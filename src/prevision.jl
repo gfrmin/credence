@@ -524,41 +524,63 @@ struct EnumerationPrevision <: Prevision
 end
 
 """
-    ConditionalPrevision(base::Prevision, event_predicate, mass::Float64) <: Prevision
+    ConditionalPrevision{E}(base::Prevision, event::E, mass::Float64) <: Prevision
 
-Move 7: lazy wrapper representing `base | event` under de Finetti / Whittle's
-conditional-prevision semantics. Used as the §5.3 Option B fallback when no
+Lazy wrapper representing `base | event` under de Finetti / Whittle's
+conditional-prevision semantics (Move 7 introduced; Posture 4 Move 1
+Invariant-2-tightened). Used as the §5.3 Option B fallback when no
 closed-form event-restriction exists at the concrete (Prevision, Event)
 pair.
 
 Fields:
   - `base::Prevision` — the prior, unconditioned.
-  - `event_predicate::Function` — closure `s -> Bool` capturing the event's
-    semantics. Stored as a predicate rather than an `Event` so prevision.jl
-    avoids circular dependency with ontology.jl's Event hierarchy.
-  - `mass::Float64` — cached `p(1_e) = expect(base, Indicator(e))`. Positive
-    by construction; the constructing `condition(p, e::Event)` method guards
-    against measure-zero events.
+  - `event::E` — the conditioning event, carried as a declared Event
+    subtype (TagSet, FeatureEquals, FeatureInterval, Conjunction,
+    Disjunction, Complement). Posture 4 Move 1 replaced the prior
+    `event_predicate::Function` opaque-closure representation with
+    this typed field, closing the last Invariant-2 discipline hole in
+    the Prevision module.
+  - `mass::Float64` — cached `p(1_e) = expect(base, Indicator(e))`.
+    Positive by construction; the constructing `condition(p, e::Event)`
+    method guards against measure-zero events.
 
-Evaluation: `expect(cp, f) = expect(base, f · 1_e) / mass`. The product
-`f · 1_e` is evaluated via opaque closure.
+Evaluation: `expect(cp, f) = expect(base, f · 1_e) / mass`, where
+`1_e = Indicator(cp.event)` — a declared TestFunction, not an opaque
+closure. The product `f · 1_e` is evaluated via the TestFunction
+hierarchy's composition (typically `LinearCombination` or a direct
+indicator-gated evaluator).
+
+Type-parameter discipline (Move 1 §5.1 Option A): `E` is unconstrained
+at the struct level, matching `Indicator{E}`'s existing pattern. The
+`<: Event` bound is enforced at the constructor signature of methods
+in `ontology.jl` (where the Event hierarchy is in scope); runtime
+construction via `ConditionalPrevision{NotAnEvent}(...)` type-checks at
+the struct level but fails constructor dispatch. This is a theoretical
+hole no working Julia code steps into — Indicator{E} has run through
+Posture 3 Moves 7–8 with the same pattern without a single issue.
 
 Type-stability caveat (move-7-design.md §5.3): `condition(p::Prevision,
-e::Event)` returns either a specialised closed-form Prevision (MixturePrevision
-restricted to firing tags, etc.) or a `ConditionalPrevision` wrapper. Callers
-requiring a specific concrete subtype must dispatch accordingly; generic-
-Prevision callers via `expect` are uniform across both return shapes.
+e::Event)` returns either a specialised closed-form Prevision
+(MixturePrevision restricted to firing tags, etc.) or a
+`ConditionalPrevision` wrapper. Callers requiring a specific concrete
+subtype must dispatch accordingly; generic-Prevision callers via
+`expect` are uniform across both return shapes.
 """
-struct ConditionalPrevision <: Prevision
+struct ConditionalPrevision{E} <: Prevision
     base::Prevision
-    event_predicate::Function
+    event::E
     mass::Float64
 
-    function ConditionalPrevision(base::Prevision, event_predicate::Function, mass::Float64)
+    function ConditionalPrevision{E}(base::Prevision, event::E, mass::Float64) where E
         mass > 0 || error("ConditionalPrevision requires positive event mass; got $mass")
-        new(base, event_predicate, mass)
+        new{E}(base, event, mass)
     end
 end
+
+# Outer constructor — lets callers write `ConditionalPrevision(base, event, mass)`
+# and have the parameter `E` inferred from `event`'s type.
+ConditionalPrevision(base::Prevision, event::E, mass::Float64) where E =
+    ConditionalPrevision{E}(base, event, mass)
 
 """
     condition(p::Prevision, e) → Prevision
@@ -676,10 +698,15 @@ function update end
 """
     _dispatch_path(p::Prevision, k::Kernel) → Symbol
 
-Observability hook (Move 4 §5.2). Returns `:conjugate` if
+Observability hook (Move 4 §5.2; retained unchanged through Posture 4
+Move 1 per move-1-design.md §5.3). Returns `:conjugate` if
 `maybe_conjugate(p, k)` matches, `:particle` otherwise. Underscore-
 prefixed per the repo conventions (see `CLAUDE.md` §Repo conventions §
-Scope boundary): test-only surface, not a production API.
+Scope boundary): test-only surface, not a production API. The
+Symbol-return discipline is load-bearing for the stratum-2 tests that
+pin dispatch-path decisions — promoting to an `@enum DispatchPath`
+would add structural type-work without discriminatory gain, and those
+tests break loudly on any new return value regardless of enum-ness.
 
 Used in Stratum-2 tests to pin dispatch-path decisions explicitly —
 without it, a silent registry miss would fall through to particle and
