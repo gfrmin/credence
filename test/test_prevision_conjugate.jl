@@ -21,6 +21,8 @@ push!(LOAD_PATH, "src")
 using Credence
 using Credence: ConjugatePrevision, maybe_conjugate, update, _dispatch_path
 using Credence: BetaPrevision, TaggedBetaPrevision
+using Credence: CategoricalPrevision, GaussianPrevision, GammaPrevision, DirichletPrevision, NormalGammaPrevision  # Posture 4 Move 4
+using Credence.Ontology: wrap_in_measure  # Posture 4 Move 4: Measure-wrap helper
 
 function check(name, cond, detail="")
     if cond
@@ -42,7 +44,7 @@ println("="^60)
 # value assertion for the wrong reason.
 
 let k = Kernel(Interval(0.0, 1.0), Finite([0, 1]),
-               h -> CategoricalMeasure(Finite([0, 1])),
+               h -> wrap_in_measure(CategoricalPrevision([0.0, 0.0]), Finite([0, 1])),
                (h, o) -> o == 1 ? log(max(h, 1e-300)) : log(max(1-h, 1e-300));
                likelihood_family = BetaBernoulli())
     p = BetaPrevision(2.0, 3.0)
@@ -85,7 +87,7 @@ end
 # registered conjugate entry (the update is the identity function).
 
 let k = Kernel(Interval(0.0, 1.0), Finite([0, 1]),
-               h -> CategoricalMeasure(Finite([0, 1])),
+               h -> wrap_in_measure(CategoricalPrevision([0.0, 0.0]), Finite([0, 1])),
                (h, o) -> 0.0;  # flat log-density
                likelihood_family = Flat())
     p = BetaPrevision(2.0, 3.0)
@@ -118,7 +120,7 @@ end
 # for backward compat.
 
 let k_new = Kernel(Euclidean(1), Euclidean(1),
-                   h -> GaussianMeasure(Euclidean(1), h, 1.0),
+                   h -> wrap_in_measure(GaussianPrevision(h, 1.0)),
                    (h, o) -> -0.5 * (o - h)^2;
                    likelihood_family = NormalNormal(1.0))
     using Credence: GaussianPrevision
@@ -148,7 +150,7 @@ end
 # `params = Dict(:sigma_obs => σ)` + `likelihood_family = PushOnly()`.
 # maybe_conjugate must match this path too for backward compat.
 let k_legacy = Kernel(Euclidean(1), Euclidean(1),
-                      h -> GaussianMeasure(Euclidean(1), h, 1.0),
+                      h -> wrap_in_measure(GaussianPrevision(h, 1.0)),
                       (h, o) -> -0.5 * (o - h)^2;
                       params = Dict{Symbol,Any}(:sigma_obs => 1.0),
                       likelihood_family = PushOnly())
@@ -178,7 +180,7 @@ end
 
 let cats = Finite([:a, :b, :c])
     k = Kernel(Simplex(3), cats,
-               θ -> CategoricalMeasure(cats),
+               θ -> wrap_in_measure(CategoricalPrevision(fill(0.0, length(cats.values))), cats),
                (θ, o) -> log(max(θ[findfirst(==(o), cats.values)], 1e-300));
                likelihood_family = Categorical(cats))
     using Credence: DirichletPrevision
@@ -211,7 +213,7 @@ end
 # κ_n = κ+1; μ_n = (κμ+r)/κ_n; α_n = α+0.5; β_n = β + κ(r-μ)²/(2κ_n).
 
 let k_new = Kernel(ProductSpace(Space[Euclidean(1), PositiveReals()]), Euclidean(1),
-                   h -> GaussianMeasure(Euclidean(1), h[1], sqrt(h[2])),
+                   h -> wrap_in_measure(GaussianPrevision(h[1], sqrt(h[2]))),
                    (h, o) -> -0.5 * (o - h[1])^2 / h[2];
                    likelihood_family = NormalGammaLikelihood())
     using Credence: NormalGammaPrevision
@@ -237,7 +239,7 @@ end
 
 # Legacy params-based path for NormalGamma.
 let k_legacy = Kernel(ProductSpace(Space[Euclidean(1), PositiveReals()]), Euclidean(1),
-                      h -> GaussianMeasure(Euclidean(1), h[1], sqrt(h[2])),
+                      h -> wrap_in_measure(GaussianPrevision(h[1], sqrt(h[2]))),
                       (h, o) -> -0.5 * (o - h[1])^2 / h[2];
                       params = Dict{Symbol,Any}(:normal_gamma => true),
                       likelihood_family = PushOnly())
@@ -263,7 +265,7 @@ end
 # fell through to particle).
 
 let k = Kernel(PositiveReals(), PositiveReals(),
-               h -> GammaMeasure(PositiveReals(), 1.0, h),
+               h -> wrap_in_measure(GammaPrevision(1.0, h)),
                (h, o) -> log(h) - h * o;
                likelihood_family = Exponential())
     using Credence: GammaPrevision
@@ -302,10 +304,10 @@ end
 # break in hard-to-diagnose ways. The guard here catches it at Stratum-2.
 
 let k = Kernel(Interval(0.0, 1.0), Finite([0, 1]),
-               h -> CategoricalMeasure(Finite([0, 1])),
+               h -> wrap_in_measure(CategoricalPrevision([0.0, 0.0]), Finite([0, 1])),
                (h, o) -> 0.0;
                likelihood_family = BetaBernoulli())
-    inner = BetaMeasure(Interval(0.0, 1.0), 2.0, 3.0)
+    inner = wrap_in_measure(BetaPrevision(2.0, 3.0))
     tbp = TaggedBetaPrevision(42, inner)
 
     check("TaggedBetaPrevision + BetaBernoulli → :particle (transitional scaffolding)",
@@ -329,7 +331,7 @@ end
 # assertion below catches it.
 
 let k = Kernel(Interval(0.0, 1.0), Finite([0, 1]),
-               h -> CategoricalMeasure(Finite([0, 1])),
+               h -> wrap_in_measure(CategoricalPrevision([0.0, 0.0]), Finite([0, 1])),
                (h, o) -> 0.0;
                likelihood_family = BetaBernoulli())
     using Credence: GaussianPrevision, GammaPrevision, DirichletPrevision, NormalGammaPrevision
