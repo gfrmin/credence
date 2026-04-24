@@ -114,6 +114,53 @@ push_component!(state.belief.prevision, TaggedBetaPrevision(tag, BetaPrevision(1
 
 ### 5.1 Shield reconstruction: from silent breakage to loud breakage
 
+#### 5.1.1 Amendment — Phase 4 pivot to Option C (2026-04-24)
+
+**This subsection amends §5.1 below.** The original §5.1 advocated Option A: tighten all three struct fields (`TaggedBetaPrevision.beta::BetaPrevision`, `MixturePrevision.components::Vector{Prevision}`, `ProductPrevision.factors::Vector{Prevision}`), activate shield reconstruction with `FrozenVectorView`, accept bounded silent-breakage in `apps/skin/server.jl:611-614`. The `FrozenVectorView` executable guard was the load-bearing mitigation.
+
+**Mid-Phase-4 implementation surfaced a deeper architectural issue** that Option A can't address: shield reconstruction of `MixturePrevision.components` requires per-component space info that the Prevision doesn't carry and shouldn't carry. The concrete failure: `condition(m::ProductMeasure, k, obs)` produces a posterior mixture whose components have **reduced Finite spaces** (e.g., `Finite(1)` for the conditioned-to category). Pre-Move-2, each component Measure stored its own reduced space. Post-Move-2 under Option A, shield reconstruction would pass `m.space` (the full outer ProductSpace) to each component's `wrap_in_measure`, reconstructing components with the ORIGINAL full space — not the reduced degenerate one. Test site at `test/test_host.jl:38` (`length(cat_factor.space.values) == 1`) asserts the reduced space and fails post-Option-A.
+
+Three candidate fixes, each unsatisfactory:
+
+- **Option D (Prevision carries per-component spaces):** wrong architectural layer. Prevision is space-agnostic; spaces are observational content Measure adds. Would be mathematical-reasoning-in-the-wrong-layer.
+- **Option A with test scope creep:** tests accept full-space components, assert degeneracy via `log_weights`. Representational downgrading — tests that asserted structural degeneracy-in-space now assert weighted degeneracy over a non-degenerate space. Weaker, and the weakness is load-bearing for the paper's structural claim.
+- **Option C (defer to Move 5):** the per-component-space question is answered natively by the Prevision-primary worldview Move 5 installs. `condition` outputting concentrated Previsions rather than reduced-space Measures is the **real** resolution. Move 2 cannot deliver that without also delivering Move 5.
+
+**Option C chosen.** The element-type tightening on `MixturePrevision.components` and `ProductPrevision.factors` is architecturally coupled to Move 5's `condition` rewrite. The master plan was wrong to partition them. Concentration as mathematical content (Prevision weights: `log_weights = [0.0, -Inf, -Inf]`) replaces concentration as representational content (reduced `Finite(1)`).
+
+#### 5.1.2 What this means for Move 2's actual scope
+
+Per the master-plan amendment in PR #49 (`docs/posture-4/master-plan.md` §Move 2, merged `a7d0924`), realised in PR #50 (merged `2937c1d`):
+
+- **`TaggedBetaPrevision.beta::BetaPrevision` tightens in Move 2** — it carries no per-component space; the coupling to `condition` doesn't apply. Outer constructor `TaggedBetaPrevision(tag, ::BetaMeasure)` extracts `.prevision` for back-compat. TaggedBetaMeasure shield reconstructs BetaMeasure via `wrap_in_measure` on read.
+- **Phase 1/2/3 APIs (`push_component!`, `replace_component!`, `FrozenVectorView`, `wrap_in_measure`) land as unused surface** for Move 5/7 consumers. They're self-contained and test independently; deferring them would be discarding completed work.
+- **`MixturePrevision.components::Vector{Prevision}`, `ProductPrevision.factors::Vector{Prevision}`, and shield reconstruction activation defer to Move 5** concurrent with the `condition` rewrite.
+
+Move 2's Phase 4 diff narrows to about 30 lines in `src/prevision.jl` + `src/ontology.jl`: struct field change, outer constructor, shield reconstruction for the one case that doesn't need per-component space, and the back-compat `_conjugacy_prevision(::TaggedBetaPrevision)` dispatch.
+
+#### 5.1.3 Prevision-primary principle
+
+The master-plan amendment (PR #49) added a new top-level section documenting this as the architectural default:
+
+> Prevision is the primary type. Where a structural question asks whether information belongs on Prevision or on Measure, the default is Prevision unless the information is observational (spaces, sampling). Per-component space variation in posteriors is not observational; it is the mathematical content of concentration and belongs on the Prevision.
+
+Cox gives probabilities, Savage gives EU maximisation, and Prevision-primary makes those axioms **operative** rather than decorative. Space-reduction is a representational workaround that exists only because the library started in Measure-first land.
+
+#### 5.1.4 Meta-observation on the design-doc cadence
+
+Two Posture 4 moves (Move 0 and Move 2) have now had design-doc premises challenged mid-implementation:
+
+- **Move 0:** assumed `Test.@test` was the assertion surface; pre-preamble survey found zero `Test.@test` calls — three bespoke idioms instead. Amended §§2/3/4 before code landed.
+- **Move 2:** assumed shield reconstruction could preserve per-component space info via `m.space` fan-out; Phase 4 implementation found that posterior components have reduced spaces that `m.space` can't recover. Amended master plan + this design doc + narrowed Phase 4 code.
+
+Design docs are proposals to reality; the implementation layer has an earned veto. Halting rather than pushing through is what makes the veto functional. **Design-doc survival through implementation is the exception, not the rule, in this posture.** Future Posture 4 move authors plan for mid-implementation premise failures and halt cleanly when they surface. See `docs/posture-4/master-plan.md` §"Prevision-primary principle" for the general pattern.
+
+---
+
+#### 5.1.5 Original §5.1 (historical record, superseded by §§5.1.1–5.1.4)
+
+The reasoning below is preserved as the chain that led to Option A and then — via mid-Phase-4 implementation — to the Option C pivot above. The `FrozenVectorView` executable-guard argument is sound for the silent-breakage-in-skin concern and remains load-bearing for Move 5 when shield reconstruction actually activates; it simply doesn't address the per-component-space concern that Option C resolves via Move 5's `condition` rewrite.
+
 Prompt 3 framed this as "per-access allocation" — that's only half the concern. The load-bearing issue is the **shared-reference contract breakage** for `push!`-through-shield patterns, and the mitigation is a **`FrozenVectorView` executable guard**, not a §6 prose flag.
 
 **The actual breakage.** Before Move 2, `m.components` returns the internal `Vector{Measure}` by reference. `push!(m.components, ...)` at `apps/skin/server.jl:611-614` writes to that vector; subsequent reads see the new element. After Move 2, the internal vector is `Vector{Prevision}`, and the shield reconstructs a fresh `Vector{Measure}` on every read via `wrap_in_measure(p)`. Without a guard, `push!`-through-shield writes to an ephemeral vector that nothing subsequently reads — **silent state corruption**.
