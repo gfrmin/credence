@@ -9,6 +9,8 @@ multi-user meta-learning, and meta-action EU evaluation.
 
 push!(LOAD_PATH, joinpath(@__DIR__, "..", "src"))
 using Credence
+using Credence: BetaPrevision, GaussianPrevision, GammaPrevision, CategoricalPrevision  # Posture 4 Move 4
+using Credence.Ontology: wrap_in_measure  # Posture 4 Move 4
 using Credence: weights, mean, condition
 using Credence: TaggedBetaMeasure, MixtureMeasure, BetaMeasure
 using Credence: Interval, Finite, Kernel, Measure
@@ -473,7 +475,7 @@ let
     ck = CompiledKernel[]
     progs = Program[]
     for (pi, p) in enumerate(programs[1:min(20, length(programs))])
-        push!(components, TaggedBetaMeasure(Interval(0.0, 1.0), pi, BetaMeasure(1.0, 1.0)))
+        push!(components, TaggedBetaMeasure(Interval(0.0, 1.0), pi, wrap_in_measure(BetaPrevision(1.0, 1.0))))
         push!(log_prior, 0.0)
         push!(meta, (g.id, pi))
         push!(ck, compile_kernel(p, g, pi))
@@ -512,7 +514,7 @@ let
         # Simulate high observation count by using Beta(50, 50)
     end
     # Use a state where mean_observation_count is high
-    conc_comps = Measure[TaggedBetaMeasure(Interval(0.0, 1.0), i, BetaMeasure(50.0, 50.0))
+    conc_comps = Measure[TaggedBetaMeasure(Interval(0.0, 1.0), i, wrap_in_measure(BetaPrevision(50.0, 50.0)))
                          for i in 1:length(components)]
     conc_belief2 = MixtureMeasure(Interval(0.0, 1.0), conc_comps, conc_lw)
     conc_state2 = AgentState(conc_belief2, meta, ck, progs, grammar_dict, 2)
@@ -553,7 +555,7 @@ let
         programs = enumerate_programs(g, 2; action_space=DOMAIN_ACTIONS, min_log_prior=-15.0)
         for (pi, p) in enumerate(programs)
             idx += 1
-            push!(components, TaggedBetaMeasure(Interval(0.0, 1.0), idx, BetaMeasure(1.0, 1.0)))
+            push!(components, TaggedBetaMeasure(Interval(0.0, 1.0), idx, wrap_in_measure(BetaPrevision(1.0, 1.0))))
             push!(log_prior, -g.complexity * log(2) - p.complexity * log(2))
             push!(meta, (g.id, pi))
             push!(ck, compile_kernel(p, g, pi))
@@ -1036,7 +1038,7 @@ let
 
     for (pi, p) in enumerate(programs[1:min(30, length(programs))])
         # Use Beta(5,2) so mean≈0.71 — asymmetric, so correct/incorrect give different likelihoods
-        push!(components, TaggedBetaMeasure(Interval(0.0, 1.0), pi, BetaMeasure(5.0, 2.0)))
+        push!(components, TaggedBetaMeasure(Interval(0.0, 1.0), pi, wrap_in_measure(BetaPrevision(5.0, 2.0))))
         push!(log_prior, 0.0)
         push!(meta, (g.id, pi))
         push!(ck_list, compile_kernel(p, g, pi))

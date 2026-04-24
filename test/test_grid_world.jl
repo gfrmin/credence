@@ -8,6 +8,8 @@ full agent runs, regime change, meta-learning.
 
 push!(LOAD_PATH, joinpath(@__DIR__, "..", "src"))
 using Credence
+using Credence: BetaPrevision, GaussianPrevision, GammaPrevision, CategoricalPrevision  # Posture 4 Move 4
+using Credence.Ontology: wrap_in_measure  # Posture 4 Move 4
 using Credence: expect, condition, weights, mean
 using Credence: BetaMeasure, TaggedBetaMeasure, MixtureMeasure, Finite, Interval, Kernel, Measure
 using Credence: prune, truncate
@@ -117,7 +119,7 @@ let
     idx = 0
     for (pi, p) in enumerate(p1)
         idx += 1
-        push!(components, TaggedBetaMeasure(Interval(0.0, 1.0), idx, BetaMeasure(1.0, 1.0)))
+        push!(components, TaggedBetaMeasure(Interval(0.0, 1.0), idx, wrap_in_measure(BetaPrevision(1.0, 1.0))))
         push!(log_prior, -g1.complexity * log(2) - p.complexity * log(2))
         push!(meta, (g1.id, pi))
         push!(ck, compile_kernel(p, g1, pi))
@@ -125,7 +127,7 @@ let
     end
     for (pi, p) in enumerate(p2)
         idx += 1
-        push!(components, TaggedBetaMeasure(Interval(0.0, 1.0), idx, BetaMeasure(1.0, 1.0)))
+        push!(components, TaggedBetaMeasure(Interval(0.0, 1.0), idx, wrap_in_measure(BetaPrevision(1.0, 1.0))))
         push!(log_prior, -g2.complexity * log(2) - p.complexity * log(2))
         push!(meta, (g2.id, pi))
         push!(ck, compile_kernel(p, g2, pi))
@@ -176,7 +178,7 @@ let
     progs = Program[]
 
     for (pi, p) in enumerate(programs)
-        push!(components, TaggedBetaMeasure(Interval(0.0, 1.0), pi, BetaMeasure(1.0, 1.0)))
+        push!(components, TaggedBetaMeasure(Interval(0.0, 1.0), pi, wrap_in_measure(BetaPrevision(1.0, 1.0))))
         push!(log_prior, -g.complexity * log(2) - p.complexity * log(2))
         push!(meta, (g.id, pi))
         push!(ck, compile_kernel(p, g, pi))
@@ -279,8 +281,8 @@ let
     @assert correct_prog !== nothing "Should find a program that predicts :enemy for red"
     @assert incorrect_prog !== nothing "Should find a program that predicts :food for red"
 
-    comp1 = TaggedBetaMeasure(Interval(0.0, 1.0), 1, BetaMeasure(1.0, 1.0))
-    comp2 = TaggedBetaMeasure(Interval(0.0, 1.0), 2, BetaMeasure(1.0, 1.0))
+    comp1 = TaggedBetaMeasure(Interval(0.0, 1.0), 1, wrap_in_measure(BetaPrevision(1.0, 1.0)))
+    comp2 = TaggedBetaMeasure(Interval(0.0, 1.0), 2, wrap_in_measure(BetaPrevision(1.0, 1.0)))
     belief = MixtureMeasure(Interval(0.0, 1.0), Measure[comp1, comp2], [0.0, 0.0])
 
     ck_vec = [correct_prog[3], incorrect_prog[3]]
