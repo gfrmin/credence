@@ -508,6 +508,91 @@ function logsumexp(xs::AbstractVector{<:Real})::Float64
 end
 
 # ================================================================
+# Move 2 Phase 3: wrap_in_measure(p::Prevision) → Measure
+# ================================================================
+#
+# Reconstruction helper for the Measure-level shields. Given a concrete
+# Prevision subtype, produce its canonical Measure wrapper. Used by
+# Phase 4's shield-reconstruction path — when a MixtureMeasure whose
+# internal MixturePrevision holds Vector{Prevision} exposes its
+# `components` property, the shield maps `wrap_in_measure` over the
+# stored Previsions to produce the fresh Vector{Measure} the shield
+# returns (wrapped in FrozenVectorView).
+#
+# Covered subtypes: Beta, TaggedBeta, Gaussian, Gamma, Product, Mixture.
+# These are the Prevision subtypes that appear as components of
+# MixturePrevision or factors of ProductPrevision in the current
+# codebase (verified via grep over src/, test/, apps/). The remaining
+# subtypes (Categorical, Dirichlet, NormalGamma) do not appear nested
+# inside other Previsions in current usage — their wrap_in_measure
+# methods error loudly with a context-missing message, directing the
+# caller to construct the Measure wrapper explicitly with the required
+# space information.
+
+"""
+    wrap_in_measure(p::Prevision) → Measure
+
+Reconstruct the canonical Measure wrapper for `p`. Called by the
+Measure-level `getproperty` shields (Phase 4) during
+shield-reconstruction of `:components` / `:factors` reads. Uses
+canonical spaces where the Prevision subtype has one (BetaPrevision →
+Interval(0,1), GaussianPrevision → Euclidean(1), GammaPrevision →
+PositiveReals). For ProductPrevision / MixturePrevision, recurses
+through the nested structure, deriving the outer space from the first
+component's space.
+
+Errors for Prevision subtypes whose canonical space is context-dependent
+(Categorical, Dirichlet, NormalGamma) — these cannot be reconstructed
+without knowing the carrier's space, which the shield cannot supply
+generically. Such cases have not been observed in Move-2-relevant
+nesting patterns; if one arises, the failing stack trace points at this
+comment and the caller constructs the Measure wrapper manually.
+"""
+function wrap_in_measure end
+
+wrap_in_measure(p::BetaPrevision) = BetaMeasure(Interval(0.0, 1.0), p.alpha, p.beta)
+
+# TaggedBetaPrevision.beta post-Phase-4 holds a BetaPrevision (not a BetaMeasure).
+# We wrap that BetaPrevision into a BetaMeasure for the TaggedBetaMeasure constructor.
+# Pre-Phase-4 (this Phase 3) it still holds a BetaMeasure; the direct dispatch is
+# `TaggedBetaMeasure(space, tag, beta::BetaMeasure)`. To handle both transition states
+# symmetrically, we dispatch on the type of `p.beta`:
+function wrap_in_measure(p::TaggedBetaPrevision)
+    beta_measure = p.beta isa BetaPrevision ? wrap_in_measure(p.beta) : p.beta
+    TaggedBetaMeasure(Interval(0.0, 1.0), p.tag, beta_measure)
+end
+
+wrap_in_measure(p::GaussianPrevision) = GaussianMeasure(Euclidean(1), p.mu, p.sigma)
+wrap_in_measure(p::GammaPrevision) = GammaMeasure(PositiveReals(), p.alpha, p.beta)
+
+function wrap_in_measure(p::ProductPrevision)
+    # Recursively wrap each factor (which may be a Prevision post-Phase-4 or
+    # still a Measure pre-Phase-4; dispatch handles both)
+    factors_as_measures = Measure[f isa Prevision ? wrap_in_measure(f) : f for f in p.factors]
+    ProductMeasure(factors_as_measures)
+end
+
+function wrap_in_measure(p::MixturePrevision)
+    components_as_measures = Measure[c isa Prevision ? wrap_in_measure(c) : c for c in p.components]
+    MixtureMeasure(components_as_measures, copy(p.log_weights))
+end
+
+# Fallback for the three context-dependent types: error with migration pointer.
+wrap_in_measure(p::CategoricalPrevision) = error(
+    "wrap_in_measure(::CategoricalPrevision) requires carrier space context " *
+    "(Finite{T}); construct CategoricalMeasure(space, p) explicitly at the call site. " *
+    "See docs/posture-4/move-2-design.md §6 (wrap_in_measure coverage)."
+)
+wrap_in_measure(p::DirichletPrevision) = error(
+    "wrap_in_measure(::DirichletPrevision) requires Simplex+Finite space context; " *
+    "construct DirichletMeasure(space, categories, p.alpha) explicitly."
+)
+wrap_in_measure(p::NormalGammaPrevision) = error(
+    "wrap_in_measure(::NormalGammaPrevision) requires ProductSpace context; " *
+    "construct NormalGammaMeasure(space, p.κ, p.μ, p.α, p.β) explicitly."
+)
+
+# ================================================================
 # TYPE 3: Kernel
 # ================================================================
 
