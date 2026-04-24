@@ -35,6 +35,7 @@ export ExchangeablePrevision, decompose
 export ParticlePrevision, QuadraturePrevision, EnumerationPrevision
 export ConditionalPrevision
 export ConjugatePrevision, maybe_conjugate, update, _dispatch_path
+export push_component!, replace_component!
 # At Move 2, `Ontology`'s `Functional` hierarchy is aliased onto these
 # types (`const Functional = TestFunction` plus `import ..Previsions:
 # Identity, …`), so both modules export the same bindings (they resolve
@@ -713,5 +714,64 @@ without it, a silent registry miss would fall through to particle and
 produce the correct value for the wrong reason.
 """
 _dispatch_path(p::Prevision, k) = maybe_conjugate(p, k) === nothing ? :particle : :conjugate
+
+# ── Prevision-level mutation APIs (Move 2 Phase 1) ────────────────────────
+#
+# Per docs/posture-4/move-2-design.md §2. Land ahead of Move 7's skin
+# rewrite as surface-ready migration targets. Not consumed by `src/`
+# internally today. The Move 5-7 rewrite of apps/skin/server.jl:611-614
+# migrates `push!(state.belief.components, ...)` to `push_component!`
+# and `push!(state.belief.log_weights, ...)` is subsumed by
+# push_component!'s atomic component+log_weight append.
+
+"""
+    push_component!(p::MixturePrevision, c::Prevision, log_weight::Float64)
+
+Append a component to a `MixturePrevision` atomically — appends `c` to
+`p.components` and `log_weight` to `p.log_weights`, then re-normalises
+`p.log_weights` in place via log-sum-exp. Mutates `p` (both fields);
+returns `p`.
+
+This is the canonical mutation API for Move 2+; direct `push!`-through-
+shield patterns on `m.components` fail loudly via `FrozenVectorView`
+guards at the Measure-level shield (see `src/ontology.jl`).
+
+Note: mutates `p.components` and `p.log_weights` in place. The prior's
+normalisation is recomputed from scratch after the append (not
+incrementally), so callers get a fresh normalised log-weight vector.
+"""
+function push_component!(p::MixturePrevision, c::Prevision, log_weight::Float64)
+    push!(getfield(p, :components), c)
+    push!(getfield(p, :log_weights), log_weight)
+    # Re-normalise in place
+    lws = getfield(p, :log_weights)
+    if all(lw -> lw == -Inf, lws)
+        error("mixture has zero total mass after push_component! — all components impossible")
+    end
+    max_lw = maximum(lws)
+    log_total = max_lw + log(sum(exp.(lws .- max_lw)))
+    for i in eachindex(lws)
+        lws[i] -= log_total
+    end
+    return p
+end
+
+"""
+    replace_component!(p::MixturePrevision, i::Int, c::Prevision)
+
+Replace the `i`-th component of `p` in place with `c`. Mutates `p.components[i]`;
+does not change `p.log_weights`. Returns `p`.
+
+Use this for Move 7's skin-server component-update paths where the
+existing pattern was `state.belief.components[i] = new_comp` — the
+`FrozenVectorView` guard rejects `setindex!` on the reconstructed shield
+vector, and this API is the migration target.
+"""
+function replace_component!(p::MixturePrevision, i::Int, c::Prevision)
+    components = getfield(p, :components)
+    1 <= i <= length(components) || error("replace_component!: index $i out of range [1, $(length(components))]")
+    components[i] = c
+    return p
+end
 
 end # module Previsions
