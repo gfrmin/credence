@@ -44,6 +44,80 @@ export factor, replace_factor
 export condition, expect, push_measure, density, log_predictive, log_marginal
 export draw
 export weights, mean, variance, log_density_at, prune, truncate, logsumexp
+export FrozenVectorView
+
+# ================================================================
+# Move 2 Phase 2: FrozenVectorView{T}
+# ================================================================
+#
+# Thin read-only wrapper around a Vector, produced by Measure-level
+# getproperty shields (from Phase 4 onward) when the shield reconstructs
+# a Measure-shaped view from the underlying Prevision-typed internal.
+#
+# Purpose: convert a silent-push!-through-shield hazard into a loud
+# runtime error. Per docs/posture-4/move-2-design.md §5.1, Move 2's
+# internal fields become Vector{Prevision}; the Measure-level shields
+# reconstruct Vector{Measure} by wrapping each element with
+# wrap_in_measure(p). Callers that then try `push!(m.components, ...)`
+# (pre-Move-7 apps/skin/server.jl:611-614 pattern) would silently push
+# into the reconstructed (ephemeral) Vector, never affecting the stored
+# Prevision's data. FrozenVectorView makes this fail loudly instead.
+#
+# Read methods delegate to the inner Vector; mutation methods throw
+# with a message pointing at push_component! / replace_component! as
+# the Prevision-level migration target.
+#
+# Phase 2 lands the type and its methods. Phase 4 wires it into the
+# MixtureMeasure / ProductMeasure / TaggedBetaMeasure shields.
+
+"""
+    FrozenVectorView{T}(inner::Vector{T})
+
+Read-only wrapper around `inner`. Delegates the read surface
+(`getindex`, `length`, `iterate`, `eachindex`, `firstindex`,
+`lastindex`, `size`, `axes`, `collect`, `isempty`) to `inner`. All
+mutation operations (`push!`, `setindex!`, `append!`, `pop!`,
+`resize!`, `empty!`, `deleteat!`, `insert!`) throw a Move-2-attributed
+error pointing at the Prevision-level mutation APIs.
+
+Used by the Measure-level `getproperty` shields on `MixtureMeasure`,
+`ProductMeasure`, `TaggedBetaMeasure` from Move 2 Phase 4 onward, to
+make shield-returned vectors self-describing as "read-only, fresh per
+access; use push_component! / replace_component! for mutation."
+"""
+struct FrozenVectorView{T}
+    inner::Vector{T}
+end
+
+# ── Read methods (delegate to inner) ──
+Base.getindex(v::FrozenVectorView, i::Int) = v.inner[i]
+Base.getindex(v::FrozenVectorView, idx) = v.inner[idx]
+Base.length(v::FrozenVectorView) = length(v.inner)
+Base.size(v::FrozenVectorView) = size(v.inner)
+Base.axes(v::FrozenVectorView) = axes(v.inner)
+Base.iterate(v::FrozenVectorView) = iterate(v.inner)
+Base.iterate(v::FrozenVectorView, state) = iterate(v.inner, state)
+Base.eachindex(v::FrozenVectorView) = eachindex(v.inner)
+Base.firstindex(v::FrozenVectorView) = firstindex(v.inner)
+Base.lastindex(v::FrozenVectorView) = lastindex(v.inner)
+Base.eltype(::Type{FrozenVectorView{T}}) where T = T
+Base.isempty(v::FrozenVectorView) = isempty(v.inner)
+Base.collect(v::FrozenVectorView) = copy(v.inner)  # explicit copy per read
+Base.show(io::IO, v::FrozenVectorView) = print(io, "FrozenVectorView(", v.inner, ")")
+
+# ── Mutation methods (throw with migration pointer) ──
+const _FROZEN_ERR = "FrozenVectorView is read-only (shield-reconstructed fresh per access). " *
+    "Use push_component!(::MixturePrevision, ...) or replace_component!(::MixturePrevision, ...) " *
+    "at the Prevision level. See docs/posture-4/move-2-design.md §5.1."
+
+Base.push!(v::FrozenVectorView, ::Any...) = error(_FROZEN_ERR)
+Base.setindex!(v::FrozenVectorView, ::Any, ::Any...) = error(_FROZEN_ERR)
+Base.append!(v::FrozenVectorView, ::Any...) = error(_FROZEN_ERR)
+Base.pop!(v::FrozenVectorView, ::Any...) = error(_FROZEN_ERR)
+Base.resize!(v::FrozenVectorView, ::Any...) = error(_FROZEN_ERR)
+Base.empty!(v::FrozenVectorView) = error(_FROZEN_ERR)
+Base.deleteat!(v::FrozenVectorView, ::Any...) = error(_FROZEN_ERR)
+Base.insert!(v::FrozenVectorView, ::Any...) = error(_FROZEN_ERR)
 
 # ================================================================
 # TYPE 1: Space

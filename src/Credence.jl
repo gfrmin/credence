@@ -47,7 +47,7 @@ export Prevision, TestFunction, Indicator, apply
 export MixturePrevision, ExchangeablePrevision, decompose
 export ParticlePrevision, QuadraturePrevision, EnumerationPrevision
 export ConditionalPrevision
-export push_component!, replace_component!
+export push_component!, replace_component!, FrozenVectorView
 export factor, replace_factor
 export condition, expect, push_measure, density, log_density_at, log_predictive, log_marginal
 export draw
