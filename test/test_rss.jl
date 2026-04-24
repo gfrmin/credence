@@ -8,6 +8,8 @@ include(joinpath(@__DIR__, "..", "apps", "julia", "rss", "host.jl"))
 
 using Dates
 using Random
+using Credence: BetaPrevision, GaussianPrevision, GammaPrevision, CategoricalPrevision  # Posture 4 Move 4
+using Credence.Ontology: wrap_in_measure  # Posture 4 Move 4
 
 passed = 0
 failed = 0
@@ -128,8 +130,8 @@ end
 # With Beta(1,1), mean=0.5=base_rate → no discrimination. Use a reliable Beta
 # to test that Plackett-Luce correctly favours programs that fire on the chosen article.
 if discriminating_idx !== nothing && wrong_idx !== nothing
-    reliable_disc = TaggedBetaMeasure(Interval(0.0, 1.0), discriminating_idx, BetaMeasure(5.0, 1.0))
-    reliable_wrong = TaggedBetaMeasure(Interval(0.0, 1.0), wrong_idx, BetaMeasure(5.0, 1.0))
+    reliable_disc = TaggedBetaMeasure(Interval(0.0, 1.0), discriminating_idx, wrap_in_measure(BetaPrevision(5.0, 1.0)))
+    reliable_wrong = TaggedBetaMeasure(Interval(0.0, 1.0), wrong_idx, wrap_in_measure(BetaPrevision(5.0, 1.0)))
 
     ll_disc = k_read.log_density(reliable_disc, 1.0)
     ll_wrong = k_read.log_density(reliable_wrong, 1.0)
@@ -152,7 +154,7 @@ k_dismiss = build_dismiss_kernel(state.compiled_kernels, fa, ts)
 # With reliable Beta, program that fires on dismissed article should be penalized more
 if discriminating_idx !== nothing
     # discriminating_idx fires on A — if A is dismissed, this is BAD
-    reliable_fires = TaggedBetaMeasure(Interval(0.0, 1.0), discriminating_idx, BetaMeasure(5.0, 1.0))
+    reliable_fires = TaggedBetaMeasure(Interval(0.0, 1.0), discriminating_idx, wrap_in_measure(BetaPrevision(5.0, 1.0)))
     ll_dismiss_fires = k_dismiss.log_density(reliable_fires, 0.0)
 
     # Find a program that doesn't fire on A
@@ -165,7 +167,7 @@ if discriminating_idx !== nothing
     end
 
     if neutral_idx !== nothing
-        reliable_neutral = TaggedBetaMeasure(Interval(0.0, 1.0), neutral_idx, BetaMeasure(5.0, 1.0))
+        reliable_neutral = TaggedBetaMeasure(Interval(0.0, 1.0), neutral_idx, wrap_in_measure(BetaPrevision(5.0, 1.0)))
         ll_dismiss_neutral = k_dismiss.log_density(reliable_neutral, 0.0)
         @check "firing program penalized more than neutral" ll_dismiss_fires < ll_dismiss_neutral
         println("  Firing program dismiss ll: $(round(ll_dismiss_fires, digits=4))")
