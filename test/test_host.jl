@@ -6,6 +6,8 @@
 
 push!(LOAD_PATH, joinpath(@__DIR__, "..", "src"))
 using Credence
+using Credence: BetaPrevision, GaussianPrevision, GammaPrevision, CategoricalPrevision  # Posture 4 Move 4
+using Credence.Ontology: wrap_in_measure  # Posture 4 Move 4
 using Credence: condition, weights, expect, draw, prune
 using Credence: CategoricalMeasure, BetaMeasure, MixtureMeasure, ProductMeasure
 using Credence: Finite, Interval, ProductSpace, Kernel, FactorSelector, Measure
@@ -17,8 +19,8 @@ println("=" ^ 60)
 # TEST: condition(ProductMeasure, kernel_with_active_factors, obs)
 # returns MixtureMeasure of ProductMeasures with only active factor updated
 let
-    cat = CategoricalMeasure(Finite([0.0, 1.0, 2.0]))  # 3 categories
-    betas = [BetaMeasure(3.0, 2.0), BetaMeasure(5.0, 5.0), BetaMeasure(2.0, 8.0)]
+    cat = CategoricalMeasure(Finite([0.0, 1.0, 2.0]), CategoricalPrevision(fill(0.0, 3)))  # 3 categories
+    betas = [wrap_in_measure(BetaPrevision(3.0, 2.0)), wrap_in_measure(BetaPrevision(5.0, 5.0)), wrap_in_measure(BetaPrevision(2.0, 8.0))]
     prod = ProductMeasure(Measure[cat, betas...])
 
     binary = Finite([0.0, 1.0])
@@ -62,8 +64,8 @@ println("HOST TEST 2: condition(ProductMeasure) on failure observation")
 println("=" ^ 60)
 
 let
-    cat = CategoricalMeasure(Finite([0.0, 1.0]))  # 2 categories
-    betas = [BetaMeasure(4.0, 3.0), BetaMeasure(2.0, 6.0)]
+    cat = CategoricalMeasure(Finite([0.0, 1.0]), CategoricalPrevision(fill(0.0, 2)))  # 2 categories
+    betas = [wrap_in_measure(BetaPrevision(4.0, 3.0)), wrap_in_measure(BetaPrevision(2.0, 6.0))]
     prod = ProductMeasure(Measure[cat, betas...])
 
     binary = Finite([0.0, 1.0])
@@ -102,8 +104,8 @@ println("=" ^ 60)
 using Random
 let
     Random.seed!(42)
-    cat = CategoricalMeasure(Finite([0, 1]))
-    theta = BetaMeasure(2.0, 2.0)
+    cat = CategoricalMeasure(Finite([0, 1]), CategoricalPrevision(fill(0.0, 2)))
+    theta = wrap_in_measure(BetaPrevision(2.0, 2.0))
     pm = ProductMeasure(Measure[cat, theta])
 
     obs_space = Finite([0, 1])
@@ -137,7 +139,7 @@ let
         prune(MixtureMeasure(Interval(0.0, 1.0), components, log_wts))
     end
 
-    betas = Measure[BetaMeasure(3.0, 2.0), BetaMeasure(5.0, 5.0), BetaMeasure(2.0, 8.0)]
+    betas = Measure[wrap_in_measure(BetaPrevision(3.0, 2.0)), wrap_in_measure(BetaPrevision(5.0, 5.0)), wrap_in_measure(BetaPrevision(2.0, 8.0))]
     prod = ProductMeasure(betas)
     rel_state = MixtureMeasure(prod.space, Measure[prod], [0.0])
     cat_w = [0.6, 0.3, 0.1]
@@ -163,9 +165,9 @@ println("=" ^ 60)
 let
     # Simulates the update_beta_state flow:
     # MixtureMeasure of ProductMeasures, each with [categorical, Beta, Beta]
-    cat = CategoricalMeasure(Finite([0.0, 1.0]))
-    b1 = BetaMeasure(2.0, 3.0)
-    b2 = BetaMeasure(4.0, 1.0)
+    cat = CategoricalMeasure(Finite([0.0, 1.0]), CategoricalPrevision(fill(0.0, 2)))
+    b1 = wrap_in_measure(BetaPrevision(2.0, 3.0))
+    b2 = wrap_in_measure(BetaPrevision(4.0, 1.0))
     prod = ProductMeasure(Measure[cat, b1, b2])
     joint = MixtureMeasure(prod.space, Measure[prod], [0.0])
 
@@ -198,7 +200,7 @@ println("=" ^ 60)
 
 let
     function _initial_cov_state(n_categories::Int, prior_coverage::Vector{Float64}; strength::Float64=10.0)
-        factors = Measure[BetaMeasure(max(p * strength, 0.01), max((1-p) * strength, 0.01))
+        factors = Measure[wrap_in_measure(BetaPrevision(max(p * strength, 0.01), max((1-p) * strength, 0.01)))
                           for p in prior_coverage]
         prod = ProductMeasure(factors)
         MixtureMeasure(prod.space, Measure[prod], [0.0])
@@ -275,7 +277,7 @@ let
                 cat_log_post[ci] = mx + log(exp(cat_log_post[ci] - mx) + exp(lw - mx))
             end
         end
-        new_cat_belief = CategoricalMeasure(cat_belief.space, cat_log_post)
+        new_cat_belief = CategoricalMeasure(cat_belief.space, CategoricalPrevision(cat_log_post))
 
         stripped = Measure[ProductMeasure(Measure[comp.factors[2:end]...])
                            for comp in posterior.components]
@@ -285,10 +287,10 @@ let
     end
 
     # Start with coverage Beta(8,2) and Beta(6,4) for 2 categories
-    factors = Measure[BetaMeasure(8.0, 2.0), BetaMeasure(6.0, 4.0)]
+    factors = Measure[wrap_in_measure(BetaPrevision(8.0, 2.0)), wrap_in_measure(BetaPrevision(6.0, 4.0))]
     prod = ProductMeasure(factors)
     cov_state = MixtureMeasure(prod.space, Measure[prod], [0.0])
-    cat_belief = CategoricalMeasure(Finite([0.0, 1.0]))
+    cat_belief = CategoricalMeasure(Finite([0.0, 1.0]), CategoricalPrevision(fill(0.0, 2)))
 
     # Responded (obs=1.0): alpha should increase for the active category
     (new_state, _) = _update_beta_state(cov_state, cat_belief, 1.0)
@@ -329,7 +331,7 @@ let
     end
 
     # Coverage state: Beta(8,2) for cat0, Beta(6,4) for cat1
-    factors = Measure[BetaMeasure(8.0, 2.0), BetaMeasure(6.0, 4.0)]
+    factors = Measure[wrap_in_measure(BetaPrevision(8.0, 2.0)), wrap_in_measure(BetaPrevision(6.0, 4.0))]
     prod = ProductMeasure(factors)
     cov_state = MixtureMeasure(prod.space, Measure[prod], [0.0])
 

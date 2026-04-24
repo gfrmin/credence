@@ -14,6 +14,8 @@ themselves.
 
 push!(LOAD_PATH, joinpath(@__DIR__, "..", "src"))
 using Credence
+using Credence: BetaPrevision, GaussianPrevision, GammaPrevision, CategoricalPrevision  # Posture 4 Move 4
+using Credence.Ontology: wrap_in_measure  # Posture 4 Move 4
 
 passed = 0
 failed = 0
@@ -46,9 +48,9 @@ let
     @check "target is BOOLEAN_SPACE" k.target === BOOLEAN_SPACE
     @check "likelihood_family is Flat" k.likelihood_family isa Flat
 
-    tbm_1 = TaggedBetaMeasure(Interval(0.0, 1.0), 1, BetaMeasure())
-    tbm_2 = TaggedBetaMeasure(Interval(0.0, 1.0), 2, BetaMeasure())
-    tbm_3 = TaggedBetaMeasure(Interval(0.0, 1.0), 3, BetaMeasure())
+    tbm_1 = TaggedBetaMeasure(Interval(0.0, 1.0), 1, BetaPrevision(1.0, 1.0))
+    tbm_2 = TaggedBetaMeasure(Interval(0.0, 1.0), 2, BetaPrevision(1.0, 1.0))
+    tbm_3 = TaggedBetaMeasure(Interval(0.0, 1.0), 3, BetaPrevision(1.0, 1.0))
 
     @check "log_density(tag=1, true) == 0.0  [tag in fires]" k.log_density(tbm_1, true) == 0.0
     @check "log_density(tag=1, false) == -Inf [tag in fires]" k.log_density(tbm_1, false) == -Inf
@@ -68,8 +70,8 @@ let
     ki = indicator_kernel(inner)
     ko = indicator_kernel(outer)
 
-    tbm_1 = TaggedBetaMeasure(Interval(0.0, 1.0), 1, BetaMeasure())
-    tbm_2 = TaggedBetaMeasure(Interval(0.0, 1.0), 2, BetaMeasure())
+    tbm_1 = TaggedBetaMeasure(Interval(0.0, 1.0), 1, BetaPrevision(1.0, 1.0))
+    tbm_2 = TaggedBetaMeasure(Interval(0.0, 1.0), 2, BetaPrevision(1.0, 1.0))
 
     @check "inner holds at tag 1" ki.log_density(tbm_1, true) == 0.0
     @check "complement does not hold at tag 1" ko.log_density(tbm_1, true) == -Inf
@@ -90,7 +92,7 @@ let
     both = Conjunction(a, b)
     k = indicator_kernel(both)
 
-    tbm(t) = TaggedBetaMeasure(Interval(0.0, 1.0), t, BetaMeasure())
+    tbm(t) = TaggedBetaMeasure(Interval(0.0, 1.0), t, BetaPrevision(1.0, 1.0))
     @check "tag 1 ∈ a, ∉ b → conjunction false" k.log_density(tbm(1), true) == -Inf
     @check "tag 2 ∈ both        → conjunction true"  k.log_density(tbm(2), true) == 0.0
     @check "tag 3 ∈ both        → conjunction true"  k.log_density(tbm(3), true) == 0.0
@@ -110,7 +112,7 @@ let
     either = Disjunction(a, b)
     k = indicator_kernel(either)
 
-    tbm(t) = TaggedBetaMeasure(Interval(0.0, 1.0), t, BetaMeasure())
+    tbm(t) = TaggedBetaMeasure(Interval(0.0, 1.0), t, BetaPrevision(1.0, 1.0))
     @check "tag 1 ∈ a        → disjunction true"  k.log_density(tbm(1), true) == 0.0
     @check "tag 3 ∈ b        → disjunction true"  k.log_density(tbm(3), true) == 0.0
     @check "tag 5 ∉ either  → disjunction false" k.log_density(tbm(5), true) == -Inf
@@ -129,7 +131,7 @@ let
     lhs = indicator_kernel(Complement(Conjunction(a, b)))
     rhs = indicator_kernel(Disjunction(Complement(a), Complement(b)))
 
-    tbm(t) = TaggedBetaMeasure(Interval(0.0, 1.0), t, BetaMeasure())
+    tbm(t) = TaggedBetaMeasure(Interval(0.0, 1.0), t, BetaPrevision(1.0, 1.0))
     all_match = all(t -> lhs.log_density(tbm(t), true) == rhs.log_density(tbm(t), true), 0:5)
     @check "De Morgan identity holds on tags 0..5" all_match
 end
@@ -161,7 +163,7 @@ println("=" ^ 60)
 
 let
     sp = Interval(0.0, 1.0)
-    components = [TaggedBetaMeasure(sp, t, BetaMeasure(2.0, 3.0)) for t in 1:4]
+    components = [TaggedBetaMeasure(sp, t, wrap_in_measure(BetaPrevision(2.0, 3.0))) for t in 1:4]
     m = MixtureMeasure(sp, components, Float64[0.0, 0.0, 0.0, 0.0])
 
     posterior = condition(m, TagSet(sp, Set([1, 3])))
@@ -180,7 +182,7 @@ println("=" ^ 60)
 
 let
     sp = Interval(0.0, 1.0)
-    components = [TaggedBetaMeasure(sp, t, BetaMeasure(1.0, 1.0)) for t in 1:3]
+    components = [TaggedBetaMeasure(sp, t, wrap_in_measure(BetaPrevision(1.0, 1.0))) for t in 1:3]
     m = MixtureMeasure(sp, components, Float64[0.0, 0.0, 0.0])
 
     threw = false
