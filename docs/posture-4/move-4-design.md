@@ -173,11 +173,70 @@ Concretely: when Move 4 rewrites `BetaMeasure(2, 3).alpha == 2.0` → `BetaPrevi
 
 **Invariant on the pragma count.** The 42 pragma sites stay at 42 across sub-PRs 4a–4d. No new pragmas added (the mechanical rewrite doesn't introduce new Prevision-primary discipline violations); no existing pragmas retired (the rewrite doesn't turn a structural oracle into a pure-`expect` one — that would be Option B scope creep). A sub-PR landing with 41 or 43 pragma sites is a **flag**, not unremarked drift — investigate whether a site genuinely stopped needing a pragma (rare; verify), whether one accidentally appeared (bug; fix), or whether the count boundary needs documenting as a legitimate exception (amend this §5.4 in the affected sub-PR).
 
+### 5.5 The not-applicable category — Measure-level composition that doesn't migrate
+
+**Amended 2026-04-24 post-sub-PR-4a.** Sub-PR 4a surfaced a scope finding the original design doc didn't name: roughly half the `Measure\(` grep hits per file represent Measure-level composition that **survives Move 4 unchanged** — never rewrites as a Prevision constructor because it's structurally the wrong shape to do so. The 96-count for 4a was wrong about what "Prevision-first files" meant, not about what 4a should attempt. 53 of 96 migrate; 43 are not-applicable. This scope category needs a name so 4b/4c/4d can report against it explicitly and Move 5 can consult the manifest of sites that remain when its shield-retirement arrives.
+
+**Criterion.** A Measure construction site is **not-applicable** to Move 4 when the Measure wrapper carries structural information that the corresponding Prevision does not, AND the test's assertions or downstream consumers rely on that information. Concretely, any of:
+
+1. **Typed Measure-level composition with no Prevision-level analogue on master.** `ProductMeasure(Vector{<:Measure})` and `MixtureMeasure(space, Vector{<:Measure}, log_weights)` — composition over Measures; `MixturePrevision.components::Vector` and `ProductPrevision.factors::Vector` remain untyped until Move 5. These stay as Measure-level constructors.
+
+2. **Prevision-in constructors that already exist.** `TaggedBetaMeasure(Interval, tag, ::BetaPrevision)` (Move 2 Phase 4's outer constructor); `CategoricalMeasure(Finite, ::CategoricalPrevision)` (existing 2-arg constructor). These are Prevision-in by signature already; rewriting them as `wrap_in_measure(p)` would just add a round-trip.
+
+3. **Context-dependent Measure types.** `DirichletMeasure(Simplex, Finite, alpha)`, `NormalGammaMeasure(ProductSpace, κ, μ, α, β)` — the Measure constructor takes the space + categories + scalar hyperparameters as separate arguments because the corresponding Prevision cannot carry them without a Finite-side companion. `wrap_in_measure(::DirichletPrevision)` errors by design; the Measure surface is the canonical construction path until Move 5's `condition` rewrite obviates it.
+
+4. **Default-uniform CategoricalMeasure constructed from a `Finite` alone.** `CategoricalMeasure(Finite([...]))` is a convenience form that constructs a uniform categorical. Rewriting to `CategoricalMeasure(Finite([...]), CategoricalPrevision(fill(0.0, N)))` is the explicit Prevision-in form but keeps the `CategoricalMeasure` wrapper because atom identity lives on the `Finite` per §5.2 Option A. This is a **migration** under the 4a pattern (scalar → Prevision-in Measure) not a not-applicable site.
+
+5. **Particle/Quadrature/Enumeration wrapping.** `CategoricalMeasure(Finite(pp.samples), pp)` where `pp::ParticlePrevision` — the 2-arg constructor deliberately wraps a non-Categorical Prevision into a CategoricalMeasure surface with explicit Finite space context. These stay through Move 4; the Prevision side carries the samples/grid/enumeration, the Finite side carries the atom identity.
+
+   **Permanence note.** Of the five sub-categories, this one is the most likely to migrate later — Move 7's skin rewrite is where the host/prevision boundary firms up (what the host sees is observational content — samples, draw outputs — and what the Prevision carries is mathematical content). The current `CategoricalMeasure(Finite, ::ParticlePrevision)` pattern fits neither side cleanly and may be retired when the boundary lands. The not-applicable set is not homogeneous in its permanence: categories 1–4 retire with Measure at Move 5; category 5 may retire later as part of Move 7's host-boundary rewrite.
+
+**What 4a observed, concretely:**
+
+| File | Sites | Migrated | Not-applicable | Post-migration breakdown |
+|---|---|---|---|---|
+| `test_prevision_unit.jl` | 66 | 34 | 32 | ~15 docstring hits in `check("...")` names; ~5 ProductMeasure; ~4 MixtureMeasure; ~6 Prevision-in Measure constructors (post-migration form); ~2 context-dependent types |
+| `test_prevision_conjugate.jl` | 11 | 11 | 0 | All migrated — file's Measure constructors were all scalar-shortcut form |
+| `test_prevision_mixture.jl` | 13 | 5 | 8 | TaggedBetaMeasure+BetaPrevision Prevision-in forms; MixtureMeasure composition |
+| `test_prevision_particle.jl` | 6 | 3 | 3 | CategoricalMeasure(Finite, particle_prevision) wraps |
+| **Total** | 96 | 53 | 43 | — |
+
+**Expected per-sub-PR not-applicable ratio.** A single wide band across all sub-PRs conceals the structural distinctions that actually matter: core DSL tests exercise deep algebraic composition (ProductMeasure-of-MixtureMeasure-of-…); domain-app tests construct-and-assert without that depth; persistence tests have small-N volatility. Each sub-PR gets its own band, tight enough that an outlier reads as informatively different from the 4a baseline.
+
+| Sub-PR | Total sites (approx) | Expected not-applicable ratio | Rationale |
+|---|---|---|---|
+| 4a (observed) | 96 | 45% (baseline) | Observed directly. |
+| 4b (core DSL + events) | ~167 | **40–55%** | Core DSL is composition-heavy; `test_core.jl` alone is 76 sites and exercises the deep ProductMeasure / MixtureMeasure algebra. Slight upward skew from 45% expected. |
+| 4c (domain apps) | ~21 | **25–40%** | Domain tests are construct-and-assert; algebraic composition is thinner than in core DSL. Slight downward skew from 45% expected. |
+| 4d (persistence) | ~7 | **15–35%** | Small-N caveat: 7 sites means any single not-applicable site shifts the ratio by 14pp. A 15–35% band accommodates 1–2 not-applicable sites; narrower bands are noise-dominated at this N. |
+
+A sub-PR landing outside its band is a flag warranting halt-and-inspect. Staying inside is not a pass-by-itself; verify the categorisation matches §5.5's criteria, then proceed.
+
+**Per-sub-PR reporting.** Each sub-PR's PR body reports BOTH counts: `migrated` (sites whose constructor changed from Measure to Prevision-first form) and `not-applicable` (sites surviving Move 4 unchanged because they fall under one of the five categories above). The sum of the two equals the pre-rewrite `grep -cE 'Measure\(' file` count.
+
+**Manifest for Move 5.** The not-applicable sites are pre-existing composition debris that Move 5's shield-retirement + `condition` rewrite will transform. Move 5's design doc should consult the 4a/4b/4c/4d PR bodies as a manifest of sites to re-inspect when `MixturePrevision.components::Vector{Prevision}` tightens and `condition` produces concentrated Previsions. Many of the not-applicable sites become rewrites at Move 5; some stay at the final Measure-retirement tip only because `CategoricalMeasure(Finite, ...)` is itself retiring; category-5 sites may stay until Move 7's host-boundary rewrite.
+
+### 5.5.1 Design-doc amendment is a cadence claim, not a meta-observation
+
+The framing "design-doc survival through implementation is the exception, not the rule" was introduced in Move 2's §5.1.4 as a meta-observation and carried into Move 0's amendment narrative. Three substantive moves in (Move 0 §§2/3/4 reset; Move 2 Phase 4 pivot; Move 4 §5.5 here), the exception has become the rule often enough that it earns promotion from observation to **cadence claim**:
+
+> **A Posture-4 move's design doc assumes one amendment will be required mid-implementation. The move's PR sequence budgets for it: the master plan stays the contract; design-doc amendments are first-class artefacts in the move's history; code halts on surfaced premise failure; amendment PR lands before the code work resumes.**
+
+What this changes for a future move author:
+
+- Plan the PR sequence for {design-doc PR, potentially-amendment-PR, code PR(s)} rather than {design-doc PR, code PR(s)}. The amendment is expected scope, not surprise scope.
+- Halting on a surfaced premise failure mid-code is the correct response, not a process exception. The Move 2 Phase 4 pivot took this path under the exception framing; future moves take it under the cadence framing.
+- The reviewer-driven pace includes amendment cycles. A move whose design doc survives implementation without amendment is genuinely unusual; a design doc drafted to survive (by over-specifying edge cases upfront) often fails in a different way — the specification over-commits to premises that haven't been stress-tested.
+
+The cadence claim doesn't retire the meta-observation's content — the discipline of halting, naming the premise failure in a §5 amendment, and landing the amendment before code resumes is exactly what the meta-observation described. Promoting it to a cadence claim just acknowledges the empirical base-rate across three moves and makes the expectation explicit for future ones.
+
+Applies prospectively from Move 5 onward. Move 5's design doc opens with the cadence claim as context: an amendment is expected; which premise turns out to need it is what implementation surfaces.
+
 ## 6. Risk + mitigation
 
 **Risk (medium — volumetric):** A Measure construction site missed by the rewrite compiles and runs but doesn't exercise the Prevision-primary surface Move 5 depends on.
 
-**Mitigation:** `grep -cE 'Measure\(' test/test_*.jl` at each sub-PR's tip. Target post-Move-4: 0 (modulo comments, docstrings, and legitimate `wrap_in_measure` return sites which are `Measure`-typed but not Measure-constructed). Each sub-PR's PR body reports the grep count before and after.
+**Mitigation:** `grep -cE 'Measure\(' test/test_*.jl` at each sub-PR's tip reports the total hit count. Target post-Move-4: the count equals the sum of (not-applicable category per §5.5) + (legitimate docstring / comment hits). Pre-sub-PR vs. post-sub-PR grep delta equals the `migrated` count reported in the sub-PR body. Sites that neither migrate nor fall under §5.5's five not-applicable sub-categories are flagged as miss-candidates and investigated per-site.
 
 **Risk (medium — per-component space):** A test constructs `CategoricalMeasure(Finite([...]), log_weights)` and migrates to `CategoricalPrevision(log_weights)`; subsequent `wrap_in_measure(p)` call needs the `Finite` space, which the Prevision doesn't carry. §5.2's Option A means the test has to hold the `Finite` space separately.
 
