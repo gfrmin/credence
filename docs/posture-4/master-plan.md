@@ -12,6 +12,16 @@ Posture 4 finishes the reconstruction. The compatibility surface is retired. Eve
 
 The guiding principle is set in `decision-log.md`: at every ambiguous design choice, take the most de Finettian option. There is exactly one numerical primitive — `expect(p, f)` — and one conditioning primitive — `condition(p, e)` or `condition(p, k, obs)`, peer primary per Posture 3 Move 7. Every other named function on a prevision is sugar over these. The type system bends to accommodate the foundation, not the other way around.
 
+## Prevision-primary principle (amended 2026-04-24 post-Move-2-Phase-4-pivot)
+
+> Prevision is the primary type. Where a structural question asks whether information belongs on Prevision or on Measure, the default is Prevision unless the information is observational (spaces, sampling). Per-component space variation in posteriors is not observational; it is the mathematical content of concentration and belongs on the Prevision.
+
+Prevision-as-primary isn't stylistic preference — it's the load-bearing claim of the Credence programme. Cox gives probabilities, Savage gives EU maximisation, and Prevision-primary makes those axioms **operative** rather than decorative. Expectations are the thing the axioms license; space-reduction is a representational workaround that exists only because the library started in Measure-first land.
+
+Every move's design doc that asks "should this field / operation live on Prevision or on Measure?" resolves by this principle. Measure's reason to exist is shrinking with each move; Prevision's surface is what Posture 4 is building. See `docs/posture-4/move-2-design.md` §5.1 (post-Phase-4 amendment) for the case that surfaced this principle — Move 2's attempt to tighten `MixturePrevision.components::Vector{Prevision}` required per-component space info that Prevision doesn't carry and shouldn't carry. Move 5's Prevision-primary `condition` (concentrated Previsions rather than reduced-space Measures) is the native resolution.
+
+**Meta-observation on the design-doc cadence.** Two Posture 4 moves now have had design-doc premises challenged by mid-flight implementation — Move 0's `Test.@test` assumption, and Move 2's shield-reconstruction-preserves-components assumption. The design-doc-first cadence is working as intended: design docs are proposals to reality, and the implementation layer has an earned veto. A future move author should treat design-doc survival through implementation as the exception, not the rule, and halting on a surfaced premise-failure is the correct mid-flight response.
+
 ## Final-state architecture
 
 The Posture 4 tip looks like this. Design docs reference this section as the convergence target; moves transform the current tip toward it.
@@ -121,11 +131,14 @@ Tests: unchanged externally; internal method bodies updated to read the new fiel
 Scope: `src/prevision.jl`, `src/ontology.jl`.
 
 Changes:
-- `TaggedBetaPrevision.beta::BetaPrevision`. Constructor takes `BetaPrevision`, not `BetaMeasure`. Existing consumers within `src/` that pass a BetaMeasure get updated to pass the underlying Prevision.
-- `ProductPrevision.factors::Vector{Prevision}`. Constructor and internal consumers updated.
-- `MixturePrevision.components::Vector{Prevision}`. Constructor, `expect`, `condition`, `decompose` methods updated.
+- `TaggedBetaPrevision.beta::BetaPrevision`. Constructor takes `BetaPrevision`, not `BetaMeasure`. Existing consumers within `src/` that pass a BetaMeasure get updated to pass the underlying Prevision (or use the outer constructor that accepts `BetaMeasure` and extracts `.prevision`).
+- Surface-ready APIs for Move 5/7: `push_component!(::MixturePrevision, ::Prevision, log_weight)` and `replace_component!(::MixturePrevision, ::Int, ::Prevision)`; a `FrozenVectorView{T}` read-only wrapper type; a `wrap_in_measure(p::Prevision) → Measure` helper. These land as unused surface for Move 5/7's shield-retirement and skin-rewrite migrations; not wired into the shields in Move 2.
 
-Measure subtypes still exist at this point — they are retired in Move 5. The `getproperty` shields on the remaining Measure subtypes may need to reconstruct a Measure-shaped view for external consumers (e.g. `MixtureMeasure.components` returns `Vector{Measure}` via on-the-fly wrapping); this transient state is what allows tests and apps to continue working until Move 4/5 rewrites them.
+Measure subtypes still exist at this point — they are retired in Move 5.
+
+**Deferred to Move 5: `MixturePrevision.components::Vector{Prevision}` and `ProductPrevision.factors::Vector{Prevision}`.** Their tightening is architecturally coupled to the Prevision-primary `condition` operation — specifically, `condition` producing concentrated Previsions rather than reduced-space Measures — which is Move 5's scope. `TaggedBetaPrevision.beta::BetaPrevision` tightens in Move 2 independently; it carries no per-component space.
+
+The coupling was surfaced by mid-Phase-4 implementation: shield reconstruction requires per-component space info (e.g., posterior components with reduced `Finite(1)` spaces after conditioning). Prevision doesn't carry that info and shouldn't — spaces are observational content Measure adds; per-component space variation is mathematical content of concentration that the Prevision-primary `condition` (Move 5) resolves natively by producing concentrated Previsions. Storing per-component spaces on the Prevision would be architectural layer confusion; passing `m.space` through shield reconstruction loses per-component reduction. Move 2 delivers the scope that's cleanly decoupled; Move 5 absorbs the rest. See `docs/posture-4/move-2-design.md` §5.1 (post-Phase-4 amendment) for the worked record.
 
 Behavioural capture: bit-exact against Move 0.
 
@@ -162,6 +175,8 @@ Changes:
 - Introduce `src/stdlib.jl` with `mean(p) = expect(p, Identity())`, `probability(p, e) = expect(p, Indicator(e))`, `variance`, `weights`, `marginal`.
 - Extend the existing `credence_lint.py` pass-two taint analysis (landed in PR #40) with the `expect-through-accessor` slug. This is an extension of the machinery already in `tools/credence-lint/`, not a from-scratch implementation.
 - Retire every posterior-iteration pragma site tracked by issue #39 (thirteen sites pragma'd as `# credence-lint: allow — precedent:posterior-iteration — tracked in issue #39`) via one of: the new stdlib one-liner (`mean`, `variance`, `probability`), a new `TestFunction` subtype (`Square`, `Power{n}`), or a declared-likelihood extension.
+- **Tighten `MixturePrevision.components::Vector{Prevision}` and `ProductPrevision.factors::Vector{Prevision}`** (deferred from Move 2 per the architectural coupling — see §Move 2). Activate the `FrozenVectorView{T}` / `wrap_in_measure` / `push_component!` / `replace_component!` surfaces that Move 2 landed as unused.
+- **Rewrite `condition` to produce concentrated Previsions, not reduced-space Measures.** This is the Move-5 edit that resolves the per-component-space problem which blocked Move 2's full scope: rather than a posterior component being `ProductMeasure` over a 1-element `Finite`, it is a concentrated `ProductPrevision` whose `CategoricalPrevision` factor has log_weights `[0.0, -Inf, -Inf]` over the unchanged ambient space. Concentration as mathematical content (Prevision weights) replaces concentration as representational content (reduced Measure space). Consumers reading posterior components post-Move-5 see the ambient space, not reduced ones.
 
 **Halting condition.** If any of the thirteen issue-#39 sites remain pragma'd at the Move 5 tip, the stdlib is incomplete and Move 5 does not merge. The design doc for Move 5 must track every site's retirement mechanism (new stdlib one-liner, new `TestFunction` subtype, declared-likelihood extension) with evidence that the replacement compiles and produces the captured behavioural value within tolerance. Sites without a disciplined retirement path are evidence that the foundation is not yet ready for Measure deletion.
 
