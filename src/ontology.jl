@@ -85,10 +85,15 @@ abstract type Measure end
 # ── Categorical: finite discrete ──
 #
 # Move 3: wraps CategoricalPrevision; `m.logw` forwards via the shield.
-# Normalisation of logw happens inside CategoricalPrevision's constructor.
-# The Vector returned by `m.logw` is by reference — shared-reference
-# contract in play; see test/test_prevision_unit.jl :: test_shared_
-# reference_contract (lands with MixtureMeasure).
+# Normalisation of log-weights happens inside CategoricalPrevision's
+# constructor. The Vector returned by `m.logw` is by reference —
+# shared-reference contract in play; see test/test_prevision_unit.jl ::
+# test_shared_reference_contract (lands with MixtureMeasure).
+#
+# Posture 4 Move 1: `CategoricalPrevision.logw` renamed to `log_weights`
+# for field-name unification across the five log-mass carriers. The
+# Measure-level `.logw` surface persists via the shield's `:logw` branch
+# until Move 5 retires `CategoricalMeasure` entirely.
 
 struct CategoricalMeasure{T} <: Measure
     prevision::Prevision    # Move 6 Phase 7: widened from CategoricalPrevision.
@@ -100,9 +105,9 @@ struct CategoricalMeasure{T} <: Measure
                             # underlying Prevision shape is stored.
     space::Finite{T}
 
-    function CategoricalMeasure{T}(space::Finite{T}, logw::Vector{Float64}) where T
-        length(space.values) == length(logw) || error("space and weights must match")
-        new{T}(CategoricalPrevision(logw), space)
+    function CategoricalMeasure{T}(space::Finite{T}, log_weights::Vector{Float64}) where T
+        length(space.values) == length(log_weights) || error("space and weights must match")
+        new{T}(CategoricalPrevision(log_weights), space)
     end
 
     # Move 6 Phase 7: pass-by-reference constructor for the three fallback
@@ -118,7 +123,7 @@ struct CategoricalMeasure{T} <: Measure
     end
 end
 
-CategoricalMeasure(s::Finite{T}, logw::Vector{Float64}) where T = CategoricalMeasure{T}(s, logw)
+CategoricalMeasure(s::Finite{T}, log_weights::Vector{Float64}) where T = CategoricalMeasure{T}(s, log_weights)
 CategoricalMeasure(s::Finite{T}) where T = CategoricalMeasure{T}(s, fill(0.0, length(s.values)))
 CategoricalMeasure(s::Finite{T}, p::Prevision) where T = CategoricalMeasure{T}(s, p)
 
@@ -126,17 +131,21 @@ CategoricalMeasure(s::Finite{T}, p::Prevision) where T = CategoricalMeasure{T}(s
 # test_prevision_particle.jl :: test_*_shared_reference. `.logw` and
 # `.space.values` return the underlying Prevision's fields by reference.
 # Shield entries for each Prevision shape the CategoricalMeasure may wrap:
-#   - CategoricalPrevision: .logw → p.logw (existing, Move 3)
+#   - CategoricalPrevision: .logw → p.log_weights (Posture 4 Move 1 rename)
 #   - ParticlePrevision:    .logw → p.log_weights, .space.values === p.samples
 #   - QuadraturePrevision:  .logw → p.log_weights, .space.values === p.grid
 #   - EnumerationPrevision: .logw → p.log_weights, .space.values === p.enumerated
 # Do NOT defensively copy — downstream consumers (skin server push!, paper
 # §2.3 drilldown, Move 7 event-conditioning path) depend on reference identity.
+#
+# Phase 1 note: post-rename all five log-mass carriers store the field
+# under `log_weights`. The branch-on-subtype logic is retained in Phase 1
+# to scope the rename cleanly; Phase 2 collapses it to a one-line forward.
 function Base.getproperty(m::CategoricalMeasure, s::Symbol)
     if s === :logw
         p = getfield(m, :prevision)
         if p isa CategoricalPrevision
-            return p.logw
+            return p.log_weights
         else
             # ParticlePrevision / QuadraturePrevision / EnumerationPrevision
             # all store the field under the name `log_weights`.

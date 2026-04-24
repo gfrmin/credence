@@ -258,34 +258,43 @@ struct GammaPrevision <: Prevision
 end
 
 """
-    CategoricalPrevision(logw::Vector{Float64}) <: Prevision
+    CategoricalPrevision(log_weights::Vector{Float64}) <: Prevision
 
 Prevision whose representing measure is categorical over a finite space,
-with log-weights `logw` normalised at construction time. The
+with log-weights `log_weights` normalised at construction time. The
 `CategoricalMeasure{T}` view wraps a `CategoricalPrevision` and forwards
-`m.logw` reads through its `getproperty` shield.
+`m.logw` reads through its `getproperty` shield (Move 5 retires the shield
+with `CategoricalMeasure`; the external `m.logw` surface persists until
+then for Moves 2–4 consumer compatibility).
 
-The `logw` field is returned by reference through the shield — see the
-shared-reference contract in docs/posture-3/move-3-design.md §3. In
-practice `logw` is never mutated post-construction (the normalisation
+Field-name unification (Posture 4 Move 1): the five log-mass carriers
+(`CategoricalPrevision`, `ParticlePrevision`, `QuadraturePrevision`,
+`EnumerationPrevision`, `MixturePrevision`) all store their normalised
+log-weight vector under the name `log_weights`. Prior to Move 1,
+`CategoricalPrevision.logw` was the one outlier; this rename aligns
+the surface.
+
+The `log_weights` field is returned by reference through the shield — see
+the shared-reference contract in docs/posture-3/move-3-design.md §3. In
+practice `log_weights` is never mutated post-construction (the normalisation
 is one-shot in the constructor), but the contract is maintained for
-consistency with MixtureMeasure's `components` / `log_weights` where
+consistency with MixturePrevision's `components` / `log_weights` where
 in-place mutation is a real consumer pattern.
 
 Not parametric on the atom type — the type connection lives at the
-Measure level (`CategoricalMeasure{T}.space::Finite{T}`). `logw` values
-stand alone as a probability vector.
+Measure level (`CategoricalMeasure{T}.space::Finite{T}`). `log_weights`
+values stand alone as a probability vector.
 """
 struct CategoricalPrevision <: Prevision
-    logw::Vector{Float64}
+    log_weights::Vector{Float64}
 
-    function CategoricalPrevision(logw::Vector{Float64})
-        if all(lw -> lw == -Inf, logw)
+    function CategoricalPrevision(log_weights::Vector{Float64})
+        if all(lw -> lw == -Inf, log_weights)
             error("measure has zero total mass — all hypotheses impossible")
         end
-        max_lw = maximum(logw)
-        log_total = max_lw + log(sum(exp.(logw .- max_lw)))
-        new(logw .- log_total)
+        max_lw = maximum(log_weights)
+        log_total = max_lw + log(sum(exp.(log_weights .- max_lw)))
+        new(log_weights .- log_total)
     end
 end
 
