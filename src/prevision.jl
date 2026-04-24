@@ -226,7 +226,7 @@ nothing on access; a future cleanup pass can replace with BetaPrevision
 """
 struct TaggedBetaPrevision <: Prevision
     tag::Int
-    beta::Any  # BetaMeasure — forward declaration before BetaMeasure loads in ontology.jl
+    beta::BetaPrevision
 end
 
 """

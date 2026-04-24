@@ -281,14 +281,26 @@ struct TaggedBetaMeasure <: Measure
     prevision::TaggedBetaPrevision
     space::Interval
 
+    # Posture 4 Move 2: TaggedBetaPrevision.beta is BetaPrevision (tightened
+    # from ::Any). Constructors accept either a BetaMeasure (extract its
+    # .prevision) or a BetaPrevision directly.
     function TaggedBetaMeasure(space::Interval, tag::Int, beta::BetaMeasure)
+        new(TaggedBetaPrevision(tag, getfield(beta, :prevision)), space)
+    end
+    function TaggedBetaMeasure(space::Interval, tag::Int, beta::BetaPrevision)
         new(TaggedBetaPrevision(tag, beta), space)
     end
 end
 
 function Base.getproperty(m::TaggedBetaMeasure, s::Symbol)
-    if s === :tag || s === :beta
-        return getproperty(getfield(m, :prevision), s)
+    if s === :tag
+        return getfield(m, :prevision).tag
+    elseif s === :beta
+        # Post-Move-2: internal .beta is BetaPrevision; reconstruct a BetaMeasure
+        # wrapper per access for consumers that expect Measure-shape (including
+        # `.space` and `.prevision` accessors). No FrozenVectorView here — single
+        # element, not a vector; the consumer doesn't push! into it.
+        return wrap_in_measure(getfield(m, :prevision).beta)
     else
         return getfield(m, s)
     end
@@ -300,6 +312,13 @@ mean(m::BetaMeasure) = m.alpha / (m.alpha + m.beta)
 variance(m::BetaMeasure) = m.alpha * m.beta / ((m.alpha + m.beta)^2 * (m.alpha + m.beta + 1))
 mean(m::TaggedBetaMeasure) = mean(m.beta)
 variance(m::TaggedBetaMeasure) = variance(m.beta)
+
+# Posture 4 Move 2: back-compat outer constructor for TaggedBetaPrevision.
+# The struct field .beta is now BetaPrevision; existing call sites that pass
+# a BetaMeasure get transparently unwrapped. Defined here in ontology.jl (after
+# BetaMeasure is defined) rather than in prevision.jl (which loads first).
+(::Type{TaggedBetaPrevision})(tag::Int, beta::BetaMeasure) =
+    TaggedBetaPrevision(tag, getfield(beta, :prevision))
 
 # ── Gaussian: continuous on interval ──
 #
@@ -1379,8 +1398,11 @@ for other Measures it's the component's own `.prevision`.
 Used by `_dispatch_path(p::MixturePrevision, k)` to query each
 component's dispatch path after resolving its LikelihoodFamily.
 """
-_conjugacy_prevision(m::TaggedBetaMeasure) = m.beta.prevision
+_conjugacy_prevision(m::TaggedBetaMeasure) = getfield(m, :prevision).beta
 _conjugacy_prevision(m::Measure) = m.prevision
+# Posture 4 Move 2: TaggedBetaPrevision.beta is BetaPrevision directly, so
+# this returns the inner BetaPrevision without shield round-trips.
+_conjugacy_prevision(p::TaggedBetaPrevision) = p.beta
 
 function condition(m::GaussianMeasure, k::Kernel, observation)
     # Move 4: try the ConjugatePrevision registry first. Covers both
