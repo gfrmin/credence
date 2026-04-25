@@ -13,6 +13,8 @@
 
 push!(LOAD_PATH, "src")
 using Credence
+using Credence: BetaPrevision, CategoricalPrevision  # Posture 4 Move 4
+using Credence.Ontology: wrap_in_measure  # Posture 4 Move 4
 using Serialization
 
 function check(name, cond, detail="")
@@ -32,17 +34,17 @@ let path = tempname()
     # v3 save → load → observe
     rel_beliefs = MixtureMeasure(
         ProductSpace([Interval(0.0, 1.0), Interval(0.0, 1.0)]),
-        Measure[ProductMeasure(Measure[BetaMeasure(Interval(0.0, 1.0), 2.0, 3.0),
-                                        BetaMeasure(Interval(0.0, 1.0), 4.0, 1.0)])],
+        Measure[ProductMeasure(Measure[wrap_in_measure(BetaPrevision(2.0, 3.0)),
+                                        wrap_in_measure(BetaPrevision(4.0, 1.0))])],
         [0.0],
     )
     cov_beliefs = MixtureMeasure(
         ProductSpace([Interval(0.0, 1.0), Interval(0.0, 1.0)]),
-        Measure[ProductMeasure(Measure[BetaMeasure(Interval(0.0, 1.0), 2.0, 2.0),
-                                        BetaMeasure(Interval(0.0, 1.0), 2.0, 2.0)])],
+        Measure[ProductMeasure(Measure[wrap_in_measure(BetaPrevision(2.0, 2.0)),
+                                        wrap_in_measure(BetaPrevision(2.0, 2.0))])],
         [0.0],
     )
-    cat_belief = CategoricalMeasure(Finite([:a, :b]), [log(3.0), log(7.0)])
+    cat_belief = CategoricalMeasure(Finite([:a, :b]), CategoricalPrevision([log(3.0), log(7.0)]))
 
     save_state(path;
                rel_beliefs = rel_beliefs,
