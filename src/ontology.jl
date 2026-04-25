@@ -1136,12 +1136,12 @@ end
 function condition(p::MixturePrevision, e::TagSet)
     new_lws = copy(p.log_weights)
     for (i, comp) in enumerate(p.components)
-        if comp isa TaggedBetaMeasure
+        if comp isa TaggedBetaMeasure || comp isa TaggedBetaPrevision
             if !(comp.tag in e.tags)
                 new_lws[i] = -Inf
             end
         else
-            error("condition(::MixturePrevision, ::TagSet): expected TaggedBetaMeasure components; got $(typeof(comp)) at index $i")
+            error("condition(::MixturePrevision, ::TagSet): expected Tagged component; got $(typeof(comp)) at index $i")
         end
     end
     MixturePrevision(p.components, new_lws)

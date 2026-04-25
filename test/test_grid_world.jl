@@ -12,6 +12,7 @@ using Credence: BetaPrevision, GaussianPrevision, GammaPrevision, CategoricalPre
 using Credence.Ontology: wrap_in_measure  # Posture 4 Move 4
 using Credence: expect, condition, weights, mean
 using Credence: BetaMeasure, TaggedBetaMeasure, MixtureMeasure, Finite, Interval, Kernel, Measure
+using Credence: TaggedBetaPrevision, MixturePrevision
 using Credence: prune, truncate
 using Credence: AgentState, sync_prune!, sync_truncate!
 using Credence: Grammar, Program, CompiledKernel
@@ -110,7 +111,7 @@ let
     p1 = enumerate_programs(g1, 3; action_space=[:food, :enemy])
     p2 = enumerate_programs(g2, 3; action_space=[:food, :enemy])
 
-    components = Measure[]
+    components = Any[]
     log_prior = Float64[]
     meta = Tuple{Int, Int}[]
     ck = CompiledKernel[]
@@ -119,7 +120,7 @@ let
     idx = 0
     for (pi, p) in enumerate(p1)
         idx += 1
-        push!(components, TaggedBetaMeasure(Interval(0.0, 1.0), idx, wrap_in_measure(BetaPrevision(1.0, 1.0))))
+        push!(components, TaggedBetaPrevision(idx, BetaPrevision(1.0, 1.0)))
         push!(log_prior, -g1.complexity * log(2) - p.complexity * log(2))
         push!(meta, (g1.id, pi))
         push!(ck, compile_kernel(p, g1, pi))
@@ -127,14 +128,14 @@ let
     end
     for (pi, p) in enumerate(p2)
         idx += 1
-        push!(components, TaggedBetaMeasure(Interval(0.0, 1.0), idx, wrap_in_measure(BetaPrevision(1.0, 1.0))))
+        push!(components, TaggedBetaPrevision(idx, BetaPrevision(1.0, 1.0)))
         push!(log_prior, -g2.complexity * log(2) - p.complexity * log(2))
         push!(meta, (g2.id, pi))
         push!(ck, compile_kernel(p, g2, pi))
         push!(progs, p)
     end
 
-    belief = MixtureMeasure(Interval(0.0, 1.0), components, log_prior)
+    belief = MixturePrevision(components, log_prior)
     grammar_dict = Dict{Int, Grammar}(g1.id => g1, g2.id => g2)
     state = AgentState(belief, meta, ck, progs, grammar_dict, 3)
 
@@ -148,7 +149,7 @@ let
     @assert length(state.all_programs) == n_after "all_programs length mismatch"
 
     for (i, comp) in enumerate(state.belief.components)
-        @assert comp isa TaggedBetaMeasure
+        @assert comp isa TaggedBetaPrevision
         @assert comp.tag == i "Tag reindex failed: expected $i, got $(comp.tag)"
     end
 
@@ -171,21 +172,21 @@ let
     g = grammars[2]
     programs = enumerate_programs(g, 3; action_space=[:food, :enemy])
 
-    components = Measure[]
+    components = Any[]
     log_prior = Float64[]
     meta = Tuple{Int, Int}[]
     ck = CompiledKernel[]
     progs = Program[]
 
     for (pi, p) in enumerate(programs)
-        push!(components, TaggedBetaMeasure(Interval(0.0, 1.0), pi, wrap_in_measure(BetaPrevision(1.0, 1.0))))
+        push!(components, TaggedBetaPrevision(pi, BetaPrevision(1.0, 1.0)))
         push!(log_prior, -g.complexity * log(2) - p.complexity * log(2))
         push!(meta, (g.id, pi))
         push!(ck, compile_kernel(p, g, pi))
         push!(progs, p)
     end
 
-    belief = MixtureMeasure(Interval(0.0, 1.0), components, log_prior)
+    belief = MixturePrevision(components, log_prior)
     grammar_dict = Dict{Int, Grammar}(g.id => g)
     state = AgentState(belief, meta, ck, progs, grammar_dict, 3)
 
@@ -281,9 +282,9 @@ let
     @assert correct_prog !== nothing "Should find a program that predicts :enemy for red"
     @assert incorrect_prog !== nothing "Should find a program that predicts :food for red"
 
-    comp1 = TaggedBetaMeasure(Interval(0.0, 1.0), 1, wrap_in_measure(BetaPrevision(1.0, 1.0)))
-    comp2 = TaggedBetaMeasure(Interval(0.0, 1.0), 2, wrap_in_measure(BetaPrevision(1.0, 1.0)))
-    belief = MixtureMeasure(Interval(0.0, 1.0), Measure[comp1, comp2], [0.0, 0.0])
+    comp1 = TaggedBetaPrevision(1, BetaPrevision(1.0, 1.0))
+    comp2 = TaggedBetaPrevision(2, BetaPrevision(1.0, 1.0))
+    belief = MixturePrevision(Any[comp1, comp2], [0.0, 0.0])
 
     ck_vec = [correct_prog[3], incorrect_prog[3]]
 
@@ -295,8 +296,8 @@ let
 
     c1 = posterior.components[1]
     c2 = posterior.components[2]
-    @assert c1 isa TaggedBetaMeasure
-    @assert c2 isa TaggedBetaMeasure
+    @assert c1 isa TaggedBetaPrevision
+    @assert c2 isa TaggedBetaPrevision
 
     @assert c1.beta.alpha ≈ 6.0 "Both programs should have α=6 after 5 obs, got $(c1.beta.alpha)"
     @assert c2.beta.alpha ≈ 6.0 "Both programs should have α=6 after 5 obs, got $(c2.beta.alpha)"

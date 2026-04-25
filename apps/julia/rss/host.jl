@@ -16,7 +16,7 @@
 push!(LOAD_PATH, joinpath(@__DIR__, "..", "..", "..", "src"))
 using Credence
 using Credence: expect, condition, draw, weights, mean, logsumexp
-using Credence: CategoricalMeasure, BetaPrevision, TaggedBetaMeasure, MixtureMeasure
+using Credence: CategoricalMeasure, BetaPrevision, TaggedBetaPrevision, MixturePrevision
 using Credence: Finite, Interval, Kernel, Measure
 using Credence: FiringByTag, BetaBernoulli, Flat
 using Credence: AgentState, sync_prune!, sync_truncate!
@@ -40,7 +40,7 @@ using Dates
     init_rss_agent(feeds, categories, known_tags; ...) → (AgentState, FeatureRegistry)
 
 Build the initial agent state: feature registry, seed grammars, enumerated
-programs, flat MixtureMeasure of TaggedBetaMeasures.
+programs, flat MixturePrevision of TaggedBetaPrevisions.
 """
 function init_rss_agent(;
     feeds::Vector{Tuple{Int, String}},
@@ -55,7 +55,7 @@ function init_rss_agent(;
 
     verbose && println("Generated $(length(grammar_pool)) seed grammars, $(length(reg.feature_set)) features")
 
-    components = Measure[]
+    components = Any[]
     log_prior_weights = Float64[]
     metadata = Tuple{Int, Int}[]
     compiled_kernels = CompiledKernel[]
@@ -68,7 +68,7 @@ function init_rss_agent(;
                                        min_log_prior = min_log_prior)
         for (pi, p) in enumerate(programs)
             idx += 1
-            push!(components, TaggedBetaMeasure(Interval(0.0, 1.0), idx, BetaPrevision(1.0, 1.0)))
+            push!(components, TaggedBetaPrevision(idx, BetaPrevision(1.0, 1.0)))
             lw = -g.complexity * log(2) - p.complexity * log(2)
             push!(log_prior_weights, lw)
             push!(metadata, (g.id, pi))
@@ -79,7 +79,7 @@ function init_rss_agent(;
 
     verbose && println("Total programs: $(length(components))")
 
-    belief = MixtureMeasure(Interval(0.0, 1.0), components, log_prior_weights)
+    belief = MixturePrevision(components, log_prior_weights)
     grammar_dict = Dict{Int, Grammar}(g.id => g for g in grammar_pool)
     state = AgentState(belief, metadata, compiled_kernels, all_programs,
                        grammar_dict, program_max_depth)
@@ -122,7 +122,7 @@ function build_read_kernel(
     Kernel(Interval(0.0, 1.0), obs_space,
         _ -> error("generate not used"),
         (m_or_θ, obs) -> begin
-            if m_or_θ isa TaggedBetaMeasure
+            if m_or_θ isa TaggedBetaPrevision
                 tag = m_or_θ.tag
                 p = mean(m_or_θ.beta)
                 ck = compiled_kernels[tag]
@@ -170,7 +170,7 @@ function build_dismiss_kernel(
     Kernel(Interval(0.0, 1.0), obs_space,
         _ -> error("generate not used"),
         (m_or_θ, obs) -> begin
-            if m_or_θ isa TaggedBetaMeasure
+            if m_or_θ isa TaggedBetaPrevision
                 tag = m_or_θ.tag
                 fires = tag in fires_set
                 p = mean(m_or_θ.beta)
@@ -277,7 +277,7 @@ function rank_articles(
     for (entry_id, features) in article_features
         score = 0.0
         for (j, comp) in enumerate(state.belief.components)
-            tbm = comp::TaggedBetaMeasure
+            tbm = comp::TaggedBetaPrevision
             fires = state.compiled_kernels[j].evaluate(features, temporal_state) == :match
             p = mean(tbm.beta)
             score += w[j] * (fires ? p : 0.5)  # credence-lint: allow — precedent:posterior-iteration — mixture EU requires per-component compiled-kernel dispatch

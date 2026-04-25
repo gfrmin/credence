@@ -8,7 +8,7 @@ CostModel beliefs (NormalGammaMeasures) are fully serializable.
 """
 
 using Serialization
-using Credence: MixtureMeasure, TaggedBetaMeasure, Interval, Measure
+using Credence: MixturePrevision, TaggedBetaPrevision
 using Credence: NormalGammaMeasure
 using Credence: Grammar, Program, CompiledKernel, AgentState
 using Credence: compile_kernel
@@ -76,12 +76,11 @@ function load_email_state(filepath::String)
     n = length(alphas)
 
     # Reconstruct belief
-    components = Measure[
-        TaggedBetaMeasure(Interval(0.0, 1.0), i,
-            Credence.Ontology.BetaPrevision(alphas[i], betas[i]))
+    components = [
+        TaggedBetaPrevision(i, Credence.Ontology.BetaPrevision(alphas[i], betas[i]))
         for i in 1:n
     ]
-    belief = MixtureMeasure(Interval(0.0, 1.0), components, log_weights)
+    belief = MixturePrevision(components, log_weights)
 
     # Recompile kernels from ASTs
     compiled_kernels = CompiledKernel[

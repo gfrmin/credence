@@ -4,7 +4,7 @@
     host.jl — Host driver for the grid-world program-space agent
 
 Orchestrates: grammar pool → program enumeration → kernel compilation →
-flat MixtureMeasure of TaggedBetaMeasures → DSL inference → action selection →
+flat MixturePrevision of TaggedBetaPrevisions → DSL inference → action selection →
 world step → repeat.
 
 Meta-actions (enumerate_more, perturb_grammar, deepen) are evaluated before
@@ -18,7 +18,7 @@ Tier 3: grid-world-specific. Uses Tier 1 (Credence DSL) and Tier 2
 push!(LOAD_PATH, joinpath(@__DIR__, "..", "..", "..", "src"))
 using Credence
 using Credence: expect, condition, draw, optimise, value, weights, mean
-using Credence: CategoricalMeasure, BetaPrevision, TaggedBetaMeasure, MixtureMeasure
+using Credence: CategoricalMeasure, BetaPrevision, TaggedBetaPrevision, MixturePrevision
 using Credence: Finite, Interval, Kernel, Measure
 using Credence: density, log_density_at, prune, truncate
 using Credence: AgentState, sync_prune!, sync_truncate!
@@ -53,7 +53,7 @@ const GW_DEEPEN_COST = 0.10
     build_observation_kernel(compiled_kernels, features, temporal_state, true_type)
 
 Build a single Kernel whose log_density dispatches per-component via
-TaggedBetaMeasure tags. Each program evaluates features → recommends an
+TaggedBetaPrevision tags. Each program evaluates features → recommends an
 action symbol (:food or :enemy). Recommendation is compared to true_type.
 
 Populates a correct_cache in kernel params for per-component Beta update
@@ -72,7 +72,7 @@ function build_observation_kernel(
     Kernel(Interval(0.0, 1.0), obs_space,
         _ -> error("generate not used in condition"),
         (m_or_θ, obs) -> begin
-            if m_or_θ isa TaggedBetaMeasure
+            if m_or_θ isa TaggedBetaPrevision
                 tag = m_or_θ.tag
                 recommended = get!(recommendation_cache, tag) do
                     ck = compiled_kernels[tag]
@@ -101,7 +101,7 @@ Estimate P(enemy) from program recommendations weighted by posterior confidence,
 then compute EU of interacting: P(enemy)*(-5) + P(food)*(+5).
 """
 function compute_eu_interact(
-    belief::MixtureMeasure,
+    belief::MixturePrevision,
     compiled_kernels::Vector{CompiledKernel},
     features::Dict{Symbol, Float64},
     temporal_state::Dict{Symbol, Any}
@@ -144,7 +144,7 @@ function mean_observation_count_gw(state::AgentState)::Float64
     isempty(state.belief.components) && return 0.0
     total = 0.0
     for comp in state.belief.components
-        tbm = comp::TaggedBetaMeasure
+        tbm = comp::TaggedBetaPrevision
         total += tbm.beta.alpha + tbm.beta.beta - 2.0  # credence-lint: allow — precedent:expect-through-accessor — pseudo-count sum (α+β−2) has no stdlib function
     end
     total / length(state.belief.components)
@@ -261,7 +261,7 @@ function run_agent(;
     end
 
     # Enumerate all (grammar, program) pairs
-    components = Measure[]
+    components = Any[]
     log_prior_weights = Float64[]
     metadata = Tuple{Int, Int}[]
     compiled_kernels = CompiledKernel[]
@@ -272,7 +272,7 @@ function run_agent(;
         programs = enumerate_programs(g, program_max_depth; include_temporal, action_space=[:food, :enemy])
         for (pi, p) in enumerate(programs)
             idx += 1
-            push!(components, TaggedBetaMeasure(Interval(0.0, 1.0), idx, BetaPrevision(1.0, 1.0)))
+            push!(components, TaggedBetaPrevision(idx, BetaPrevision(1.0, 1.0)))
             lw = -g.complexity * log(2) - p.complexity * log(2)
             push!(log_prior_weights, lw)
             push!(metadata, (g.id, pi))
@@ -286,7 +286,7 @@ function run_agent(;
         println("Grammars: $(length(grammar_pool))")
     end
 
-    belief = MixtureMeasure(Interval(0.0, 1.0), components, log_prior_weights)
+    belief = MixturePrevision(components, log_prior_weights)
     grammar_dict = Dict{Int, Grammar}(g.id => g for g in grammar_pool)
     state = AgentState(belief, metadata, compiled_kernels, all_programs,
                        grammar_dict, program_max_depth)

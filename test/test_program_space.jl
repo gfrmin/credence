@@ -11,7 +11,7 @@ using Credence
 using Credence: BetaPrevision, GaussianPrevision, GammaPrevision, CategoricalPrevision  # Posture 4 Move 4
 using Credence.Ontology: wrap_in_measure  # Posture 4 Move 4
 using Credence: expect, condition, weights, mean
-using Credence: BetaMeasure, TaggedBetaMeasure, MixtureMeasure, Finite, Interval, Kernel, Measure
+using Credence: BetaMeasure, TaggedBetaMeasure, TaggedBetaPrevision, MixtureMeasure, MixturePrevision, BetaPrevision, Finite, Interval, Kernel, Measure
 using Credence: prune, truncate
 using Credence: ActionExpr, IfExpr
 
@@ -665,21 +665,21 @@ let
 
     # Build initial state with some programs
     programs = enumerate_programs(g, 2; action_space=[:food, :enemy])
-    components = Measure[]
+    components = Any[]
     log_prior = Float64[]
     meta = Tuple{Int, Int}[]
     ck = CompiledKernel[]
     progs = Program[]
 
     for (pi, p) in enumerate(programs)
-        push!(components, TaggedBetaMeasure(Interval(0.0, 1.0), pi, wrap_in_measure(BetaPrevision(1.0, 1.0))))
+        push!(components, TaggedBetaPrevision(pi, BetaPrevision(1.0, 1.0)))
         push!(log_prior, -g.complexity * log(2) - p.complexity * log(2))
         push!(meta, (g.id, pi))
         push!(ck, compile_kernel(p, g, pi))
         push!(progs, p)
     end
 
-    belief = MixtureMeasure(Interval(0.0, 1.0), components, log_prior)
+    belief = MixturePrevision(components, log_prior)
     grammar_dict = Dict{Int, Grammar}(g.id => g)
     state = AgentState(belief, meta, ck, progs, grammar_dict, 2)
 
@@ -724,7 +724,7 @@ let
     grammars = generate_seed_grammars()
     g1, g2, g3 = grammars[1], grammars[2], grammars[3]
 
-    components = Measure[]
+    components = Any[]
     log_prior = Float64[]
     meta = Tuple{Int, Int}[]
     ck = CompiledKernel[]
@@ -737,7 +737,7 @@ let
         programs = enumerate_programs(g, 2; action_space=[:food, :enemy])
         for (pi, p) in enumerate(programs[1:min(3, length(programs))])
             idx += 1
-            push!(components, TaggedBetaMeasure(Interval(0.0, 1.0), idx, wrap_in_measure(BetaPrevision(1.0, 1.0))))
+            push!(components, TaggedBetaPrevision(idx, BetaPrevision(1.0, 1.0)))
             push!(log_prior, grammar_weights_target[g.id])
             push!(meta, (g.id, pi))
             push!(ck, compile_kernel(p, g, pi))
@@ -745,7 +745,7 @@ let
         end
     end
 
-    belief = MixtureMeasure(Interval(0.0, 1.0), components, log_prior)
+    belief = MixturePrevision(components, log_prior)
     grammar_dict = Dict{Int, Grammar}(g.id => g for g in [g1, g2, g3])
     state = AgentState(belief, meta, ck, progs, grammar_dict, 2)
 

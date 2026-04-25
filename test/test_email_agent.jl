@@ -13,6 +13,7 @@ using Credence: BetaPrevision, GaussianPrevision, GammaPrevision, CategoricalPre
 using Credence.Ontology: wrap_in_measure  # Posture 4 Move 4
 using Credence: weights, mean, condition
 using Credence: TaggedBetaMeasure, MixtureMeasure, BetaMeasure
+using Credence: TaggedBetaPrevision, MixturePrevision
 using Credence: Interval, Finite, Kernel, Measure
 using Credence: Grammar, Program, CompiledKernel, ProductionRule
 using Credence: enumerate_programs, compile_kernel
@@ -469,20 +470,20 @@ let
     programs = enumerate_programs(g, 2; action_space=DOMAIN_ACTIONS, min_log_prior=-15.0)
 
     # Build a state with uniform priors (high entropy)
-    components = Measure[]
+    components = Any[]
     log_prior = Float64[]
     meta = Tuple{Int, Int}[]
     ck = CompiledKernel[]
     progs = Program[]
     for (pi, p) in enumerate(programs[1:min(20, length(programs))])
-        push!(components, TaggedBetaMeasure(Interval(0.0, 1.0), pi, wrap_in_measure(BetaPrevision(1.0, 1.0))))
+        push!(components, TaggedBetaPrevision(pi, BetaPrevision(1.0, 1.0)))
         push!(log_prior, 0.0)
         push!(meta, (g.id, pi))
         push!(ck, compile_kernel(p, g, pi))
         push!(progs, p)
     end
 
-    belief = MixtureMeasure(Interval(0.0, 1.0), components, log_prior)
+    belief = MixturePrevision(components, log_prior)
     grammar_dict = Dict{Int, Grammar}(g.id => g)
     state = AgentState(belief, meta, ck, progs, grammar_dict, 2)
 
@@ -505,18 +506,18 @@ let
     # Now create a concentrated state (one component dominates)
     conc_lw = [-100.0 for _ in 1:length(components)]
     conc_lw[1] = 0.0  # only component 1 has weight
-    conc_belief = MixtureMeasure(Interval(0.0, 1.0), components, conc_lw)
+    conc_belief = MixturePrevision(components, conc_lw)
     conc_state = AgentState(conc_belief, meta, ck, progs, grammar_dict, 2)
 
     # Simulate many observations
     for comp in conc_state.belief.components
-        tbm = comp::TaggedBetaMeasure
+        tbm = comp::TaggedBetaPrevision
         # Simulate high observation count by using Beta(50, 50)
     end
     # Use a state where mean_observation_count is high
-    conc_comps = Measure[TaggedBetaMeasure(Interval(0.0, 1.0), i, wrap_in_measure(BetaPrevision(50.0, 50.0)))
-                         for i in 1:length(components)]
-    conc_belief2 = MixtureMeasure(Interval(0.0, 1.0), conc_comps, conc_lw)
+    conc_comps = Any[TaggedBetaPrevision(i, BetaPrevision(50.0, 50.0))
+                     for i in 1:length(components)]
+    conc_belief2 = MixturePrevision(conc_comps, conc_lw)
     conc_state2 = AgentState(conc_belief2, meta, ck, progs, grammar_dict, 2)
 
     w2 = weights(conc_state2.belief)
@@ -542,7 +543,7 @@ let
     grammars = generate_email_seed_grammars()
 
     # Build a minimal state
-    components = Measure[]
+    components = Any[]
     log_prior = Float64[]
     meta = Tuple{Int, Int}[]
     ck = CompiledKernel[]
@@ -555,7 +556,7 @@ let
         programs = enumerate_programs(g, 2; action_space=DOMAIN_ACTIONS, min_log_prior=-15.0)
         for (pi, p) in enumerate(programs)
             idx += 1
-            push!(components, TaggedBetaMeasure(Interval(0.0, 1.0), idx, wrap_in_measure(BetaPrevision(1.0, 1.0))))
+            push!(components, TaggedBetaPrevision(idx, BetaPrevision(1.0, 1.0)))
             push!(log_prior, -g.complexity * log(2) - p.complexity * log(2))
             push!(meta, (g.id, pi))
             push!(ck, compile_kernel(p, g, pi))
@@ -563,7 +564,7 @@ let
         end
     end
 
-    belief = MixtureMeasure(Interval(0.0, 1.0), components, log_prior)
+    belief = MixturePrevision(components, log_prior)
     state = AgentState(belief, meta, ck, progs, grammar_dict, 2)
 
     n_before = length(state.belief.components)
@@ -1030,7 +1031,7 @@ let
     action_space = vcat(PRIMITIVE_ACTIONS, [:done])
     programs = enumerate_programs(g, 2; action_space=action_space, min_log_prior=-15.0)
 
-    components = Measure[]
+    components = Any[]
     log_prior = Float64[]
     meta = Tuple{Int, Int}[]
     ck_list = CompiledKernel[]
@@ -1038,14 +1039,14 @@ let
 
     for (pi, p) in enumerate(programs[1:min(30, length(programs))])
         # Use Beta(5,2) so mean≈0.71 — asymmetric, so correct/incorrect give different likelihoods
-        push!(components, TaggedBetaMeasure(Interval(0.0, 1.0), pi, wrap_in_measure(BetaPrevision(5.0, 2.0))))
+        push!(components, TaggedBetaPrevision(pi, BetaPrevision(5.0, 2.0)))
         push!(log_prior, 0.0)
         push!(meta, (g.id, pi))
         push!(ck_list, compile_kernel(p, g, pi))
         push!(progs, p)
     end
 
-    belief = MixtureMeasure(Interval(0.0, 1.0), components, log_prior)
+    belief = MixturePrevision(components, log_prior)
     grammar_dict = Dict{Int, Grammar}(g.id => g)
     state = AgentState(belief, meta, ck_list, progs, grammar_dict, 2)
 
