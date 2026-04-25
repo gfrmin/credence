@@ -67,7 +67,7 @@ weights(p::BetaPrevision) = throw(WeightsDomainError(_WEIGHTS_DOMAIN_MSG))
 weights(p::TaggedBetaPrevision) = throw(WeightsDomainError(_WEIGHTS_DOMAIN_MSG))
 weights(p::GaussianPrevision) = throw(WeightsDomainError(_WEIGHTS_DOMAIN_MSG))
 weights(p::GammaPrevision) = throw(WeightsDomainError(_WEIGHTS_DOMAIN_MSG))
-weights(p::DirichletPrevision) = throw(WeightsDomainError(_WEIGHTS_DOMAIN_MSG))
+weights(p::DirichletPrevision) = p.alpha ./ sum(p.alpha)
 weights(p::NormalGammaPrevision) = throw(WeightsDomainError(_WEIGHTS_DOMAIN_MSG))
 
 function marginal(p::MixturePrevision, indices::Vector{Int})
