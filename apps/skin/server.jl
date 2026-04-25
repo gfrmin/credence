@@ -247,7 +247,7 @@ function build_kernel(spec, state_id::Union{String, Nothing}=nothing)
                     correct = recommended == true_label
                     correct_cache[tag] = correct
                     p = mean(m_or_θ.beta)
-                    correct ? log(max(p, 1e-300)) : log(max(1.0 - p, 1e-300))  # credence-lint: allow — precedent:posterior-iteration — inline Bernoulli log-density; tracked in issue #39
+                    correct ? log(max(p, 1e-300)) : log(max(1.0 - p, 1e-300))  # credence-lint: allow — precedent:declarative-construction — Kernel log-density closure: Bernoulli likelihood from Beta mean
                 else
                     obs == 1.0 ? log(max(m_or_θ, 1e-300)) : log(max(1.0 - m_or_θ, 1e-300))
                 end
@@ -611,7 +611,7 @@ function handle_create_state(params)
                 push!(state.belief.components,
                     TaggedBetaMeasure(Interval(0.0, 1.0), tag, BetaMeasure()))
                 lw = -g.complexity * log(2) - p.complexity * log(2)
-                push!(state.belief.log_weights, lw)
+                push!(state.belief.log_weights, lw)  # credence-lint: allow — precedent:expect-through-accessor — MixtureMeasure construction: appending log-weight for new component
                 push!(state.metadata, (g.id, pi))
                 push!(state.compiled_kernels, compile_kernel(p, g, pi))
                 push!(state.all_programs, p)
@@ -620,9 +620,10 @@ function handle_create_state(params)
         end
 
         # Normalize weights
+        # credence-lint: allow — precedent:expect-through-accessor — MixtureMeasure reconstruction from existing components and log-weights
         if !isempty(state.belief.log_weights)
             state.belief = MixtureMeasure(Interval(0.0, 1.0),
-                state.belief.components, state.belief.log_weights)
+                state.belief.components, state.belief.log_weights)  # credence-lint: allow — precedent:expect-through-accessor — MixtureMeasure reconstruction
         end
 
         id = register_state(state)
@@ -1105,10 +1106,10 @@ function handle_eu_interact(params)
         # p(rec is correct) = mean_j, p(rec is wrong) = 1 - mean_j
         for (label, _) in rewards
             p_label = if rec == label
-                w[j] * mean_j  # credence-lint: allow — precedent:posterior-iteration — mixture label prob by hand; tracked in issue #39
+                w[j] * mean_j  # credence-lint: allow — precedent:posterior-iteration — mixture EU requires per-component compiled-kernel dispatch
             else
                 # If there are only 2 labels, the other gets 1-mean_j
-                w[j] * (1.0 - mean_j) / max(length(rewards) - 1, 1)  # credence-lint: allow — precedent:posterior-iteration — mixture label prob by hand; tracked in issue #39
+                w[j] * (1.0 - mean_j) / max(length(rewards) - 1, 1)  # credence-lint: allow — precedent:posterior-iteration — mixture EU requires per-component compiled-kernel dispatch
             end
             label_probs[label] = get(label_probs, label, 0.0) + p_label
         end

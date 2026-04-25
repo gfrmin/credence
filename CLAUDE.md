@@ -271,6 +271,8 @@ The slug index below is the lint's source of truth for valid slugs (regex `^\*\*
 
 **Slug:** `test-oracle` — Tests of the reasoner need an independent manual oracle (`assert expect(m, f) == approx(0.7)`). Pragma marks the comparison line. Causal within the test, non-causal w.r.t. the agent. (Invariant 1)
 
+**Slug:** `expect-through-accessor` — Reading a Prevision's parameter fields (`.alpha`, `.log_weights`, `.mu`, `.sigma`, `.kappa`) to compute a probabilistic property. Rewrite as `mean(p)`, `variance(p)`, `probability(p, e)`, `weights(p)`, or `expect(p, f)`. Not flagged: `.beta` (ambiguous — TaggedBetaMeasure navigation vs BetaPrevision parameter; `.alpha` catches the same violations), `.components`/`.factors` (containers, not parameters). File-scope exclusion for `src/previsions.jl` and `src/conjugate.jl` (legitimate internal reads). (Invariant 2)
+
 ## Development commands
 
 Julia tests (one file at a time; `ls test/test_*.jl` for the catalogue):

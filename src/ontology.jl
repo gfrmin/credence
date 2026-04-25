@@ -1,27 +1,22 @@
 """
-    ontology.jl — Three types. Axiom-constrained functions.
+    ontology.jl — Module shell + Measure facades + axiom-constrained functions.
 
-Types (frozen):
-    Space   — a set of possibilities
-    Measure — a probability distribution over a space
-    Kernel  — a conditional distribution between two spaces
+After the Move 5 split, concept-files hold their own concerns:
+    spaces.jl    — Space types + BOOLEAN_SPACE
+    kernels.jl   — Kernel, LikelihoodFamily hierarchy, density
+    events.jl    — Event hierarchy + indicator_kernel witnesses
+    conjugate.jl — maybe_conjugate / update registry
+    stdlib.jl    — mean, variance, probability, weights, marginal
 
-Axiom-constrained functions (behaviour frozen, interface negotiable):
-    condition — Bayesian inversion
-    expect    — integration against a measure
-    push_     — composition of measure with kernel (push is reserved in Julia)
-    density   — kernel density at a point
+What remains here: the module namespace (`module Ontology`), imports,
+exports, FrozenVectorView, Measure facades (nine types preserving the
+consumer API as views over Prevision), logsumexp, wrap_in_measure,
+expect methods (Measure-level forwarding + Prevision-primary dispatch),
+condition, push_measure, draw, prune, truncate, log_marginal.
 """
 module Ontology
 
 # ── Move 2: unify Functional hierarchy onto Previsions.TestFunction ──
-# The `Functional` abstract type and its concrete subtypes (`Identity`,
-# `Projection`, `NestedProjection`, `Tabular`, `LinearCombination`,
-# `OpaqueClosure`) were previously declared in this file. Move 2 replaces
-# them with imports from `Previsions` plus `const Functional = TestFunction`.
-# The re-exports below (line continuing `Functional, Identity, ...`) now
-# resolve via alias; `Ontology.Identity === Previsions.Identity` is `true`,
-# so `using .Previsions, .Ontology` in Credence is unambiguous.
 import ..Previsions: Prevision
 import ..Previsions: TestFunction, Identity, Projection, NestedProjection,
                      Tabular, LinearCombination, OpaqueClosure, expect
@@ -31,6 +26,8 @@ import ..Previsions: ParticlePrevision, QuadraturePrevision, EnumerationPrevisio
 import ..Previsions: ConditionalPrevision
 import ..Previsions: condition
 import ..Previsions: ConjugatePrevision, maybe_conjugate, update, _dispatch_path
+import ..Previsions: CenteredPower, CenteredSquare
+import ..Previsions: Indicator, apply
 
 export Space, Finite, Interval, ProductSpace, Simplex, Euclidean, PositiveReals, support
 export Measure, CategoricalMeasure, BetaMeasure, TaggedBetaMeasure, GaussianMeasure, GammaMeasure, ExponentialMeasure, DirichletMeasure, NormalGammaMeasure, ProductMeasure, MixtureMeasure
@@ -41,34 +38,16 @@ export Event, TagSet, FeatureEquals, FeatureInterval, Conjunction, Disjunction, 
 export indicator_kernel, feature_value, BOOLEAN_SPACE
 export Functional, Identity, Projection, NestedProjection, Tabular, LinearCombination, OpaqueClosure
 export factor, replace_factor
-export condition, expect, push_measure, density, log_predictive, log_marginal
+export condition, expect, push_measure, density, log_predictive, log_marginal, wrap_in_measure
+export ConjugatePrevision, maybe_conjugate, update
 export draw
 export weights, mean, variance, log_density_at, prune, truncate, logsumexp
 export FrozenVectorView
+export WeightsDomainError, probability, marginal, CenteredPower, CenteredSquare
 
 # ================================================================
-# Move 2 Phase 2: FrozenVectorView{T}
+# FrozenVectorView{T}
 # ================================================================
-#
-# Thin read-only wrapper around a Vector, produced by Measure-level
-# getproperty shields (from Phase 4 onward) when the shield reconstructs
-# a Measure-shaped view from the underlying Prevision-typed internal.
-#
-# Purpose: convert a silent-push!-through-shield hazard into a loud
-# runtime error. Per docs/posture-4/move-2-design.md §5.1, Move 2's
-# internal fields become Vector{Prevision}; the Measure-level shields
-# reconstruct Vector{Measure} by wrapping each element with
-# wrap_in_measure(p). Callers that then try `push!(m.components, ...)`
-# (pre-Move-7 apps/skin/server.jl:611-614 pattern) would silently push
-# into the reconstructed (ephemeral) Vector, never affecting the stored
-# Prevision's data. FrozenVectorView makes this fail loudly instead.
-#
-# Read methods delegate to the inner Vector; mutation methods throw
-# with a message pointing at push_component! / replace_component! as
-# the Prevision-level migration target.
-#
-# Phase 2 lands the type and its methods. Phase 4 wires it into the
-# MixtureMeasure / ProductMeasure / TaggedBetaMeasure shields.
 
 """
     FrozenVectorView{T}(inner::Vector{T})
@@ -89,7 +68,6 @@ struct FrozenVectorView{T}
     inner::Vector{T}
 end
 
-# ── Read methods (delegate to inner) ──
 Base.getindex(v::FrozenVectorView, i::Int) = v.inner[i]
 Base.getindex(v::FrozenVectorView, idx) = v.inner[idx]
 Base.length(v::FrozenVectorView) = length(v.inner)
@@ -102,10 +80,9 @@ Base.firstindex(v::FrozenVectorView) = firstindex(v.inner)
 Base.lastindex(v::FrozenVectorView) = lastindex(v.inner)
 Base.eltype(::Type{FrozenVectorView{T}}) where T = T
 Base.isempty(v::FrozenVectorView) = isempty(v.inner)
-Base.collect(v::FrozenVectorView) = copy(v.inner)  # explicit copy per read
+Base.collect(v::FrozenVectorView) = copy(v.inner)
 Base.show(io::IO, v::FrozenVectorView) = print(io, "FrozenVectorView(", v.inner, ")")
 
-# ── Mutation methods (throw with migration pointer) ──
 const _FROZEN_ERR = "FrozenVectorView is read-only (shield-reconstructed fresh per access). " *
     "Use push_component!(::MixturePrevision, ...) or replace_component!(::MixturePrevision, ...) " *
     "at the Prevision level. See docs/posture-4/move-2-design.md §5.1."
@@ -120,63 +97,25 @@ Base.deleteat!(v::FrozenVectorView, ::Any...) = error(_FROZEN_ERR)
 Base.insert!(v::FrozenVectorView, ::Any...) = error(_FROZEN_ERR)
 
 # ================================================================
-# TYPE 1: Space
+# TYPE 1: Space (extracted to spaces.jl)
 # ================================================================
-
-abstract type Space end
-
-struct Finite{T} <: Space
-    values::Vector{T}
-end
-
-struct Interval <: Space
-    lo::Float64
-    hi::Float64
-end
-
-struct ProductSpace <: Space
-    factors::Vector{Space}
-end
-
-struct Simplex <: Space
-    k::Int  # Δ^(k-1): vectors of length k, non-negative, summing to 1
-end
-
-struct Euclidean <: Space
-    dim::Int
-end
-
-struct PositiveReals <: Space end
-
-support(s::Finite) = s.values
+include("spaces.jl")
 
 # ================================================================
-# TYPE 2: Measure
+# TYPE 3: Kernel (extracted to kernels.jl)
+# ================================================================
+include("kernels.jl")
+
+# ================================================================
+# TYPE 2: Measure — compatibility facades wrapping Prevision
 # ================================================================
 
 abstract type Measure end
 
 # ── Categorical: finite discrete ──
-#
-# Move 3: wraps CategoricalPrevision; `m.logw` forwards via the shield.
-# Normalisation of log-weights happens inside CategoricalPrevision's
-# constructor. The Vector returned by `m.logw` is by reference —
-# shared-reference contract in play; see test/test_prevision_unit.jl ::
-# test_shared_reference_contract (lands with MixtureMeasure).
-#
-# Posture 4 Move 1: `CategoricalPrevision.logw` renamed to `log_weights`
-# for field-name unification across the five log-mass carriers. The
-# Measure-level `.logw` surface persists via the shield's `:logw` branch
-# until Move 5 retires `CategoricalMeasure` entirely.
 
 struct CategoricalMeasure{T} <: Measure
-    prevision::Prevision    # Move 6 Phase 7: widened from CategoricalPrevision.
-                            # Allows ParticlePrevision / QuadraturePrevision /
-                            # EnumerationPrevision carriers to survive past the
-                            # wrapping step, per move-6-design.md §5.1 Option A
-                            # and §4.5's typed-carrier trace. The shield below
-                            # routes `.logw` and `.space.values` to whichever
-                            # underlying Prevision shape is stored.
+    prevision::Prevision
     space::Finite{T}
 
     function CategoricalMeasure{T}(space::Finite{T}, log_weights::Vector{Float64}) where T
@@ -184,14 +123,6 @@ struct CategoricalMeasure{T} <: Measure
         new{T}(CategoricalPrevision(log_weights), space)
     end
 
-    # Move 6 Phase 7: pass-by-reference constructor for the three fallback
-    # Prevision subtypes. Stores `p` directly — no fresh normalisation, no
-    # defensive copy. Contract test: test_prevision_particle.jl ::
-    # test_*_shared_reference (§5.1 Option A narrowed form: wrapper .logw
-    # === underlying .log_weights; wrapper .space.values === underlying
-    # .samples/.grid/.enumerated). Consumer reads through the shield resolve
-    # to the Prevision's fields; breaking the reference identity silently
-    # corrupts downstream consumer state in the same class as precedent #2.
     function CategoricalMeasure{T}(space::Finite{T}, p::Prevision) where T
         new{T}(p, space)
     end
@@ -201,20 +132,8 @@ CategoricalMeasure(s::Finite{T}, log_weights::Vector{Float64}) where T = Categor
 CategoricalMeasure(s::Finite{T}) where T = CategoricalMeasure{T}(s, fill(0.0, length(s.values)))
 CategoricalMeasure(s::Finite{T}, p::Prevision) where T = CategoricalMeasure{T}(s, p)
 
-# Shared-reference contract — see Move 3 precedent #2 and test
-# test_prevision_particle.jl :: test_*_shared_reference. `.logw`
-# returns the underlying Prevision's `log_weights` field by reference.
-# Post-Move-1, all five log-mass carriers (CategoricalPrevision,
-# ParticlePrevision, QuadraturePrevision, EnumerationPrevision,
-# MixturePrevision) store under the unified `log_weights` name, so the
-# shield's branch-on-stored-subtype dispatch collapses to a single
-# forward. Do NOT defensively copy — downstream consumers (skin server
-# push!, paper §2.3 drilldown, Move 7 event-conditioning path) depend on
-# reference identity.
 function Base.getproperty(m::CategoricalMeasure, s::Symbol)
     if s === :logw
-        # DEPRECATED: forwarded for Moves 2–4 consumer compatibility;
-        # retired in Move 5 with CategoricalMeasure itself.
         return getfield(m, :prevision).log_weights
     else
         return getfield(m, s)
@@ -230,16 +149,6 @@ function weights(m::CategoricalMeasure)
 end
 
 # ── Beta: continuous on [0,1] ──
-#
-# Move 3: `BetaMeasure` is now a thin wrapper around `BetaPrevision`. The
-# `Base.getproperty` shield below forwards `m.alpha` and `m.beta` reads
-# to the underlying prevision so existing consumer code (m.alpha /
-# (m.alpha + m.beta), etc.) works unchanged. The shield MUST return
-# values by direct dereference, not copies or wrappers — see the
-# shared-reference contract in test_prevision_unit.jl
-# (test_shared_reference_contract). Breaking that invariant silently
-# corrupts the push!(state.belief.components, ...) pattern in
-# apps/skin/server.jl:549,552.
 
 struct BetaMeasure <: Measure
     prevision::BetaPrevision
@@ -254,9 +163,6 @@ end
 BetaMeasure(α::Float64, β::Float64) = BetaMeasure(Interval(0.0, 1.0), α, β)
 BetaMeasure() = BetaMeasure(1.0, 1.0)
 
-# `getproperty` shield: see shared-reference contract in
-# test/test_prevision_unit.jl (test_shared_reference_contract).
-# Do NOT defensively copy.
 function Base.getproperty(m::BetaMeasure, s::Symbol)
     if s === :alpha
         return getfield(m, :prevision).alpha
@@ -270,20 +176,11 @@ end
 Base.propertynames(::BetaMeasure) = (:alpha, :beta, :space, :prevision)
 
 # ── TaggedBeta: program-indexed Beta for per-component kernel dispatch ──
-#
-# Move 3: TaggedBetaMeasure wraps a TaggedBetaPrevision carrying the tag
-# and the underlying BetaMeasure. Consumer code `m.tag` and `m.beta`
-# reads forward via the shield; `m.beta.alpha` walks through the
-# TaggedBetaMeasure shield → BetaMeasure → BetaMeasure's own shield →
-# BetaPrevision.alpha. Two shield hops; both transparent.
 
 struct TaggedBetaMeasure <: Measure
     prevision::TaggedBetaPrevision
     space::Interval
 
-    # Posture 4 Move 2: TaggedBetaPrevision.beta is BetaPrevision (tightened
-    # from ::Any). Constructors accept either a BetaMeasure (extract its
-    # .prevision) or a BetaPrevision directly.
     function TaggedBetaMeasure(space::Interval, tag::Int, beta::BetaMeasure)
         new(TaggedBetaPrevision(tag, getfield(beta, :prevision)), space)
     end
@@ -296,10 +193,6 @@ function Base.getproperty(m::TaggedBetaMeasure, s::Symbol)
     if s === :tag
         return getfield(m, :prevision).tag
     elseif s === :beta
-        # Post-Move-2: internal .beta is BetaPrevision; reconstruct a BetaMeasure
-        # wrapper per access for consumers that expect Measure-shape (including
-        # `.space` and `.prevision` accessors). No FrozenVectorView here — single
-        # element, not a vector; the consumer doesn't push! into it.
         return wrap_in_measure(getfield(m, :prevision).beta)
     else
         return getfield(m, s)
@@ -313,19 +206,10 @@ variance(m::BetaMeasure) = m.alpha * m.beta / ((m.alpha + m.beta)^2 * (m.alpha +
 mean(m::TaggedBetaMeasure) = mean(m.beta)
 variance(m::TaggedBetaMeasure) = variance(m.beta)
 
-# Posture 4 Move 2: back-compat outer constructor for TaggedBetaPrevision.
-# The struct field .beta is now BetaPrevision; existing call sites that pass
-# a BetaMeasure get transparently unwrapped. Defined here in ontology.jl (after
-# BetaMeasure is defined) rather than in prevision.jl (which loads first).
 (::Type{TaggedBetaPrevision})(tag::Int, beta::BetaMeasure) =
     TaggedBetaPrevision(tag, getfield(beta, :prevision))
 
 # ── Gaussian: continuous on interval ──
-#
-# Move 3: wraps GaussianPrevision; `m.mu` and `m.sigma` forward via
-# the getproperty shield. See the shared-reference contract in
-# test/test_prevision_unit.jl :: test_shared_reference_contract
-# (lands with MixtureMeasure). Do NOT defensively copy.
 
 struct GaussianMeasure <: Measure
     prevision::GaussianPrevision
@@ -351,13 +235,10 @@ variance(m::GaussianMeasure) = m.sigma^2
 
 # ── Dirichlet: distribution over the probability simplex ──
 
-# Move 3: wraps DirichletPrevision; `m.alpha` forwards via the shield
-# (Vector returned by reference — shared-reference contract).
-
 struct DirichletMeasure <: Measure
     prevision::DirichletPrevision
     space::Simplex
-    categories::Finite     # the category labels the probability vectors are about
+    categories::Finite
 
     function DirichletMeasure(space::Simplex, categories::Finite, alpha::Vector{Float64})
         space.k == length(categories.values) == length(alpha) ||
@@ -380,9 +261,6 @@ weights(m::DirichletMeasure) = m.alpha ./ sum(m.alpha)
 mean(m::DirichletMeasure) = weights(m)
 
 # ── Gamma: continuous on PositiveReals ──
-#
-# Move 3: wraps GammaPrevision; `m.alpha` and `m.beta` forward via
-# the getproperty shield. Do NOT defensively copy; see contract test.
 
 struct GammaMeasure <: Measure
     prevision::GammaPrevision
@@ -407,17 +285,13 @@ Base.propertynames(::GammaMeasure) = (:alpha, :beta, :space, :prevision)
 
 mean(m::GammaMeasure) = m.alpha / m.beta
 
-# Exponential is Gamma(1, rate) — convenience constructor, not a separate type.
 ExponentialMeasure(rate::Float64) = GammaMeasure(1.0, rate)
 
 # ── Normal-Gamma: conjugate prior for Normal with unknown mean and variance ──
-#
-# Move 3: wraps NormalGammaPrevision; scalar hyperparameters forward via
-# the shield.
 
 struct NormalGammaMeasure <: Measure
     prevision::NormalGammaPrevision
-    space::ProductSpace          # Euclidean(1) × PositiveReals
+    space::ProductSpace
 
     function NormalGammaMeasure(space::ProductSpace, κ::Float64, μ::Float64, α::Float64, β::Float64)
         new(NormalGammaPrevision(κ, μ, α, β), space)
@@ -440,14 +314,6 @@ Base.propertynames(::NormalGammaMeasure) = (:κ, :μ, :α, :β, :space, :previsi
 mean(m::NormalGammaMeasure) = m.μ
 
 # ── Product: independent joint ──
-#
-# Move 3: wraps ProductPrevision; `m.factors` forwards via the shield
-# (Vector returned by reference — shared-reference contract applies).
-# Consumer code that uses `m.factors[i]` or `replace_factor(m, i, f)`
-# continues to work; the latter already constructs a new ProductMeasure,
-# so no in-place mutation concern. Direct `push!(m.factors, ...)` is not
-# a pattern in the current codebase but would be supported by the
-# shared-reference contract if it appeared.
 
 struct ProductMeasure <: Measure
     prevision::ProductPrevision
@@ -481,13 +347,6 @@ function replace_factor(m::ProductMeasure, i::Int, new_factor::Measure)
 end
 
 # ── Mixture: weighted combination ──
-
-# Move 3: wraps MixturePrevision. Shield forwards :components and
-# :log_weights — BOTH returned by reference. See the shared-reference
-# contract in test/test_prevision_unit.jl :: test_shared_reference_contract
-# and docs/posture-3/move-3-design.md §3 and R4. The contract is
-# load-bearing for apps/skin/server.jl:549,552 which push! through the
-# shield. Do NOT defensively copy.
 
 struct MixtureMeasure <: Measure
     prevision::MixturePrevision
@@ -526,56 +385,19 @@ function logsumexp(xs::AbstractVector{<:Real})::Float64
     m + log(sum(exp(x - m) for x in xs))
 end
 
-# ================================================================
-# Move 2 Phase 3: wrap_in_measure(p::Prevision) → Measure
-# ================================================================
-#
-# Reconstruction helper for the Measure-level shields. Given a concrete
-# Prevision subtype, produce its canonical Measure wrapper. Used by
-# Phase 4's shield-reconstruction path — when a MixtureMeasure whose
-# internal MixturePrevision holds Vector{Prevision} exposes its
-# `components` property, the shield maps `wrap_in_measure` over the
-# stored Previsions to produce the fresh Vector{Measure} the shield
-# returns (wrapped in FrozenVectorView).
-#
-# Covered subtypes: Beta, TaggedBeta, Gaussian, Gamma, Product, Mixture.
-# These are the Prevision subtypes that appear as components of
-# MixturePrevision or factors of ProductPrevision in the current
-# codebase (verified via grep over src/, test/, apps/). The remaining
-# subtypes (Categorical, Dirichlet, NormalGamma) do not appear nested
-# inside other Previsions in current usage — their wrap_in_measure
-# methods error loudly with a context-missing message, directing the
-# caller to construct the Measure wrapper explicitly with the required
-# space information.
+# ── wrap_in_measure: Prevision → Measure reconstruction ──
 
 """
     wrap_in_measure(p::Prevision) → Measure
 
 Reconstruct the canonical Measure wrapper for `p`. Called by the
-Measure-level `getproperty` shields (Phase 4) during
-shield-reconstruction of `:components` / `:factors` reads. Uses
-canonical spaces where the Prevision subtype has one (BetaPrevision →
-Interval(0,1), GaussianPrevision → Euclidean(1), GammaPrevision →
-PositiveReals). For ProductPrevision / MixturePrevision, recurses
-through the nested structure, deriving the outer space from the first
-component's space.
-
-Errors for Prevision subtypes whose canonical space is context-dependent
-(Categorical, Dirichlet, NormalGamma) — these cannot be reconstructed
-without knowing the carrier's space, which the shield cannot supply
-generically. Such cases have not been observed in Move-2-relevant
-nesting patterns; if one arises, the failing stack trace points at this
-comment and the caller constructs the Measure wrapper manually.
+Measure-level `getproperty` shields during shield-reconstruction of
+`:components` / `:factors` / `:beta` reads.
 """
 function wrap_in_measure end
 
 wrap_in_measure(p::BetaPrevision) = BetaMeasure(Interval(0.0, 1.0), p.alpha, p.beta)
 
-# TaggedBetaPrevision.beta post-Phase-4 holds a BetaPrevision (not a BetaMeasure).
-# We wrap that BetaPrevision into a BetaMeasure for the TaggedBetaMeasure constructor.
-# Pre-Phase-4 (this Phase 3) it still holds a BetaMeasure; the direct dispatch is
-# `TaggedBetaMeasure(space, tag, beta::BetaMeasure)`. To handle both transition states
-# symmetrically, we dispatch on the type of `p.beta`:
 function wrap_in_measure(p::TaggedBetaPrevision)
     beta_measure = p.beta isa BetaPrevision ? wrap_in_measure(p.beta) : p.beta
     TaggedBetaMeasure(Interval(0.0, 1.0), p.tag, beta_measure)
@@ -585,8 +407,6 @@ wrap_in_measure(p::GaussianPrevision) = GaussianMeasure(Euclidean(1), p.mu, p.si
 wrap_in_measure(p::GammaPrevision) = GammaMeasure(PositiveReals(), p.alpha, p.beta)
 
 function wrap_in_measure(p::ProductPrevision)
-    # Recursively wrap each factor (which may be a Prevision post-Phase-4 or
-    # still a Measure pre-Phase-4; dispatch handles both)
     factors_as_measures = Measure[f isa Prevision ? wrap_in_measure(f) : f for f in p.factors]
     ProductMeasure(factors_as_measures)
 end
@@ -596,7 +416,6 @@ function wrap_in_measure(p::MixturePrevision)
     MixtureMeasure(components_as_measures, copy(p.log_weights))
 end
 
-# Fallback for the three context-dependent types: error with migration pointer.
 wrap_in_measure(p::CategoricalPrevision) = error(
     "wrap_in_measure(::CategoricalPrevision) requires carrier space context " *
     "(Finite{T}); construct CategoricalMeasure(space, p) explicitly at the call site. " *
@@ -612,359 +431,18 @@ wrap_in_measure(p::NormalGammaPrevision) = error(
 )
 
 # ================================================================
-# TYPE 3: Kernel
+# TYPE 4: Event (extracted to events.jl)
 # ================================================================
-
-struct FactorSelector
-    discrete_index::Int       # which factor is the discrete selector
-    active::Function          # selector_value → Vector{Int} of factors to condition
-end
-
-# ─────────────────────────────────────────────────────────────────────
-# LikelihoodFamily: declared per-θ algebraic form of a kernel's likelihood
-# ─────────────────────────────────────────────────────────────────────
-# A Kernel's log_density closure is opaque to the type system. Dispatch
-# needs to know the likelihood's algebraic form (Beta-Bernoulli, flat, …)
-# to pick the right computation — closed-form conjugate, no-op for flat,
-# etc. Declaring the family at construction is the same principle as
-# Functional for expect.
-#
-# Every Kernel must declare a likelihood_family — it is a required kwarg
-# at construction. Kernels used only with push/expect (not condition)
-# declare PushOnly(); condition() errors loudly if called on one.
-abstract type LikelihoodFamily end
-
-# Leaf families terminate the FiringByTag / DispatchByComponent routing
-# chain. Only these may appear in a condition() dispatch's final step.
-abstract type LeafFamily <: LikelihoodFamily end
-
-# p(obs|θ) = θ^obs · (1−θ)^(1−obs). Conjugate with Beta priors.
-struct BetaBernoulli <: LeafFamily end
-
-# p(obs|θ) constant in θ. The observation provides no evidence about θ.
-# Bayesian posterior = prior.
-struct Flat <: LeafFamily end
-
-# Sentinel for kernels whose condition path does not dispatch on family —
-# either push/expect-only, or condition through space-shape dispatch
-# (e.g. Gaussian→Gaussian conjugate, Categorical→Categorical tabular).
-# `condition(::TaggedBetaMeasure, …)` with a PushOnly kernel raises a
-# clear error, since TaggedBetaMeasure conditioning requires a declared
-# leaf or routing family.
-struct PushOnly <: LikelihoodFamily end
-
-# Move 4: Gaussian-Normal conjugate pair. Carries the observation noise
-# stdev sigma_obs. Legacy kernels passed this via `params[:sigma_obs]`
-# + `likelihood_family = PushOnly()`; new kernels declare directly via
-# `likelihood_family = NormalNormal(sigma_obs)`. maybe_conjugate matches
-# either shape for backward compat.
-struct NormalNormal <: LeafFamily
-    sigma_obs::Float64
-end
-
-# Move 4: Dirichlet-Categorical conjugate pair. Carries the category
-# labels because the `update` step needs to look up the observation's
-# index, and at the Prevision level (where update lives) there's no
-# access to the Measure's `.categories` field. Minor semantic impurity
-# (a label list in a Likelihood) accepted for registry cleanliness;
-# legacy kernels that don't carry this field are handled at Phase 3's
-# Measure-level condition facade by synthesizing a `Categorical(cat)`
-# marker from the Measure's own `.categories`.
-struct Categorical{T} <: LeafFamily
-    categories::Finite{T}
-end
-
-# Move 4: NormalGamma conjugate pair. No carried params; the update
-# uses the prior's (κ, μ, α, β) hyperparameters and the scalar obs.
-struct NormalGammaLikelihood <: LeafFamily end
-
-# Move 4: Gamma-Exponential conjugate pair (net-new fast-path). No
-# carried params; Exponential observations are positive reals consumed
-# by the Gamma update as (shape+1, rate+obs).
-struct Exponential <: LeafFamily end
-
-# Fire/not-fire routing by component tag. Tags in `fires` use
-# `when_fires`; all other tags use `when_not`. This is the declarative
-# capture of the dominant per-component routing pattern in program-space
-# mixtures — "some predicates fire on this observation, some don't".
-# Prefer this over DispatchByComponent when the routing is tag-based.
-#
-# The branch fields are LeafFamily-typed so declared nesting is
-# statically impossible. The condition() dispatch loop still guards
-# against runtime misuse from DispatchByComponent returning a router.
-struct FiringByTag <: LikelihoodFamily
-    fires::Set{Int}
-    when_fires::LeafFamily
-    when_not::LeafFamily
-end
-
-# Explicit escape hatch — the LikelihoodFamily analogue of OpaqueClosure.
-# Takes a `classify(m) → LikelihoodFamily` closure called at dispatch
-# time. The closure must eventually unwrap to a leaf family. Returning
-# another DispatchByComponent is caught by the depth cap in condition().
-# Reach for this only when no declarative subtype (FiringByTag, …) fits.
-struct DispatchByComponent <: LikelihoodFamily
-    classify::Function  # Measure → LikelihoodFamily
-end
-
-struct Kernel
-    source::Space       # H
-    target::Space       # O
-    generate::Function  # h → distribution spec (for push)
-    log_density::Function  # (h, o) → log p(o|h) (for condition)
-    factor_selector::Union{Nothing, FactorSelector}
-    params::Union{Nothing, Dict{Symbol,Any}}
-    likelihood_family::LikelihoodFamily
-end
-
-# Canonical constructor: likelihood_family is a required kwarg. Optional
-# factor_selector / params default to nothing.
-Kernel(source::Space, target::Space, gen::Function, ld::Function;
-       factor_selector::Union{Nothing, FactorSelector}=nothing,
-       params::Union{Nothing, Dict{Symbol,Any}}=nothing,
-       likelihood_family::LikelihoodFamily) =
-    Kernel(source, target, gen, ld, factor_selector, params, likelihood_family)
-
-kernel_source(k::Kernel) = k.source
-kernel_target(k::Kernel) = k.target
-kernel_params(k::Kernel) = k.params
+include("events.jl")
 
 # ================================================================
-# TYPE 4: Event — first-class declared structure
+# Functional: alias for Previsions.TestFunction
 # ================================================================
-# An Event is a declared proposition about the state of a Space.
-# Events are bearers of probability in the de Finettian sense:
-# P(A) is defined directly, not derived from a measure on subsets.
-#
-# Every Event constructor witnesses a computable `indicator_kernel`
-# into a declared Boolean Space. That witness is the mechanical
-# bridge between the event layer and the kernel layer: when
-# `condition(m, e::Event)` is invoked (sibling form), it expands to
-# `condition(m, indicator_kernel(e), true)` — Di Lavore–Román–
-# Sobociński Prop. 4.9 applied in one line.
-#
-# Declared structure per Invariant 2: no opaque predicate closures
-# at the axiom layer. Every Event carries the data its kernel needs
-# in a typed field, not in a captured lambda.
-
-abstract type Event end
-
-"""
-    TagSet(space, tags)
-
-Event stating that a mixture component's tag lies in a declared finite
-set of `Int`s. Peer of `FiringByTag` on the expect / posterior side:
-declarative tag-based dispatch, no opaque closures.
-
-Applicable to mixtures whose components carry `Int` tags (e.g.
-`TaggedBetaMeasure`). The indicator kernel uses `_tag_of(component)`
-to read the tag at dispatch time; add a `_tag_of` method for any new
-tag-bearing Measure type.
-"""
-struct TagSet <: Event
-    space::Space
-    tags::Set{Int}
-end
-
-"""
-    FeatureEquals(space, feature, value)
-
-Deterministic equality event on a declared feature of hypotheses in
-`space`. The indicator kernel queries `feature_value(h, feature)` —
-add a method per hypothesis type when needed.
-
-Valid only for discrete features; continuous equality is a
-measure-zero event and must go through a disintegration primitive
-(not yet implemented) — this constructor does not guard that case at
-construction time; the dispatch is undefined on measure-zero events.
-"""
-struct FeatureEquals{T} <: Event
-    space::Space
-    feature::Symbol
-    value::T
-end
-
-"""
-    FeatureInterval(space, feature, lo, hi)
-
-Event stating a declared continuous feature lies in the closed
-interval [lo, hi]. `feature_value(h, feature)` must return a real
-number for hypotheses `h` drawn from `space`.
-"""
-struct FeatureInterval <: Event
-    space::Space
-    feature::Symbol
-    lo::Float64
-    hi::Float64
-end
-
-"""
-    Conjunction(left, right)
-
-Event that holds iff both `left` and `right` hold. Operands must
-share the same Space (checked at `indicator_kernel` construction).
-"""
-struct Conjunction <: Event
-    left::Event
-    right::Event
-end
-
-"""
-    Disjunction(left, right)
-
-Event that holds iff `left` or `right` holds.
-"""
-struct Disjunction <: Event
-    left::Event
-    right::Event
-end
-
-"""
-    Complement(inner)
-
-Event that holds iff `inner` does not.
-"""
-struct Complement <: Event
-    inner::Event
-end
-
-# ── Boolean Space — shared target for all indicator kernels ──
-const BOOLEAN_SPACE = Finite([false, true])
-
-# ── Tag accessor: declared-structure dispatch, not an opaque closure ──
-# Extend with one-line methods for any new tag-bearing Measure type.
-_tag_of(m::TaggedBetaMeasure) = m.tag
-
-# ── Feature accessor: method dispatch is the registry ──
-# Domains extend with their hypothesis types.
-"""
-    feature_value(h, name::Symbol)
-
-Extract the named feature from hypothesis `h`. Default: NamedTuple
-index / struct field access. Override for domain-specific hypothesis
-types via method dispatch.
-"""
-feature_value(h::NamedTuple, name::Symbol) = h[name]
-feature_value(h, name::Symbol) = getfield(h, name)
-
-# ── indicator_kernel: the mechanical bridge ──
-# For each Event, produce a Kernel from the event's Space to
-# BOOLEAN_SPACE whose log_density is 0 when the event holds and -Inf
-# otherwise. `likelihood_family = Flat()` because the indicator does
-# not depend on the Beta parameter of a tagged component — it is a
-# structural predicate on the component's tag. Under Flat dispatch,
-# `condition(::TaggedBetaMeasure, k, _)` returns the component
-# unchanged; the effective work is done by `_predictive_ll` on the
-# mixture, which propagates the log_density as a weight multiplier.
-
-"""
-    indicator_kernel(event) → Kernel
-
-Witness that an Event is expressible as a declared indicator kernel
-into BOOLEAN_SPACE. Used internally by `condition(::Measure, ::Event)`.
-Also the mechanical proof that Invariant 2 is preserved: events reach
-the axiom layer only through declared kernels.
-"""
-function indicator_kernel(e::TagSet)
-    ld = (h, o) -> begin
-        holds = _tag_of(h) in e.tags
-        (o === true && holds) || (o === false && !holds) ? 0.0 : -Inf
-    end
-    gen = h -> begin
-        holds = _tag_of(h) in e.tags
-        CategoricalMeasure(
-            BOOLEAN_SPACE,
-            [holds ? -Inf : 0.0,   # logw at false
-             holds ? 0.0 : -Inf],  # logw at true
-        )
-    end
-    Kernel(e.space, BOOLEAN_SPACE, gen, ld; likelihood_family = Flat())
-end
-
-function indicator_kernel(e::FeatureEquals{T}) where T
-    ld = (h, o) -> begin
-        holds = feature_value(h, e.feature) == e.value
-        (o === true && holds) || (o === false && !holds) ? 0.0 : -Inf
-    end
-    gen = h -> begin
-        holds = feature_value(h, e.feature) == e.value
-        CategoricalMeasure(
-            BOOLEAN_SPACE,
-            [holds ? -Inf : 0.0, holds ? 0.0 : -Inf],
-        )
-    end
-    Kernel(e.space, BOOLEAN_SPACE, gen, ld; likelihood_family = Flat())
-end
-
-function indicator_kernel(e::FeatureInterval)
-    ld = (h, o) -> begin
-        v = feature_value(h, e.feature)
-        holds = e.lo <= v <= e.hi
-        (o === true && holds) || (o === false && !holds) ? 0.0 : -Inf
-    end
-    gen = h -> begin
-        v = feature_value(h, e.feature)
-        holds = e.lo <= v <= e.hi
-        CategoricalMeasure(
-            BOOLEAN_SPACE,
-            [holds ? -Inf : 0.0, holds ? 0.0 : -Inf],
-        )
-    end
-    Kernel(e.space, BOOLEAN_SPACE, gen, ld; likelihood_family = Flat())
-end
-
-# Boolean algebra — compose indicator log-densities. The result is a
-# single Kernel whose log_density reads the two operand indicators at
-# observation `true` and combines them.
-function indicator_kernel(e::Conjunction)
-    kl = indicator_kernel(e.left)
-    kr = indicator_kernel(e.right)
-    kl.source === kr.source ||
-        error("Conjunction: operands must share the same Space instance")
-    ld = (h, o) -> begin
-        holds = kl.log_density(h, true) == 0.0 && kr.log_density(h, true) == 0.0
-        (o === true && holds) || (o === false && !holds) ? 0.0 : -Inf
-    end
-    gen = h -> error("indicator_kernel(Conjunction).generate not used in condition")
-    Kernel(kl.source, BOOLEAN_SPACE, gen, ld; likelihood_family = Flat())
-end
-
-function indicator_kernel(e::Disjunction)
-    kl = indicator_kernel(e.left)
-    kr = indicator_kernel(e.right)
-    kl.source === kr.source ||
-        error("Disjunction: operands must share the same Space instance")
-    ld = (h, o) -> begin
-        holds = kl.log_density(h, true) == 0.0 || kr.log_density(h, true) == 0.0
-        (o === true && holds) || (o === false && !holds) ? 0.0 : -Inf
-    end
-    gen = h -> error("indicator_kernel(Disjunction).generate not used in condition")
-    Kernel(kl.source, BOOLEAN_SPACE, gen, ld; likelihood_family = Flat())
-end
-
-function indicator_kernel(e::Complement)
-    ki = indicator_kernel(e.inner)
-    ld = (h, o) -> begin
-        holds = ki.log_density(h, true) != 0.0  # inner did NOT hold
-        (o === true && holds) || (o === false && !holds) ? 0.0 : -Inf
-    end
-    gen = h -> error("indicator_kernel(Complement).generate not used in condition")
-    Kernel(ki.source, BOOLEAN_SPACE, gen, ld; likelihood_family = Flat())
-end
-
-# ================================================================
-# AXIOM-CONSTRAINED FUNCTION: density
-# ================================================================
-# The kernel's log-density at a point.
-# density(kernel, h, o) = log P(o | h)
-
-density(k::Kernel, h, o) = k.log_density(h, o)
+const Functional = TestFunction
 
 # ================================================================
 # AXIOM-CONSTRAINED FUNCTION: expect
 # ================================================================
-# Integration against a measure: E_m[f]
-# This is what a measure IS.
 
 function expect(m::CategoricalMeasure, f::Function)
     w = weights(m)
@@ -1036,23 +514,6 @@ function expect(m::MixtureMeasure, f::Function)
     sum(w[i] * expect(m.components[i], f) for i in eachindex(w))
 end
 
-# ================================================================
-# Functional: alias for Previsions.TestFunction
-# ================================================================
-# The `Functional` abstract type and its concrete subtypes are declared
-# in `src/prevision.jl`'s `Previsions` module (imported at the top of
-# this file). `const Functional = TestFunction` preserves the legacy
-# name for existing consumers; the types are identical via alias
-# (`Functional === TestFunction`, `Identity === Previsions.Identity`,
-# etc.). A future cleanup pass collapses the aliases; the Posture 3
-# master plan scopes that as post-Move-8 work.
-#
-# The `expect` dispatch methods below attach to `Previsions.expect`
-# (imported as `expect`); the Functional and TestFunction method
-# signatures resolve to the same types.
-
-const Functional = TestFunction
-
 # ── Dispatch: closed-form cases on leaf measures ──
 expect(m::BetaMeasure, ::Identity)     = m.alpha / (m.alpha + m.beta)
 expect(m::TaggedBetaMeasure, ::Identity) = expect(m.beta, Identity())
@@ -1082,8 +543,6 @@ function expect(m::CategoricalMeasure, p::Projection)
     sum(w[i] * m.space.values[i][p.index] for i in eachindex(w))
 end
 
-# NestedProjection on CategoricalMeasure: descent reached a particle-cloud
-# leaf. Remaining indices select nested elements within each atom.
 function expect(m::CategoricalMeasure, np::NestedProjection)
     length(np.indices) >= 1 || error("NestedProjection requires at least one index")
     w = weights(m)
@@ -1117,159 +576,142 @@ function expect(m::MixtureMeasure, φ::Functional)
 end
 
 expect(m::Measure, o::OpaqueClosure; kwargs...) = expect(m, o.f; kwargs...)
-
-# Resolves dispatch ambiguity between expect(::MixtureMeasure, ::Functional)
-# and expect(::Measure, ::OpaqueClosure).
 expect(m::MixtureMeasure, o::OpaqueClosure; kwargs...) = expect(m, o.f; kwargs...)
+
+# ── Prevision-primary expect methods ──
+# Closed-form Identity on scalar Prevision types.
+expect(p::BetaPrevision, ::Identity) = p.alpha / (p.alpha + p.beta)
+expect(p::TaggedBetaPrevision, ::Identity) = expect(p.beta, Identity())
+expect(p::GaussianPrevision, ::Identity) = p.mu
+expect(p::GammaPrevision, ::Identity) = p.alpha / p.beta
+
+# General-function expect on scalar Previsions via quadrature/delegation.
+function expect(p::BetaPrevision, f::Function; n::Int=64)
+    grid = range(1/(2n), 1-1/(2n), length=n)
+    logw = [(p.alpha - 1) * log(x) + (p.beta - 1) * log(1 - x) for x in grid]
+    max_lw = maximum(logw)
+    w = exp.(logw .- max_lw)
+    w ./= sum(w)
+    sum(w[i] * f(grid[i]) for i in eachindex(w))
+end
+
+expect(p::TaggedBetaPrevision, f::Function; kwargs...) = expect(p.beta, f; kwargs...)
+
+function expect(p::GaussianPrevision, f::Function; n::Int=64)
+    lo = p.mu - 4 * p.sigma
+    hi = p.mu + 4 * p.sigma
+    grid = range(lo, hi, length=n)
+    logw = [-0.5 * ((x - p.mu) / p.sigma)^2 for x in grid]
+    max_lw = maximum(logw)
+    w = exp.(logw .- max_lw)
+    w ./= sum(w)
+    sum(w[i] * f(grid[i]) for i in eachindex(w))
+end
+
+function expect(p::GammaPrevision, f::Function; n::Int=64)
+    μ = p.alpha / p.beta
+    σ = sqrt(p.alpha) / p.beta
+    lo = max(1e-10, μ - 4σ)
+    hi = μ + 6σ
+    grid = range(lo, hi, length=n)
+    logw = [(p.alpha - 1) * log(x) - p.beta * x for x in grid]
+    max_lw = maximum(logw)
+    w = exp.(logw .- max_lw)
+    w ./= sum(w)
+    sum(w[i] * f(grid[i]) for i in eachindex(w))
+end
+
+# Particle/Quadrature/Enumeration carry their own support data.
+function expect(p::ParticlePrevision, f::Function)
+    lw = p.log_weights
+    max_lw = maximum(lw)
+    w = exp.(lw .- max_lw)
+    w ./= sum(w)
+    sum(w[i] * f(p.samples[i]) for i in eachindex(w))
+end
+
+function expect(p::QuadraturePrevision, f::Function)
+    lw = p.log_weights
+    max_lw = maximum(lw)
+    w = exp.(lw .- max_lw)
+    w ./= sum(w)
+    sum(w[i] * f(p.grid[i]) for i in eachindex(w))
+end
+
+function expect(p::EnumerationPrevision, f::Function)
+    lw = p.log_weights
+    max_lw = maximum(lw)
+    w = exp.(lw .- max_lw)
+    w ./= sum(w)
+    sum(w[i] * f(p.enumerated[i]) for i in eachindex(w))
+end
+
+# MixturePrevision: linearity of expectation.
+function expect(p::MixturePrevision, f::Function)
+    lw = p.log_weights
+    max_lw = maximum(lw)
+    w = exp.(lw .- max_lw)
+    w ./= sum(w)
+    sum(w[i] * expect(p.components[i], f) for i in eachindex(w))
+end
+
+# Functional dispatch on Prevision types.
+function expect(p::MixturePrevision, φ::TestFunction)
+    lw = p.log_weights
+    max_lw = maximum(lw)
+    w = exp.(lw .- max_lw)
+    w ./= sum(w)
+    sum(w[i] * expect(p.components[i], φ) for i in eachindex(w))
+end
+
+# Generic TestFunction dispatch on scalar Previsions: apply then integrate.
+expect(p::BetaPrevision, tf::TestFunction; kwargs...) = expect(p, x -> apply(tf, x); kwargs...)
+expect(p::TaggedBetaPrevision, tf::TestFunction; kwargs...) = expect(p.beta, tf; kwargs...)
+expect(p::GaussianPrevision, tf::TestFunction; kwargs...) = expect(p, x -> apply(tf, x); kwargs...)
+expect(p::GammaPrevision, tf::TestFunction; kwargs...) = expect(p, x -> apply(tf, x); kwargs...)
+expect(p::ParticlePrevision, tf::TestFunction) = expect(p, x -> apply(tf, x))
+expect(p::QuadraturePrevision, tf::TestFunction) = expect(p, x -> apply(tf, x))
+expect(p::EnumerationPrevision, tf::TestFunction) = expect(p, x -> apply(tf, x))
+
+# Prevision-level OpaqueClosure unwrapping.
+expect(p::Prevision, o::OpaqueClosure; kwargs...) = expect(p, o.f; kwargs...)
+
+# LinearCombination on Prevision: linearity of expectation.
+function expect(p::Prevision, lc::LinearCombination)
+    total = lc.offset
+    for (c, f) in lc.terms
+        total += c * expect(p, f)
+    end
+    total
+end
+
+# Measure-level probability via indicator kernel. The generic path
+# integrates the indicator over the measure's support; specialised
+# methods handle component-level events (TagSet on MixtureMeasure).
+function probability(m::Measure, e::Event)
+    k = indicator_kernel(e)
+    expect(m, h -> k.log_density(h, true) == 0.0 ? 1.0 : 0.0)
+end
+
+function probability(m::MixtureMeasure, e::TagSet)
+    w = weights(m)
+    total = 0.0
+    for (i, comp) in enumerate(m.components)
+        if comp isa TaggedBetaMeasure && comp.tag in e.tags
+            total += w[i]
+        end
+    end
+    total
+end
+
+# ================================================================
+# Conjugate registry (extracted to conjugate.jl)
+# ================================================================
+include("conjugate.jl")
 
 # ================================================================
 # AXIOM-CONSTRAINED FUNCTION: condition
 # ================================================================
-# Bayesian inversion: prior × kernel × observation → posterior
-# P(h|o) ∝ P(o|h) · P(h)
-# The ONE learning mechanism.
-
-# ── Conjugate registry (Move 4) ──────────────────────────────────────────
-#
-# `maybe_conjugate(p::Prevision, k::Kernel)` dispatches on the Prior type
-# and returns a `ConjugatePrevision` when a closed-form update exists.
-# `update(cp::ConjugatePrevision{Prior, Likelihood}, obs)` applies that
-# update. The `Likelihood` type parameter is the kernel's
-# `likelihood_family` type or a pair-specific marker.
-#
-# The facade that routes `condition` through this registry lives further
-# down (per-Measure-subtype method bodies); this section only declares
-# the per-pair methods.
-#
-# For transitional scaffolding: TaggedBetaPrevision does NOT get a
-# `maybe_conjugate` method — the per-tag routing loop in
-# `condition(::TaggedBetaMeasure, ...)` handles it until Move 5's
-# `MixturePrevision` lands. See move-4-design.md §3 and R3.
-
-# ── Pair: (BetaPrevision, BetaBernoulli) — replaces src/ontology.jl:891-904 ──
-
-function maybe_conjugate(p::BetaPrevision, k::Kernel)
-    if k.likelihood_family isa BetaBernoulli
-        return ConjugatePrevision(p, k.likelihood_family)
-    elseif k.likelihood_family isa Flat
-        return ConjugatePrevision(p, k.likelihood_family)
-    end
-    nothing
-end
-
-function update(cp::ConjugatePrevision{BetaPrevision, BetaBernoulli}, obs)
-    if obs == 1 || obs == 1.0 || obs === true
-        ConjugatePrevision(BetaPrevision(cp.prior.alpha + 1.0, cp.prior.beta), cp.likelihood)
-    elseif obs == 0 || obs == 0.0 || obs === false
-        ConjugatePrevision(BetaPrevision(cp.prior.alpha, cp.prior.beta + 1.0), cp.likelihood)
-    else
-        error("BetaBernoulli update: obs must be ∈ {0, 1, true, false}, got $obs")
-    end
-end
-
-# (BetaPrevision, Flat) — no-op. A Flat likelihood does not depend on the
-# Beta parameter; the posterior is the prior unchanged. Replaces the
-# no-op path at src/ontology.jl:612-613 (inside TaggedBetaMeasure
-# routing) for direct BetaPrevision + Flat kernel matches.
-
-function update(cp::ConjugatePrevision{BetaPrevision, Flat}, obs)
-    cp  # no-op
-end
-
-# ── (GaussianPrevision, NormalNormal) — replaces ontology.jl:949-961 ──
-#
-# Precision-weighted posterior under known observation noise. Accepts
-# kernels constructed either with `likelihood_family = NormalNormal(σ)`
-# (forward-looking) or with `params = Dict(:sigma_obs => σ)` +
-# `likelihood_family = PushOnly()` (legacy, used by existing tests).
-# Both paths are treated as conjugate.
-
-function maybe_conjugate(p::GaussianPrevision, k::Kernel)
-    if k.likelihood_family isa NormalNormal
-        return ConjugatePrevision(p, k.likelihood_family)
-    elseif k.params !== nothing && haskey(k.params, :sigma_obs)
-        sigma_obs = k.params[:sigma_obs]::Float64
-        return ConjugatePrevision(p, NormalNormal(sigma_obs))
-    end
-    nothing
-end
-
-function update(cp::ConjugatePrevision{GaussianPrevision, NormalNormal}, obs)
-    sigma_obs = cp.likelihood.sigma_obs
-    τ_prior = 1.0 / cp.prior.sigma^2
-    τ_obs = 1.0 / sigma_obs^2
-    τ_post = τ_prior + τ_obs
-    μ_post = (τ_prior * cp.prior.mu + τ_obs * Float64(obs)) / τ_post
-    σ_post = 1.0 / sqrt(τ_post)
-    ConjugatePrevision(GaussianPrevision(μ_post, σ_post), cp.likelihood)
-end
-
-# ── (DirichletPrevision, Categorical) — replaces ontology.jl:964-974 ──
-#
-# Posterior update: α[idx] += 1 where idx is the observation's position
-# in the category list carried by the Categorical likelihood marker.
-
-function maybe_conjugate(p::DirichletPrevision, k::Kernel)
-    if k.likelihood_family isa Categorical
-        return ConjugatePrevision(p, k.likelihood_family)
-    end
-    nothing
-end
-
-function update(cp::ConjugatePrevision{DirichletPrevision, Categorical{T}}, obs) where T
-    idx = findfirst(==(obs), cp.likelihood.categories.values)
-    idx !== nothing || error("observation $obs not in categories $(cp.likelihood.categories.values)")
-    new_alpha = copy(cp.prior.alpha)
-    new_alpha[idx] += 1.0
-    ConjugatePrevision(DirichletPrevision(new_alpha), cp.likelihood)
-end
-
-# ── (NormalGammaPrevision, NormalGammaLikelihood) — replaces ontology.jl:976-988 ──
-#
-# NormalGamma is the conjugate prior for a Normal with unknown mean AND
-# unknown variance. Update closed-form: κ_n = κ + 1, μ_n = (κμ + r)/κ_n,
-# α_n = α + 1/2, β_n = β + κ(r-μ)²/(2κ_n). Backward compat via
-# params[:normal_gamma] flag (existing kernels); forward path via
-# likelihood_family = NormalGammaLikelihood().
-
-function maybe_conjugate(p::NormalGammaPrevision, k::Kernel)
-    if k.likelihood_family isa NormalGammaLikelihood
-        return ConjugatePrevision(p, k.likelihood_family)
-    elseif k.params !== nothing && haskey(k.params, :normal_gamma)
-        return ConjugatePrevision(p, NormalGammaLikelihood())
-    end
-    nothing
-end
-
-function update(cp::ConjugatePrevision{NormalGammaPrevision, NormalGammaLikelihood}, obs)
-    r = Float64(obs)
-    κ, μ, α, β = cp.prior.κ, cp.prior.μ, cp.prior.α, cp.prior.β
-    κₙ = κ + 1.0
-    μₙ = (κ * μ + r) / κₙ
-    αₙ = α + 0.5
-    βₙ = β + κ * (r - μ)^2 / (2.0 * κₙ)
-    ConjugatePrevision(NormalGammaPrevision(κₙ, μₙ, αₙ, βₙ), cp.likelihood)
-end
-
-# ── (GammaPrevision, Exponential) — net-new fast-path (no prior dispatch) ──
-#
-# Conjugate update for Gamma(α, β) as prior on the rate parameter of
-# an Exponential likelihood: posterior is Gamma(α + 1, β + obs).
-# No legacy path — this pair wasn't previously dispatched; existing
-# code falls through to particle.
-
-function maybe_conjugate(p::GammaPrevision, k::Kernel)
-    if k.likelihood_family isa Exponential
-        return ConjugatePrevision(p, k.likelihood_family)
-    end
-    nothing
-end
-
-function update(cp::ConjugatePrevision{GammaPrevision, Exponential}, obs)
-    r = Float64(obs)
-    r > 0 || error("Exponential observations must be positive, got $r")
-    ConjugatePrevision(GammaPrevision(cp.prior.alpha + 1.0, cp.prior.beta + r), cp.likelihood)
-end
 
 function condition(m::CategoricalMeasure{T}, k::Kernel, observation) where T
     new_logw = copy(m.logw)
@@ -1282,18 +724,11 @@ function condition(m::CategoricalMeasure{T}, k::Kernel, observation) where T
 end
 
 function condition(m::BetaMeasure, k::Kernel, observation)
-    # Move 4: try the ConjugatePrevision registry first. Beta-Bernoulli
-    # and Beta-Flat are registered (see maybe_conjugate(::BetaPrevision,
-    # ...) above). Legacy structural dispatch (Interval → Finite with 2
-    # outcomes but no explicit BetaBernoulli family) remains below for
-    # kernels constructed without declaring likelihood_family.
     cp = maybe_conjugate(m.prevision, k)
     if cp !== nothing
         updated = update(cp, observation).prior
         return BetaMeasure(m.space, updated.alpha, updated.beta)
     end
-    # Legacy structural path: Interval → Finite(0,1) kernel without
-    # declared BetaBernoulli family — synthesize the conjugate pair.
     if k.source isa Interval && k.target isa Finite && length(k.target.values) == 2
         if observation == 1 || observation == 1.0 || observation == true
             return BetaMeasure(m.space, m.alpha + 1.0, m.beta)
@@ -1304,85 +739,10 @@ function condition(m::BetaMeasure, k::Kernel, observation)
     _condition_by_grid(m, k, observation)
 end
 
-struct DepthCapExceeded <: Exception
-    msg::String
-end
-Base.showerror(io::IO, e::DepthCapExceeded) = print(io, "DepthCapExceeded: ", e.msg)
-
-# ── Move 5: LikelihoodFamily routing helper (semantically owned by
-#           MixturePrevision; physically lives here because LikelihoodFamily
-#           subtypes are declared in this file and Previsions loads first).
-#           Pure function; no side effects.
-
-"""
-    _resolve_likelihood_family(fam::LikelihoodFamily, component) -> LeafFamily
-
-Unwrap `FiringByTag` / `DispatchByComponent` routers against a specific
-`component` (a Measure) to reach a leaf family (`BetaBernoulli`, `Flat`,
-etc.). Depth cap of 8 catches accidental self-referential
-`DispatchByComponent` closures.
-
-Rejects `PushOnly` at entry with the same error the pre-Move-5
-`condition(::TaggedBetaMeasure, …)` produced.
-
-This helper is the load-bearing primitive of Move 5's routing
-relocation. Pre-Move-5 the unwrap loop lived inline inside
-`condition(::TaggedBetaMeasure, …)`; post-Move-5 it's called by both
-the TaggedBetaMeasure facade (for standalone-measure conditioning,
-§5.3 delegate posture) and `condition(p::MixturePrevision, …)` (the
-per-component coordinator).
-"""
-function _resolve_likelihood_family(fam::LikelihoodFamily, component)
-    fam isa PushOnly && error(
-        "condition called on a push-only kernel (likelihood_family = PushOnly()). " *
-        "Declare a leaf family (BetaBernoulli, Flat, or via FiringByTag/DispatchByComponent) " *
-        "at Kernel construction.")
-    for _ in 1:8  # depth cap — catches accidental self-referential DispatchByComponent
-        if fam isa FiringByTag
-            fam = component.tag in fam.fires ? fam.when_fires : fam.when_not
-        elseif fam isa DispatchByComponent
-            fam = fam.classify(component)
-        else
-            break
-        end
-    end
-    (fam isa FiringByTag || fam isa DispatchByComponent) &&
-        throw(DepthCapExceeded(
-            "LikelihoodFamily unwrap did not reach a leaf within depth cap (got $(typeof(fam)))"))
-    fam
-end
-
-"""
-    _with_resolved_family(k::Kernel, fam::LikelihoodFamily) -> Kernel
-
-Return a new Kernel with the same source/target/generate/log_density/
-factor_selector/params as `k`, but with `likelihood_family` replaced by
-`fam`. Used after `_resolve_likelihood_family` has unwrapped a
-FiringByTag/DispatchByComponent router to a leaf family, so Move 4's
-registry dispatch (`maybe_conjugate`) sees the concrete leaf family
-directly.
-"""
-function _with_resolved_family(k::Kernel, fam::LikelihoodFamily)
-    Kernel(k.source, k.target, k.generate, k.log_density;
-           factor_selector = k.factor_selector,
-           params = k.params,
-           likelihood_family = fam)
-end
-
-# Move 5 §5.3 Option A: delegate. The Measure-surface API
-# (condition(::TaggedBetaMeasure, …)) is a public contract; this method
-# stays to preserve it. The body resolves the LikelihoodFamily and
-# forwards to Move 4's registry via the inner BetaMeasure, then
-# re-wraps with the original tag. No per-Beta arithmetic lives here
-# anymore — every conjugate update goes through `maybe_conjugate` / `update`.
 function condition(m::TaggedBetaMeasure, k::Kernel, observation)
     fam = _resolve_likelihood_family(k.likelihood_family, m)
     resolved_k = _with_resolved_family(k, fam)
-
-    # Side effect: domain kernels populate per-tag caches in k.params.
-    # Return value is consumed later by _predictive_ll at the mixture level.
     k.log_density(m, observation)
-
     new_beta = condition(m.beta, resolved_k, observation)
     TaggedBetaMeasure(m.space, m.tag, new_beta)
 end
@@ -1391,23 +751,13 @@ end
     _conjugacy_prevision(component) -> Prevision
 
 Return the prevision Move 4's `maybe_conjugate` registry keys on for a
-given mixture component. For `TaggedBetaMeasure` this is the inner
-`BetaPrevision` (TaggedBetaMeasure → inner BetaMeasure → BetaPrevision);
-for other Measures it's the component's own `.prevision`.
-
-Used by `_dispatch_path(p::MixturePrevision, k)` to query each
-component's dispatch path after resolving its LikelihoodFamily.
+given mixture component.
 """
 _conjugacy_prevision(m::TaggedBetaMeasure) = getfield(m, :prevision).beta
 _conjugacy_prevision(m::Measure) = m.prevision
-# Posture 4 Move 2: TaggedBetaPrevision.beta is BetaPrevision directly, so
-# this returns the inner BetaPrevision without shield round-trips.
 _conjugacy_prevision(p::TaggedBetaPrevision) = p.beta
 
 function condition(m::GaussianMeasure, k::Kernel, observation)
-    # Move 4: try the ConjugatePrevision registry first. Covers both
-    # `likelihood_family = NormalNormal(σ)` and the legacy `params =
-    # Dict(:sigma_obs => σ)` paths.
     cp = maybe_conjugate(m.prevision, k)
     if cp !== nothing
         updated = update(cp, observation).prior
@@ -1417,17 +767,11 @@ function condition(m::GaussianMeasure, k::Kernel, observation)
 end
 
 function condition(m::DirichletMeasure, k::Kernel, observation)
-    # Move 4: try the ConjugatePrevision registry first (kernels that
-    # explicitly declare likelihood_family = Categorical(cats)).
     cp = maybe_conjugate(m.prevision, k)
     if cp !== nothing
         updated = update(cp, observation).prior
         return DirichletMeasure(m.space, m.categories, updated.alpha)
     end
-    # Legacy structural match: Simplex → Finite kernel without an
-    # explicit Categorical family. Synthesize Categorical(m.categories)
-    # at the facade level — the Measure carries the category labels;
-    # the Prevision does not.
     k.source isa Simplex && k.target isa Finite ||
         error("DirichletMeasure condition requires a Categorical kernel (Simplex → Finite)")
     synthetic_cp = ConjugatePrevision(m.prevision, Categorical(m.categories))
@@ -1436,33 +780,20 @@ function condition(m::DirichletMeasure, k::Kernel, observation)
 end
 
 function condition(m::NormalGammaMeasure, k::Kernel, observation)
-    # Move 4: try the ConjugatePrevision registry first. Covers both
-    # `likelihood_family = NormalGammaLikelihood()` and the legacy
-    # `params[:normal_gamma]` paths.
     cp = maybe_conjugate(m.prevision, k)
     if cp !== nothing
         updated = update(cp, observation).prior
         return NormalGammaMeasure(m.space, updated.κ, updated.μ, updated.α, updated.β)
     end
-    # Non-conjugate: importance sampling fallback. Call _condition_particle
-    # directly — `condition(m::Measure, k, observation)` would be a type
-    # assertion interpreted as a recursive call on typeof(m) = NormalGammaMeasure,
-    # causing infinite recursion. (Pre-Move-6 bug latent until Move 6 Phase 6's
-    # skin smoke first exercised a non-conjugate path through this facade.)
     _condition_particle(m, k, observation)
 end
 
 function condition(m::GammaMeasure, k::Kernel, observation)
-    # Move 4: (GammaPrevision, Exponential) is net-new fast-path — no
-    # legacy condition method existed. Registry lookup; fallback to
-    # generic particle path for any other kernel.
     cp = maybe_conjugate(m.prevision, k)
     if cp !== nothing
         updated = update(cp, observation).prior
         return GammaMeasure(m.space, updated.alpha, updated.beta)
     end
-    # Same fix as NormalGammaMeasure above: call _condition_particle
-    # directly to avoid infinite recursion.
     _condition_particle(m, k, observation)
 end
 
@@ -1475,10 +806,6 @@ function _condition_by_grid(m::BetaMeasure, k::Kernel, observation; n::Int=64)
         !isnan(ll) || error("density returned NaN for hypothesis $i")
         push!(logw, lp + ll)
     end
-    # Move 6 Phase 7: construct QuadraturePrevision and wrap by reference.
-    # Same pattern as _condition_particle — the pass-by-reference
-    # CategoricalMeasure constructor keeps the QuadraturePrevision alive
-    # past this call. Shield resolves .logw → qp.log_weights (by ref).
     qp = QuadraturePrevision(grid, logw)
     CategoricalMeasure(Finite(qp.grid), qp)
 end
@@ -1505,19 +832,14 @@ log_density_at(m::GaussianMeasure, x) = -0.5 * ((x - m.mu) / m.sigma)^2
 log_density_at(m::DirichletMeasure, x) = sum((m.alpha[i] - 1) * log(x[i]) for i in eachindex(m.alpha))
 
 function log_density_at(m::NormalGammaMeasure, x)
-    # x = (μ_val, σ²_val) — joint density of Normal-Gamma
     μ_val, σ² = x[1], x[2]
     σ² > 0 || return -Inf
-    # InvGamma(α, β) density for σ²
     log_ig = m.α * log(m.β) - _log_gamma(m.α) - (m.α + 1.0) * log(σ²) - m.β / σ²
-    # Normal(μ, σ²/κ) density for μ_val
     log_n = -0.5 * log(2π * σ² / m.κ) - m.κ * (μ_val - m.μ)^2 / (2.0 * σ²)
     log_ig + log_n
 end
 
-# Log-Gamma via Stirling approximation (stdlib only, no SpecialFunctions)
 function _log_gamma(x::Float64)
-    # Lanczos approximation for log(Γ(x))
     if x < 0.5
         return log(π / sin(π * x)) - _log_gamma(1.0 - x)
     end
@@ -1582,7 +904,6 @@ function log_predictive(m::Measure, k::Kernel, obs)
 end
 
 function log_predictive(m::DirichletMeasure, k::Kernel, obs)
-    # Conjugate fast-path: posterior predictive = α_obs / Σα
     idx = findfirst(==(obs), m.categories.values)
     idx !== nothing || error("observation $obs not in categories")
     log(m.alpha[idx] / sum(m.alpha))
@@ -1592,8 +913,6 @@ function log_predictive(m::CategoricalMeasure, k::Kernel, obs)
     _predictive_ll(m, k, obs)
 end
 
-# Move 5: MixturePrevision now owns per-component routing and weight
-# reassembly; the MixtureMeasure facade is a thin shim.
 function condition(p::MixturePrevision, k::Kernel, obs)
     new_components = Measure[]
     new_log_wts = Float64[]
@@ -1619,11 +938,6 @@ function condition(m::MixtureMeasure, k::Kernel, obs)
     MixtureMeasure(m.space, new_p.components, new_p.log_weights)
 end
 
-# Move 5 §5.4: single-Symbol rollup observability for mixture dispatch.
-# `:conjugate` iff every component routes conjugate under its resolved
-# LikelihoodFamily; else `:mixed`. Per-component drilldown goes through
-# `_dispatch_path(m.components[i], k)` at the test call site using
-# Move 4's per-Prevision hook.
 function _dispatch_path(p::MixturePrevision, k::Kernel)
     for comp in p.components
         fam = _resolve_likelihood_family(k.likelihood_family, comp)
@@ -1633,16 +947,8 @@ function _dispatch_path(p::MixturePrevision, k::Kernel)
     :conjugate
 end
 
-# Forwarder for the Measure-surface: _dispatch_path(m::Measure, k) →
-# delegates to the underlying prevision (or in the mixture case, to the
-# per-component rollup above).
 _dispatch_path(m::MixtureMeasure, k::Kernel) = _dispatch_path(m.prevision, k)
 
-# Move 5 §5.1 Option A: ExchangeablePrevision ships with simplest-case
-# decompose (Dirichlet prior over a Finite component space → one ergodic
-# component per category, weighted by Dirichlet marginal αᵢ/Σα). The
-# hierarchical / multi-component correctness burden lives in the
-# email-agent migration follow-up PR per §5.1 R3 scoping.
 function decompose(p::ExchangeablePrevision)
     p.prior_on_components isa DirichletPrevision ||
         error("decompose: only Dirichlet priors supported at Move 5 (§5.1 R3 scoping); got $(typeof(p.prior_on_components))")
@@ -1660,7 +966,6 @@ function decompose(p::ExchangeablePrevision)
     components = Measure[]
     log_weights = Float64[]
     for i in 1:k
-        # Ergodic component i: degenerate CategoricalMeasure on cats[i].
         log_w_per_cat = fill(-Inf, k)
         log_w_per_cat[i] = 0.0
         push!(components, CategoricalMeasure(p.component_space, log_w_per_cat))
@@ -1669,7 +974,7 @@ function decompose(p::ExchangeablePrevision)
     MixturePrevision(components, log_weights)
 end
 
-# ── ProductMeasure condition: structured factored update ──
+# ── ProductMeasure condition ──
 
 function condition(m::ProductMeasure, k::Kernel, obs; kwargs...)
     fs = k.factor_selector
@@ -1688,7 +993,6 @@ function condition(m::ProductMeasure, k::Kernel, obs; kwargs...)
         ai = active_indices[1]
         factor_ai = m.factors[ai]
 
-        # Restricted kernel: fix discrete at c, project onto active factor
         restricted_ld = (h_i, o) -> begin
             full_h = Any[0.0 for _ in m.factors]
             full_h[d] = c
@@ -1699,13 +1003,9 @@ function condition(m::ProductMeasure, k::Kernel, obs; kwargs...)
             _ -> error("generate not used in condition"), restricted_ld;
             likelihood_family = k.likelihood_family)
 
-        # Condition — hits conjugate fast-paths (e.g. Beta + Bernoulli)
         conditioned = condition(factor_ai, restricted_k, obs)
-
-        # Predictive likelihood for weighting
         pred_ll = _predictive_ll(factor_ai, restricted_k, obs)
 
-        # New ProductMeasure: discrete → point mass, active → conditioned, rest unchanged
         new_factors = Measure[f for f in m.factors]
         new_factors[d] = CategoricalMeasure(Finite([c]))
         new_factors[ai] = conditioned
@@ -1717,118 +1017,28 @@ function condition(m::ProductMeasure, k::Kernel, obs; kwargs...)
     MixtureMeasure(m.space, new_components, new_log_wts)
 end
 
-# ── General importance-sampling fallback: `_condition_particle` ──
-#
-# Move 6 R4 (per move-6-design.md §6 R4): `_condition_particle` is the
-# named particle-fallback function aligning with the master-plan
-# vocabulary. Phase 1 introduced it as the canonical name; Phase 7
-# removed the residual `_condition_product_fallback` delegate — the
-# single in-tree caller at `condition(::ProductMeasure, k, obs)`
-# migrated to call this function directly. One name, one canonical path.
-
 function _condition_particle(m::Measure, k::Kernel, obs; n_particles::Int=1000, seed::Int=0)
     samples = [draw(m) for _ in 1:n_particles]
     log_weights = Float64[k.log_density(s, obs) for s in samples]
-    # Move 6 Phase 7: construct ParticlePrevision and wrap it inside
-    # CategoricalMeasure by reference. The pass-by-reference CategoricalMeasure
-    # constructor (widened `prevision` field + dedicated Prevision ctor) keeps
-    # the ParticlePrevision alive past this call; consumer reads through the
-    # shield resolve to pp.log_weights and pp.samples without copying.
-    #
-    # Bit-identity: ParticlePrevision's constructor normalises log_weights via
-    # logsumexp. The resulting Vector is stored by reference; the Finite space
-    # also wraps pp.samples by reference. No double-normalisation — the pre-
-    # Move-6-Phase-7 pattern (which passed pp.log_weights into a fresh
-    # CategoricalPrevision) has been removed. Phase 0's canonical-bit-
-    # invariance test remains the tripwire for any seed-consumption reorder
-    # or arithmetic reassociation.
     pp = ParticlePrevision(samples, log_weights, seed)
     CategoricalMeasure(Finite(pp.samples), pp)
 end
-
-# ── General condition fallback: importance sampling ──
 
 function condition(m::Measure, k::Kernel, obs; n_particles::Int=1000)
     _condition_particle(m, k, obs; n_particles=n_particles)
 end
 
 # ── condition — sibling form taking an Event directly ──
-#
-# Provably equivalent to conditioning on `indicator_kernel(e)` at
-# observation `true`, for deterministic events. Di Lavore–Román–
-# Sobociński Proposition 4.9: Pearl and Jeffrey coincide on
-# deterministic observations, both equal Bayesian inversion at the
-# observed point. The parametric form `condition(m, k, obs)` stays
-# the primary signature for existing consumers; this form is the
-# natural idiom for new code whose conditioning object is an event
-# rather than a kernel-observation pair.
+
 function condition(m::Measure, e::Event)
-    # Generic fallback (Posture 2 form). Specialised Measure+Event pairs
-    # that have a Prevision-level closed-form (added in Move 7 Phase 2)
-    # dispatch on their specific types; this generic method handles the
-    # remaining cases via indicator_kernel expansion.
     condition(m, indicator_kernel(e), true)
 end
 
-# ── Move 7 Phase 2: Measure-level facade delegates to Prevision-level ────
-#
-# For (Measure, Event) pairs whose underlying (Prevision, Event) has a
-# closed-form specialisation, the Measure-level method delegates to the
-# Prevision primary and wraps the result back in the Measure type. This
-# inverts the Posture 2 direction of delegation (Measure → Prevision)
-# while preserving the Posture 2 behaviour bit-for-bit for the common
-# cases.
-#
-# Julia's multiple dispatch handles the fallback automatically: pairs
-# without a Prevision closed-form hit the generic condition(m::Measure,
-# e::Event) above, which keeps the indicator_kernel expansion.
-
-"""
-    condition(m::MixtureMeasure, e::TagSet) → MixtureMeasure
-
-Delegates to the Prevision-level `condition(p::MixturePrevision, e::TagSet)`
-closed-form (Move 7 Phase 1), then wraps the restricted `MixturePrevision`
-in a `MixtureMeasure` with the original space. Type-preserving per §5.3.
-"""
 function condition(m::MixtureMeasure, e::TagSet)
     new_p = condition(m.prevision, e)
     MixtureMeasure(m.space, new_p.components, new_p.log_weights)
 end
 
-# ── Move 7 Phase 1: Prevision-level condition(p, e::Event) ────────────────
-#
-# Elevates event-form conditioning to Prevision-level dispatch per §5.1
-# Option B: parametric form and event form are peer primary primitives.
-# Specialisations for common (Prevision, Event) pairs return closed-form
-# restricted previsions eagerly; the generic fallback routes through
-# indicator_kernel via a wrapping Measure that the Measure-level facade
-# (Phase 2) supplies.
-#
-# Phase 1 ships one closed-form specialisation: MixturePrevision + TagSet.
-# This covers the Posture 2 gate-7 test case and the most common
-# consumer-facing event-conditioning shape. Other (Prevision, Event)
-# pairs land in subsequent phases or as follow-up work.
-
-"""
-    condition(p::MixturePrevision, e::TagSet) → MixturePrevision
-
-Closed-form event-restriction: preserve all components, set log-weight to
-`-Inf` for non-firing components (tag not in `e.tags`), re-normalise through
-the `MixturePrevision` constructor. Type-preserving per §5.3 Option B.
-
-The components-preserved shape matches Posture 2's indicator-kernel
-expansion: `condition(m, indicator_kernel(e), true)` assigns `pred_ll =
--Inf` to non-firing components, which the `MixturePrevision` constructor's
-logsumexp normalisation then drives to zero weight. Test assertions that
-depend on component-count invariance (test_events.jl TEST 7) rely on this
-shape — dropping non-firing components would change the representation
-even though the posterior distribution is equivalent.
-
-Components must be `TaggedBetaMeasure` — mixture components without a `tag`
-field cannot be restricted by a TagSet event, and return a loud error
-naming the concrete component type for diagnosis. Zero-mass guard raises
-via `MixturePrevision` constructor when all components are non-firing.
-"""
 function condition(p::MixturePrevision, e::TagSet)
     new_lws = copy(p.log_weights)
     for (i, comp) in enumerate(p.components)
@@ -1840,22 +1050,14 @@ function condition(p::MixturePrevision, e::TagSet)
             error("condition(::MixturePrevision, ::TagSet): expected TaggedBetaMeasure components; got $(typeof(comp)) at index $i")
         end
     end
-
-    # MixturePrevision constructor raises on all-(-Inf) (zero-mass guard).
     MixturePrevision(p.components, new_lws)
 end
 
 # ================================================================
 # AXIOM-CONSTRAINED FUNCTION: push_measure
 # ================================================================
-# Pushforward: Measure(H) × Kernel(H,T) → Measure(T)
-# The induced distribution on the target space.
-# expect is push to ℝ.
 
 function push_measure(m::CategoricalMeasure, k::Kernel)
-    # For each hypothesis, the kernel generates a distribution on T.
-    # The pushforward is the mixture: Σ_i w_i · kernel(h_i)
-    # For finite target: compute weight of each target value
     tgt = k.target
     if tgt isa Finite
         w = weights(m)
@@ -1868,7 +1070,6 @@ function push_measure(m::CategoricalMeasure, k::Kernel)
                     if tgt_logw[j] == -Inf
                         tgt_logw[j] = contrib
                     else
-                        # log-sum-exp
                         mx = max(tgt_logw[j], contrib)
                         tgt_logw[j] = mx + log(exp(tgt_logw[j] - mx) + exp(contrib - mx))
                     end
@@ -1882,8 +1083,6 @@ function push_measure(m::CategoricalMeasure, k::Kernel)
 end
 
 function push_measure(m::MixtureMeasure, k::Kernel)
-    # Pushforward of a mixture: Σ_i w_i · push(component_i, kernel)
-    # For finite targets, integrate kernel density over each component via expect.
     tgt = k.target
     tgt isa Finite || error("push_measure to non-Finite target not implemented for MixtureMeasure")
     w = weights(m)
@@ -1905,9 +1104,6 @@ function push_measure(m::MixtureMeasure, k::Kernel)
 end
 
 function push_measure(m::DirichletMeasure, k::Kernel)
-    # Any kernel Simplex → Finite is a categorical draw: each simplex
-    # point IS a categorical distribution. The pushforward is the
-    # posterior predictive: P(o_j) = E_Dir[θ_j] = alpha_j / sum(alpha).
     k.source isa Simplex || error("push_measure from DirichletMeasure requires Simplex source kernel")
     tgt = k.target
     tgt isa Finite || error("push_measure to non-Finite target not implemented for DirichletMeasure")
@@ -1919,10 +1115,6 @@ end
 # ================================================================
 # HOST OPERATION: draw
 # ================================================================
-# Crosses the boundary from mathematical object to actual value.
-# This is the ONLY source of randomness in the system.
-# Exported from the ontology module for Julia host callers.
-# NOT added to the DSL's default_env — the DSL is pure.
 
 function draw(m::CategoricalMeasure)
     w = weights(m)
@@ -1936,7 +1128,6 @@ function draw(m::CategoricalMeasure)
 end
 
 function draw(m::BetaMeasure)
-    # Beta via Gamma ratio: X/(X+Y) where X ~ Gamma(α), Y ~ Gamma(β)
     x = _draw_gamma(m.alpha)
     y = _draw_gamma(m.beta)
     x / (x + y)
@@ -1950,16 +1141,12 @@ function draw(m::GaussianMeasure)
     m.mu + m.sigma * randn()
 end
 
-# ── Gamma sampling (Marsaglia-Tsang) for Dirichlet draw ──
-
 function _draw_gamma(alpha::Float64)
     if alpha == 1.0
-        return -log(rand())  # Gamma(1,1) = Exponential(1)
+        return -log(rand())
     elseif alpha < 1.0
-        # Ahrens-Dieter: Gamma(α) = Gamma(α+1) · U^(1/α)
         return _draw_gamma(alpha + 1.0) * rand()^(1.0 / alpha)
     else
-        # Marsaglia-Tsang for α > 1
         d = alpha - 1.0/3.0
         c = 1.0 / sqrt(9.0 * d)
         while true
@@ -1981,11 +1168,8 @@ function draw(m::DirichletMeasure)
 end
 
 function draw(m::NormalGammaMeasure)
-    # Sample σ² ~ InvGamma(α, β) = 1/Gamma(α, 1/β) * β  →  β / Gamma(α)
-    # InvGamma: if X ~ Gamma(α, 1), then β/X ~ InvGamma(α, β)
     g = _draw_gamma(m.α)
     σ² = m.β / g
-    # Sample μ ~ Normal(μ, σ²/κ)
     μ_s = m.μ + sqrt(σ² / m.κ) * randn()
     (μ_s, σ²)
 end
@@ -2022,9 +1206,6 @@ end
 # ================================================================
 # log_marginal — Dirichlet-Multinomial marginal likelihood
 # ================================================================
-# log P(data | Dir(α)) = log B(α + n) / B(α)
-# O(K) from sufficient statistics — important for structure learning
-# which evaluates many candidate structures.
 
 function log_marginal(m::DirichletMeasure, counts::Vector{Int})
     α = m.alpha
@@ -2037,5 +1218,10 @@ function log_marginal(m::DirichletMeasure, counts::Vector{Int})
     end
     score
 end
+
+# ================================================================
+# Stdlib (extracted to stdlib.jl)
+# ================================================================
+include("stdlib.jl")
 
 end # module Ontology

@@ -81,7 +81,7 @@ function build_observation_kernel(
                 correct = recommended == true_type
                 correct_cache[tag] = correct
                 p = mean(m_or_θ.beta)
-                correct ? log(max(p, 1e-300)) : log(max(1.0 - p, 1e-300))  # credence-lint: allow — precedent:posterior-iteration — inline Bernoulli log-density; tracked in issue #39
+                correct ? log(max(p, 1e-300)) : log(max(1.0 - p, 1e-300))  # credence-lint: allow — precedent:declarative-construction — Kernel log-density closure: Bernoulli likelihood from Beta mean
             else
                 obs == 1.0 ? log(max(m_or_θ, 1e-300)) : log(max(1.0 - m_or_θ, 1e-300))
             end
@@ -114,7 +114,7 @@ function compute_eu_interact(
         mean_j = mean(comp.beta)
         # If program recommends :enemy and is correct (mean_j), entity is enemy
         # If program recommends :food and is correct (mean_j), entity is food → P(enemy) = 1-mean_j
-        p_enemy += w[j] * (rec == :enemy ? mean_j : 1.0 - mean_j)  # credence-lint: allow — precedent:posterior-iteration — mixture P(enemy) by hand; tracked in issue #39
+        p_enemy += w[j] * (rec == :enemy ? mean_j : 1.0 - mean_j)  # credence-lint: allow — precedent:posterior-iteration — mixture EU requires per-component compiled-kernel dispatch
     end
     energy_enemy = -5.0
     energy_food = 5.0
@@ -145,7 +145,7 @@ function mean_observation_count_gw(state::AgentState)::Float64
     total = 0.0
     for comp in state.belief.components
         tbm = comp::TaggedBetaMeasure
-        total += tbm.beta.alpha + tbm.beta.beta - 2.0
+        total += tbm.beta.alpha + tbm.beta.beta - 2.0  # credence-lint: allow — precedent:expect-through-accessor — pseudo-count sum (α+β−2) has no stdlib function
     end
     total / length(state.belief.components)
 end
@@ -394,7 +394,7 @@ function run_agent(;
                     ck = state.compiled_kernels[j]
                     rec = ck.evaluate(features, temporal_state)
                     mean_j = mean(comp.beta)
-                    p_enemy_val += w[j] * (rec == :enemy ? mean_j : 1.0 - mean_j)  # credence-lint: allow — precedent:posterior-iteration — mixture P(enemy) by hand; tracked in issue #39
+                    p_enemy_val += w[j] * (rec == :enemy ? mean_j : 1.0 - mean_j)  # credence-lint: allow — precedent:posterior-iteration — mixture EU requires per-component compiled-kernel dispatch
                 end
                 p_obs = is_enemy ? p_enemy_val : (1.0 - p_enemy_val)
                 surprise = -log(max(p_obs, 1e-300))

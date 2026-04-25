@@ -87,6 +87,21 @@ The compact slug index lives in `CLAUDE.md` — that's what the lint reads to di
 **Legal with escape hatch.** Tests *of* the reasoner legitimately need an independent oracle: `assert expect(m, f) == pytest.approx(0.7)  # computed by hand from Beta(3,7)`.
 **Required pragma:** `# credence-lint: allow — precedent:test-oracle — <reason>` on the comparison line. The manual computation is the test's ground truth; it is causal *within the test*, but the test is non-causal with respect to the agent (it doesn't feed back into agent behaviour).
 
+### Reading a Prevision's structural fields to compute a probabilistic property
+**Slug:** `expect-through-accessor`.
+**Illegal outside `src/previsions.jl` and `src/conjugate.jl`.** Code that reads `.alpha`, `.log_weights`, `.mu`, `.sigma`, or `.kappa` from a Prevision to compute a probabilistic quantity (mean, variance, probability mass, mixing weights) bypasses the `expect` canalisation and hardcodes representation assumptions at the call site. Not flagged: `.beta` (ambiguous between TaggedBetaMeasure navigation and BetaPrevision parameter — `.alpha` catches the same violations), `.components`/`.factors` (containers, not parameters; `posterior-iteration` covers arithmetic on their contents).
+**Rewrite:** `mean(p)`, `variance(p)`, `probability(p, e)`, `weights(p)`, `marginal(p, indices)`, or `expect(p, f)` with a declared TestFunction. These one-liners route through `expect`, which dispatches on the Prevision's type — the call site never sees the representation.
+**File-scope exclusion:** `src/previsions.jl` and `src/conjugate.jl` are excluded from the slug entirely (approach (a) from Move 5 §5.4). Inside those files, accessor reads are the legitimate internal implementation of `expect` and `update` method bodies. If a future file in `src/` needs the exclusion, add it to the file-scope list as a one-liner.
+**Follows from Invariant 2** (declared structure: the accessor read bypasses the type-dispatched `expect` path) and Invariant 1 (topological face: the computation creates a path to a probabilistic quantity that the lint cannot trace through `expect`).
+
+**Admissible pragma categories.** The seven pragma sites in `apps/` after Move 5 fall into three principled categories. A pragma under this slug is admissible only if it names one of these categories in its reason; novel categories require a precedents.md amendment.
+
+| Category | Why accessor-shaped | Example | Count |
+|----------|-------------------|---------|-------|
+| **Serialisation** | The serialised form names structural fields by definition; JSON keys are `alpha`, `beta`, `log_weights`. | `state_persistence.jl`: extracting Beta parameters and log-weights for JSON. | 3 |
+| **Construction** | The MixtureMeasure constructor is the layer that knows about `log_weights` and `components`; building or rebuilding a mixture requires naming the fields. | `server.jl`: `push!(state.belief.log_weights, lw)`, `MixtureMeasure(…, state.belief.log_weights)`. | 2 |
+| **Conjugate-machinery vocabulary** | Pseudo-count expressions (`α + β − 2`) are the conjugate family's internal vocabulary; no stdlib function wraps "total pseudo-observations minus prior". | `host.jl`: `tbm.beta.alpha + tbm.beta.beta - 2.0`. | 2 |
+
 ## Specific derivations
 
 ### Indifference implies exploration

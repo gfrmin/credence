@@ -138,7 +138,7 @@ function build_predictive(
         r_j = rec_cache[j]
         for a in action_space
             p = a == r_j ? θ_mean : (1.0 - θ_mean) / max(n_actions - 1, 1)
-            action_probs[a] += w[j] * p  # credence-lint: allow — precedent:posterior-iteration — mixture EU by hand; tracked in issue #39
+            action_probs[a] += w[j] * p  # credence-lint: allow — precedent:posterior-iteration — mixture EU requires per-component compiled-kernel dispatch; no stdlib Functional covers this pattern
         end
     end
 
@@ -215,7 +215,7 @@ function mean_observation_count(state::AgentState)::Float64
     total = 0.0
     for comp in state.belief.components
         tbm = comp::TaggedBetaMeasure
-        total += tbm.beta.alpha + tbm.beta.beta - 2.0
+        total += tbm.beta.alpha + tbm.beta.beta - 2.0  # credence-lint: allow — precedent:expect-through-accessor — pseudo-count sum (α+β−2) has no stdlib function
     end
     total / length(state.belief.components)
 end
@@ -507,7 +507,7 @@ function build_email_observation_kernel(
                 correct = recommended == user_action
                 correct_cache[tag] = correct
                 p = mean(m_or_θ.beta)
-                correct ? log(max(p, 1e-300)) : log(max(1.0 - p, 1e-300))  # credence-lint: allow — precedent:posterior-iteration — inline Bernoulli log-density; tracked in issue #39
+                correct ? log(max(p, 1e-300)) : log(max(1.0 - p, 1e-300))  # credence-lint: allow — precedent:declarative-construction — Kernel log-density closure: Bernoulli likelihood from Beta mean
             else
                 obs == 1.0 ? log(max(m_or_θ, 1e-300)) : log(max(1.0 - m_or_θ, 1e-300))
             end
@@ -546,7 +546,7 @@ function build_step_kernel(
                 correct = recommended in correct_actions
                 correct_cache[tag] = correct
                 p = mean(m_or_θ.beta)
-                correct ? log(max(p, 1e-300)) : log(max(1.0 - p, 1e-300))  # credence-lint: allow — precedent:posterior-iteration — inline Bernoulli log-density; tracked in issue #39
+                correct ? log(max(p, 1e-300)) : log(max(1.0 - p, 1e-300))  # credence-lint: allow — precedent:declarative-construction — Kernel log-density closure: Bernoulli likelihood from Beta mean
             else
                 obs == 1.0 ? log(max(m_or_θ, 1e-300)) : log(max(1.0 - m_or_θ, 1e-300))
             end

@@ -44,14 +44,19 @@ export Event, TagSet, FeatureEquals, FeatureInterval, Conjunction, Disjunction, 
 export indicator_kernel, feature_value, BOOLEAN_SPACE
 export Functional, Identity, Projection, NestedProjection, Tabular, LinearCombination, OpaqueClosure
 export Prevision, TestFunction, Indicator, apply
-export MixturePrevision, ExchangeablePrevision, decompose
+export CenteredPower, CenteredSquare
+export BetaPrevision, TaggedBetaPrevision, GaussianPrevision, GammaPrevision
+export CategoricalPrevision, DirichletPrevision, NormalGammaPrevision
+export ProductPrevision, MixturePrevision, ExchangeablePrevision, decompose
 export ParticlePrevision, QuadraturePrevision, EnumerationPrevision
 export ConditionalPrevision
 export push_component!, replace_component!, FrozenVectorView
 export factor, replace_factor
-export condition, expect, push_measure, density, log_density_at, log_predictive, log_marginal
+export condition, expect, push_measure, density, log_density_at, log_predictive, log_marginal, wrap_in_measure
+export ConjugatePrevision, maybe_conjugate, update
 export draw
-export weights, mean, variance, prune, truncate, logsumexp
+export weights, mean, variance, probability, marginal, prune, truncate, logsumexp
+export WeightsDomainError
 export save_state, load_state, MigrationError
 export initial_rel_state, initial_cov_state, marginalize_betas, update_beta_state
 export extract_reliability_means
