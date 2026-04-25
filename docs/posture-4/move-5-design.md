@@ -165,15 +165,15 @@ My prior: **`CenteredPower{n} <: TestFunction` parametric, with `CenteredSquare`
 - Keeps the type system as the encoder of structure (n is a type parameter, not a runtime field).
 - Matches the precedent of `Indicator{E}` where the TestFunction subtype is parametric on its specialising structure.
 
-Argue against if `CenteredPower{n}` adds compile-time cost via type parameter explosion, or if Julia's parametric dispatch on `n::Int` is awkward in practice. State your answer.
+**Approved with constraint:** `CenteredSquare = CenteredPower{2}` is the *only* const alias landed in Move 5. No `CenteredCube`, `CenteredFourth`, etc. Const aliases are a forking discipline — once you have two, the question of which other moments deserve named constants becomes a recurring design conversation, and the answer is always "none of them; the parametric form is the API". One alias for variance (because variance has independent name-recognition value) is fine; two starts a list.
 
 ### 5.2 `weights` for non-categorical previsions
 
 `weights(p::CategoricalPrevision)` returns `exp.(p.log_weights)` (normalised, since CategoricalPrevision normalises at construction). What does `weights(p::BetaPrevision)` return? The continuous analogue would be the density function evaluated on a grid — but a grid choice is observational, not mathematical content of the prevision. `weights(p::MixturePrevision)` over a mixture of continuous components — undefined component-wise, well-defined for the mixing weights `exp.(p.log_weights)`.
 
-My prior: **`weights` is constrained to finite-support Previsions: `CategoricalPrevision`, `MixturePrevision`, `ParticlePrevision`, `QuadraturePrevision`, `EnumerationPrevision`.** For `MixturePrevision`, `weights` returns the mixing weights, not anything component-wise. For continuous Previsions (Beta, Gaussian, Gamma, Dirichlet, NormalGamma), `weights` is a method error. Consumers wanting probability mass over a region use `probability(p, e::Event)` — `Indicator(FeatureInterval(...))` carries the discretisation choice as a declared Event, not as a hidden grid inside `weights`.
+My prior: **`weights` is constrained to finite-support Previsions: `CategoricalPrevision`, `MixturePrevision`, `ParticlePrevision`, `QuadraturePrevision`, `EnumerationPrevision`.** For `MixturePrevision`, `weights` returns the mixing weights, not anything component-wise. For continuous Previsions (Beta, Gaussian, Gamma, Dirichlet, NormalGamma), `weights` raises a custom `WeightsDomainError` (not a bare `MethodError`) whose message reads: "weights is defined only for finite-support Previsions; for continuous Previsions, use `probability(p, e::Event)` with a declared Event to obtain a measure of an event's mass, or `expect(p, f)` for an integrated functional." A `MethodError` is a Julia-level failure, not a credence-level one — the custom error teaches the caller the right alternative.
 
-Push back if there's a use case for `weights` over a Beta or Gaussian I haven't anticipated.
+**Approved. Foreclosure on the borderline case:** discretised approximations of continuous Previsions used as proposal distributions should be `ParticlePrevision` or `CategoricalPrevision` over a discretisation declared at construction time, not implicit grids inside `weights`. The discretisation grid is a declared Space, not a hidden parameter.
 
 ### 5.3 Module split granularity — six files or trim the monolith?
 
@@ -204,7 +204,7 @@ The walker needs to distinguish "I am inside a Prevision-method body in `src/pre
 
 My prior: **(a) — file-scope rule.** The slug's purpose is to prevent call-site accessor reads in apps and tests; legitimate `src/`-internal reads are by definition in the file that defines the type. The pass-two implementation cost is one line (a regex-based file-path filter, same shape as the Posture 3 `apps/julia/pomdp_agent/` exclusion already in `credence_lint.py`). Approach (b) is more precise but the imprecision of (a) doesn't matter — `src/previsions.jl` is the only file authoring Prevision-internal logic; if we ever need to author Prevision-internal logic elsewhere in `src/`, that file gets added to the exclusion list as a one-liner.
 
-Argue if approach (b) is needed (e.g., if there's a class of helper-function-in-previsions.jl that should be flagged) or if (a) is too permissive.
+**Approved.** The file-scope exclusion is *upgradable* without a master-plan amendment if a concrete false-negative case arises. If a helper in `previsions.jl` is found to need the lint, the rule is promoted to body-scope or the helper is relocated; this is a maintenance decision, not a re-architecture.
 
 ### 5.5 Issue-#39 retirement table
 
