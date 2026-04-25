@@ -797,6 +797,66 @@ function condition(m::GammaMeasure, k::Kernel, observation)
     _condition_particle(m, k, observation)
 end
 
+# ── Prevision-level scalar condition methods (Move 7: Move 5 completion) ──
+
+function condition(p::BetaPrevision, k::Kernel, observation)
+    cp = maybe_conjugate(p, k)
+    if cp !== nothing
+        return update(cp, observation).prior
+    end
+    conditioned = condition(wrap_in_measure(p), k, observation)
+    conditioned.prevision
+end
+
+function condition(p::TaggedBetaPrevision, k::Kernel, observation)
+    fam = _resolve_likelihood_family(k.likelihood_family, p)
+    resolved_k = _with_resolved_family(k, fam)
+    k.log_density(p, observation)
+    new_beta = condition(p.beta, resolved_k, observation)
+    TaggedBetaPrevision(p.tag, new_beta)
+end
+
+function condition(p::GaussianPrevision, k::Kernel, observation)
+    cp = maybe_conjugate(p, k)
+    if cp !== nothing
+        return update(cp, observation).prior
+    end
+    conditioned = condition(wrap_in_measure(p), k, observation)
+    conditioned.prevision
+end
+
+function condition(p::GammaPrevision, k::Kernel, observation)
+    cp = maybe_conjugate(p, k)
+    if cp !== nothing
+        return update(cp, observation).prior
+    end
+    conditioned = condition(wrap_in_measure(p), k, observation)
+    conditioned.prevision
+end
+
+function condition(p::DirichletPrevision, k::Kernel, observation)
+    cp = maybe_conjugate(p, k)
+    if cp !== nothing
+        return update(cp, observation).prior
+    end
+    error("condition(::DirichletPrevision, ...) non-conjugate fallback requires " *
+          "categories/space context; use DirichletMeasure for non-conjugate kernels")
+end
+
+function condition(p::NormalGammaPrevision, k::Kernel, observation)
+    cp = maybe_conjugate(p, k)
+    if cp !== nothing
+        return update(cp, observation).prior
+    end
+    error("condition(::NormalGammaPrevision, ...) non-conjugate fallback requires " *
+          "space context; use NormalGammaMeasure for non-conjugate kernels")
+end
+
+function condition(p::ProductPrevision, k::Kernel, obs; kwargs...)
+    conditioned = condition(wrap_in_measure(p), k, obs; kwargs...)
+    conditioned isa MixtureMeasure ? conditioned.prevision : conditioned.prevision
+end
+
 function _condition_by_grid(m::BetaMeasure, k::Kernel, observation; n::Int=64)
     grid = collect(range(m.space.lo + 1e-10, m.space.hi - 1e-10, length=n))
     logw = Float64[]
@@ -896,11 +956,33 @@ function _predictive_ll(m::Measure, k::Kernel, obs; n_samples::Int=200)
     log(max(total / n_samples, 1e-300))
 end
 
+# ── Prevision-level _predictive_ll (Move 7: supports MixturePrevision condition) ──
+
+_predictive_ll(p::BetaPrevision, k::Kernel, obs) =
+    _predictive_ll(wrap_in_measure(p), k, obs)
+
+_predictive_ll(p::TaggedBetaPrevision, k::Kernel, obs) =
+    k.log_density(p, obs)
+
+_predictive_ll(p::GaussianPrevision, k::Kernel, obs) =
+    _predictive_ll(wrap_in_measure(p), k, obs)
+
+_predictive_ll(p::GammaPrevision, k::Kernel, obs) =
+    _predictive_ll(wrap_in_measure(p), k, obs)
+
+function _predictive_ll(p::Prevision, k::Kernel, obs)
+    _predictive_ll(wrap_in_measure(p), k, obs)
+end
+
 # ── log_predictive: log P(obs | beliefs) — single observation ──
 
 function log_predictive(m::Measure, k::Kernel, obs)
     pred = expect(m, h -> exp(density(k, h, obs)))
     log(max(pred, 1e-300))
+end
+
+function log_predictive(p::Prevision, k::Kernel, obs)
+    log_predictive(wrap_in_measure(p), k, obs)
 end
 
 function log_predictive(m::DirichletMeasure, k::Kernel, obs)
@@ -914,13 +996,13 @@ function log_predictive(m::CategoricalMeasure, k::Kernel, obs)
 end
 
 function condition(p::MixturePrevision, k::Kernel, obs)
-    new_components = Measure[]
+    new_components = Any[]
     new_log_wts = Float64[]
     for (i, comp) in enumerate(p.components)
         pred_ll = _predictive_ll(comp, k, obs)
         conditioned = condition(comp, k, obs)
         base_lw = p.log_weights[i] + pred_ll
-        if conditioned isa MixtureMeasure
+        if conditioned isa MixtureMeasure || conditioned isa MixturePrevision
             for (j, sub) in enumerate(conditioned.components)
                 push!(new_components, sub)
                 push!(new_log_wts, base_lw + conditioned.log_weights[j])
@@ -930,12 +1012,12 @@ function condition(p::MixturePrevision, k::Kernel, obs)
             push!(new_log_wts, base_lw)
         end
     end
-    MixturePrevision(Vector{Measure}(new_components), new_log_wts)
+    MixturePrevision(new_components, new_log_wts)
 end
 
 function condition(m::MixtureMeasure, k::Kernel, obs)
     new_p = condition(m.prevision, k, obs)
-    MixtureMeasure(m.space, new_p.components, new_p.log_weights)
+    MixtureMeasure(m.space, Vector{Measure}(new_p.components), new_p.log_weights)
 end
 
 function _dispatch_path(p::MixturePrevision, k::Kernel)
@@ -948,6 +1030,18 @@ function _dispatch_path(p::MixturePrevision, k::Kernel)
 end
 
 _dispatch_path(m::MixtureMeasure, k::Kernel) = _dispatch_path(m.prevision, k)
+
+function _dispatch_path(p::Prevision, k::Kernel)
+    maybe_conjugate(p, k) !== nothing ? :conjugate : :particle
+end
+
+factor(p::ProductPrevision, i::Int) = p.factors[i]
+
+function replace_factor(p::ProductPrevision, i::Int, new_factor)
+    new_factors = [f for f in p.factors]
+    new_factors[i] = new_factor
+    ProductPrevision(new_factors)
+end
 
 function decompose(p::ExchangeablePrevision)
     p.prior_on_components isa DirichletPrevision ||
