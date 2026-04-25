@@ -78,7 +78,7 @@ function load_email_state(filepath::String)
     # Reconstruct belief
     components = Measure[
         TaggedBetaMeasure(Interval(0.0, 1.0), i,
-            Credence.Ontology.BetaMeasure(alphas[i], betas[i]))
+            Credence.Ontology.BetaPrevision(alphas[i], betas[i]))
         for i in 1:n
     ]
     belief = MixtureMeasure(Interval(0.0, 1.0), components, log_weights)

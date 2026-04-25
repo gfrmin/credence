@@ -46,7 +46,7 @@ function run_bayesian_seed(tools::Vector{SimulatedTool},
     n_tools = length(tools)
     n_cats = length(CATEGORIES)
 
-    rel_betas = [BetaMeasure() for _ in 1:n_tools, _ in 1:n_cats]
+    rel_betas = [BetaPrevision(1.0, 1.0) for _ in 1:n_tools, _ in 1:n_cats]
 
     records = QuestionResult[]
     total_reward = 0.0

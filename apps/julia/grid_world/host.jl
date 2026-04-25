@@ -18,7 +18,7 @@ Tier 3: grid-world-specific. Uses Tier 1 (Credence DSL) and Tier 2
 push!(LOAD_PATH, joinpath(@__DIR__, "..", "..", "..", "src"))
 using Credence
 using Credence: expect, condition, draw, optimise, value, weights, mean
-using Credence: CategoricalMeasure, BetaMeasure, TaggedBetaMeasure, MixtureMeasure
+using Credence: CategoricalMeasure, BetaPrevision, TaggedBetaMeasure, MixtureMeasure
 using Credence: Finite, Interval, Kernel, Measure
 using Credence: density, log_density_at, prune, truncate
 using Credence: AgentState, sync_prune!, sync_truncate!
@@ -272,7 +272,7 @@ function run_agent(;
         programs = enumerate_programs(g, program_max_depth; include_temporal, action_space=[:food, :enemy])
         for (pi, p) in enumerate(programs)
             idx += 1
-            push!(components, TaggedBetaMeasure(Interval(0.0, 1.0), idx, BetaMeasure(1.0, 1.0)))
+            push!(components, TaggedBetaMeasure(Interval(0.0, 1.0), idx, BetaPrevision(1.0, 1.0)))
             lw = -g.complexity * log(2) - p.complexity * log(2)
             push!(log_prior_weights, lw)
             push!(metadata, (g.id, pi))
