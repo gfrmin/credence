@@ -4,7 +4,7 @@
     host.jl — Host driver for the email program-space agent
 
 Orchestrates: grammar pool → program enumeration → kernel compilation →
-flat MixtureMeasure of TaggedBetaMeasures → action EU (domain + meta) →
+flat MixturePrevision of TaggedBetaPrevisions → action EU (domain + meta) →
 conditioning → repeat.
 
 Meta-actions (enumerate_more, perturb_grammar, deepen) are evaluated by
@@ -19,7 +19,7 @@ push!(LOAD_PATH, joinpath(@__DIR__, "..", "..", "..", "src"))
 using Credence
 using Credence: expect, condition, push_measure, density, weights, mean
 using Credence: load_dsl
-using Credence: CategoricalMeasure, BetaPrevision, TaggedBetaMeasure, MixtureMeasure
+using Credence: CategoricalMeasure, BetaPrevision, TaggedBetaPrevision, MixturePrevision
 using Credence: Finite, Interval, Kernel, Measure, ProductSpace, Euclidean, PositiveReals, Space
 using Credence: prune, truncate
 using Credence: AgentState, sync_prune!, sync_truncate!
@@ -132,7 +132,7 @@ function build_predictive(
 
     for (j, comp) in enumerate(state.belief.components)
         haskey(rec_cache, j) || continue
-        tbm = comp::TaggedBetaMeasure
+        tbm = comp::TaggedBetaPrevision
         # E[θ_j] via credence's expect on the Beta component
         θ_mean = expect(tbm, identity)
         r_j = rec_cache[j]
@@ -214,7 +214,7 @@ function mean_observation_count(state::AgentState)::Float64
     isempty(state.belief.components) && return 0.0
     total = 0.0
     for comp in state.belief.components
-        tbm = comp::TaggedBetaMeasure
+        tbm = comp::TaggedBetaPrevision
         total += tbm.beta.alpha + tbm.beta.beta - 2.0  # credence-lint: allow — precedent:expect-through-accessor — pseudo-count sum (α+β−2) has no stdlib function
     end
     total / length(state.belief.components)
@@ -328,7 +328,7 @@ function compute_eu(
     for (j, comp) in enumerate(state.belief.components)
         haskey(rec_cache, j) || continue
         rec_cache[j] == action || continue
-        tbm = comp::TaggedBetaMeasure
+        tbm = comp::TaggedBetaPrevision
         w = component_weights[j]
         θ = mean(tbm.beta)
         weighted_eu += w * (θ * u_c + (1.0 - θ) * u_w)
@@ -356,7 +356,7 @@ The hand-rolled posterior iteration that previously lived here is
 now done inside the axiom layer — `_predictive_ll` propagates the
 indicator kernel's 0 / -Inf log-density as the weight multiplier,
 non-firing components drop to zero in the conditioned mixture, and
-`expect(MixtureMeasure, Identity)` aggregates. Semantically
+`expect(MixturePrevision, Identity)` aggregates. Semantically
 identical to the former hand-rolled `Σ w_j · mean(β_j) / Σ w_j` for
 firing components; numerically identical modulo reordered arithmetic.
 """
@@ -374,7 +374,7 @@ function compute_eu_primitive(
     fires = Set{Int}(j for (j, rec) in pairs(rec_cache) if rec == action)
     isempty(fires) && return 0.5  # domain base-rate when no program recommends
 
-    restricted = condition(state.belief, TagSet(state.belief.space, fires))
+    restricted = condition(state.belief, TagSet(Interval(0.0, 1.0), fires))
     expect(restricted, Identity())
 end
 
@@ -498,7 +498,7 @@ function build_email_observation_kernel(
     Kernel(Interval(0.0, 1.0), obs_space,
         _ -> error("generate not used in condition"),
         (m_or_θ, obs) -> begin
-            if m_or_θ isa TaggedBetaMeasure
+            if m_or_θ isa TaggedBetaPrevision
                 tag = m_or_θ.tag
                 recommended = get!(recommendation_cache, tag) do
                     ck = compiled_kernels[tag]
@@ -540,7 +540,7 @@ function build_step_kernel(
     Kernel(Interval(0.0, 1.0), obs_space,
         _ -> error("generate not used in condition"),
         (m_or_θ, obs) -> begin
-            if m_or_θ isa TaggedBetaMeasure
+            if m_or_θ isa TaggedBetaPrevision
                 tag = m_or_θ.tag
                 recommended = get(rec_cache, tag, :done)
                 correct = recommended in correct_actions
@@ -746,7 +746,7 @@ function run_agent(;
     end
 
     # Enumerate all (grammar, predicate, action) triples
-    components = Measure[]
+    components = Any[]
     log_prior_weights = Float64[]
     metadata = Tuple{Int, Int}[]
     compiled_kernels = CompiledKernel[]
@@ -759,7 +759,7 @@ function run_agent(;
                                        min_log_prior=min_log_prior)
         for (pi, p) in enumerate(programs)
             idx += 1
-            push!(components, TaggedBetaMeasure(Interval(0.0, 1.0), idx, BetaPrevision(1.0, 1.0)))
+            push!(components, TaggedBetaPrevision(idx, BetaPrevision(1.0, 1.0)))
             lw = -g.complexity * log(2) - p.complexity * log(2)
             push!(log_prior_weights, lw)
             push!(metadata, (g.id, pi))
@@ -773,7 +773,7 @@ function run_agent(;
         println("Grammars: $(length(grammar_pool))")
     end
 
-    belief = MixtureMeasure(Interval(0.0, 1.0), components, log_prior_weights)
+    belief = MixturePrevision(components, log_prior_weights)
     grammar_dict = Dict{Int, Grammar}(g.id => g for g in grammar_pool)
     state = AgentState(belief, metadata, compiled_kernels, all_programs,
                        grammar_dict, program_max_depth)
