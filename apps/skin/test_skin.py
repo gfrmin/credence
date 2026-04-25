@@ -721,7 +721,8 @@ def test_particle_snapshot():
         w_after = skin.weights(sid2)
         # Round-trip should preserve exact weights (Julia Serialization is
         # bit-exact for Float64 Vectors; JSON-RPC base64 is lossless).
-        assert w_after == w_before, \  # credence-lint: allow — precedent:test-oracle — no-op condition preserves bit-exact weights
+        # credence-lint: allow — precedent:test-oracle — no-op condition preserves bit-exact weights
+        assert w_after == w_before, \
             f"particle-path snapshot round-trip drifted: weights not ==; " \
             f"sums before={sum_before:.12f} after={sum(w_after):.12f}"  # credence-lint: allow — precedent:test-oracle — diagnostic message reports sum on no-op
 
@@ -835,7 +836,8 @@ def test_event_kernel_equivalence():
         skin.condition_on_event(sid_kernel, event={"type": "tag_set", "tags": [1, 3]})
         w_kernel = skin.weights(sid_kernel)
 
-        assert w_event == w_kernel, \  # credence-lint: allow — precedent:test-oracle — event-form and parametric-form condition agree exactly (DLRS Prop. 4.9)
+        # credence-lint: allow — precedent:test-oracle — event-form and parametric-form condition agree exactly (DLRS Prop. 4.9)
+        assert w_event == w_kernel, \
             f"event-form results diverged across identical states:\n" \
             f"  A: {w_event}\n  B: {w_kernel}"
 

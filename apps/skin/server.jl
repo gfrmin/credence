@@ -17,9 +17,11 @@ using Credence: expect, condition, push_measure, draw, density
 using Credence: Event, TagSet, FeatureEquals, FeatureInterval, Conjunction, Disjunction, Complement
 using Credence: _dispatch_path
 using Credence: weights, mean, variance, prune, truncate, logsumexp
-using Credence: CategoricalMeasure, BetaMeasure, TaggedBetaMeasure
-using Credence: GaussianMeasure, GammaMeasure, DirichletMeasure
-using Credence: NormalGammaMeasure, ProductMeasure, MixtureMeasure
+using Credence: CategoricalMeasure, ProductMeasure, MixtureMeasure
+using Credence: Prevision
+using Credence: BetaPrevision, TaggedBetaPrevision, GaussianPrevision
+using Credence: GammaPrevision, DirichletPrevision, NormalGammaPrevision
+using Credence: ProductPrevision, MixturePrevision, CategoricalPrevision
 using Credence: Finite, Interval, ProductSpace, Euclidean, PositiveReals, Simplex
 using Credence: Kernel, FactorSelector, support
 using Credence: Functional, Identity, Projection, NestedProjection, Tabular, LinearCombination, OpaqueClosure
@@ -143,8 +145,43 @@ function build_space(spec)
 end
 
 # ═══════════════════════════════════════
-# Measure construction from spec
+# State construction from spec
 # ═══════════════════════════════════════
+
+function build_prevision(spec)
+    t = spec["type"]
+    if t == "categorical"
+        space = build_space(spec["space"])
+        if haskey(spec, "log_weights")
+            CategoricalMeasure(space, collect(Float64, spec["log_weights"]))
+        else
+            CategoricalMeasure(space)
+        end
+    elseif t == "beta"
+        BetaPrevision(Float64(spec["alpha"]), Float64(spec["beta"]))
+    elseif t == "tagged_beta"
+        TaggedBetaPrevision(Int(spec["tag"]),
+                            BetaPrevision(Float64(spec["alpha"]), Float64(spec["beta"])))
+    elseif t == "gaussian"
+        GaussianPrevision(Float64(spec["mu"]), Float64(spec["sigma"]))
+    elseif t == "gamma"
+        GammaPrevision(Float64(spec["alpha"]), Float64(spec["beta"]))
+    elseif t == "dirichlet"
+        DirichletPrevision(collect(Float64, spec["alpha"]))
+    elseif t == "normal_gamma"
+        NormalGammaPrevision(Float64(spec["kappa"]), Float64(spec["mu"]),
+                             Float64(spec["alpha"]), Float64(spec["beta"]))
+    elseif t == "product"
+        factors = [build_measure(f) for f in spec["factors"]]
+        ProductMeasure(factors)
+    elseif t == "mixture"
+        components = [build_prevision(c) for c in spec["components"]]
+        lw = collect(Float64, spec["log_weights"])
+        MixturePrevision(components, lw)
+    else
+        error("unknown type: $t")
+    end
+end
 
 function build_measure(spec)
     t = spec["type"]
@@ -238,7 +275,7 @@ function build_kernel(spec, state_id::Union{String, Nothing}=nothing)
         Kernel(Interval(0.0, 1.0), obs_space,
             _ -> error("generate not used"),
             (m_or_θ, obs) -> begin
-                if m_or_θ isa TaggedBetaMeasure
+                if m_or_θ isa TaggedBetaPrevision
                     tag = m_or_θ.tag
                     recommended = get!(recommendation_cache, tag) do
                         ck = state.compiled_kernels[tag]
@@ -583,57 +620,38 @@ function handle_create_state(params)
             push!(grammar_pool, g)
         end
 
-        # Initialize empty AgentState
-        belief = MixtureMeasure(Interval(0.0, 1.0),
-            Measure[TaggedBetaMeasure(Interval(0.0, 1.0), 1, BetaMeasure())],
-            [0.0])
-        state = AgentState(belief,
-            Tuple{Int,Int}[(0, 0)],
-            CompiledKernel[],
-            Program[],
-            Dict{Int, Grammar}(),
-            max_depth)
+        # Build components from grammars
+        all_components = Any[]
+        all_lw = Float64[]
+        all_meta = Tuple{Int,Int}[]
+        all_ck = CompiledKernel[]
+        all_progs = Program[]
 
-        # Enumerate from each grammar
-        # First, fix the placeholder: remove the dummy component
-        state.belief = MixtureMeasure(Interval(0.0, 1.0),
-            Measure[], Float64[])
-
-        # Re-initialize properly after enumeration
-        total_added = 0
         for g in grammar_pool
-            state.grammars[g.id] = g
-            # Can't use add_programs_to_state! on empty state, so build manually
             programs = enumerate_programs(g, max_depth;
                 action_space=action_space, min_log_prior=-20.0)
             for (pi, p) in enumerate(programs)
-                tag = length(state.compiled_kernels) + 1
-                push!(state.belief.components,
-                    TaggedBetaMeasure(Interval(0.0, 1.0), tag, BetaMeasure()))
-                lw = -g.complexity * log(2) - p.complexity * log(2)
-                push!(state.belief.log_weights, lw)  # credence-lint: allow — precedent:expect-through-accessor — MixtureMeasure construction: appending log-weight for new component
-                push!(state.metadata, (g.id, pi))
-                push!(state.compiled_kernels, compile_kernel(p, g, pi))
-                push!(state.all_programs, p)
-                total_added += 1
+                tag = length(all_ck) + 1
+                push!(all_components, TaggedBetaPrevision(tag, BetaPrevision(1.0, 1.0)))
+                push!(all_lw, -g.complexity * log(2) - p.complexity * log(2))
+                push!(all_meta, (g.id, pi))
+                push!(all_ck, compile_kernel(p, g, pi))
+                push!(all_progs, p)
             end
         end
 
-        # Normalize weights
-        # credence-lint: allow — precedent:expect-through-accessor — MixtureMeasure reconstruction from existing components and log-weights
-        if !isempty(state.belief.log_weights)
-            state.belief = MixtureMeasure(Interval(0.0, 1.0),
-                state.belief.components, state.belief.log_weights)  # credence-lint: allow — precedent:expect-through-accessor — MixtureMeasure reconstruction
-        end
+        belief = MixturePrevision(all_components, all_lw)
+        grammar_dict = Dict{Int, Grammar}(g.id => g for g in grammar_pool)
+        state = AgentState(belief, all_meta, all_ck, all_progs, grammar_dict, max_depth)
 
         id = register_state(state)
         Dict("state_id" => id, "n_components" => length(state.belief.components))
     else
-        measure = build_measure(params)
-        id = register_state(measure)
+        state = build_prevision(params)
+        id = register_state(state)
         result = Dict{String, Any}("state_id" => id)
-        if measure isa MixtureMeasure
-            result["n_components"] = length(measure.components)
+        if state isa MixturePrevision || state isa MixtureMeasure
+            result["n_components"] = length(state.components)
         end
         result
     end
@@ -665,7 +683,8 @@ end
 function handle_factor(params)
     id = string(params["state_id"])
     state = get_state(id)
-    state isa ProductMeasure || error("factor requires a ProductMeasure, got $(typeof(state))")
+    state isa ProductMeasure || state isa ProductPrevision ||
+        error("factor requires a ProductMeasure or ProductPrevision, got $(typeof(state))")
     idx = Int(params["index"]) + 1  # 0-based → 1-based
     1 <= idx <= length(state.factors) || error("factor index out of range: $(idx-1)")
     new_id = register_state(factor(state, idx))
@@ -675,12 +694,15 @@ end
 function handle_replace_factor(params)
     id = string(params["state_id"])
     state = get_state(id)
-    state isa ProductMeasure || error("replace_factor requires a ProductMeasure, got $(typeof(state))")
+    state isa ProductMeasure || state isa ProductPrevision ||
+        error("replace_factor requires a ProductMeasure or ProductPrevision, got $(typeof(state))")
     idx = Int(params["index"]) + 1
     1 <= idx <= length(state.factors) || error("replace_factor index out of range: $(idx-1)")
     new_factor_id = string(params["new_factor_id"])
     new_factor = get_state(new_factor_id)
-    new_factor isa Measure || error("replace_factor new factor must be a Measure, got $(typeof(new_factor))")
+    if state isa ProductMeasure && new_factor isa Prevision
+        new_factor = wrap_in_measure(new_factor)
+    end
     new_state = replace_factor(state, idx, new_factor)
     new_id = register_state(new_state)
     Dict("state_id" => new_id)
@@ -689,7 +711,8 @@ end
 function handle_n_factors(params)
     id = string(params["state_id"])
     state = get_state(id)
-    state isa ProductMeasure || error("n_factors requires a ProductMeasure, got $(typeof(state))")
+    state isa ProductMeasure || state isa ProductPrevision ||
+        error("n_factors requires a ProductMeasure or ProductPrevision, got $(typeof(state))")
     Dict("n_factors" => length(state.factors))
 end
 
@@ -701,14 +724,15 @@ end
 # would fall through to particle and produce correct values for the wrong
 # reason without this hook.
 #
-# Accepts a Measure state; the shield forwards to the prevision-level
+# Accepts a Prevision or Measure state; forwards to the prevision-level
 # `_dispatch_path` declared in src/prevision.jl.
 
 function handle_dispatch_path(params)
     id = string(params["state_id"])
     state = get_state(id)
     kernel = build_kernel(params["kernel"])
-    path = _dispatch_path(state.prevision, kernel)
+    p = state isa Prevision ? state : state.prevision
+    path = _dispatch_path(p, kernel)
     Dict("path" => string(path))
 end
 
@@ -1106,10 +1130,10 @@ function handle_eu_interact(params)
         # p(rec is correct) = mean_j, p(rec is wrong) = 1 - mean_j
         for (label, _) in rewards
             p_label = if rec == label
-                w[j] * mean_j  # credence-lint: allow — precedent:posterior-iteration — mixture EU requires per-component compiled-kernel dispatch
+                w[j] * mean_j  # credence-lint: allow — precedent:posterior-iteration — per-component compiled-kernel dispatch; reducible via per-component-dispatch Functional (post-Posture-4)
             else
                 # If there are only 2 labels, the other gets 1-mean_j
-                w[j] * (1.0 - mean_j) / max(length(rewards) - 1, 1)  # credence-lint: allow — precedent:posterior-iteration — mixture EU requires per-component compiled-kernel dispatch
+                w[j] * (1.0 - mean_j) / max(length(rewards) - 1, 1)  # credence-lint: allow — precedent:posterior-iteration — per-component compiled-kernel dispatch; reducible via per-component-dispatch Functional (post-Posture-4)
             end
             label_probs[label] = get(label_probs, label, 0.0) + p_label
         end

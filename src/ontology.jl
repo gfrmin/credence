@@ -425,10 +425,8 @@ wrap_in_measure(p::DirichletPrevision) = error(
     "wrap_in_measure(::DirichletPrevision) requires Simplex+Finite space context; " *
     "construct DirichletMeasure(space, categories, p.alpha) explicitly."
 )
-wrap_in_measure(p::NormalGammaPrevision) = error(
-    "wrap_in_measure(::NormalGammaPrevision) requires ProductSpace context; " *
-    "construct NormalGammaMeasure(space, p.κ, p.μ, p.α, p.β) explicitly."
-)
+wrap_in_measure(p::NormalGammaPrevision) =
+    NormalGammaMeasure(p.κ, p.μ, p.α, p.β)
 
 # ================================================================
 # TYPE 4: Event (extracted to events.jl)
@@ -584,6 +582,8 @@ expect(p::BetaPrevision, ::Identity) = p.alpha / (p.alpha + p.beta)
 expect(p::TaggedBetaPrevision, ::Identity) = expect(p.beta, Identity())
 expect(p::GaussianPrevision, ::Identity) = p.mu
 expect(p::GammaPrevision, ::Identity) = p.alpha / p.beta
+expect(p::DirichletPrevision, ::Identity) = p.alpha ./ sum(p.alpha)
+expect(p::NormalGammaPrevision, ::Identity) = p.μ
 
 # General-function expect on scalar Previsions via quadrature/delegation.
 function expect(p::BetaPrevision, f::Function; n::Int=64)
@@ -983,6 +983,14 @@ end
 
 function log_predictive(p::Prevision, k::Kernel, obs)
     log_predictive(wrap_in_measure(p), k, obs)
+end
+
+function log_predictive(p::DirichletPrevision, k::Kernel, obs)
+    lf = k.likelihood_family
+    lf isa Categorical || error("DirichletPrevision log_predictive requires Categorical kernel, got $(typeof(lf))")
+    idx = findfirst(==(obs), lf.categories.values)
+    idx !== nothing || error("observation $obs not in categories")
+    log(p.alpha[idx] / sum(p.alpha))
 end
 
 function log_predictive(m::DirichletMeasure, k::Kernel, obs)
