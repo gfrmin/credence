@@ -232,6 +232,16 @@ The cadence claim doesn't retire the meta-observation's content — the discipli
 
 Applies prospectively from Move 5 onward. Move 5's design doc opens with the cadence claim as context: an amendment is expected; which premise turns out to need it is what implementation surfaces.
 
+### 5.5.2 Provenance note: the bands were not calibrated against domain-app shape
+
+Sub-PR 4c (PR #58) landed at 87% scalar-shortcut completeness (13/15 in-scope sites migrated) but at 64% under the old aggregate-counting method that defines the bands in §5.5's table — outside 4c's 25–40% band by a margin comparable to 4a's miss against the original single wide band. Inspection resolved cleanly: the 64% aggregate is dominated by 38 sites whose deferral is named in the master plan (21 `TaggedBetaMeasure` constructions deferred to Move 7's TaggedBetaPrevision-primary construction; 17 `MixtureMeasure` / `Measure[…]` parametric uses deferred to Move 5's MixturePrevision component-space rewrite). Domain apps are mixture-routing-heavy; the dominant population is exactly the deferred categories the master plan partitions away from Move 4.
+
+The bands in §5.5's table were calibrated on Prevision-level (4a) and core-DSL (4b) test shapes, where deferred-mixture sites are sparser and the in-scope scalar-shortcut population is correspondingly denser. Domain-app shape inverts that mix. The bands' construction never absorbed that inversion, so an out-of-band domain-app reading is not in itself a scope signal — unlike 4a's miss, which surfaced an unnamed category and triggered the §5.5 amendment.
+
+For a future move author looking at §5.5's bands and a future-similar miss: the bands describe within-population shape, not across-population shape. An out-of-band reading whose categorisation resolves to "expected, structural, deferrals already named in master plan" is a band-population mismatch (forensic record, no scope action), not a scope-reset signal. An out-of-band reading whose categorisation surfaces a previously-unnamed sub-category (4a's pattern) is a scope-reset signal and warrants amendment. The discriminator is whether the categorisation discovers a category or composes named ones.
+
+This note is provenance only. The 4c bands stay as-recorded in §5.5's table; rebanding 4c retroactively would lose the inspection record itself, which is what the discipline produces.
+
 ## 6. Risk + mitigation
 
 **Risk (medium — volumetric):** A Measure construction site missed by the rewrite compiles and runs but doesn't exercise the Prevision-primary surface Move 5 depends on.
