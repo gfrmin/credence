@@ -23,8 +23,8 @@ names the precedent, not as an ad-hoc regex tweak.
 
 ## Layout
 
-Directories correspond 1:1 with the seven slugs declared in
-`CLAUDE.md` (Precedents section):
+Directories correspond 1:1 with the slugs declared in `CLAUDE.md`
+(Precedents section):
 
 - `compute-on-weights/` — no-escape: any arithmetic on posterior access
 - `sort-for-display/` — escape-hatch: display-only comparisons
@@ -33,5 +33,8 @@ Directories correspond 1:1 with the seven slugs declared in
 - `posterior-iteration/` — no-escape: loops over support + weights
 - `declarative-construction/` — legal-by-construction: struct building
 - `stdlib-composition/` — legal-by-construction: stdlib calling stdlib
+- `expect-through-accessor/` — Prevision parameter field reads
+  (`.alpha`, `.log_weights`, `.mu`, `.sigma`, `.kappa`)
+  outside `src/previsions.jl` and `src/conjugate.jl`
 - `pragma-malformed/` — corpus for validating the pragma parser itself
   (missing slug, missing reason, unknown slug, etc.)

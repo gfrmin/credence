@@ -106,6 +106,20 @@ SKIP_DIR_PARTS = {"__pycache__", ".venv", ".git", "node_modules", ".pytest_cache
 # separately"), skip the pomdp_agent subtree from apps/ scans.
 SKIP_REL_DIRS = (("apps", "julia", "pomdp_agent"),)
 
+# ── expect-through-accessor: structural field reads on Previsions ────
+# Fields that, when read outside src/previsions.jl or src/conjugate.jl,
+# indicate a call site is bypassing expect to compute a probabilistic
+# quantity directly from the representation.
+_ACCESSOR_FIELDS = {
+    "alpha", "log_weights", "mu", "sigma", "kappa",
+}
+# File-scope exclusion (Move 5 §5.4 approach (a)): these files contain
+# the legitimate internal accessor reads inside expect/update bodies.
+_ACCESSOR_EXCLUDED_FILES = {"previsions.jl", "conjugate.jl"}
+_JL_ACCESSOR_RE = re.compile(
+    r"\.(?:" + "|".join(_ACCESSOR_FIELDS) + r")\b"
+)
+
 # Declaration prefixes — function/class signatures look like DSL calls but
 # aren't callsites. Match leading whitespace then keyword.
 DECL_RE = re.compile(r"^\s*(?:async\s+)?(?:def|class|function|macro|struct|abstract\s+type|mutable\s+struct)\s+")
@@ -702,6 +716,49 @@ def _jl_strip_trailing_comment(line: str) -> str:
     return line
 
 
+# ── expect-through-accessor: structural field read detection ──────────
+def _check_accessor_reads(path: Path, lines: list[str],
+                          valid_slugs: set[str]) -> list[Violation]:
+    """Flag accessor reads on Prevision structural fields outside excluded files.
+    Julia-only: Python apps never see Prevision objects (they use the skin)."""
+    if path.suffix != ".jl":
+        return []
+    if path.name in _ACCESSOR_EXCLUDED_FILES:
+        return []
+    violations: list[Violation] = []
+    accessor_re = _JL_ACCESSOR_RE
+    in_docstring = False
+    for i, line in enumerate(lines, start=1):
+        triples = len(TRIPLE_RE.findall(line))
+        was_in_docstring = in_docstring
+        if triples % 2 == 1:
+            in_docstring = not in_docstring
+        if was_in_docstring and in_docstring:
+            continue
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#") or stripped.startswith(";"):
+            continue
+        if DECL_RE.match(line):
+            continue
+        if not accessor_re.search(line):
+            continue
+        ok, err = _pragma_allows(lines, i, valid_slugs)
+        if ok:
+            continue
+        if err is not None:
+            violations.append(Violation(path, i, line.rstrip(), err))
+        else:
+            violations.append(Violation(
+                path, i, line.rstrip(),
+                "expect-through-accessor: structural field read on Prevision"
+                " — use mean(), variance(), probability(), weights(), or"
+                " expect(p, f) instead, or add a"
+                " `# credence-lint: allow — precedent:expect-through-accessor"
+                " — <reason>` pragma",
+            ))
+    return violations
+
+
 # ── per-file lint ─────────────────────────────────────────────────────
 def check_file(path: Path, valid_slugs: set[str], require_role: bool) -> list[Violation]:
     violations: list[Violation] = []
@@ -757,6 +814,12 @@ def check_file(path: Path, valid_slugs: set[str], require_role: bool) -> list[Vi
         p2 = []
     for v in p2:
         if v.line_no not in p1_lines:
+            violations.append(v)
+
+    # Accessor-read check — dedup against p1 + p2.
+    covered = {v.line_no for v in violations}
+    for v in _check_accessor_reads(path, lines, valid_slugs):
+        if v.line_no not in covered:
             violations.append(v)
 
     return sorted(violations, key=lambda v: v.line_no)

@@ -31,9 +31,10 @@ function save_email_state(
 )
     # Extract serializable parts from belief
     n = length(state.belief.components)
+    # credence-lint: allow — precedent:expect-through-accessor — serialization: extracting Beta parameters and log-weights for JSON persistence
     alphas = Float64[state.belief.components[i].beta.alpha for i in 1:n]
     betas = Float64[state.belief.components[i].beta.beta for i in 1:n]
-    log_weights = copy(state.belief.log_weights)
+    log_weights = copy(state.belief.log_weights)  # credence-lint: allow — precedent:expect-through-accessor — serialization: log-weights for JSON persistence
 
     data = Dict{Symbol, Any}(
         :alphas => alphas,

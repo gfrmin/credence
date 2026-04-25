@@ -36,6 +36,7 @@ export ParticlePrevision, QuadraturePrevision, EnumerationPrevision
 export ConditionalPrevision
 export ConjugatePrevision, maybe_conjugate, update, _dispatch_path
 export push_component!, replace_component!
+export CenteredPower, CenteredSquare
 # At Move 2, `Ontology`'s `Functional` hierarchy is aliased onto these
 # types (`const Functional = TestFunction` plus `import ..Previsions:
 # Identity, …`), so both modules export the same bindings (they resolve
@@ -185,6 +186,18 @@ subtypes), not at the field level. See `docs/posture-3/move-1-design.md`
 struct Indicator{E} <: TestFunction
     event::E
 end
+
+# ── CenteredPower{n}: parametric test function for central moments ──
+# Move 5: CenteredPower{n} generalises to any central moment without a
+# new type per moment. CenteredSquare is the ONLY const alias (§5.1
+# single-alias constraint). apply(cp, x) = (x - μ)^n.
+struct CenteredPower{n} <: TestFunction
+    μ::Float64
+end
+
+apply(cp::CenteredPower{n}, x) where n = (x - cp.μ)^n
+
+const CenteredSquare = CenteredPower{2}
 
 # ── Concrete Prevision subtypes (Move 3) ──────────────────────────────────
 
