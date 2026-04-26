@@ -424,16 +424,16 @@ where the concrete component Measure types are in scope.
 function decompose end
 
 """
-    ParticlePrevision(samples::Vector, log_weights::Vector{Float64}, seed::Int) <: Prevision
+    ParticlePrevision{T}(samples::Vector{T}, log_weights::Vector{Float64}, seed::Int) <: Prevision
 
 Move 6: typed carrier for importance-sampling posteriors. `samples`
-holds the drawn hypotheses (one per particle; type depends on the
-sampled Measure — Float64, tuples, Vectors, Symbols, etc.).
-`log_weights` is the per-particle log importance weight, normalised at
-construction via logsumexp. `seed` records the RNG seed that produced
-the samples, for reproducibility auditing — not used by any computation,
-but load-bearing for the seeded-MC `==` precedent (see
-`docs/posture-3/precedents.md` §4).
+holds the drawn hypotheses (one per particle; element type `T` depends
+on the sampled Measure — `Float64` for Beta/Gaussian, `Vector{Float64}`
+for Dirichlet, tuples for NormalGamma, etc.). `log_weights` is the
+per-particle log importance weight, normalised at construction via
+logsumexp. `seed` records the RNG seed that produced the samples, for
+reproducibility auditing — not used by any computation, but load-bearing
+for the seeded-MC `==` precedent (see `docs/posture-3/precedents.md` §4).
 
 **Shared-reference contract inherited from Move 3** (precedent #2):
 `samples` and `log_weights` are returned by reference through the
@@ -441,20 +441,13 @@ but load-bearing for the seeded-MC `==` precedent (see
 breaks the shared-reference semantics that downstream Measure-surface
 readers depend on. See `test/test_prevision_particle.jl` — contract
 tests confirm the shield.
-
-At Move 6 Phase 2 the struct is declared additively: it exists as a
-type but no code path constructs it yet. Phase 3 wires
-`_condition_particle` to construct a `ParticlePrevision` wrapped by
-`CategoricalMeasure(Finite(samples), log_weights)` for consumer-
-surface compatibility. Phase 0's canonical-bit-invariance test is the
-tripwire across the refactor.
 """
-struct ParticlePrevision <: Prevision
-    samples::Vector
+struct ParticlePrevision{T} <: Prevision
+    samples::Vector{T}
     log_weights::Vector{Float64}
     seed::Int
 
-    function ParticlePrevision(samples::Vector, log_weights::Vector{Float64}, seed::Int)
+    function ParticlePrevision(samples::Vector{T}, log_weights::Vector{Float64}, seed::Int) where {T}
         length(samples) == length(log_weights) || error("particles and weights must match")
         length(samples) > 0 || error("particle set must be non-empty")
         if all(lw -> lw == -Inf, log_weights)
@@ -462,7 +455,7 @@ struct ParticlePrevision <: Prevision
         end
         max_lw = maximum(log_weights)
         log_total = max_lw + log(sum(exp.(log_weights .- max_lw)))
-        new(samples, log_weights .- log_total, seed)
+        new{T}(samples, log_weights .- log_total, seed)
     end
 end
 
