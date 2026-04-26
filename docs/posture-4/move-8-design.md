@@ -14,7 +14,7 @@ Rename the Python-side `Measure` class and all Measure-vocabulary Julia interop 
 
 ### credence_bindings (MODIFY)
 
-- `credence/__init__.py:5,11` — `Measure` import/export → `Prevision`; add backward-compat alias `Measure = Prevision`
+- `credence/__init__.py:5,11` — `Measure` import/export → `Prevision`; no backward-compat alias (§5.1 review decision)
 - `credence/measure.py` → **RENAME to `credence/prevision.py`** — class `Measure` → `Prevision`; all return types `-> Measure` → `-> Prevision`; constructor bodies updated:
   - Line 31: `jl.CategoricalMeasure(space._jl)` — **unchanged** (CategoricalMeasure stays, §0)
   - Line 34: `jl.BetaMeasure(space._jl, 1.0, 1.0)` → `jl.BetaPrevision(1.0, 1.0)`
@@ -128,7 +128,9 @@ The `categories` Space argument moves to kernel construction time (the `Categori
 
 ### 5.1 Backward-compatible `Measure` alias
 
-The `credence` Python package currently exports `Measure`. External callers (if any exist outside this repo) would break on rename. **My prior:** add `Measure = Prevision` alias in `__init__.py` for one release cycle, with a deprecation warning on first use. The alias is a one-liner and costs nothing; removing it later is a one-liner deletion. The alternative — keeping `Measure` as the public name while the internal vocabulary has moved — is a confusing split that the alias avoids.
+The `credence` Python package currently exports `Measure`. External callers (if any exist outside this repo) would break on rename. **My prior:** add `Measure = Prevision` alias in `__init__.py` for one release cycle, with a deprecation warning on first use.
+
+**Review decision: hard rename, no alias.** `Measure` and `Prevision` are architecturally different things (Measure carries carrier-binding, Prevision doesn't); aliasing them flattens a distinction six moves have been making. A user reading `Measure.beta(1, 1)` under the alias thinks they're constructing a Measure when they're constructing a Prevision. All consumers are internal (`credence_agents`, `credence_router`, `bayesian_if`); no external migration window needed.
 
 ### 5.2 `Prevision.dirichlet()` signature change
 
@@ -140,6 +142,8 @@ The `credence` Python package currently exports `Measure`. External callers (if 
 
 **My prior:** option (a). The `credence_bindings` package is internal to this repo; there are no external callers. The one call site (`julia_bridge.py` doesn't call `Measure.dirichlet` — it constructs directly via seval). The `test_bindings.py` call is the only consumer; update it.
 
+**Review decision: approved.** Constructor argument is architecturally wrong (categories belong at kernel construction time per Move 5/7).
+
 ### 5.3 `ProductMeasure` vs `ProductPrevision` in julia_bridge seval strings
 
 The julia_bridge constructs `ProductMeasure(Measure[...])` via seval strings. `ProductPrevision` exists (`src/prevision.jl`) and takes `Any[]` factors. Options:
@@ -148,6 +152,8 @@ The julia_bridge constructs `ProductMeasure(Measure[...])` via seval strings. `P
 - **(b) Keep `ProductMeasure` in seval strings.** ProductMeasure stays in the frozen layer alongside CategoricalMeasure per Move 7 §5.1.
 
 **My prior:** option (a). The julia_bridge doesn't need ProductMeasure's space-binding capability — it's constructing opaque Julia objects for `condition`/`expect` dispatch. `ProductPrevision` is the lighter-weight type. Move 7 §5.1 keeps `ProductMeasure` in the *skin* because the skin needs `build_measure` for Product sub-factors; the julia_bridge constructs directly via seval, so it can use the Prevision type.
+
+**Review decision: approved, conditional on verifying no downstream `.space` access.** Grep julia_bridge return values for `.space` accesses before implementing. ProductMeasure's components carry their own spaces; ProductPrevision's don't — the question is whether anything downstream needs them.
 
 ## 6. Risk + mitigation
 
