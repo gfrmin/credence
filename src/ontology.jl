@@ -22,7 +22,7 @@ import ..Previsions: TestFunction, Identity, Projection, NestedProjection,
                      Tabular, LinearCombination, OpaqueClosure, expect
 import ..Previsions: BetaPrevision, TaggedBetaPrevision, GaussianPrevision, GammaPrevision, CategoricalPrevision, DirichletPrevision, NormalGammaPrevision, ProductPrevision, MixturePrevision
 import ..Previsions: ExchangeablePrevision, decompose
-import ..Previsions: ParticlePrevision, QuadraturePrevision, EnumerationPrevision
+import ..Previsions: ParticlePrevision, QuadraturePrevision
 import ..Previsions: ConditionalPrevision
 import ..Previsions: condition
 import ..Previsions: ConjugatePrevision, maybe_conjugate, update, _dispatch_path
@@ -30,7 +30,7 @@ import ..Previsions: CenteredPower, CenteredSquare
 import ..Previsions: Indicator, apply
 
 export Space, Finite, Interval, ProductSpace, Simplex, Euclidean, PositiveReals, support
-export Measure, CategoricalMeasure, BetaMeasure, TaggedBetaMeasure, GaussianMeasure, GammaMeasure, ExponentialMeasure, DirichletMeasure, NormalGammaMeasure, ProductMeasure, MixtureMeasure
+export Measure, CategoricalMeasure, BetaMeasure, TaggedBetaMeasure, GaussianMeasure, GammaMeasure, ExponentialMeasure, DirichletMeasure, NormalGammaMeasure, EnumerationMeasure, ProductMeasure, MixtureMeasure
 export Kernel, FactorSelector, kernel_source, kernel_target, kernel_params
 export LikelihoodFamily, LeafFamily, PushOnly, BetaBernoulli, Flat, FiringByTag, DispatchByComponent, DepthCapExceeded
 export NormalNormal, Categorical, NormalGammaLikelihood, Exponential
@@ -312,6 +312,30 @@ end
 Base.propertynames(::NormalGammaMeasure) = (:κ, :μ, :α, :β, :space, :prevision)
 
 mean(m::NormalGammaMeasure) = m.μ
+
+# ── Enumeration: carrier-binding Measure over CategoricalPrevision ──
+
+struct EnumerationMeasure{T} <: Measure
+    prevision::CategoricalPrevision
+    carrier::Vector{T}
+    space::Finite{T}
+
+    function EnumerationMeasure{T}(prevision::CategoricalPrevision, carrier::Vector{T}, space::Finite{T}) where {T}
+        length(carrier) == length(prevision.log_weights) || error("carrier and weights must match")
+        length(carrier) == length(space.values) || error("carrier and space must match")
+        new{T}(prevision, carrier, space)
+    end
+end
+
+function expect(m::EnumerationMeasure, f::Function)
+    lw = m.prevision.log_weights
+    max_lw = maximum(lw)
+    w = exp.(lw .- max_lw)
+    w ./= sum(w)
+    sum(w[i] * f(m.carrier[i]) for i in eachindex(w))
+end
+
+expect(m::EnumerationMeasure, tf::TestFunction) = expect(m, x -> apply(tf, x))
 
 # ── Product: independent joint ──
 
@@ -670,14 +694,6 @@ function expect(p::QuadraturePrevision, f::Function)
     sum(w[i] * f(p.grid[i]) for i in eachindex(w))
 end
 
-function expect(p::EnumerationPrevision, f::Function)
-    lw = p.log_weights
-    max_lw = maximum(lw)
-    w = exp.(lw .- max_lw)
-    w ./= sum(w)
-    sum(w[i] * f(p.enumerated[i]) for i in eachindex(w))
-end
-
 # MixturePrevision: linearity of expectation.
 function expect(p::MixturePrevision, f::Function)
     lw = p.log_weights
@@ -703,7 +719,6 @@ expect(p::GaussianPrevision, tf::TestFunction; kwargs...) = expect(p, x -> apply
 expect(p::GammaPrevision, tf::TestFunction; kwargs...) = expect(p, x -> apply(tf, x); kwargs...)
 expect(p::ParticlePrevision, tf::TestFunction) = expect(p, x -> apply(tf, x))
 expect(p::QuadraturePrevision, tf::TestFunction) = expect(p, x -> apply(tf, x))
-expect(p::EnumerationPrevision, tf::TestFunction) = expect(p, x -> apply(tf, x))
 
 # Prevision-level OpaqueClosure unwrapping.
 expect(p::Prevision, o::OpaqueClosure; kwargs...) = expect(p, o.f; kwargs...)

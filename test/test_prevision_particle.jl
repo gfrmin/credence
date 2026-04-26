@@ -116,14 +116,14 @@ end
 # ── Shared-reference contract tests per precedents.md §2 + §3 ──
 #
 # Per Move 6 design doc §5.1 Option A narrowed form and §4.5's typed-carrier
-# trace: CategoricalMeasure wrapping ParticlePrevision / QuadraturePrevision /
-# EnumerationPrevision must preserve reference identity between the wrapper's
-# shield-accessed fields and the underlying Prevision's stored Vectors.
-# Breaking this contract silently corrupts downstream consumers (skin server
-# push! patterns, Move 7 event-conditioning paths, paper §2.3 isa-drilldown).
+# trace: CategoricalMeasure wrapping ParticlePrevision / QuadraturePrevision
+# must preserve reference identity between the wrapper's shield-accessed
+# fields and the underlying Prevision's stored Vectors. EnumerationMeasure
+# stores its carrier and CategoricalPrevision directly (no CategoricalMeasure
+# wrapper). Breaking these contracts silently corrupts downstream consumers.
 #
 # Contract: cm.logw === pp.log_weights (identity, not equality).
-#          cm.space.values === pp.samples / qp.grid / ep.enumerated.
+#          cm.space.values === pp.samples / qp.grid.
 #
 # These tests are named in invariant comments on the shield at
 # src/ontology.jl:getproperty(::CategoricalMeasure, …). Breaking either
@@ -160,25 +160,25 @@ function test_quadrature_shared_reference()
           cm.space.values === qp.grid, "")
 end
 
-function test_enumeration_shared_reference()
-    enumerated = Any[:a, :b, :c]
+function test_enumeration_measure_structure()
+    carrier = [:a, :b, :c]
     log_weights = [log(0.5), log(0.3), log(0.2)]
-    ep = EnumerationPrevision(enumerated, log_weights)
-    # Enumeration wraps over a Finite{Symbol} space using ep.enumerated
-    # as the values backing.
-    cm = CategoricalMeasure(Finite(ep.enumerated), ep)
+    cp = CategoricalPrevision(log_weights)
+    em = EnumerationMeasure{Symbol}(cp, carrier, Finite(carrier))
 
-    check("CategoricalMeasure wrapping EnumerationPrevision stores ep by ref",
-          cm.prevision === ep, "")
-    check("cm.logw === ep.log_weights (reference identity)",
-          cm.logw === ep.log_weights, "")
-    check("cm.space.values === ep.enumerated (reference identity)",
-          cm.space.values === ep.enumerated, "")
+    check("EnumerationMeasure stores CategoricalPrevision by ref",
+          em.prevision === cp, "")
+    check("EnumerationMeasure carrier preserved (reference identity)",
+          em.carrier === carrier, "")
+    check("EnumerationMeasure space.values === carrier (reference identity)",
+          em.space.values === carrier, "")
+    check("EnumerationMeasure{Symbol} isa EnumerationMeasure",
+          em isa EnumerationMeasure, "")
 end
 
 test_particle_shared_reference()
 test_quadrature_shared_reference()
-test_enumeration_shared_reference()
+test_enumeration_measure_structure()
 
 # ── _dispatch_path vocabulary pins per §5.3 Option A (uniform `:particle`) ──
 #
@@ -196,23 +196,22 @@ let k = Kernel(Euclidean(1), Euclidean(1),
 
     pp = ParticlePrevision([1.0, 2.0], [log(0.5), log(0.5)], 42)
     qp = QuadraturePrevision([0.1, 0.5, 0.9], [0.0, 0.0, 0.0])
-    ep = EnumerationPrevision([:a, :b], [log(0.7), log(0.3)])
+    em = EnumerationMeasure{Symbol}(CategoricalPrevision([log(0.7), log(0.3)]),
+                                     [:a, :b], Finite([:a, :b]))
 
     check("ParticlePrevision → :particle (uniform fallback label)",
           _dispatch_path(pp, k) === :particle, "got $(_dispatch_path(pp, k))")
     check("QuadraturePrevision → :particle (uniform fallback label)",
           _dispatch_path(qp, k) === :particle, "got $(_dispatch_path(qp, k))")
-    check("EnumerationPrevision → :particle (uniform fallback label)",
-          _dispatch_path(ep, k) === :particle, "got $(_dispatch_path(ep, k))")
+    check("EnumerationMeasure inner CategoricalPrevision → :particle (PushOnly kernel)",
+          _dispatch_path(em.prevision, k) === :particle, "got $(_dispatch_path(em.prevision, k))")
 
-    # Drilldown via concrete type, per §5.3 Decoupling-from-§5.2:
-    # tests that need the strategy distinction use `isa`, not the Symbol.
     check("ParticlePrevision isa ParticlePrevision (type-level drilldown)",
           pp isa ParticlePrevision, "")
     check("QuadraturePrevision isa QuadraturePrevision (type-level drilldown)",
           qp isa QuadraturePrevision, "")
-    check("EnumerationPrevision isa EnumerationPrevision (type-level drilldown)",
-          ep isa EnumerationPrevision, "")
+    check("EnumerationMeasure isa EnumerationMeasure (type-level drilldown)",
+          em isa EnumerationMeasure, "")
 end
 
 println()

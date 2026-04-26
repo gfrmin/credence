@@ -132,11 +132,11 @@ Fields:
 - `id::Int` — grammar identifier, used by `add_programs_to_state!` to
   track which grammar produced each mixture component.
 
-See `enumerate_programs_as_prevision` for the typed-carrier surface
-(Move 6 Phase 5 wrapper) that returns an `EnumerationPrevision` over
-the programs a Grammar generates. The existing `enumerate_programs`
-function returns `Vector{Program}` for backward compatibility; both
-surfaces draw from the same enumeration logic.
+See `enumerate_programs_as_measure` for the typed-carrier surface
+that returns an `EnumerationMeasure{Program}` over the programs a
+Grammar generates. The existing `enumerate_programs` function returns
+`Vector{Program}` for backward compatibility; both surfaces draw from
+the same enumeration logic.
 """
 struct Grammar
     feature_set::Set{Symbol}
