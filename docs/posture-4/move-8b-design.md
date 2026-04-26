@@ -212,11 +212,13 @@ A Prevision that holds programs is named for what it isn't — the programs are 
 struct EnumerationMeasure{T} <: Measure
     prevision::CategoricalPrevision
     carrier::Vector{T}
-    space::Space
+    space::Finite{T}
 end
 ```
 
-The `CategoricalPrevision` holds the simplex (algebraic content). The `carrier::Vector{T}` holds the enumerated domain objects. The `space::Space` is the carrier space (consistent with all other Measure types). This is the standard `(Prevision, carrier-space)` shape.
+The `CategoricalPrevision` holds the simplex (algebraic content). The `carrier::Vector{T}` holds the enumerated domain objects. The `space::Finite{T}` is the carrier space — typed to match the carrier, because the space *is* the set of possibilities the carrier elements live in. This is the standard `(Prevision, carrier-space)` shape.
+
+**Space-carrier type alignment.** The `space` field is `Finite{T}`, not bare `Space`, because the carrier type and the space type must agree: if `carrier::Vector{Program}`, then the space is `Finite{Program}` — the finite set whose elements are those programs. `Finite{T}` already accepts `Vector{T}` (spaces.jl:10–12), so `Finite(programs)` yields `Finite{Program}` directly. Substituting a `Symbol`-projection (`Finite(Symbol[p.name for p in programs])`) would misalign the space type (`Finite{Symbol}`) with the carrier type (`Vector{Program}`), creating a type error that the constructor should reject.
 
 **Method migration.** EnumerationPrevision has exactly three methods:
 
@@ -232,8 +234,7 @@ The `CategoricalPrevision` holds the simplex (algebraic content). The `carrier::
 function enumerate_programs_as_measure(g::Grammar, max_depth::Int; ...)
     programs = enumerate_programs(g, max_depth; ...)
     log_weights = Float64[-g.complexity * log(2) - p.complexity * log(2) for p in programs]
-    program_space = Finite(Symbol[p.name for p in programs])  # or appropriate Space
-    EnumerationMeasure{Program}(CategoricalPrevision(log_weights), programs, program_space)
+    EnumerationMeasure{Program}(CategoricalPrevision(log_weights), programs, Finite(programs))
 end
 ```
 
@@ -252,7 +253,7 @@ Consumers that construct `EnumerationPrevision(items, weights)` → `Enumeration
 The `untyped-mixture-construction` slug (§5.5) covers `MixturePrevision` and `ProductPrevision` construction. Extend its scope to also catch:
 
 - `convert(Vector{Any}, ...)` feeding `EnumerationMeasure` construction (catches the retired pattern)
-- Bare `Vector` container literals feeding `ParticlePrevision` construction (less urgent — Julia's type inference usually produces `Vector{T}` from comprehensions, but explicit `Any[]` should be flagged)
+- Explicit `Any[]` feeding `ParticlePrevision` construction (Julia's type inference usually produces `Vector{T}` from comprehensions, but explicit `Any[]` is a discipline violation regardless)
 
 The slug's taint-analysis pattern generalises: seed = untyped container literal; sink = Prevision/Measure constructor. No new slug needed; the existing slug's sink list expands.
 
@@ -269,6 +270,8 @@ The slug's taint-analysis pattern generalises: seed = untyped container literal;
 **The question.** Should Phase A and Phase B land as one PR or two?
 
 **Prior: two PRs, Phase A first.** Phase A is a substrate-only change that should pass all existing tests — the type tightening is a no-op behaviourally (the same objects flow through the same paths; only the Julia type system's enforcement changes). Phase B depends on Phase A: app construction sites that pass `TaggedBetaPrevision[]` into `MixturePrevision` type-check against `Vector{Prevision}` (which accepts any `Vector{<:Prevision}`) but would also type-check against bare `Vector`. Substrate-first means the contract is enforced before apps comply with it.
+
+**Phase A vs Phase A′: two PRs.** Phase A lands Move 5's committed Mixture/Product tightening. Phase A′ is audit-surfaced architectural cleanup (Particle parametricity, Enumeration retirement) — logically separable, independently revertable, different narrative. Two-PR shape gives each clean provenance in `git log`.
 
 Phase C (lint slug) lands with Phase B or as a small follow-up. It doesn't depend on Phase A semantically but should run against the post-Phase-B codebase to verify zero violations.
 
@@ -314,7 +317,13 @@ If any persistence code (state_persistence.jl, production_persistence.jl) serial
 
 Mitigation: grep for `ParticlePrevision` in persistence code. If found, update the deserialisation to handle both the old unparameterised and new parametric form during migration.
 
-**Risk 5: The lint slug surfaces unexpected violations.**
+**Risk 5: `EnumerationMeasure{T}` space-carrier type alignment.**
+
+The `EnumerationMeasure{T}` constructor requires `space::Finite{T}` matching `carrier::Vector{T}`. If any construction site builds the space from a projection (e.g. `Symbol` names) rather than the carrier objects themselves, the types will mismatch at compile time. The design doc's migration example uses `Finite(programs)` directly, which is correct. The risk is that an untouched construction site or test uses the projection pattern.
+
+Mitigation: the `space::Finite{T}` field type enforces alignment — a `Finite{Symbol}` will not fit `Finite{Program}`. Type errors surface at construction, not at use.
+
+**Risk 6: The lint slug surfaces unexpected violations.**
 
 When `untyped-mixture-construction` runs against the post-Phase-B codebase, it may find construction sites beyond the ten the audit named. These are findings worth investigating before merging.
 
@@ -340,8 +349,9 @@ Mitigation: run the slug locally during Phase C development and diagnose any une
 1. All Phase A tests still pass
 2. `julia test/test_program_space.jl` — program enumeration returns `EnumerationMeasure` not `EnumerationPrevision`
 3. `julia test/test_core.jl` — particle conditioning produces `ParticlePrevision{T}` (inferred)
-4. `grep -r 'EnumerationPrevision' src/ apps/ test/` — zero hits (type fully retired)
-5. `python tools/credence-lint/credence_lint.py check apps/` — 0 violations
+4. `grep -r 'EnumerationPrevision' src/ apps/ test/ examples/` — zero hits (type fully retired)
+5. `grep -rn 'samples::Vector[^{]' src/prevision.jl` — zero hits (bare `samples::Vector` replaced by `samples::Vector{T}`)
+6. `python tools/credence-lint/credence_lint.py check apps/` — 0 violations
 
 ### Phase B (apps)
 
@@ -373,7 +383,7 @@ Mitigation: run the slug locally during Phase C development and diagnose any une
 2. **Tighten substrate `Any[]` sites.** `src/program_space/agent_state.jl` lines 118, 140 → `TaggedBetaPrevision[]`. `src/host_helpers.jl` line 47 → `BetaPrevision[]`.
 3. **Full test suite verification.**
 
-### Phase A′ (PR 1 continued, or separate PR: Particle/Enumeration)
+### Phase A′ (PR 2: Particle/Enumeration substrate)
 
 4. **Make `ParticlePrevision` parametric.** `struct ParticlePrevision{T} <: Prevision` with `samples::Vector{T}`. Inner constructor parameterised. No method signature changes needed (unparameterised dispatch matches).
 5. **Retire `EnumerationPrevision`.** Delete the struct from `src/prevision.jl`. Delete `weights(::EnumerationPrevision)` from `src/stdlib.jl`. Delete `expect(::EnumerationPrevision, ...)` methods from `src/ontology.jl`.
@@ -381,14 +391,14 @@ Mitigation: run the slug locally during Phase C development and diagnose any une
 7. **Migrate `enumerate_programs_as_prevision` → `enumerate_programs_as_measure`.** Update `src/program_space/enumeration.jl` and all callers.
 8. **Full test suite verification.**
 
-### Phase B (PR 2: apps + examples)
+### Phase B (PR 3: apps + examples)
 
 9. **Tighten app/skin `Any[]` sites.** `email_agent/host.jl`, `grid_world/host.jl`, `rss/host.jl`, `skin/server.jl` — `Any[]` → `TaggedBetaPrevision[]`.
 10. **Migrate email_agent secondary files.** `live.jl`, `eval_retrospective.jl` — Measure pathway → Prevision pathway.
 11. **Migrate `examples/host_credence_agent.jl` vocabulary.** MixtureMeasure → MixturePrevision in imports, type checks, comments.
 12. **Full test suite + lint verification.**
 
-### Phase C (PR 3 or folded into PR 2: lint slug)
+### Phase C (PR 4, or folded into PR 3: lint slug)
 
 13. **Add `untyped-mixture-construction` slug.** Pattern, corpus files, scope exclusions.
 14. **Corpus self-test + `check apps/` verification.**
