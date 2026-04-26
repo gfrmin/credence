@@ -321,8 +321,11 @@ struct ProductMeasure <: Measure
 
     function ProductMeasure(space::ProductSpace, factors::Vector{<:Measure})
         length(space.factors) == length(factors) || error("space and factors must match")
-        new(ProductPrevision(Vector{Measure}(factors)), space)
+        previsions = Prevision[f.prevision for f in factors]
+        new(ProductPrevision(previsions), space)
     end
+
+    ProductMeasure(prevision::ProductPrevision, space::ProductSpace) = new(prevision, space)
 end
 
 ProductMeasure(factors::Vector{<:Measure}) =
@@ -330,7 +333,9 @@ ProductMeasure(factors::Vector{<:Measure}) =
 
 function Base.getproperty(m::ProductMeasure, s::Symbol)
     if s === :factors
-        return getproperty(getfield(m, :prevision), s)
+        p = getfield(m, :prevision)
+        spaces = getfield(m, :space).factors
+        return FrozenVectorView(Measure[wrap_in_measure(p.factors[i], spaces[i]) for i in eachindex(p.factors)])
     else
         return getfield(m, s)
     end
@@ -353,16 +358,23 @@ struct MixtureMeasure <: Measure
     space::Space
 
     function MixtureMeasure(space::Space, components::Vector{<:Measure}, log_weights::Vector{Float64})
-        new(MixturePrevision(Vector{Measure}(components), log_weights), space)
+        previsions = Prevision[c.prevision for c in components]
+        new(MixturePrevision(previsions, log_weights), space)
     end
+
+    MixtureMeasure(space::Space, prevision::MixturePrevision) = new(prevision, space)
 end
 
 MixtureMeasure(components::Vector{<:Measure}, log_weights::Vector{Float64}) =
     MixtureMeasure(components[1].space, components, log_weights)
 
 function Base.getproperty(m::MixtureMeasure, s::Symbol)
-    if s === :components || s === :log_weights
-        return getproperty(getfield(m, :prevision), s)
+    if s === :components
+        p = getfield(m, :prevision)
+        sp = getfield(m, :space)
+        return FrozenVectorView(Measure[wrap_in_measure(c, sp) for c in p.components])
+    elseif s === :log_weights
+        return getproperty(getfield(m, :prevision), :log_weights)
     else
         return getfield(m, s)
     end
@@ -407,24 +419,44 @@ wrap_in_measure(p::GaussianPrevision) = GaussianMeasure(Euclidean(1), p.mu, p.si
 wrap_in_measure(p::GammaPrevision) = GammaMeasure(PositiveReals(), p.alpha, p.beta)
 
 function wrap_in_measure(p::ProductPrevision)
-    factors_as_measures = Measure[f isa Prevision ? wrap_in_measure(f) : f for f in p.factors]
+    factors_as_measures = Measure[wrap_in_measure(f) for f in p.factors]
     ProductMeasure(factors_as_measures)
 end
 
 function wrap_in_measure(p::MixturePrevision)
-    components_as_measures = Measure[c isa Prevision ? wrap_in_measure(c) : c for c in p.components]
+    components_as_measures = Measure[wrap_in_measure(c) for c in p.components]
     MixtureMeasure(components_as_measures, copy(p.log_weights))
 end
 
 wrap_in_measure(p::CategoricalPrevision) = error(
     "wrap_in_measure(::CategoricalPrevision) requires carrier space context " *
-    "(Finite{T}); construct CategoricalMeasure(space, p) explicitly at the call site. " *
-    "See docs/posture-4/move-2-design.md §6 (wrap_in_measure coverage)."
+    "(Finite{T}); use wrap_in_measure(p, space) or construct CategoricalMeasure(space, p) " *
+    "explicitly. See docs/posture-4/move-2-design.md §6 (wrap_in_measure coverage)."
+)
+
+wrap_in_measure(p::Prevision, ::Space) = wrap_in_measure(p)
+wrap_in_measure(p::CategoricalPrevision, space::Finite) = CategoricalMeasure(space, p)
+
+function wrap_in_measure(p::ProductPrevision, space::ProductSpace)
+    factors_as_measures = Measure[wrap_in_measure(p.factors[i], space.factors[i]) for i in eachindex(p.factors)]
+    ProductMeasure(factors_as_measures)
+end
+
+function wrap_in_measure(p::MixturePrevision, space::Space)
+    components_as_measures = Measure[wrap_in_measure(c, space) for c in p.components]
+    MixtureMeasure(components_as_measures, copy(p.log_weights))
+end
+wrap_in_measure(p::DirichletPrevision, space::Simplex) = error(
+    "wrap_in_measure(::DirichletPrevision, ::Simplex) also requires categories::Finite; " *
+    "construct DirichletMeasure explicitly."
 )
 wrap_in_measure(p::DirichletPrevision) = error(
     "wrap_in_measure(::DirichletPrevision) requires Simplex+Finite space context; " *
     "construct DirichletMeasure(space, categories, p.alpha) explicitly."
 )
+wrap_in_measure(p::ParticlePrevision) =
+    CategoricalMeasure(Finite(p.samples), p)
+
 wrap_in_measure(p::NormalGammaPrevision) =
     NormalGammaMeasure(p.κ, p.μ, p.α, p.β)
 
@@ -756,6 +788,9 @@ given mixture component.
 _conjugacy_prevision(m::TaggedBetaMeasure) = getfield(m, :prevision).beta
 _conjugacy_prevision(m::Measure) = m.prevision
 _conjugacy_prevision(p::TaggedBetaPrevision) = p.beta
+# Identity for bare Previsions (GaussianPrevision, GammaPrevision, etc.) that
+# are themselves the conjugacy-keyed type — no unwrapping needed.
+_conjugacy_prevision(p::Prevision) = p
 
 function condition(m::GaussianMeasure, k::Kernel, observation)
     cp = maybe_conjugate(m.prevision, k)
@@ -1004,13 +1039,13 @@ function log_predictive(m::CategoricalMeasure, k::Kernel, obs)
 end
 
 function condition(p::MixturePrevision, k::Kernel, obs)
-    new_components = Any[]
+    new_components = Prevision[]
     new_log_wts = Float64[]
     for (i, comp) in enumerate(p.components)
         pred_ll = _predictive_ll(comp, k, obs)
         conditioned = condition(comp, k, obs)
         base_lw = p.log_weights[i] + pred_ll
-        if conditioned isa MixtureMeasure || conditioned isa MixturePrevision
+        if conditioned isa MixturePrevision
             for (j, sub) in enumerate(conditioned.components)
                 push!(new_components, sub)
                 push!(new_log_wts, base_lw + conditioned.log_weights[j])
@@ -1024,8 +1059,23 @@ function condition(p::MixturePrevision, k::Kernel, obs)
 end
 
 function condition(m::MixtureMeasure, k::Kernel, obs)
-    new_p = condition(m.prevision, k, obs)
-    MixtureMeasure(m.space, Vector{Measure}(new_p.components), new_p.log_weights)
+    new_components = Measure[]
+    new_log_wts = Float64[]
+    for (i, comp) in enumerate(m.components)
+        pred_ll = _predictive_ll(comp, k, obs)
+        conditioned = condition(comp, k, obs)
+        base_lw = m.log_weights[i] + pred_ll
+        if conditioned isa MixtureMeasure
+            for (j, sub) in enumerate(conditioned.components)
+                push!(new_components, sub)
+                push!(new_log_wts, base_lw + conditioned.log_weights[j])
+            end
+        else
+            push!(new_components, conditioned)
+            push!(new_log_wts, base_lw)
+        end
+    end
+    MixtureMeasure(m.space, new_components, new_log_wts)
 end
 
 function _dispatch_path(p::MixturePrevision, k::Kernel)
@@ -1065,12 +1115,12 @@ function decompose(p::ExchangeablePrevision)
     k == length(α) ||
         error("decompose: component_space has $k categories but Dirichlet prior has $(length(α)) components")
 
-    components = Measure[]
+    components = Prevision[]
     log_weights = Float64[]
     for i in 1:k
         log_w_per_cat = fill(-Inf, k)
         log_w_per_cat[i] = 0.0
-        push!(components, CategoricalMeasure(p.component_space, log_w_per_cat))
+        push!(components, CategoricalPrevision(log_w_per_cat))
         push!(log_weights, log(α[i] / total))
     end
     MixturePrevision(components, log_weights)
@@ -1109,7 +1159,9 @@ function condition(m::ProductMeasure, k::Kernel, obs; kwargs...)
         pred_ll = _predictive_ll(factor_ai, restricted_k, obs)
 
         new_factors = Measure[f for f in m.factors]
-        new_factors[d] = CategoricalMeasure(Finite([c]))
+        point_mass_lw = fill(-Inf, length(cat.space.values))
+        point_mass_lw[ci] = 0.0
+        new_factors[d] = CategoricalMeasure(cat.space, point_mass_lw)
         new_factors[ai] = conditioned
 
         push!(new_components, ProductMeasure(new_factors))
@@ -1138,18 +1190,18 @@ end
 
 function condition(m::MixtureMeasure, e::TagSet)
     new_p = condition(m.prevision, e)
-    MixtureMeasure(m.space, new_p.components, new_p.log_weights)
+    MixtureMeasure(m.space, new_p)
 end
 
 function condition(p::MixturePrevision, e::TagSet)
     new_lws = copy(p.log_weights)
     for (i, comp) in enumerate(p.components)
-        if comp isa TaggedBetaMeasure || comp isa TaggedBetaPrevision
+        if comp isa TaggedBetaPrevision
             if !(comp.tag in e.tags)
                 new_lws[i] = -Inf
             end
         else
-            error("condition(::MixturePrevision, ::TagSet): expected Tagged component; got $(typeof(comp)) at index $i")
+            error("condition(::MixturePrevision, ::TagSet): expected TaggedBetaPrevision; got $(typeof(comp)) at index $i")
         end
     end
     MixturePrevision(p.components, new_lws)

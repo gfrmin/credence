@@ -470,7 +470,7 @@ let
     programs = enumerate_programs(g, 2; action_space=DOMAIN_ACTIONS, min_log_prior=-15.0)
 
     # Build a state with uniform priors (high entropy)
-    components = Any[]
+    components = TaggedBetaPrevision[]
     log_prior = Float64[]
     meta = Tuple{Int, Int}[]
     ck = CompiledKernel[]
@@ -515,7 +515,7 @@ let
         # Simulate high observation count by using Beta(50, 50)
     end
     # Use a state where mean_observation_count is high
-    conc_comps = Any[TaggedBetaPrevision(i, BetaPrevision(50.0, 50.0))
+    conc_comps = TaggedBetaPrevision[TaggedBetaPrevision(i, BetaPrevision(50.0, 50.0))
                      for i in 1:length(components)]
     conc_belief2 = MixturePrevision(conc_comps, conc_lw)
     conc_state2 = AgentState(conc_belief2, meta, ck, progs, grammar_dict, 2)
@@ -543,7 +543,7 @@ let
     grammars = generate_email_seed_grammars()
 
     # Build a minimal state
-    components = Any[]
+    components = TaggedBetaPrevision[]
     log_prior = Float64[]
     meta = Tuple{Int, Int}[]
     ck = CompiledKernel[]
@@ -1031,7 +1031,7 @@ let
     action_space = vcat(PRIMITIVE_ACTIONS, [:done])
     programs = enumerate_programs(g, 2; action_space=action_space, min_log_prior=-15.0)
 
-    components = Any[]
+    components = TaggedBetaPrevision[]
     log_prior = Float64[]
     meta = Tuple{Int, Int}[]
     ck_list = CompiledKernel[]

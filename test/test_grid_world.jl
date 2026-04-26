@@ -111,7 +111,7 @@ let
     p1 = enumerate_programs(g1, 3; action_space=[:food, :enemy])
     p2 = enumerate_programs(g2, 3; action_space=[:food, :enemy])
 
-    components = Any[]
+    components = TaggedBetaPrevision[]
     log_prior = Float64[]
     meta = Tuple{Int, Int}[]
     ck = CompiledKernel[]
@@ -172,7 +172,7 @@ let
     g = grammars[2]
     programs = enumerate_programs(g, 3; action_space=[:food, :enemy])
 
-    components = Any[]
+    components = TaggedBetaPrevision[]
     log_prior = Float64[]
     meta = Tuple{Int, Int}[]
     ck = CompiledKernel[]
@@ -284,7 +284,7 @@ let
 
     comp1 = TaggedBetaPrevision(1, BetaPrevision(1.0, 1.0))
     comp2 = TaggedBetaPrevision(2, BetaPrevision(1.0, 1.0))
-    belief = MixturePrevision(Any[comp1, comp2], [0.0, 0.0])
+    belief = MixturePrevision(Prevision[comp1, comp2], [0.0, 0.0])
 
     ck_vec = [correct_prog[3], incorrect_prog[3]]
 

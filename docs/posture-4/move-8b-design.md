@@ -162,6 +162,14 @@ DirichletMeasure's extra `categories::Finite` is carrier-binding context (the Fi
 
 These are all within `src/` and operate on components that are already Previsions (post-condition output) or already in the existing `components` field. The type tightening should be transparent at these sites — they just need the vector literal typed as `Prevision[]` rather than untyped.
 
+### 5.1a Carrier-dependent dispatch (Phase A finding)
+
+Prevision-level `condition`, `expect`, and `optimise` are available for Prevision trees whose leaves do not require carrier mappings to evaluate kernel likelihoods. Measure-level dispatch is required for Prevision trees containing Categorical (or any future carrier-dependent type) leaves. This follows from the CategoricalMeasure principled exception established in Move 6 §5.1: where a Prevision cannot self-represent without a carrier, operations that recurse through it cannot dispatch at the Prevision level.
+
+Concretely: `condition(m::MixtureMeasure, k, obs)` operates at Measure level (iterating `m.components`, which reconstructs Measures via the shield), not by delegating to `condition(m.prevision, k, obs)`. The Measure-level path preserves carrier context through `_predictive_ll` and recursive `condition` calls. The Prevision-level `condition(p::MixturePrevision, k, obs)` remains and is correct for Prevision trees whose leaves are self-wrapping (BetaPrevision, TaggedBetaPrevision, GaussianPrevision, GammaPrevision) — the Beta-Bernoulli program-space path exercises this directly.
+
+This is not a partial implementation. Threading carrier-space through the Prevision-level path would violate the design principle that Previsions don't carry spaces. The dispatch-level split is the principled consequence of the carrier exception.
+
 ### 5.2 ParticlePrevision and EnumerationPrevision
 
 The initial version of this design doc deferred these two types as "residual debt." That framing repeats the Move 5 pattern — designed-but-not-landed — that this entire audit arc exists to retire. The three first-principles below yield direct answers.

@@ -94,6 +94,7 @@ end
 
 # ── Tag accessor: declared-structure dispatch, not an opaque closure ──
 _tag_of(m::TaggedBetaMeasure) = m.tag
+_tag_of(p::TaggedBetaPrevision) = p.tag
 
 # ── Feature accessor: method dispatch is the registry ──
 """

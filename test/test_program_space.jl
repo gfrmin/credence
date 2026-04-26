@@ -665,7 +665,7 @@ let
 
     # Build initial state with some programs
     programs = enumerate_programs(g, 2; action_space=[:food, :enemy])
-    components = Any[]
+    components = TaggedBetaPrevision[]
     log_prior = Float64[]
     meta = Tuple{Int, Int}[]
     ck = CompiledKernel[]
@@ -724,7 +724,7 @@ let
     grammars = generate_seed_grammars()
     g1, g2, g3 = grammars[1], grammars[2], grammars[3]
 
-    components = Any[]
+    components = TaggedBetaPrevision[]
     log_prior = Float64[]
     meta = Tuple{Int, Int}[]
     ck = CompiledKernel[]

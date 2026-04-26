@@ -401,54 +401,43 @@ let m = wrap_in_measure(BetaPrevision(2.0, 3.0))
           "got $(variance(m))")
 end
 
-# ── SHARED-REFERENCE CONTRACT TEST (load-bearing, Move 3) ──
-# Per docs/posture-3/move-3-design.md §3 and R4: the MixtureMeasure
-# `getproperty` shield returns `.components` and `.log_weights` by
-# reference — mutations via `push!` must be visible on subsequent reads
-# through the shield. The apps/skin/server.jl:549,552 sites depend on
-# this. A future refactor that defensively copies silently breaks those
-# sites (push! succeeds on the copy, original unchanged, no test-site
-# error). This test guards against that regression.
+# ── SHARED-REFERENCE CONTRACT TEST (Move 8b: updated from Move 3) ──
+# MixturePrevision stores Vector{Prevision}. The MixtureMeasure shield
+# reconstructs Measures via wrap_in_measure + FrozenVectorView. Mutation
+# goes through push_component!/replace_component! at the Prevision level;
+# push! through the shield is rejected by FrozenVectorView.
 #
 # `test_shared_reference_contract` is the test name that the invariant
-# comment on MixtureMeasure's `Base.getproperty` in src/ontology.jl
-# references by name (executable-documentation pattern: comment names
-# the test, test asserts the invariant; breaking either breaks both).
+# comment on MixturePrevision's docstring in src/prevision.jl references
+# by name (executable-documentation pattern).
 
 function test_shared_reference_contract()
     c1 = wrap_in_measure(BetaPrevision(2.0, 3.0))
     c2 = wrap_in_measure(BetaPrevision(5.0, 5.0))
     m = MixtureMeasure(Interval(0.0, 1.0), Measure[c1, c2], [log(1.0), log(1.0)])
 
-    # Read .components through the shield.
     comps = m.components
-    check("MixtureMeasure.components returns 2 components pre-mutation",
+    check("MixtureMeasure.components returns 2 components",
           length(comps) == 2, "got $(length(comps))")
+    check("shield-returned components are Measures",
+          comps[1] isa BetaMeasure, "got $(typeof(comps[1]))")
 
-    # Mutate in place — push! a new component.
-    push!(comps, wrap_in_measure(BetaPrevision(1.0, 1.0)))
+    push_rejected = try push!(comps, wrap_in_measure(BetaPrevision(1.0, 1.0))); false
+                    catch e; true end
+    check("push! through shield throws (FrozenVectorView guard)",
+          push_rejected, "push! should have been rejected")
 
-    # Read .components through the shield again; mutation must be visible.
-    check("MixtureMeasure.components shows the push!'d component (shared-reference contract)",
-          length(m.components) == 3,
-          "got $(length(m.components)); shield defensively copied? Breaks apps/skin/server.jl:549")
+    check("prevision.components holds Previsions",
+          m.prevision.components[1] isa BetaPrevision,
+          "got $(typeof(m.prevision.components[1]))")
 
-    # Same for .log_weights.
-    lws = m.log_weights
-    original_length = length(lws)
-    push!(lws, log(0.5))
-    check("MixtureMeasure.log_weights shows the push!'d weight (shared-reference contract)",
-          length(m.log_weights) == original_length + 1,
-          "got $(length(m.log_weights)); shield defensively copied? Breaks apps/skin/server.jl:552")
+    push_component!(m.prevision, BetaPrevision(1.0, 1.0), log(0.5))
+    check("push_component! visible through shield",
+          length(m.components) == 3, "got $(length(m.components))")
 
-    # Invariant: the shield-returned vectors ARE the underlying
-    # prevision vectors (object identity), not copies.
-    check("MixtureMeasure.components === prevision.components (object identity)",
-          m.components === m.prevision.components,
-          "shield constructs a new vector on each access")
-    check("MixtureMeasure.log_weights === prevision.log_weights (object identity)",
+    check("log_weights by-reference (object identity)",
           m.log_weights === m.prevision.log_weights,
-          "shield constructs a new vector on each access")
+          "shield defensively copied log_weights")
 end
 
 test_shared_reference_contract()
