@@ -2,17 +2,28 @@
 
 ## 0. Final-state alignment
 
-Move 8b closes a gap the stricter Posture 4 audit surfaced: Move 5's design doc committed to `MixturePrevision.components::Vector{Prevision}` and `ProductPrevision.factors::Vector{Prevision}`, but the implementation never landed. The current substrate has bare unparameterised `Vector` fields — looser than either Move 2's deferred-language description or Move 5's committed-target description. Ten construction sites across `apps/` and `src/` use `Any[]` or `Measure[]` containers for uniformly-typed contents, which the existing lint does not detect.
+Move 8b closes a gap the stricter Posture 4 audit surfaced: Move 5's design doc committed to `MixturePrevision.components::Vector{Prevision}` and `ProductPrevision.factors::Vector{Prevision}`, but the implementation never landed. The current substrate has four bare unparameterised `Vector` fields — looser than either Move 2's deferred-language description or Move 5's committed-target description. Ten construction sites across `apps/` and `src/` use `Any[]` or `Measure[]` containers for uniformly-typed contents, which the existing lint does not detect. Beyond the Mixture/Product fields, `ParticlePrevision.samples::Vector` and `EnumerationPrevision.enumerated::Vector` each conflate algebraic and carrier content in ways that violate the Prevision/Measure split that Posture 4 established.
 
-After Move 8b, the substrate field types match Move 5's committed architecture, every construction site uses typed containers, and a new lint slug prevents the blind spot from recurring. Posture 4 then closes properly and Posture 5 opens against a verified-clean substrate.
+### End-state properties
+
+After Move 8b, every Prevision type in the substrate satisfies five properties:
+
+1. **Every Prevision holds only algebraic content** — the parameters and weights that enable `expect` to compute. No carrier-space objects, no domain elements, no observational data.
+2. **Every Measure is `(Prevision, carrier-space)`** — observational carrier binding happens at the Measure layer, not inside Prevision fields.
+3. **Parametric typing for fields whose element type varies across instances but is uniform within each instance** — `ParticlePrevision{T}` uses `Vector{T}`, not `Vector{Any}`.
+4. **No type named for what it isn't** — `EnumerationPrevision` holds carrier objects (programs, domain elements) inside a Prevision; it is retired and replaced by `EnumerationMeasure{T}`, whose simplex content lives in a `CategoricalPrevision`.
+5. **Lint covers container element-type discipline** — the `untyped-mixture-construction` slug prevents the blind spot from recurring.
+
+Every construction site uses typed containers. Posture 4 then closes properly and Posture 5 opens against a verified-clean substrate.
 
 ## 1. Purpose
 
-Land the substrate tightening Move 5 designed but didn't implement. Three deliverables:
+Land the substrate tightening Move 5 designed but didn't implement, and complete the Prevision/Measure split for the two types that conflate algebraic and carrier content. Four deliverables:
 
-1. **Phase A (substrate):** Tighten `MixturePrevision.components` and `ProductPrevision.factors` to `Vector{Prevision}`. Update `MixtureMeasure`/`ProductMeasure` constructors to extract `.prevision` from Measure components. Clean up the three substrate `Any[]` sites.
-2. **Phase B (apps + examples):** Tighten the seven app/skin construction sites from `Any[]`/`Measure[]` to `TaggedBetaPrevision[]`. Migrate the six email_agent secondary-file sites and `examples/host_credence_agent.jl` vocabulary to Prevision.
-3. **Phase C (lint):** Land the `untyped-mixture-construction` slug that catches `Any[]` for uniform-type mixture/product construction.
+1. **Phase A (substrate — Mixture/Product):** Tighten `MixturePrevision.components` and `ProductPrevision.factors` to `Vector{Prevision}`. Update `MixtureMeasure`/`ProductMeasure` constructors to extract `.prevision` from Measure components. Clean up the three substrate `Any[]` sites.
+2. **Phase A′ (substrate — Particle/Enumeration):** Make `ParticlePrevision` parametric (`ParticlePrevision{T}`), retire `EnumerationPrevision`, introduce `EnumerationMeasure{T}`.
+3. **Phase B (apps + examples):** Tighten the seven app/skin construction sites from `Any[]`/`Measure[]` to `TaggedBetaPrevision[]`. Migrate the six email_agent secondary-file sites and `examples/host_credence_agent.jl` vocabulary to Prevision.
+4. **Phase C (lint):** Land the `untyped-mixture-construction` slug that catches `Any[]` for uniform-type mixture/product construction.
 
 ## 2. Files touched
 
@@ -24,6 +35,24 @@ Land the substrate tightening Move 5 designed but didn't implement. Three delive
 - `src/ontology.jl` — `MixtureMeasure` constructor (line 355–357): extract `.prevision` from each Measure component before passing to `MixturePrevision`. `ProductMeasure` constructor (line 322–325): same extraction. Internal construction sites in `condition`, `prune`, `truncate` updated to pass `Prevision[]` rather than `Measure[]`.
 - `src/host_helpers.jl` — Line 47: `Any[]` → typed Prevision container in `marginalize_betas` Prevision dispatch.
 - `src/program_space/agent_state.jl` — Lines 118, 140: `Any[]` → `TaggedBetaPrevision[]` in `add_programs!` and the accumulator site.
+
+### Phase A′ — Particle/Enumeration substrate
+
+**Modified:**
+
+- `src/prevision.jl` — `ParticlePrevision` becomes `ParticlePrevision{T}` with `samples::Vector{T}`. Inner constructor parameterised. `EnumerationPrevision` struct deleted.
+- `src/ontology.jl` — New `EnumerationMeasure{T}` struct: `(CategoricalPrevision, carrier::Vector{T}, space::Space)`. `_condition_particle` (line 1122–1127) unchanged (already constructs `CategoricalMeasure(Finite(pp.samples), pp)` — `pp.samples` becomes `Vector{T}`). Three `expect` dispatches updated:
+  - `expect(p::ParticlePrevision, f::Function)` (line 625) — unchanged; `p.samples[i]` works regardless of `T`.
+  - `expect(p::ParticlePrevision, tf::TestFunction)` (line 672) — unchanged.
+  - `expect(p::EnumerationPrevision, f::Function)` (line 641) → becomes `expect(m::EnumerationMeasure, f::Function)` accessing `m.carrier[i]`.
+  - `expect(p::EnumerationPrevision, tf::TestFunction)` (line 674) → becomes `expect(m::EnumerationMeasure, tf::TestFunction)`.
+- `src/stdlib.jl` — `weights(p::EnumerationPrevision)` (line 62) deleted; `weights(p::CategoricalPrevision)` already exists (line 34) and covers the simplex. `weights(p::ParticlePrevision)` (line 48) unchanged.
+- `src/program_space/enumeration.jl` — `enumerate_programs_as_prevision` (line 171) → `enumerate_programs_as_measure`. Returns `EnumerationMeasure{Program}(CategoricalPrevision(log_weights), programs, program_space)` instead of `EnumerationPrevision(convert(Vector{Any}, programs), log_weights)`. Function renamed to reflect the return type change.
+
+**Tests updated:**
+
+- Any test that constructs `EnumerationPrevision` directly → constructs `EnumerationMeasure{T}` instead.
+- Any test that dispatches on `::EnumerationPrevision` → dispatches on `::EnumerationMeasure` or `::CategoricalPrevision`.
 
 ### Phase B — apps + examples
 
@@ -46,7 +75,13 @@ Land the substrate tightening Move 5 designed but didn't implement. Three delive
 
 ## 3. Behaviour preserved
 
-Move 8b is a type-discipline tightening. No numerical output changes. Every `MixturePrevision` and `ProductPrevision` that previously held its components/factors as bare `Vector` now holds them as `Vector{Prevision}`. The values stored are identical; only the Julia type system's enforcement changes. The `MixtureMeasure`/`ProductMeasure` constructors extract `.prevision` from Measure arguments — every Measure subtype has a `.prevision` field (verified in the audit's Measure shape check; DirichletMeasure has an extra `categories::Finite` but its `.prevision` is a standard `DirichletPrevision`).
+Move 8b is a type-discipline tightening. No numerical output changes.
+
+**Mixture/Product (Phase A):** Every `MixturePrevision` and `ProductPrevision` that previously held its components/factors as bare `Vector` now holds them as `Vector{Prevision}`. The values stored are identical; only the Julia type system's enforcement changes. The `MixtureMeasure`/`ProductMeasure` constructors extract `.prevision` from Measure arguments — every Measure subtype has a `.prevision` field (verified in the audit's Measure shape check; DirichletMeasure has an extra `categories::Finite` but its `.prevision` is a standard `DirichletPrevision`).
+
+**Particle (Phase A′):** `ParticlePrevision{T}` replaces `ParticlePrevision`. Same struct, same fields, same methods — the type parameter is inferred from the samples vector. Julia's existing `isa(x, ParticlePrevision)` and `::ParticlePrevision` dispatch match parametric instances.
+
+**Enumeration (Phase A′):** `EnumerationPrevision` is retired. `EnumerationMeasure{T}` takes its place. The numerical behaviour is identical: `expect(m::EnumerationMeasure, f)` computes the same weighted sum as `expect(p::EnumerationPrevision, f)`, with weights from `m.prevision.log_weights` and domain elements from `m.carrier`. The only API change is the constructor shape and the type name in dispatch; all consumers are in `src/` or `apps/julia/` and are migrated in this move.
 
 ## 4. Worked end-to-end example
 
@@ -127,21 +162,99 @@ DirichletMeasure's extra `categories::Finite` is carrier-binding context (the Fi
 
 These are all within `src/` and operate on components that are already Previsions (post-condition output) or already in the existing `components` field. The type tightening should be transparent at these sites — they just need the vector literal typed as `Prevision[]` rather than untyped.
 
-### 5.2 ParticlePrevision and EnumerationPrevision field types
+### 5.2 ParticlePrevision and EnumerationPrevision
 
-**The question.** Should `ParticlePrevision.samples::Vector` and `EnumerationPrevision.enumerated::Vector` tighten in Move 8b?
+The initial version of this design doc deferred these two types as "residual debt." That framing repeats the Move 5 pattern — designed-but-not-landed — that this entire audit arc exists to retire. The three first-principles below yield direct answers.
 
-**Empirical finding: these fields are genuinely heterogeneous and should NOT tighten to `Vector{Prevision}`.**
+**First-principles:**
 
-`ParticlePrevision.samples` holds draws from arbitrary Measures. The production construction site (`_condition_particle` at `src/ontology.jl:1122-1127`) calls `draw(m)` which returns `Float64` for Beta/Gaussian, `Vector{Float64}` for Dirichlet, tuples for NormalGamma, `Any[...]` for Product. The samples vector is fundamentally polymorphic — its element type depends on the Measure's domain.
+1. **Prevision = algebraic content enabling `expect`.** A Prevision holds the parameters and weights that `expect` integrates over. It does not hold the objects being integrated over — those are domain elements or carrier-space objects.
+2. **Measure = (Prevision, carrier-space).** Observational carrier binding happens at the Measure layer. When a type needs to store domain elements alongside a simplex, it is a Measure, not a Prevision.
+3. **Parametric typing for uniform-within-instance, varying-across-instance fields.** When a field's element type is `Float64` at one construction site and `Vector{Float64}` at another, but every instance holds a uniform-type vector, the correct answer is a type parameter `{T}`, not `Vector{Any}`.
 
-`EnumerationPrevision.enumerated` holds enumerated programs. The production construction site (`enumerate_programs_as_prevision` at `src/program_space/enumeration.jl:180`) explicitly converts `Vector{Program}` to `Vector{Any}`. Test sites hold `Symbol`s.
+#### 5.2.1 ParticlePrevision → ParticlePrevision{T}
 
-**Neither field holds Previsions.** They hold domain objects (samples from a space, programs from a grammar). `Vector{Prevision}` would be wrong; `Vector{T}` parameterised by a type parameter would be correct but is a different design conversation (parametric structs change dispatch ergonomics throughout the codebase).
+**Current state.** `ParticlePrevision` (prevision.jl:465) holds `samples::Vector` (bare) and `log_weights::Vector{Float64}`. The samples are draws from the underlying Measure's domain: `Float64` for Beta/Gaussian, `Vector{Float64}` for Dirichlet, tuples for NormalGamma, nested vectors for Product. Each instance's samples are uniform in type; the type varies across instances.
 
-**Prior: exclude from Move 8b scope.** These fields have a genuinely different character from `MixturePrevision.components` and `ProductPrevision.factors`. The Mixture/Product fields hold Previsions (or Measures-wrapping-Previsions) and should be typed as such. The Particle/Enumeration fields hold domain objects and their typing is a separate question about parametric struct design, not about the Prevision-primary architecture Move 8b is completing. Lumping them in would expand Move 8b's scope from "land Move 5's committed tightening" to "redesign Prevision struct parametericity" — a different kind of work.
+**Analysis.** The samples are algebraic content — they are the support points of an empirical distribution, the parameters `expect` needs to compute. `expect(p::ParticlePrevision, f)` (ontology.jl:625) evaluates `f(p.samples[i])` weighted by the simplex. The samples do not bind an external carrier space — they *are* the distribution's representation. This is parallel to `QuadraturePrevision.grid::Vector{Float64}` (already typed), which is a special case of `T = Float64`.
 
-The bare `::Vector` on these fields should be noted as known residual debt for a future move, not absorbed into Move 8b.
+**Decision: parametric `ParticlePrevision{T}`.** The struct becomes:
+
+```julia
+struct ParticlePrevision{T} <: Prevision
+    samples::Vector{T}
+    log_weights::Vector{Float64}
+    seed::Int
+end
+```
+
+**Dispatch consequence.** All three methods on `ParticlePrevision` work generically over any `T`:
+
+- `expect(p::ParticlePrevision, f::Function)` (ontology.jl:625) — `f(p.samples[i])` does not depend on `T`
+- `expect(p::ParticlePrevision, tf::TestFunction)` (ontology.jl:672) — delegates to the above
+- `weights(p::ParticlePrevision)` (stdlib.jl:48) — simplex-only, does not touch `samples`
+
+Unparameterised `ParticlePrevision` in dispatch signatures (`p::ParticlePrevision`) matches `ParticlePrevision{T}` for any `T` in Julia — no method signatures need to change. `isa(x, ParticlePrevision)` checks work against the unparameterised generic. The conversion is entirely mechanical.
+
+**Construction site.** `_condition_particle` (ontology.jl:1122–1127) calls `draw(m)` which returns `T`-typed values. The comprehension `[draw(m) for _ in 1:n_particles]` already produces `Vector{T}` by Julia's type inference. The only change is the struct accepting `Vector{T}` instead of `Vector{Any}`.
+
+#### 5.2.2 EnumerationPrevision → EnumerationMeasure{T}
+
+**Current state.** `EnumerationPrevision` (prevision.jl:524) holds `enumerated::Vector` (domain objects — programs, symbols) and `log_weights::Vector{Float64}` (simplex weights). The single production construction site (`enumerate_programs_as_prevision` at program_space/enumeration.jl:180) explicitly converts to `Vector{Any}`: `convert(Vector{Any}, programs)`.
+
+**Analysis.** The `enumerated` field holds carrier-space objects, not algebraic content. `expect(p::EnumerationPrevision, f)` (ontology.jl:641) evaluates `f(p.enumerated[i])` — it applies a function to domain elements, not to distribution parameters. The simplex (`log_weights`) is the algebraic content; the enumerated objects are the carrier binding. This type conflates Prevision and Measure content in one struct, violating the Prevision/Measure split.
+
+A Prevision that holds programs is named for what it isn't — the programs are the carrier, and the Prevision is just a `CategoricalPrevision` (simplex weights over a finite support). The existing `CategoricalPrevision` already holds `log_weights::Vector{Float64}` with a `weights()` method (stdlib.jl:34).
+
+**Decision: retire `EnumerationPrevision`, introduce `EnumerationMeasure{T}`.** The replacement is:
+
+```julia
+struct EnumerationMeasure{T} <: Measure
+    prevision::CategoricalPrevision
+    carrier::Vector{T}
+    space::Space
+end
+```
+
+The `CategoricalPrevision` holds the simplex (algebraic content). The `carrier::Vector{T}` holds the enumerated domain objects. The `space::Space` is the carrier space (consistent with all other Measure types). This is the standard `(Prevision, carrier-space)` shape.
+
+**Method migration.** EnumerationPrevision has exactly three methods:
+
+| Current dispatch | Migrates to | Rationale |
+|-----------------|-------------|-----------|
+| `expect(::EnumerationPrevision, f::Function)` (ontology.jl:641) | `expect(m::EnumerationMeasure, f::Function)` — accesses `m.carrier[i]`, weights from `m.prevision` | `f` applied to carrier objects; the Measure holds both |
+| `expect(::EnumerationPrevision, tf::TestFunction)` (ontology.jl:674) | `expect(m::EnumerationMeasure, tf::TestFunction)` — delegates | Same pattern |
+| `weights(::EnumerationPrevision)` (stdlib.jl:62) | Deleted; `weights(m.prevision)` via existing `weights(::CategoricalPrevision)` | Simplex lives in CategoricalPrevision |
+
+**Construction site migration.** `enumerate_programs_as_prevision` (enumeration.jl:171) becomes `enumerate_programs_as_measure`:
+
+```julia
+function enumerate_programs_as_measure(g::Grammar, max_depth::Int; ...)
+    programs = enumerate_programs(g, max_depth; ...)
+    log_weights = Float64[-g.complexity * log(2) - p.complexity * log(2) for p in programs]
+    program_space = Finite(Symbol[p.name for p in programs])  # or appropriate Space
+    EnumerationMeasure{Program}(CategoricalPrevision(log_weights), programs, program_space)
+end
+```
+
+**CategoricalMeasure exception.** `CategoricalMeasure` stays as a Measure — it binds `Finite{T}` carrier space to `CategoricalPrevision`, which is the correct Measure/Prevision split. `EnumerationMeasure{T}` follows the same pattern: carrier-binding Measure wrapping an algebraic Prevision.
+
+#### 5.2.3 Consumer migration
+
+Consumers that dispatch on `EnumerationPrevision` (outside `src/`) must be updated. The migration is mechanical: replace `::EnumerationPrevision` with `::EnumerationMeasure`, access weights via `m.prevision`, access domain elements via `m.carrier`.
+
+Consumers that dispatch on `ParticlePrevision` need no changes — unparameterised dispatch matches the parametric type.
+
+Consumers that construct `EnumerationPrevision(items, weights)` → `EnumerationMeasure{T}(CategoricalPrevision(weights), items, space)`. The constructor gains a `space` argument (consistent with all other Measure types).
+
+#### 5.2.4 Lint slug extension
+
+The `untyped-mixture-construction` slug (§5.5) covers `MixturePrevision` and `ProductPrevision` construction. Extend its scope to also catch:
+
+- `convert(Vector{Any}, ...)` feeding `EnumerationMeasure` construction (catches the retired pattern)
+- Bare `Vector` container literals feeding `ParticlePrevision` construction (less urgent — Julia's type inference usually produces `Vector{T}` from comprehensions, but explicit `Any[]` should be flagged)
+
+The slug's taint-analysis pattern generalises: seed = untyped container literal; sink = Prevision/Measure constructor. No new slug needed; the existing slug's sink list expands.
 
 ### 5.3 Substrate `Any[]` sites
 
@@ -189,7 +302,19 @@ Several `src/ontology.jl` code paths construct new `MixturePrevision` objects fr
 
 Mitigation: each internal construction site will be inspected during Phase A implementation. The likely outcome is that all internal paths already produce Prevision objects (since `condition` on a Prevision returns a Prevision), but verification is required.
 
-**Risk 3: The lint slug surfaces unexpected violations.**
+**Risk 3: EnumerationPrevision retirement breaks downstream callers.**
+
+Any code that dispatches on `::EnumerationPrevision` or constructs it directly will break. The blast radius is narrow: one production construction site (`enumerate_programs_as_prevision` in `src/program_space/enumeration.jl`), three `expect`/`weights` dispatches in `src/`, and test files. No `apps/` code dispatches on `EnumerationPrevision` directly.
+
+Mitigation: grep for `EnumerationPrevision` before and after the refactor. Every hit must be migrated or deleted.
+
+**Risk 4: `ParticlePrevision{T}` breaks serialisation or persistence.**
+
+If any persistence code (state_persistence.jl, production_persistence.jl) serialises `ParticlePrevision` objects, the parametric type changes the serialised representation.
+
+Mitigation: grep for `ParticlePrevision` in persistence code. If found, update the deserialisation to handle both the old unparameterised and new parametric form during migration.
+
+**Risk 5: The lint slug surfaces unexpected violations.**
 
 When `untyped-mixture-construction` runs against the post-Phase-B codebase, it may find construction sites beyond the ten the audit named. These are findings worth investigating before merging.
 
@@ -210,6 +335,14 @@ Mitigation: run the slug locally during Phase C development and diagnose any une
 9. `python tools/credence-lint/credence_lint.py test` — corpus 14/10/5
 10. `PYTHON_JULIACALL_HANDLE_SIGNALS=yes uv run pytest apps/python/` — Python tests unaffected
 
+### Phase A′ (Particle/Enumeration substrate)
+
+1. All Phase A tests still pass
+2. `julia test/test_program_space.jl` — program enumeration returns `EnumerationMeasure` not `EnumerationPrevision`
+3. `julia test/test_core.jl` — particle conditioning produces `ParticlePrevision{T}` (inferred)
+4. `grep -r 'EnumerationPrevision' src/ apps/ test/` — zero hits (type fully retired)
+5. `python tools/credence-lint/credence_lint.py check apps/` — 0 violations
+
 ### Phase B (apps)
 
 1. All Phase A tests still pass
@@ -226,7 +359,7 @@ Mitigation: run the slug locally during Phase C development and diagnose any une
 
 1. **Is every numerical query in this move routed through `expect`?** N/A — Move 8b changes type annotations and container types, not numerical computation.
 
-2. **Does this move hold a Prevision inside a Measure, or a Measure inside a Prevision?** After Move 8b, `MixturePrevision.components` holds `Vector{Prevision}`, not `Vector{Measure}`. The "Measure inside a Prevision" anti-pattern that the current bare `Vector` allows (via `MixtureMeasure` passing `Vector{Measure}`) is eliminated. This is the point.
+2. **Does this move hold a Prevision inside a Measure, or a Measure inside a Prevision?** After Move 8b, `MixturePrevision.components` holds `Vector{Prevision}`, not `Vector{Measure}`. The "Measure inside a Prevision" anti-pattern that the current bare `Vector` allows (via `MixtureMeasure` passing `Vector{Measure}`) is eliminated. The "carrier inside a Prevision" anti-pattern (`EnumerationPrevision.enumerated` holding domain objects) is eliminated by retiring `EnumerationPrevision` and replacing it with `EnumerationMeasure{T}`, which correctly separates the simplex (`CategoricalPrevision`) from the carrier (`Vector{T}`). This is the point.
 
 3. **Does this move introduce an opaque closure where a declared structure would fit?** No. The lint slug uses the existing pass-two taint analysis framework.
 
@@ -240,17 +373,25 @@ Mitigation: run the slug locally during Phase C development and diagnose any une
 2. **Tighten substrate `Any[]` sites.** `src/program_space/agent_state.jl` lines 118, 140 → `TaggedBetaPrevision[]`. `src/host_helpers.jl` line 47 → `BetaPrevision[]`.
 3. **Full test suite verification.**
 
+### Phase A′ (PR 1 continued, or separate PR: Particle/Enumeration)
+
+4. **Make `ParticlePrevision` parametric.** `struct ParticlePrevision{T} <: Prevision` with `samples::Vector{T}`. Inner constructor parameterised. No method signature changes needed (unparameterised dispatch matches).
+5. **Retire `EnumerationPrevision`.** Delete the struct from `src/prevision.jl`. Delete `weights(::EnumerationPrevision)` from `src/stdlib.jl`. Delete `expect(::EnumerationPrevision, ...)` methods from `src/ontology.jl`.
+6. **Introduce `EnumerationMeasure{T}`.** New struct in `src/ontology.jl`: `(CategoricalPrevision, carrier::Vector{T}, space::Space)`. Add `expect(::EnumerationMeasure, f::Function)` and `expect(::EnumerationMeasure, tf::TestFunction)` methods.
+7. **Migrate `enumerate_programs_as_prevision` → `enumerate_programs_as_measure`.** Update `src/program_space/enumeration.jl` and all callers.
+8. **Full test suite verification.**
+
 ### Phase B (PR 2: apps + examples)
 
-1. **Tighten app/skin `Any[]` sites.** `email_agent/host.jl`, `grid_world/host.jl`, `rss/host.jl`, `skin/server.jl` — `Any[]` → `TaggedBetaPrevision[]`.
-2. **Migrate email_agent secondary files.** `live.jl`, `eval_retrospective.jl` — Measure pathway → Prevision pathway.
-3. **Migrate `examples/host_credence_agent.jl` vocabulary.** MixtureMeasure → MixturePrevision in imports, type checks, comments.
-4. **Full test suite + lint verification.**
+9. **Tighten app/skin `Any[]` sites.** `email_agent/host.jl`, `grid_world/host.jl`, `rss/host.jl`, `skin/server.jl` — `Any[]` → `TaggedBetaPrevision[]`.
+10. **Migrate email_agent secondary files.** `live.jl`, `eval_retrospective.jl` — Measure pathway → Prevision pathway.
+11. **Migrate `examples/host_credence_agent.jl` vocabulary.** MixtureMeasure → MixturePrevision in imports, type checks, comments.
+12. **Full test suite + lint verification.**
 
 ### Phase C (PR 3 or folded into PR 2: lint slug)
 
-1. **Add `untyped-mixture-construction` slug.** Pattern, corpus files, scope exclusions.
-2. **Corpus self-test + `check apps/` verification.**
+13. **Add `untyped-mixture-construction` slug.** Pattern, corpus files, scope exclusions.
+14. **Corpus self-test + `check apps/` verification.**
 
 ## Closure ritual
 
@@ -264,7 +405,6 @@ After Move 8b lands (all three phases merged):
 ## Out of scope
 
 - Full Measure-type retirement (deleting `MixtureMeasure`, `ProductMeasure`, etc. from `src/ontology.jl`). Move 5 designed this; Move 8b does not attempt it. The Measure types remain as declared views over Prevision, which is architecturally sound.
-- Parametric typing of `ParticlePrevision.samples` and `EnumerationPrevision.enumerated` (see §5.2).
 - Schema v4, Connection abstraction, Maildir, Telegram, server loop (shelved Move 9 scope).
 - Any Posture 5 move implementation (cache audit, benchmark methodology, etc.).
 - pomdp_agent migration (46 Measure-vocabulary sites; status determination is sequenced after Move 8b).
