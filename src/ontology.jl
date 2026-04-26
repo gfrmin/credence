@@ -1289,6 +1289,44 @@ function draw(m::MixtureMeasure)
     draw(m.components[end])
 end
 
+function draw(p::BetaPrevision)
+    x = _draw_gamma(p.alpha)
+    y = _draw_gamma(p.beta)
+    x / (x + y)
+end
+
+draw(p::TaggedBetaPrevision) = draw(p.beta)
+
+draw(p::GaussianPrevision) = p.mu + p.sigma * randn()
+
+draw(p::GammaPrevision) = _draw_gamma(p.alpha) / p.beta
+
+function draw(p::DirichletPrevision)
+    g = [_draw_gamma(a) for a in p.alpha]
+    g ./= sum(g)
+    g
+end
+
+function draw(p::NormalGammaPrevision)
+    g = _draw_gamma(p.α)
+    σ² = p.β / g
+    μ_s = p.μ + sqrt(σ² / p.κ) * randn()
+    (μ_s, σ²)
+end
+
+draw(p::ProductPrevision) = Any[draw(f) for f in p.factors]
+
+function draw(p::MixturePrevision)
+    w = weights(p)
+    r = rand()
+    cumw = 0.0
+    for i in eachindex(w)
+        cumw += w[i]
+        r < cumw && return draw(p.components[i])
+    end
+    draw(p.components[end])
+end
+
 # ── Mixture maintenance ──
 
 function prune(m::MixtureMeasure; threshold::Float64=-20.0)
@@ -1298,11 +1336,25 @@ function prune(m::MixtureMeasure; threshold::Float64=-20.0)
     MixtureMeasure(m.space, m.components[keep], m.log_weights[keep])
 end
 
+function prune(p::MixturePrevision; threshold::Float64=-20.0)
+    max_lw = maximum(p.log_weights)
+    keep = [i for i in eachindex(p.log_weights) if p.log_weights[i] - max_lw > threshold]
+    length(keep) == length(p.components) && return p
+    MixturePrevision(p.components[keep], p.log_weights[keep])
+end
+
 function truncate(m::MixtureMeasure; max_components::Int=10)
     length(m.components) <= max_components && return m
     perm = sortperm(m.log_weights, rev=true)
     keep = perm[1:min(max_components, length(perm))]
     MixtureMeasure(m.space, m.components[keep], m.log_weights[keep])
+end
+
+function truncate(p::MixturePrevision; max_components::Int=10)
+    length(p.components) <= max_components && return p
+    perm = sortperm(p.log_weights, rev=true)
+    keep = perm[1:min(max_components, length(perm))]
+    MixturePrevision(p.components[keep], p.log_weights[keep])
 end
 
 # ================================================================

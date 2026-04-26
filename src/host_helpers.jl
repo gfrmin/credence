@@ -11,6 +11,7 @@ axiom-constrained functions.
 
 using ..Ontology
 import ..Ontology: truncate
+using ..Previsions
 
 """Initial per-tool reliability state: single ProductMeasure of K Beta(1,1) priors."""
 function initial_rel_state(n_categories::Int)
@@ -33,6 +34,19 @@ function marginalize_betas(rel_state::MixtureMeasure, cat_w::Vector{Float64})
     prune(MixtureMeasure(Interval(0.0, 1.0), components, log_wts))
 end
 
+function marginalize_betas(rel_state::MixturePrevision, cat_w::Vector{Float64})
+    components = Any[]
+    log_wts = Float64[]
+    for (i, comp) in enumerate(rel_state.components)
+        prod = comp::ProductPrevision
+        for (c, w_c) in enumerate(cat_w)
+            push!(components, prod.factors[c])
+            push!(log_wts, rel_state.log_weights[i] + log(max(w_c, 1e-300)))
+        end
+    end
+    prune(MixturePrevision(components, log_wts))
+end
+
 """Initial per-tool coverage state: ProductMeasure of K Beta priors centered at declared coverage."""
 function initial_cov_state(n_categories::Int, prior_coverage::Vector{Float64}; strength::Float64=10.0)
     factors = Measure[BetaMeasure(max(p * strength, 0.01), max((1-p) * strength, 0.01))
@@ -52,6 +66,18 @@ function extract_reliability_means(rel_state::MixtureMeasure)
     means = Float64[]
     for c in 1:n_factors
         m = sum(w[i] * mean(rel_state.components[i]::ProductMeasure |> x -> x.factors[c]::BetaMeasure)
+                for i in eachindex(w))
+        push!(means, m)
+    end
+    means
+end
+
+function extract_reliability_means(rel_state::MixturePrevision)
+    w = weights(rel_state)
+    n_factors = length(rel_state.components[1]::ProductPrevision |> x -> x.factors)
+    means = Float64[]
+    for c in 1:n_factors
+        m = sum(w[i] * mean(rel_state.components[i]::ProductPrevision |> x -> x.factors[c]::BetaPrevision)
                 for i in eachindex(w))
         push!(means, m)
     end
@@ -114,4 +140,9 @@ function update_beta_state(rel_state::MixtureMeasure,
     new_rel_state = truncate(prune(new_rel_state); max_components=20)
 
     (new_rel_state, new_cat_belief)
+end
+
+function update_beta_state(rel_state::MixturePrevision,
+                            cat_belief::CategoricalMeasure, obs)
+    update_beta_state(wrap_in_measure(rel_state), cat_belief, obs)
 end

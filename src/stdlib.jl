@@ -26,6 +26,9 @@ function variance(p::Prevision)
     expect(p, CenteredSquare(μ))
 end
 
+variance(p::BetaPrevision) = p.alpha * p.beta / ((p.alpha + p.beta)^2 * (p.alpha + p.beta + 1))
+variance(p::GaussianPrevision) = p.sigma^2
+
 probability(p::Prevision, e::Event) = expect(p, Indicator(e))
 
 function weights(p::CategoricalPrevision)
