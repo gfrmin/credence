@@ -131,7 +131,7 @@ end
 let
     # All log_weights at -Inf → MixturePrevision constructor errors.
     raised = try
-        MixturePrevision(Measure[wrap_in_measure(BetaPrevision(1.0, 1.0))], [-Inf])
+        MixturePrevision(Prevision[BetaPrevision(1.0, 1.0)], [-Inf])
         false
     catch e
         occursin("zero total mass", sprint(showerror, e))
@@ -151,9 +151,9 @@ let
           length(mp.components) == 3,
           "got $(length(mp.components))")
 
-    # Components are degenerate CategoricalMeasures on each category.
+    # Components are degenerate CategoricalPrevisions on each category.
     c1, c2, c3 = mp.components
-    check("component 1 is CategoricalMeasure", c1 isa CategoricalMeasure, "got $(typeof(c1))")
+    check("component 1 is CategoricalPrevision", c1 isa CategoricalPrevision, "got $(typeof(c1))")
     w1 = weights(c1)
     check("component 1 concentrated on cat 1 (== [1.0, 0.0, 0.0])",
           w1[1] == 1.0 && w1[2] == 0.0 && w1[3] == 0.0,

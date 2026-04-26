@@ -35,7 +35,7 @@ function marginalize_betas(rel_state::MixtureMeasure, cat_w::Vector{Float64})
 end
 
 function marginalize_betas(rel_state::MixturePrevision, cat_w::Vector{Float64})
-    components = Any[]
+    components = Prevision[]
     log_wts = Float64[]
     for (i, comp) in enumerate(rel_state.components)
         prod = comp::ProductPrevision

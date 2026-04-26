@@ -746,7 +746,7 @@ function run_agent(;
     end
 
     # Enumerate all (grammar, predicate, action) triples
-    components = Any[]
+    components = TaggedBetaPrevision[]
     log_prior_weights = Float64[]
     metadata = Tuple{Int, Int}[]
     compiled_kernels = CompiledKernel[]

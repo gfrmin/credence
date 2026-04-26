@@ -38,8 +38,9 @@ let
         @assert comp isa ProductMeasure
         # Factor 1: point mass categorical at category ci-1
         cat_factor = comp.factors[1]::CategoricalMeasure
-        @assert length(cat_factor.space.values) == 1
-        @assert cat_factor.space.values[1] == Float64(ci - 1)
+        cat_w = weights(cat_factor)
+        @assert cat_w[ci] ≈ 1.0
+        @assert all(cat_w[j] ≈ 0.0 for j in eachindex(cat_w) if j != ci)
 
         for j in 2:4  # Beta factors
             beta = comp.factors[j]::BetaMeasure
@@ -187,7 +188,8 @@ let
     for comp in posterior.components
         @assert comp isa ProductMeasure
         cat_f = comp.factors[1]::CategoricalMeasure
-        @assert length(cat_f.space.values) == 1
+        cat_w = weights(cat_f)
+        @assert count(w -> w ≈ 1.0, cat_w) == 1
     end
 
     println("PASSED: MixtureMeasure of ProductMeasures conditions via FactorSelector")

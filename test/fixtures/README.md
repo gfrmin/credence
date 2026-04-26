@@ -58,7 +58,8 @@ Assertion tolerances: `==` on α/β (integer-accumulated).
 
 **Regeneration policy during Moves 3–8:** permitted only when accompanied by (a) a design-doc note in the move that triggered regeneration identifying the specific refactor that invalidated the prior fixture, and (b) a one-line entry in this file recording the pre-regeneration and post-regeneration SHAs. See `docs/posture-4/move-3-design.md` §5.1.
 
-**Regeneration log:** none yet.
+**Regeneration log:**
+- Pre: `af1fef5`. Post: Move 8b Phase A branch tip (field-type tightening `Vector` → `Vector{Prevision}` in `MixturePrevision.components` and `ProductPrevision.factors`). Same construction script, same Bayesian content; only internal Julia Serialization layout differs.
 
 **Invalidation conditions:** intermediate-move struct-layout changes (Move 5 Measure deletion, Move 7 skin rewrite) may invalidate and require regeneration per the policy above. Post-Move-9, the "never regenerate" rule kicks in.
 
@@ -114,7 +115,8 @@ Assertion tolerances: `==` on α/β; `atol=1e-14` on normalised weights; `==` on
 
 **Regeneration policy:** as for `agent_state_v3.jls` — permitted during Moves 3–8 only with design-doc note + SHA-log entry here.
 
-**Regeneration log:** none yet.
+**Regeneration log:**
+- Pre: `af1fef5`. Post: Move 8b Phase A branch tip (same trigger as `agent_state_v3.jls` — `Vector{Prevision}` field-type tightening).
 
 **Invalidation conditions:** as above.
 

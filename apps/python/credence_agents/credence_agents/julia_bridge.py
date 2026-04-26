@@ -180,9 +180,9 @@ class CredenceBridge:
         jl = self.jl
         beta_strs = [f"BetaPrevision({float(alpha)}, {float(beta)})"] * n_categories
         code = (
-            "let factors = Any[" + ", ".join(beta_strs) + "]; "
+            "let factors = Prevision[" + ", ".join(beta_strs) + "]; "
             "prod = ProductPrevision(factors); "
-            "MixturePrevision(Any[prod], Float64[0.0]) end"
+            "MixturePrevision(Prevision[prod], Float64[0.0]) end"
         )
         return jl.seval(code)  # noqa: S307 — trusted numeric literals
 
@@ -200,9 +200,9 @@ class CredenceBridge:
             beta = max(0.01, n_pseudo * (1.0 - r))
             beta_strs.append(f"BetaPrevision({alpha}, {beta})")
         code = (
-            "let factors = Any[" + ", ".join(beta_strs) + "]; "
+            "let factors = Prevision[" + ", ".join(beta_strs) + "]; "
             "prod = ProductPrevision(factors); "
-            "MixturePrevision(Any[prod], Float64[0.0]) end"
+            "MixturePrevision(Prevision[prod], Float64[0.0]) end"
         )
         return jl.seval(code)  # noqa: S307 — trusted numeric literals
 
@@ -256,11 +256,11 @@ class CredenceBridge:
         comp_strs = []
         for comp in components:
             beta_strs = [f"BetaPrevision({a}, {b})" for a, b in comp]
-            comp_strs.append("ProductPrevision(Any[" + ", ".join(beta_strs) + "])")
+            comp_strs.append("ProductPrevision(Prevision[" + ", ".join(beta_strs) + "])")
 
         lw_str = "Float64[" + ", ".join(str(w) for w in log_weights) + "]"
         code = (
-            "let comps = Any[" + ", ".join(comp_strs) + "]; "
+            "let comps = Prevision[" + ", ".join(comp_strs) + "]; "
             f"MixturePrevision(comps, {lw_str}) end"
         )
         return jl.seval(code)  # noqa: S307

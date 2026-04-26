@@ -115,7 +115,7 @@ function add_programs_to_state!(
 
     n_added = 0
     base_idx = length(state.compiled_kernels)
-    new_components = Any[]
+    new_components = TaggedBetaPrevision[]
     new_lw = Float64[]
     new_meta = Tuple{Int, Int}[]
     new_ck = CompiledKernel[]
@@ -137,7 +137,7 @@ function add_programs_to_state!(
     end
 
     if !isempty(new_components)
-        all_comps = Any[state.belief.components..., new_components...]
+        all_comps = Prevision[state.belief.components..., new_components...]
         all_lw = Float64[state.belief.log_weights..., new_lw...]
         state.belief = Ontology.MixturePrevision(all_comps, all_lw)
         append!(state.metadata, new_meta)

@@ -353,47 +353,34 @@ struct NormalGammaPrevision <: Prevision
 end
 
 """
-    ProductPrevision(factors::Vector) <: Prevision
+    ProductPrevision(factors::Vector{<:Prevision}) <: Prevision
 
-Prevision for an independent joint over a product space. Holds the factors
-as a Vector of Measure (not Vector of Prevision) — consumers access
-`m.factors[i]` expecting a Measure; the shield forwards the vector by
-reference, preserving shared-reference semantics.
-
-Holding Measures-in-a-Prevision is the same pragmatic choice made for
-TaggedBetaPrevision — allocates nothing on access; a future cleanup
-can replace with Previsions + view reconstruction if perf justifies.
+Prevision for an independent joint over a product space. Holds factors
+as `Vector{Prevision}`. The `ProductMeasure` shield reconstructs
+Measures via `wrap_in_measure` on access.
 """
 struct ProductPrevision <: Prevision
-    factors::Vector
+    factors::Vector{Prevision}
 end
 
 """
-    MixturePrevision(components::Vector, log_weights::Vector{Float64}) <: Prevision
+    MixturePrevision(components::Vector{<:Prevision}, log_weights::Vector{Float64}) <: Prevision
 
 Prevision for a coherent convex combination of component previsions.
-Holds components (as Vector of Measure — same pragmatic impurity as
-ProductPrevision) and log-weights (normalised at construction).
+Holds components as `Vector{Prevision}` and log-weights (normalised
+at construction).
 
-**Shared-reference contract (load-bearing).** Both `components` and
-`log_weights` are returned by reference through the `MixtureMeasure`
-shield. Consumer code that does
-`push!(state.belief.components, new_comp)` at
-`apps/skin/server.jl:549,552` (and `push!(state.belief.log_weights,
-new_lw)`) depends on this; breaking the contract by defensively copying
-silently corrupts state (push! succeeds on the copy, original is
-unchanged, no test-site error). The contract test in
-`test/test_prevision_unit.jl` (`test_shared_reference_contract`)
-asserts the invariant directly. See docs/posture-3/move-3-design.md §3
-and R4 for the full rationale; future Moves 5/6 inherit this pattern
-for MixturePrevision's own component updates and ParticlePrevision's
-sample arrays.
+**Mutation API.** Use `push_component!(p, c, lw)` and
+`replace_component!(p, i, c)` for in-place mutation. The
+`MixtureMeasure` shield returns `FrozenVectorView`-wrapped
+reconstructed Measures; direct push! through the shield is rejected.
+See `test/test_prevision_unit.jl` (`test_shared_reference_contract`).
 """
 struct MixturePrevision <: Prevision
-    components::Vector
+    components::Vector{Prevision}
     log_weights::Vector{Float64}
 
-    function MixturePrevision(components::Vector, log_weights::Vector{Float64})
+    function MixturePrevision(components::Vector{<:Prevision}, log_weights::Vector{Float64})
         length(components) == length(log_weights) || error("components and weights must match")
         length(components) > 0 || error("mixture must have at least one component")
         if all(lw -> lw == -Inf, log_weights)
@@ -401,7 +388,7 @@ struct MixturePrevision <: Prevision
         end
         max_lw = maximum(log_weights)
         log_total = max_lw + log(sum(exp.(log_weights .- max_lw)))
-        new(components, log_weights .- log_total)
+        new(Vector{Prevision}(components), log_weights .- log_total)
     end
 end
 

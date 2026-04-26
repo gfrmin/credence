@@ -55,7 +55,7 @@ function init_rss_agent(;
 
     verbose && println("Generated $(length(grammar_pool)) seed grammars, $(length(reg.feature_set)) features")
 
-    components = Any[]
+    components = TaggedBetaPrevision[]
     log_prior_weights = Float64[]
     metadata = Tuple{Int, Int}[]
     compiled_kernels = CompiledKernel[]
