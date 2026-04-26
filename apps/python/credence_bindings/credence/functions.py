@@ -5,23 +5,23 @@ from __future__ import annotations
 
 from typing import Callable
 
-from credence.measure import Measure
+from credence.prevision import Prevision
 from credence.kernel import Kernel
 
 
-def condition(prior: Measure, kernel: Kernel, observation) -> Measure:
+def condition(prior: Prevision, kernel: Kernel, observation) -> Prevision:
     """Bayesian inversion: prior x kernel x observation -> posterior."""
     return prior.condition(kernel, observation)
 
 
-def expect(measure: Measure, f: Callable) -> float:
-    """Integration against a measure: E_m[f]."""
-    return measure.expect(f)
+def expect(prevision: Prevision, f: Callable) -> float:
+    """Integration against a prevision: E_p[f]."""
+    return prevision.expect(f)
 
 
-def push(measure: Measure, kernel: Kernel) -> Measure:
-    """Pushforward: Measure(H) x Kernel(H,T) -> Measure(T)."""
-    return measure.push(kernel)
+def push(prevision: Prevision, kernel: Kernel) -> Prevision:
+    """Pushforward: Prevision(H) x Kernel(H,T) -> Prevision(T)."""
+    return prevision.push(kernel)
 
 
 def density(kernel: Kernel, h, o) -> float:
@@ -29,6 +29,6 @@ def density(kernel: Kernel, h, o) -> float:
     return kernel.density(h, o)
 
 
-def draw(measure: Measure):
-    """Draw a sample from a measure. The ONLY source of randomness."""
-    return measure.draw()
+def draw(prevision: Prevision):
+    """Draw a sample from a prevision. The ONLY source of randomness."""
+    return prevision.draw()

@@ -81,7 +81,7 @@ class _Bridge:
         return vec
 
     def make_measure_vector(self, items):
-        """Build a Julia Measure[] vector."""
+        """Build a Julia Measure[] vector (legacy — prefer make_jl_vector("Any", ...))."""
         return self.make_jl_vector("Measure", items)
 
 
