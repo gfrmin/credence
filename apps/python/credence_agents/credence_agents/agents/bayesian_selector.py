@@ -42,7 +42,7 @@ class BayesianSelector:
         self._n_cats = len(categories)
         self._categories = categories
 
-        # Julia state: per-option MixtureMeasures + category belief
+        # Julia state: per-option MixturePrevisions + category belief
         self.rel_states = [bridge.initial_rel_state(self._n_cats) for _ in option_configs]
         self.cov_states = [
             bridge.initial_cov_state(self._n_cats, oc.coverage_by_category)

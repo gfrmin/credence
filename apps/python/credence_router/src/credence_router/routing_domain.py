@@ -1,7 +1,7 @@
 # Role: body
 """RoutingDomain: provider routing via the skin server.
 
-State is a nested ProductMeasure (providers × categories × (theta, k)).
+State is a nested ProductPrevision (providers × categories × (theta, k)).
 Decide is `skin.optimise` with a `functional_per_action` spec of
 LinearCombination of NestedProjections that descends to the θ leaf.
 Observe is factor → condition → replace_factor on the chosen leaf.
@@ -88,7 +88,7 @@ class RouteDecision:
 
 
 def _make_router_state(skin: SkinClient, n_providers: int, n_categories: int) -> str:
-    """Build a nested ProductMeasure state.
+    """Build a nested ProductPrevision state.
 
     Shape: providers × categories × (theta, concentration).
     Prior per leaf: Beta(1,1) ⊗ Gamma(2, 0.5). Matches the prior in
@@ -271,7 +271,7 @@ class RoutingDomain:
         )
 
     def _compute_reliability(self) -> dict[str, dict[str, float]]:
-        """Per-provider per-category E[theta] from the current ProductMeasure."""
+        """Per-provider per-category E[theta] from the current ProductPrevision."""
         skin = self._brain
         theta_projection = {"type": "projection", "index": 0}
         result: dict[str, dict[str, float]] = {}

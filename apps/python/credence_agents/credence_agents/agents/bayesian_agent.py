@@ -61,7 +61,7 @@ class BayesianAgent(BayesianSelector):
         self._num_categories = self._n_cats
 
         # Per-question state (set in on_question_start)
-        self._answer_measure = None  # Julia CategoricalMeasure
+        self._answer_measure = None  # Julia CategoricalMeasure (Prevision-backed)
         self._n_answers = 0
         self._available = []  # indices into tool_configs
         self._tool_responses: dict[int, int | None] = {}
