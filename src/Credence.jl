@@ -36,7 +36,7 @@ using .Persistence
 
 export run_dsl, load_dsl, parse_sexpr, parse_all
 export Space, Finite, Interval, ProductSpace, Simplex, Euclidean, PositiveReals, support
-export Measure, CategoricalMeasure, BetaMeasure, TaggedBetaMeasure, GaussianMeasure, GammaMeasure, ExponentialMeasure, DirichletMeasure, NormalGammaMeasure, ProductMeasure, MixtureMeasure
+export Measure, CategoricalMeasure, BetaMeasure, TaggedBetaMeasure, GaussianMeasure, GammaMeasure, ExponentialMeasure, DirichletMeasure, NormalGammaMeasure, EnumerationMeasure, ProductMeasure, MixtureMeasure
 export Kernel, FactorSelector, kernel_source, kernel_target
 export LikelihoodFamily, LeafFamily, PushOnly, BetaBernoulli, Flat, FiringByTag, DispatchByComponent, DepthCapExceeded
 export NormalNormal, Categorical, NormalGammaLikelihood, Exponential
@@ -48,7 +48,7 @@ export CenteredPower, CenteredSquare
 export BetaPrevision, TaggedBetaPrevision, GaussianPrevision, GammaPrevision
 export CategoricalPrevision, DirichletPrevision, NormalGammaPrevision
 export ProductPrevision, MixturePrevision, ExchangeablePrevision, decompose
-export ParticlePrevision, QuadraturePrevision, EnumerationPrevision
+export ParticlePrevision, QuadraturePrevision
 export ConditionalPrevision
 export push_component!, replace_component!, FrozenVectorView
 export factor, replace_factor
@@ -70,7 +70,7 @@ export ProductionRule, Grammar, compute_grammar_complexity
 export Program, CompiledKernel, SubprogramFrequencyTable
 export THRESHOLDS
 export expr_complexity, expanded_complexity
-export enumerate_programs, enumerate_programs_as_prevision
+export enumerate_programs, enumerate_programs_as_measure
 export compile_kernel, compile_expr, evaluate_predicate
 export analyse_posterior_subtrees, extract_subtrees
 export propose_nonterminal, perturb_grammar

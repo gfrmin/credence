@@ -59,13 +59,6 @@ weights(p::QuadraturePrevision) = begin
     w ./ sum(w)
 end
 
-weights(p::EnumerationPrevision) = begin
-    lw = p.log_weights
-    max_lw = maximum(lw)
-    w = exp.(lw .- max_lw)
-    w ./ sum(w)
-end
-
 weights(p::BetaPrevision) = throw(WeightsDomainError(_WEIGHTS_DOMAIN_MSG))
 weights(p::TaggedBetaPrevision) = throw(WeightsDomainError(_WEIGHTS_DOMAIN_MSG))
 weights(p::GaussianPrevision) = throw(WeightsDomainError(_WEIGHTS_DOMAIN_MSG))

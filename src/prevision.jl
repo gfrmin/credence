@@ -32,7 +32,7 @@ export Prevision, TestFunction, Indicator, apply, expect
 export Identity, Projection, NestedProjection, Tabular, LinearCombination, OpaqueClosure
 export BetaPrevision, TaggedBetaPrevision, GaussianPrevision, GammaPrevision, CategoricalPrevision, DirichletPrevision, NormalGammaPrevision, ProductPrevision, MixturePrevision
 export ExchangeablePrevision, decompose
-export ParticlePrevision, QuadraturePrevision, EnumerationPrevision
+export ParticlePrevision, QuadraturePrevision
 export ConditionalPrevision
 export ConjugatePrevision, maybe_conjugate, update, _dispatch_path
 export push_component!, replace_component!
@@ -281,12 +281,11 @@ with log-weights `log_weights` normalised at construction time. The
 with `CategoricalMeasure`; the external `m.logw` surface persists until
 then for Moves 2–4 consumer compatibility).
 
-Field-name unification (Posture 4 Move 1): the five log-mass carriers
+Field-name unification (Posture 4 Move 1): the four log-mass carriers
 (`CategoricalPrevision`, `ParticlePrevision`, `QuadraturePrevision`,
-`EnumerationPrevision`, `MixturePrevision`) all store their normalised
-log-weight vector under the name `log_weights`. Prior to Move 1,
-`CategoricalPrevision.logw` was the one outlier; this rename aligns
-the surface.
+`MixturePrevision`) all store their normalised log-weight vector under
+the name `log_weights`. Prior to Move 1, `CategoricalPrevision.logw`
+was the one outlier; this rename aligns the surface.
 
 The `log_weights` field is returned by reference through the shield — see
 the shared-reference contract in docs/posture-3/move-3-design.md §3. In
@@ -489,33 +488,6 @@ struct QuadraturePrevision <: Prevision
     end
 end
 
-"""
-    EnumerationPrevision(enumerated::Vector, log_weights::Vector{Float64}) <: Prevision
-
-Move 6: typed carrier for exhaustive-enumeration posteriors (primarily
-program-space enumeration per `src/program_space/enumeration.jl`).
-`enumerated` holds the enumerated items (programs, AST shapes, etc.);
-`log_weights` the per-item log weights, normalised at construction via
-logsumexp.
-
-Enumeration is deterministic under fixed iteration order; Stratum-2
-tolerance per `precedents.md` §4 is `==`.
-"""
-struct EnumerationPrevision <: Prevision
-    enumerated::Vector
-    log_weights::Vector{Float64}
-
-    function EnumerationPrevision(enumerated::Vector, log_weights::Vector{Float64})
-        length(enumerated) == length(log_weights) || error("items and weights must match")
-        length(enumerated) > 0 || error("enumeration set must be non-empty")
-        if all(lw -> lw == -Inf, log_weights)
-            error("enumeration posterior has zero total mass")
-        end
-        max_lw = maximum(log_weights)
-        log_total = max_lw + log(sum(exp.(log_weights .- max_lw)))
-        new(enumerated, log_weights .- log_total)
-    end
-end
 
 """
     ConditionalPrevision{E}(base::Prevision, event::E, mass::Float64) <: Prevision

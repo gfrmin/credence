@@ -144,38 +144,29 @@ function enumerate_programs(g::Grammar, max_depth::Int;
 end
 
 """
-    enumerate_programs_as_prevision(grammar, max_depth; ...) → EnumerationPrevision
+    enumerate_programs_as_measure(grammar, max_depth; ...) → EnumerationMeasure{Program}
 
-Move 6: typed-Prevision wrapper around `enumerate_programs`. Returns an
-`EnumerationPrevision` whose `enumerated` field is the program vector
-and whose `log_weights` follow the complexity prior
-`-grammar.complexity * log(2) - p.complexity * log(2)` (matching the
-convention in `add_programs_to_state!`, the primary in-tree consumer
-of enumeration results).
-
-Additive — the existing `enumerate_programs` function continues to
-return `Vector{Program}` for backward compatibility with
-`add_programs_to_state!` and other callers. This wrapper is the
-live construction site for `EnumerationPrevision`; future consumers
-that want a typed carrier of enumerated-programs-with-weights
-(e.g. the paper case study, or a Move 8 follow-up if it wires
-program-space posteriors through the Prevision surface directly)
-call this variant.
+Typed-carrier wrapper around `enumerate_programs`. Returns an
+`EnumerationMeasure{Program}` whose `carrier` field is the program
+vector, `prevision` is a `CategoricalPrevision` with log-weights from
+the complexity prior `-grammar.complexity * log(2) - p.complexity *
+log(2)` (matching the convention in `add_programs_to_state!`), and
+`space` is `Finite(programs)`.
 
 Stratum-2 tolerance per `precedents.md` §4: `==` under deterministic
 iteration order. Enumeration order is grammar-fixed (sorted feature
 set, fixed threshold list, deterministic depth-wise expansion),
-so the returned `EnumerationPrevision` is reproducible bit-for-bit
+so the returned `EnumerationMeasure` is reproducible bit-for-bit
 across invocations with the same grammar / max_depth / action_space.
 """
-function enumerate_programs_as_prevision(g::Grammar, max_depth::Int;
-                                          include_temporal::Bool=false,
-                                          min_log_prior::Float64=-20.0,
-                                          action_space::Vector{Symbol}=Symbol[:classify])
+function enumerate_programs_as_measure(g::Grammar, max_depth::Int;
+                                       include_temporal::Bool=false,
+                                       min_log_prior::Float64=-20.0,
+                                       action_space::Vector{Symbol}=Symbol[:classify])
     programs = enumerate_programs(g, max_depth;
                                    include_temporal=include_temporal,
                                    min_log_prior=min_log_prior,
                                    action_space=action_space)
     log_weights = Float64[-g.complexity * log(2) - p.complexity * log(2) for p in programs]
-    Previsions.EnumerationPrevision(convert(Vector{Any}, programs), log_weights)
+    Ontology.EnumerationMeasure{Program}(CategoricalPrevision(log_weights), programs, Finite(programs))
 end
