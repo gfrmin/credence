@@ -131,7 +131,7 @@ class CredenceBridge:
         return (int(result[0]), int(result[1]))
 
     def update_on_response(self, answer_measure, kernel, response):
-        """Call DSL update-on-response (condition). Returns updated measure."""
+        """Call DSL update-on-response (condition). Returns updated prevision."""
         fn = self.env[self.jl.Symbol("update-on-response")]
         return fn(answer_measure, kernel, float(response))
 
@@ -151,7 +151,7 @@ class CredenceBridge:
         return self.jl.initial_cov_state(int(n_categories), cov_jl)
 
     def marginalize_betas(self, state, cat_weights):
-        """Marginalize MixtureMeasure of ProductMeasures to MixtureMeasure of Betas."""
+        """Marginalize MixturePrevision of ProductPrevisions to MixturePrevision of Betas."""
         cat_w_jl = self._make_float_vector(cat_weights)
         return self.jl.marginalize_betas(state, cat_w_jl)
 
@@ -178,11 +178,11 @@ class CredenceBridge:
     def make_warm_rel_state(self, n_categories, alpha=7.0, beta=3.0):
         """Create a rel_state with Beta(alpha, beta) per category (for warm-starting)."""
         jl = self.jl
-        beta_strs = [f"BetaMeasure({float(alpha)}, {float(beta)})"] * n_categories
+        beta_strs = [f"BetaPrevision({float(alpha)}, {float(beta)})"] * n_categories
         code = (
-            "let factors = Measure[" + ", ".join(beta_strs) + "]; "
-            "prod = ProductMeasure(factors); "
-            "MixtureMeasure(prod.space, Measure[prod], Float64[0.0]) end"
+            "let factors = Any[" + ", ".join(beta_strs) + "]; "
+            "prod = ProductPrevision(factors); "
+            "MixturePrevision(Any[prod], Float64[0.0]) end"
         )
         return jl.seval(code)  # noqa: S307 — trusted numeric literals
 
@@ -190,24 +190,23 @@ class CredenceBridge:
         """Create a rel_state with known reliabilities (for OracleAgent).
 
         reliabilities: list of floats, one per category (true reliability values).
-        Returns MixtureMeasure wrapping a single ProductMeasure of tight Betas.
+        Returns MixturePrevision wrapping a single ProductPrevision of tight Betas.
         """
         jl = self.jl
         n_pseudo = 100.0
-        # Build Julia code for the tight-prior ProductMeasure
         beta_strs = []
         for r in reliabilities:
             alpha = max(0.01, n_pseudo * r)
             beta = max(0.01, n_pseudo * (1.0 - r))
-            beta_strs.append(f"BetaMeasure({alpha}, {beta})")
+            beta_strs.append(f"BetaPrevision({alpha}, {beta})")
         code = (
-            "let factors = Measure[" + ", ".join(beta_strs) + "]; "
-            "prod = ProductMeasure(factors); "
-            "MixtureMeasure(prod.space, Measure[prod], Float64[0.0]) end"
+            "let factors = Any[" + ", ".join(beta_strs) + "]; "
+            "prod = ProductPrevision(factors); "
+            "MixturePrevision(Any[prod], Float64[0.0]) end"
         )
         return jl.seval(code)  # noqa: S307 — trusted numeric literals
 
-    # --- Measure accessors ---
+    # --- Prevision accessors ---
 
     def weights(self, measure):
         """Extract probability weights as Python list."""
@@ -219,11 +218,11 @@ class CredenceBridge:
         return float(self.jl.expect(measure, self.jl.seval("r -> r")))  # noqa: S307
 
     def mean(self, measure):
-        """Extract mean of a BetaMeasure."""
+        """Extract mean of a BetaPrevision."""
         return float(self.jl.mean(measure))
 
     def extract_mixture_state(self, rel_state) -> dict:
-        """Extract full MixtureMeasure state for persistence.
+        """Extract full MixturePrevision state for persistence.
 
         Returns dict with 'log_weights' and 'components' (list of list of (alpha, beta)).
         """
@@ -246,7 +245,7 @@ class CredenceBridge:
         return {"log_weights": log_weights, "components": components}
 
     def make_rel_state_from_mixture(self, state_dict: dict):
-        """Reconstruct a MixtureMeasure from saved state.
+        """Reconstruct a MixturePrevision from saved state.
 
         Inverse of extract_mixture_state.
         """
@@ -256,13 +255,13 @@ class CredenceBridge:
 
         comp_strs = []
         for comp in components:
-            beta_strs = [f"BetaMeasure({a}, {b})" for a, b in comp]
-            comp_strs.append("ProductMeasure(Measure[" + ", ".join(beta_strs) + "])")
+            beta_strs = [f"BetaPrevision({a}, {b})" for a, b in comp]
+            comp_strs.append("ProductPrevision(Any[" + ", ".join(beta_strs) + "])")
 
         lw_str = "Float64[" + ", ".join(str(w) for w in log_weights) + "]"
         code = (
-            "let comps = Measure[" + ", ".join(comp_strs) + "]; "
-            f"MixtureMeasure(comps[1].space, comps, {lw_str}) end"
+            "let comps = Any[" + ", ".join(comp_strs) + "]; "
+            f"MixturePrevision(comps, {lw_str}) end"
         )
         return jl.seval(code)  # noqa: S307
 

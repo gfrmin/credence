@@ -173,13 +173,13 @@ class Router:
         Extracts per-tool per-category reliability and coverage means from Julia state.
         """
         bridge = self._bridge
-        # Extract approximate reliability table from Julia MixtureMeasure state
+        # Extract approximate reliability table from Julia MixturePrevision state
         reliability_means = []
         for t_idx in range(len(self._tools)):
             means = bridge.extract_reliability_means(self._agent.rel_states[t_idx])
             reliability_means.append(means)
 
-        # Extract approximate coverage table from Julia MixtureMeasure state
+        # Extract approximate coverage table from Julia MixturePrevision state
         coverage_means = []
         for t_idx in range(len(self._tools)):
             means = bridge.extract_reliability_means(self._agent.cov_states[t_idx])
