@@ -15,6 +15,14 @@ claims* — model-tier routing savings on coding-shaped workloads — and honest
 about what it doesn't measure (cache savings, multi-provider routing beyond
 Anthropic+OpenAI, production-scale workloads).
 
+A named methodological feature: the design isolates routing-induced variance
+from LLM-output variance. Baseline repetitions (always-Sonnet, no routing)
+measure output variance alone; routing repetitions combine output variance with
+routing variance (cold-start learning, model-selection stochasticity). This
+decomposition lets the benchmark report routing's own statistical reliability
+separately from the underlying model stochasticity — a precise answer to "are
+the savings real or noise?" rather than an aggregate one.
+
 Move 0's audit report is a named input: any benchmark that implies cache
 savings contradicts the audit's findings and is dishonest.
 
@@ -56,6 +64,10 @@ smaller than the synthetic eval suggests.
 
 The feasibility check validates that routing produces meaningful savings on
 coding-shaped workloads before committing to the full benchmark methodology.
+Note: the feasibility check's savings numbers are upper-bound estimates because
+beliefs accumulate across workloads (warm-start after the first few). The full
+benchmark's fresh-priors-per-repetition design (§5.5) produces more
+conservative figures that include the cold-start cost every real user pays.
 
 ### Specification
 
@@ -158,7 +170,9 @@ full benchmark?
    These contain realistic agent-tool interaction sequences. **Adaptation
    required**: the trajectories use SWE-agent/OpenHands message formats, not
    standard OpenAI chat-completion format. Adaptation cost is the limiting
-   factor.
+   factor. The methodological payoff of adaptation is quality-signal
+   robustness: SWE-bench instances have ground-truth test suites, so quality
+   measurement uses pass/fail execution rather than LLM judging.
 
 2. **Hand-curated workloads.** Constructed from common agentic-coding patterns
    (debug, implement, refactor, test, explain). Cheaper to produce, fully
@@ -255,6 +269,8 @@ per-million-token rates used.
 in `provider.py:62-92` are used for EU routing decisions, not for benchmark
 cost accounting. However, if the proxy's internal prices diverge from actual
 pricing, routing decisions are suboptimal (the EU tradeoff is miscalibrated).
+Any historical cost-savings claims produced using the proxy's current pricing
+should be treated as preliminary until the corrected-pricing benchmark runs.
 Before benchmark execution, the proxy's cost table must be verified against
 current pricing and corrected if needed. Current discrepancies observed:
 
@@ -274,7 +290,9 @@ overestimates Opus's cost, so the routing almost never selects Opus even when
 its quality would justify the actual (much lower) price. The Haiku
 underpricing mildly favours Haiku over what it should. These discrepancies
 affect routing decisions and therefore benchmark results. Correcting the cost
-table is a **pre-benchmark prerequisite**, not a nice-to-have.
+table is a **pre-benchmark prerequisite**, not a nice-to-have. Post-Move-2
+hardening work should decouple pricing from source code (e.g., a config file
+or API-fetched rates) so the cost table cannot silently drift again.
 
 **Per-turn cost formula:**
 
@@ -431,8 +449,11 @@ router, not the routing methodology.
 
 ## 7. Test plan (execution shape for Move 2)
 
-1. **Verify proxy cost table** against official pricing page. Correct
-   discrepancies in a pre-benchmark PR if needed.
+1. **Verify proxy cost table** against official pricing page. Verification:
+   compare each model's `input_price_per_1k` and `output_price_per_1k` in
+   `provider.py` against the snapshotted pricing page; any discrepancy beyond
+   ±5% (to allow for minor rounding in per-1K vs per-1M conversion) is
+   corrected in a pre-benchmark PR before proceeding.
 
 2. **Run feasibility check** per §Pre-design:
    - 5 hand-curated multi-turn workloads.
