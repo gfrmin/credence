@@ -120,6 +120,22 @@ _JL_ACCESSOR_RE = re.compile(
     r"\.(?:" + "|".join(_ACCESSOR_FIELDS) + r")\b"
 )
 
+# ── untyped-mixture-construction: untyped container → typed constructor ─
+# Catches `Any[]`, bare `[]`, `Vector{Any}(...)`, `convert(Vector{Any}, ...)`
+# flowing into MixturePrevision / ProductPrevision / MixtureMeasure /
+# ProductMeasure / ParticlePrevision / EnumerationMeasure constructors.
+_UNTYPED_SEED_RE = re.compile(
+    r"(?:Any\[\]|\bVector\{Any\}\s*\(|\bconvert\s*\(\s*Vector\{Any\})"
+)
+_TYPED_CONSTRUCTOR_SINKS = {
+    "MixturePrevision", "ProductPrevision",
+    "MixtureMeasure", "ProductMeasure",
+    "ParticlePrevision", "EnumerationMeasure",
+}
+_SINK_CALL_RE = re.compile(
+    r"\b(?:" + "|".join(_TYPED_CONSTRUCTOR_SINKS) + r")(?:\{[^}]*\})?\s*\("
+)
+
 # Declaration prefixes — function/class signatures look like DSL calls but
 # aren't callsites. Match leading whitespace then keyword.
 DECL_RE = re.compile(r"^\s*(?:async\s+)?(?:def|class|function|macro|struct|abstract\s+type|mutable\s+struct)\s+")
@@ -759,6 +775,92 @@ def _check_accessor_reads(path: Path, lines: list[str],
     return violations
 
 
+# ── untyped-mixture-construction: untyped container → constructor ─────
+def _is_untyped_container_seed(rhs: str) -> bool:
+    s = rhs.strip()
+    if s == "[]":
+        return True
+    if _UNTYPED_SEED_RE.search(s):
+        return True
+    return False
+
+
+def _check_untyped_construction(path: Path, lines: list[str],
+                                valid_slugs: set[str]) -> list[Violation]:
+    """Flag untyped container literals (`Any[]`, bare `[]`, `Vector{Any}(...)`,
+    `convert(Vector{Any}, ...)`) that flow into Mixture/Product/Particle/
+    Enumeration constructors. Julia-only."""
+    if path.suffix != ".jl":
+        return []
+    violations: list[Violation] = []
+    untyped_vars: set[str] = set()
+    fn_stack: list[set[str]] = []
+    block_stack: list[str] = []
+
+    in_docstring = False
+    for i, line in enumerate(lines, start=1):
+        triples = len(TRIPLE_RE.findall(line))
+        was_in_docstring = in_docstring
+        if triples % 2 == 1:
+            in_docstring = not in_docstring
+        if was_in_docstring and in_docstring:
+            continue
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#") or stripped.startswith(";"):
+            continue
+        if DECL_RE.match(line):
+            continue
+
+        raw = _jl_strip_trailing_comment(line)
+
+        om = _JL_OPENER_RE.match(raw)
+        if om:
+            kind = om.group(1).split()[-1]
+            if kind == "function":
+                fn_stack.append(untyped_vars)
+                untyped_vars = set()
+                block_stack.append("function")
+                continue
+            block_stack.append("other")
+        if _JL_END_RE.match(raw):
+            if block_stack:
+                popped = block_stack.pop()
+                if popped == "function" and fn_stack:
+                    untyped_vars = fn_stack.pop()
+            continue
+
+        am = _JL_ASSIGN_RE.match(raw)
+        if am:
+            tgt, rhs = am.group("tgt"), am.group("rhs")
+            if _is_untyped_container_seed(rhs):
+                untyped_vars.add(tgt)
+            else:
+                untyped_vars.discard(tgt)
+
+        if _SINK_CALL_RE.search(raw) and untyped_vars:
+            for var in sorted(untyped_vars):
+                if re.search(rf"(?<![\w.])\b{re.escape(var)}\b", raw):
+                    ok, err = _pragma_allows(lines, i, valid_slugs)
+                    if ok:
+                        break
+                    if err is not None:
+                        violations.append(Violation(path, i, line.rstrip(), err))
+                    else:
+                        violations.append(Violation(
+                            path, i, line.rstrip(),
+                            f"untyped-mixture-construction: untyped container"
+                            f" `{var}` passed to typed constructor"
+                            f" — use a typed Vector literal (e.g."
+                            f" `TaggedBetaPrevision[]`), or add a"
+                            f" `# credence-lint: allow —"
+                            f" precedent:untyped-mixture-construction"
+                            f" — <reason>` pragma",
+                        ))
+                    break
+
+    return violations
+
+
 # ── per-file lint ─────────────────────────────────────────────────────
 def check_file(path: Path, valid_slugs: set[str], require_role: bool) -> list[Violation]:
     violations: list[Violation] = []
@@ -819,6 +921,12 @@ def check_file(path: Path, valid_slugs: set[str], require_role: bool) -> list[Vi
     # Accessor-read check — dedup against p1 + p2.
     covered = {v.line_no for v in violations}
     for v in _check_accessor_reads(path, lines, valid_slugs):
+        if v.line_no not in covered:
+            violations.append(v)
+
+    # Untyped-construction check — dedup against all prior.
+    covered = {v.line_no for v in violations}
+    for v in _check_untyped_construction(path, lines, valid_slugs):
         if v.line_no not in covered:
             violations.append(v)
 

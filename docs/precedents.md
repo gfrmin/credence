@@ -102,6 +102,13 @@ The compact slug index lives in `CLAUDE.md` — that's what the lint reads to di
 | **Construction** | The MixtureMeasure constructor is the layer that knows about `log_weights` and `components`; building or rebuilding a mixture requires naming the fields. | `server.jl`: `push!(state.belief.log_weights, lw)`, `MixtureMeasure(…, state.belief.log_weights)`. | 2 |
 | **Conjugate-machinery vocabulary** | Pseudo-count expressions (`α + β − 2`) are the conjugate family's internal vocabulary; no stdlib function wraps "total pseudo-observations minus prior". | `host.jl`: `tbm.beta.alpha + tbm.beta.beta - 2.0`. | 2 |
 
+### Untyped container literals passed to typed Prevision/Measure constructors
+**Slug:** `untyped-mixture-construction`.
+**Illegal.** Code that initialises a container as `Any[]`, bare `[]`, `Vector{Any}(...)`, or `convert(Vector{Any}, ...)` and then passes it to a `MixturePrevision`, `ProductPrevision`, `MixtureMeasure`, `ProductMeasure`, `ParticlePrevision`, or `EnumerationMeasure` constructor. The untyped container defeats Julia's type inference at the constructor boundary — the constructor accepts `Vector{<:Prevision}` (or `Vector{<:Measure}`), but `Vector{Any}` forces a runtime conversion or silent type erasure.
+**Rewrite:** Use a typed literal: `TaggedBetaPrevision[]`, `BetaPrevision[]`, `Prevision[]`, etc. If the container genuinely holds heterogeneous types, annotate explicitly (e.g. `Vector{Union{BetaPrevision, GaussianPrevision}}()`) — that documents the heterogeneity in the type system.
+**Escape hatch:** `# credence-lint: allow — precedent:untyped-mixture-construction — <reason>`. Admissible for deserialisation paths where types are recovered at parse time and the intermediate `Any[]` is a transient artefact.
+**Follows from Invariant 3** (single-responsibility representations: the container's element type is part of its representation, and `Any` conflates "I don't know the type" with "any type is allowed").
+
 ## Specific derivations
 
 ### Indifference implies exploration
