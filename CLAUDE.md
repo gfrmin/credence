@@ -273,6 +273,8 @@ The slug index below is the lint's source of truth for valid slugs (regex `^\*\*
 
 **Slug:** `expect-through-accessor` — Reading a Prevision's parameter fields (`.alpha`, `.log_weights`, `.mu`, `.sigma`, `.kappa`) to compute a probabilistic property. Rewrite as `mean(p)`, `variance(p)`, `probability(p, e)`, `weights(p)`, or `expect(p, f)`. Not flagged: `.beta` (ambiguous — TaggedBetaMeasure navigation vs BetaPrevision parameter; `.alpha` catches the same violations), `.components`/`.factors` (containers, not parameters). File-scope exclusion for `src/previsions.jl` and `src/conjugate.jl` (legitimate internal reads). (Invariant 2)
 
+**Slug:** `untyped-mixture-construction` — Untyped container literals (`Any[]`, bare `[]`, `Vector{Any}(...)`, `convert(Vector{Any}, ...)`) passed to Mixture/Product/Particle/Enumeration constructors. Use a typed Vector literal (e.g. `TaggedBetaPrevision[]`). Escape hatch for justified heterogeneous construction (e.g. deserialisation). (Invariant 3)
+
 ## Development commands
 
 Julia tests (one file at a time; `ls test/test_*.jl` for the catalogue):
