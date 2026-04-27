@@ -14,7 +14,7 @@ through training with conditioning, then evaluates on held-out test set.
 push!(LOAD_PATH, joinpath(@__DIR__, "..", "..", "..", "src"))
 using Credence
 using Credence: weights, mean, condition
-using Credence: TaggedBetaMeasure, MixtureMeasure, BetaMeasure
+using Credence: TaggedBetaPrevision, BetaPrevision, MixturePrevision, TaggedBetaMeasure
 using Credence: Interval, Finite, Kernel, Measure
 using Credence: Grammar, Program, CompiledKernel
 using Credence: enumerate_programs, compile_kernel
@@ -134,7 +134,7 @@ function init_agent(; action_space::Vector{Symbol}, program_max_depth::Int=2,
                       min_log_prior::Float64=-15.0)
     grammar_pool = generate_email_seed_grammars()
 
-    components = Measure[]
+    components = TaggedBetaPrevision[]
     log_prior_weights = Float64[]
     metadata = Tuple{Int, Int}[]
     compiled_kernels = CompiledKernel[]
@@ -147,7 +147,7 @@ function init_agent(; action_space::Vector{Symbol}, program_max_depth::Int=2,
                                        min_log_prior=min_log_prior)
         for (pi, p) in enumerate(programs)
             idx += 1
-            push!(components, TaggedBetaMeasure(Interval(0.0, 1.0), idx, BetaMeasure(1.0, 1.0)))
+            push!(components, TaggedBetaPrevision(idx, BetaPrevision(1.0, 1.0)))
             lw = -g.complexity * log(2) - p.complexity * log(2)
             push!(log_prior_weights, lw)
             push!(metadata, (g.id, pi))
@@ -156,7 +156,7 @@ function init_agent(; action_space::Vector{Symbol}, program_max_depth::Int=2,
         end
     end
 
-    belief = MixtureMeasure(Interval(0.0, 1.0), components, log_prior_weights)
+    belief = MixturePrevision(components, log_prior_weights)
     grammar_dict = Dict{Int, Grammar}(g.id => g for g in grammar_pool)
     AgentState(belief, metadata, compiled_kernels, all_programs,
                grammar_dict, program_max_depth)

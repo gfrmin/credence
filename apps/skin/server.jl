@@ -621,7 +621,7 @@ function handle_create_state(params)
         end
 
         # Build components from grammars
-        all_components = Any[]
+        all_components = TaggedBetaPrevision[]
         all_lw = Float64[]
         all_meta = Tuple{Int,Int}[]
         all_ck = CompiledKernel[]

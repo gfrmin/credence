@@ -167,7 +167,7 @@ function run_live(;
         temporal_state = Dict{Symbol, Any}(:recent => Dict{Symbol, Float64}[])
 
         grammar_pool = generate_email_seed_grammars()
-        components = Measure[]
+        components = TaggedBetaPrevision[]
         log_prior_weights = Float64[]
         metadata = Tuple{Int, Int}[]
         compiled_kernels = CompiledKernel[]
@@ -180,7 +180,7 @@ function run_live(;
                                            min_log_prior=min_log_prior)
             for (pi, p) in enumerate(programs)
                 idx += 1
-                push!(components, TaggedBetaMeasure(Interval(0.0, 1.0), idx, BetaMeasure(1.0, 1.0)))
+                push!(components, TaggedBetaPrevision(idx, BetaPrevision(1.0, 1.0)))
                 push!(log_prior_weights, -g.complexity * log(2) - p.complexity * log(2))
                 push!(metadata, (g.id, pi))
                 push!(compiled_kernels, compile_kernel(p, g, pi))
@@ -188,7 +188,7 @@ function run_live(;
             end
         end
 
-        belief = MixtureMeasure(Interval(0.0, 1.0), components, log_prior_weights)
+        belief = MixturePrevision(components, log_prior_weights)
         grammar_dict = Dict{Int, Grammar}(g.id => g for g in grammar_pool)
         state = AgentState(belief, metadata, compiled_kernels, all_programs,
                            grammar_dict, program_max_depth)
