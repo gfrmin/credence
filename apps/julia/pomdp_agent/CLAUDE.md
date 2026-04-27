@@ -1,5 +1,11 @@
 # CLAUDE.md
 
+## Status: dormant (as of Posture 4 closure, 2026-04-27)
+
+pomdp_agent is dormant. Its 46+ Measure-vocabulary sites were excluded from Posture 4's migration scope per issue #5 (own `src/`, own invariants, own `Distributions.jl` dependency). The package has had no substantive development since its initial placement in the monorepo; the only commits are repo-wide maintenance (directory reorg, `# Role:` headers). No code outside this package imports or calls it, and it is not included in CI. Migration to Prevision vocabulary is deferred until someone resumes the package.
+
+---
+
 Practical guidance for Claude Code working in this package.
 
 This is the POMDP agent package within the credence monorepo.
