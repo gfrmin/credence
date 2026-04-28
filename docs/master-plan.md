@@ -13,3 +13,5 @@ Complete the de Finettian migration through all layers: apps, skin, body, tests.
 ## Posture 5 — open 2026-04-27
 
 credence-proxy v0.1: cache-discipline audit, benchmark methodology, release engineering, distribution. See `docs/posture-5/master-plan.md`.
+
+**2026-04-28:** Posture 5 strategic shift to Bayesian governance sidecar for agentic harnesses; OpenClaw first integration target; routing-collapse benchmark (67.4% savings, 100% Haiku) superseded; personal-agent direction further deferred to Posture 6+.
