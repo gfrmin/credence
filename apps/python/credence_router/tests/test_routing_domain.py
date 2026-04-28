@@ -119,14 +119,14 @@ class TestLLMProvider:
 
     def test_extract_user_message_string(self):
         body = json.dumps({
-            "model": "gpt-4o",
+            "model": "gpt-5.4",
             "messages": [{"role": "user", "content": "hello world"}],
         }).encode()
         assert extract_user_message(body) == "hello world"
 
     def test_extract_user_message_content_blocks(self):
         body = json.dumps({
-            "model": "gpt-4o",
+            "model": "gpt-5.4",
             "messages": [{"role": "user", "content": [
                 {"type": "text", "text": "describe this image"},
             ]}],
@@ -135,7 +135,7 @@ class TestLLMProvider:
 
     def test_extract_user_message_multi_turn(self):
         body = json.dumps({
-            "model": "gpt-4o",
+            "model": "gpt-5.4",
             "messages": [
                 {"role": "user", "content": "first message"},
                 {"role": "assistant", "content": "response"},
