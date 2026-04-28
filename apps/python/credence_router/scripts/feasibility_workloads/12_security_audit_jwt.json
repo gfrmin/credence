@@ -1,0 +1,17 @@
+{
+  "name": "security-audit-jwt",
+  "task_type": "security-audit",
+  "system_prompt": "You are a security engineer conducting a code audit. Be specific about vulnerabilities and their exploit paths.",
+  "turns": [
+    "Audit this JWT authentication middleware for security vulnerabilities. List every issue you find.\n\n```python\nimport jwt\nimport time\nfrom functools import wraps\nfrom flask import request, jsonify, g\n\nSECRET_KEY = \"super-secret-key-123\"\n\ndef create_token(user_id, role=\"user\"):\n    payload = {\n        \"user_id\": user_id,\n        \"role\": role,\n        \"exp\": time.time() + 86400\n    }\n    return jwt.encode(payload, SECRET_KEY, algorithm=\"HS256\")\n\ndef require_auth(f):\n    @wraps(f)\n    def decorated(*args, **kwargs):\n        token = request.headers.get(\"Authorization\", \"\").replace(\"Bearer \", \"\")\n        if not token:\n            return jsonify({\"error\": \"Missing token\"}), 401\n        try:\n            payload = jwt.decode(token, SECRET_KEY, algorithms=[\"HS256\", \"none\"])\n            g.user_id = payload[\"user_id\"]\n            g.role = payload.get(\"role\", \"admin\")\n        except jwt.ExpiredSignatureError:\n            return jsonify({\"error\": \"Token expired\"}), 401\n        except Exception:\n            return jsonify({\"error\": \"Invalid token\"}), 401\n        return f(*args, **kwargs)\n    return decorated\n\ndef require_admin(f):\n    @wraps(f)\n    @require_auth\n    def decorated(*args, **kwargs):\n        if g.role != \"admin\":\n            return jsonify({\"error\": \"Forbidden\"}), 403\n        return f(*args, **kwargs)\n    return decorated\n```",
+    "For the 'none' algorithm vulnerability, show the exact attack: craft a token that bypasses authentication. Show the bytes.",
+    "Fix all the vulnerabilities. Show the corrected code with explanations for each change.",
+    "Now add refresh token rotation. The access token should be short-lived (15 min), and the refresh token should be single-use with a token family for reuse detection.",
+    "Write a test suite that verifies each vulnerability is actually fixed: none algorithm rejected, expired tokens rejected, role escalation prevented, and refresh token reuse detected."
+  ],
+  "expected_patterns": [
+    "none.*algorithm|alg.*none|algorithm.*none",
+    "secret|SECRET|refresh|rotation|HMAC|RS256"
+  ],
+  "outcome_description": "Response identifies JWT security flaws (none algorithm, hardcoded secret, role default) and provides secure implementation"
+}

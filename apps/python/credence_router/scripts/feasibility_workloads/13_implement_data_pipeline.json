@@ -1,0 +1,17 @@
+{
+  "name": "implement-data-pipeline",
+  "task_type": "implement",
+  "system_prompt": "You are a data engineer building reliable ETL pipelines. Prioritize correctness and idempotency.",
+  "turns": [
+    "Design a Python data pipeline that: reads CSV files from an S3 bucket, validates and transforms the data, deduplicates records, and loads into PostgreSQL. The CSV has columns: id, email, name, signup_date, plan_type, amount_cents. Show the architecture and main pipeline function.",
+    "Implement the validation layer. Rules: email must be valid format, signup_date must be ISO 8601 and not in the future, plan_type must be one of [free, basic, pro, enterprise], amount_cents must be non-negative integer. Invalid rows go to a dead letter queue with the reason. Show the code.",
+    "The deduplication is tricky: we might get the same user (by email) in multiple files with different data. The rule is: keep the record with the latest signup_date. If same date, keep the one with the higher plan tier. Implement this.",
+    "Make the pipeline idempotent. If we rerun it on the same file, it should not create duplicates in PostgreSQL. Use an upsert strategy. Show the SQL and Python code.",
+    "Add monitoring: track records_processed, records_valid, records_invalid, records_deduplicated, records_upserted. Emit these as structured logs and expose as Prometheus metrics. Show the complete instrumented pipeline."
+  ],
+  "expected_patterns": [
+    "upsert|ON CONFLICT|MERGE|INSERT.*ON",
+    "idempotent|dedup|dead.letter|validation"
+  ],
+  "outcome_description": "Response builds a complete ETL pipeline with validation, deduplication, idempotent upserts, and monitoring"
+}

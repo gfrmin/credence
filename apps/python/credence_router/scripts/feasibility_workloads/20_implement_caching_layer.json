@@ -1,0 +1,17 @@
+{
+  "name": "implement-caching-layer",
+  "task_type": "implement",
+  "system_prompt": "You are a backend engineer implementing caching infrastructure. Focus on cache coherence, invalidation strategies, and failure modes.",
+  "turns": [
+    "Design a two-level caching layer for a REST API: L1 is in-process (per-instance), L2 is Redis (shared). The API serves user profiles that are read-heavy (1000:1 read:write ratio). Show the architecture and the cache lookup/populate flow.",
+    "Implement the cache layer in Python. Support: get, set, invalidate, and bulk_get. Handle L1/L2 consistency — when L2 is updated, all instances' L1 caches for that key must be invalidated. Use Redis pub/sub for cross-instance invalidation.\n\nShow the complete implementation.",
+    "Add cache stampede protection. When a popular key expires, 100 concurrent requests shouldn't all hit the database. Implement probabilistic early expiration (XFetch algorithm) and single-flight deduplication.",
+    "The user profile has nested data: profile -> posts -> comments. When a comment is added, we need to invalidate the right cache entries without over-invalidating. Design a tag-based invalidation scheme where cache entries are tagged with their dependencies.",
+    "Write a chaos test that verifies cache consistency under: (1) Redis connection failures (L1 should still work), (2) concurrent writes to the same key, (3) pub/sub message loss (eventual consistency within bounded time)."
+  ],
+  "expected_patterns": [
+    "cache|Cache|Redis|redis|L1|L2|TTL|ttl",
+    "invalidat|stampede|pub.?sub|XFetch|single.flight|tag"
+  ],
+  "outcome_description": "Response implements a two-level cache with pub/sub invalidation, stampede protection, and tag-based dependency tracking"
+}

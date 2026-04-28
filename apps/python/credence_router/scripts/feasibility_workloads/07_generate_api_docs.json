@@ -1,0 +1,17 @@
+{
+  "name": "generate-api-docs",
+  "task_type": "documentation",
+  "system_prompt": "You are a helpful coding assistant. Write clear, accurate documentation.",
+  "turns": [
+    "Generate docstrings for each method in this class. Use Google-style docstrings with Args, Returns, and Raises sections.\n\n```python\nclass TokenBucket:\n    def __init__(self, rate, capacity):\n        self.rate = rate\n        self.capacity = capacity\n        self._tokens = capacity\n        self._last_refill = time.monotonic()\n\n    def _refill(self):\n        now = time.monotonic()\n        elapsed = now - self._last_refill\n        self._tokens = min(self.capacity, self._tokens + elapsed * self.rate)\n        self._last_refill = now\n\n    def consume(self, tokens=1):\n        self._refill()\n        if self._tokens >= tokens:\n            self._tokens -= tokens\n            return True\n        return False\n\n    def wait_and_consume(self, tokens=1):\n        while not self.consume(tokens):\n            deficit = tokens - self._tokens\n            time.sleep(deficit / self.rate)\n        return True\n\n    @property\n    def available(self):\n        self._refill()\n        return self._tokens\n```",
+    "Now write a module-level docstring and a usage example that shows rate limiting HTTP requests to 10 per second with burst up to 20.",
+    "Add type hints to all methods. Show the complete class with both docstrings and type hints.",
+    "Write a README section for this class: overview, quick start, configuration, and common pitfalls (like what happens if rate=0 or capacity=0).",
+    "Review the documentation you wrote. Is anything inaccurate? Does wait_and_consume actually have a subtle bug with the sleep duration?"
+  ],
+  "expected_patterns": [
+    "Args:|Returns:|Raises:|Parameters|:param|:returns",
+    "def.*->|:\\s*(int|float|bool|str|None)"
+  ],
+  "outcome_description": "Response generates accurate docstrings with Args/Returns sections and adds type hints"
+}

@@ -1,0 +1,18 @@
+{
+  "name": "design-rest-api",
+  "task_type": "api-design",
+  "system_prompt": "You are a senior API architect. Design clean, RESTful APIs following best practices.",
+  "turns": [
+    "Design a REST API for a task management system (like a simplified Trello). The core entities are: boards, lists (columns within a board), and cards (tasks within a list). Include endpoints for CRUD operations on all three entities. Show the URL structure and HTTP methods.",
+    "Now add the request/response schemas for the card endpoints. Use JSON. Include: title, description, assignee, due_date, labels, position (for ordering within a list). Show create, update, and list responses.",
+    "How should moving a card between lists work? Design the endpoint. Consider: what happens to the card's position in the source and destination lists?",
+    "Add pagination to the list endpoints. Support both cursor-based and offset-based pagination. Which would you recommend for this use case and why?",
+    "Design the error response format. Show examples for: 404 (board not found), 422 (invalid due_date format), 403 (not a board member), and 409 (concurrent modification conflict).",
+    "Write an OpenAPI/Swagger snippet for the 'move card' endpoint you designed. Include path parameters, request body schema, and all possible response codes."
+  ],
+  "expected_patterns": [
+    "GET|POST|PUT|PATCH|DELETE",
+    "/boards|/lists|/cards|/api"
+  ],
+  "outcome_description": "Response designs a coherent REST API with proper HTTP methods, URL structure, and error handling for a task management system"
+}

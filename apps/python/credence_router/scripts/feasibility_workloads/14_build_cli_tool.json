@@ -1,0 +1,17 @@
+{
+  "name": "build-cli-tool",
+  "task_type": "implement",
+  "system_prompt": "You are a developer building command-line tools. Follow Unix philosophy: do one thing well, compose with other tools.",
+  "turns": [
+    "Build a CLI tool called `logslice` that extracts time-windowed slices from log files. It should handle multiple log timestamp formats (ISO 8601, syslog, Apache common log). Usage:\n\n```\nlogslice --from '2026-04-28 14:00' --to '2026-04-28 15:00' access.log\nlogslice --last 30m error.log\nlogslice --around '2026-04-28 14:32:15' --context 5m app.log\n```\n\nShow the argument parsing and timestamp detection logic.",
+    "Implement the core slicing algorithm. The log file might be 10GB+ so you can't load it all into memory. Use binary search on the file to find the start position efficiently.",
+    "Add support for reading from stdin (for piping) and multiple files. When reading multiple files, interleave the output chronologically. Handle the case where files have different timestamp formats.",
+    "Add output formatting options: --json (convert each line to JSON with parsed timestamp), --count (just count matching lines), --stats (show lines/minute histogram). Show the implementation.",
+    "Write the test suite. Cover: each timestamp format, binary search correctness on edge cases (empty file, single line, all lines match, no lines match), stdin mode, and multi-file interleaving."
+  ],
+  "expected_patterns": [
+    "argparse|click|typer|ArgumentParser",
+    "binary.search|bisect|seek|mmap"
+  ],
+  "outcome_description": "Response builds a complete CLI log-slicing tool with efficient binary search and multiple timestamp format support"
+}

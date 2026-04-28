@@ -1,0 +1,17 @@
+{
+  "name": "debug-distributed-system",
+  "task_type": "debug",
+  "system_prompt": "You are a distributed systems engineer debugging a production issue. Think about consistency, ordering, and failure modes.",
+  "turns": [
+    "Our distributed task queue is losing tasks. Workers pull tasks, process them, and ACK. But some tasks vanish without being processed or appearing in the dead letter queue. Here's the worker code:\n\n```python\nimport redis\nimport json\nimport signal\nimport sys\n\nr = redis.Redis()\n\ndef worker():\n    while True:\n        # BRPOPLPUSH: atomically pop from queue, push to processing list\n        task_data = r.brpoplpush('task_queue', 'processing', timeout=5)\n        if task_data is None:\n            continue\n\n        task = json.loads(task_data)\n        try:\n            result = process_task(task)\n            r.lpush(f\"results:{task['id']}\", json.dumps(result))\n            r.lrem('processing', 1, task_data)\n        except Exception as e:\n            r.lpush('dead_letter', json.dumps({\n                'task': task, 'error': str(e)\n            }))\n            r.lrem('processing', 1, task_data)\n\ndef process_task(task):\n    # Simulate work (5-30 seconds)\n    import time\n    time.sleep(task.get('duration', 10))\n    return {'status': 'done', 'task_id': task['id']}\n\nsignal.signal(signal.SIGTERM, lambda s, f: sys.exit(0))\nworker()\n```\n\nWhere are tasks being lost?",
+    "Walk through the exact failure scenario step by step. What happens when: (1) the worker gets SIGTERM during process_task, (2) the Redis connection drops during lrem, (3) two workers somehow get the same task?",
+    "Fix the worker to handle all three failure modes. Show the corrected code with proper signal handling, connection error recovery, and the reaper process for the processing list.",
+    "The reaper needs to distinguish between 'task is still being actively processed' and 'task is orphaned because the worker died'. Design and implement a heartbeat mechanism.",
+    "We're now seeing tasks processed twice despite the fixes. The issue is that the reaper re-queues a task while a slow worker is still processing it. Implement distributed locking with fencing tokens to prevent this."
+  ],
+  "expected_patterns": [
+    "SIGTERM|signal|graceful.shutdown|lrem|BRPOPLPUSH",
+    "heartbeat|lock|fence|reaper|idempotent|at.least.once|exactly.once"
+  ],
+  "outcome_description": "Response traces task loss to signal handling and connection failures, then implements heartbeat and fencing token solutions"
+}

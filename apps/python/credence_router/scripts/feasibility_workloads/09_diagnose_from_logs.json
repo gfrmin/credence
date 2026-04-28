@@ -1,0 +1,17 @@
+{
+  "name": "diagnose-from-logs",
+  "task_type": "bug-triage",
+  "system_prompt": "You are a senior SRE diagnosing a production issue. Be systematic and evidence-based.",
+  "turns": [
+    "We're seeing intermittent 502 errors in production. Here are the relevant log entries from the last hour. What's the likely root cause?\n\n```\n2026-04-28 14:01:23 [nginx] 502 Bad Gateway - POST /api/v1/process - upstream: \"http://127.0.0.1:8080/api/v1/process\" - request_time: 30.001\n2026-04-28 14:01:23 [nginx] upstream timed out (110: Connection timed out) while reading response header from upstream\n2026-04-28 14:03:45 [app] WARNING pool.py:283 - Connection pool is full, discarding connection: db-primary.internal\n2026-04-28 14:03:45 [app] WARNING pool.py:283 - Connection pool is full, discarding connection: db-primary.internal\n2026-04-28 14:03:47 [app] ERROR handler.py:142 - Request processing failed: OperationalError('(psycopg2.pool.PoolError) connection pool exhausted')\n2026-04-28 14:05:12 [nginx] 502 Bad Gateway - POST /api/v1/process - upstream: \"http://127.0.0.1:8080/api/v1/process\" - request_time: 30.002\n2026-04-28 14:05:13 [app] INFO metrics.py:55 - Active DB connections: 20/20, Waiting: 47\n2026-04-28 14:05:15 [app] WARNING handler.py:98 - Slow query detected: SELECT * FROM events WHERE user_id = $1 ORDER BY created_at DESC - duration: 28.4s\n2026-04-28 14:07:30 [pg_stat] LOG: duration: 29102.445 ms  statement: SELECT * FROM events WHERE user_id = 'usr_a1b2c3' ORDER BY created_at DESC\n2026-04-28 14:07:31 [pg_stat] LOG: duration: 27845.221 ms  statement: SELECT * FROM events WHERE user_id = 'usr_d4e5f6' ORDER BY created_at DESC\n```",
+    "Good analysis. What's the specific chain of events: slow query → pool exhaustion → 502? Walk through the causal chain step by step.",
+    "What's the immediate fix to stop the bleeding? And what's the proper long-term fix?",
+    "Write the SQL to add the missing index. Also show how to verify the index is being used with EXPLAIN ANALYZE.",
+    "Draft an incident postmortem for this: timeline, root cause, impact, immediate fix, long-term actions. Keep it under 300 words."
+  ],
+  "expected_patterns": [
+    "index|INDEX|missing.*index|no.*index|sequential.*scan|seq.*scan",
+    "CREATE\\s+INDEX|pool|connection.*pool|timeout"
+  ],
+  "outcome_description": "Response traces 502s to slow unindexed query exhausting the connection pool and proposes the index fix"
+}

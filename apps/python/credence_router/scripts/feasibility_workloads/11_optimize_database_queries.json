@@ -1,0 +1,17 @@
+{
+  "name": "optimize-database-queries",
+  "task_type": "performance",
+  "system_prompt": "You are a database performance expert. Focus on query optimization, indexing strategies, and execution plan analysis.",
+  "turns": [
+    "This Django view is causing N+1 queries and taking 3 seconds on pages with 50 items. Optimize it.\n\n```python\nclass OrderListView(ListView):\n    model = Order\n    template_name = 'orders/list.html'\n    paginate_by = 50\n\n    def get_queryset(self):\n        return Order.objects.filter(\n            customer=self.request.user\n        ).order_by('-created_at')\n\n    def get_context_data(self, **kwargs):\n        context = super().get_context_data(**kwargs)\n        for order in context['object_list']:\n            order.total = sum(\n                item.product.price * item.quantity\n                for item in order.items.all()\n            )\n            order.primary_category = order.items.first().product.category.name\n        return context\n```",
+    "Show the optimized queryset using select_related, prefetch_related, and annotations. Explain what each change eliminates.",
+    "The orders table has 2M rows. Even with the ORM fixes, the ORDER BY created_at DESC is slow. Show the EXPLAIN ANALYZE and what index to add.",
+    "Now the product search page also needs optimization. It uses full-text search:\n\n```python\ndef search_products(query):\n    words = query.split()\n    q = Q()\n    for word in words:\n        q &= (Q(name__icontains=word) | Q(description__icontains=word))\n    return Product.objects.filter(q).distinct()[:20]\n```\n\nWhat's wrong and how to fix it?",
+    "Compare the performance characteristics of: GIN index with pg_trgm, GiST index with ts_vector, and Elasticsearch. When would you choose each?"
+  ],
+  "expected_patterns": [
+    "select_related|prefetch_related|Prefetch|annotate",
+    "N\\+1|index|INDEX|EXPLAIN"
+  ],
+  "outcome_description": "Response fixes N+1 queries with proper ORM usage and recommends appropriate indexing strategies"
+}

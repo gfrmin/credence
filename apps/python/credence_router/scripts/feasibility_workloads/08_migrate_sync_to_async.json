@@ -1,0 +1,18 @@
+{
+  "name": "migrate-sync-to-async",
+  "task_type": "migration",
+  "system_prompt": "You are a helpful coding assistant specializing in Python async programming. Be precise about async/await semantics.",
+  "turns": [
+    "I need to migrate this synchronous HTTP client to async. The sync version works but blocks the event loop in our FastAPI app. Show me the async equivalent.\n\n```python\nimport requests\nfrom typing import Optional\n\nclass WeatherClient:\n    def __init__(self, api_key: str, base_url: str = \"https://api.weather.example.com\"):\n        self.session = requests.Session()\n        self.session.headers.update({\"Authorization\": f\"Bearer {api_key}\"})\n        self.base_url = base_url\n\n    def get_current(self, city: str) -> dict:\n        resp = self.session.get(f\"{self.base_url}/current\", params={\"city\": city})\n        resp.raise_for_status()\n        return resp.json()\n\n    def get_forecast(self, city: str, days: int = 5) -> list[dict]:\n        resp = self.session.get(f\"{self.base_url}/forecast\", params={\"city\": city, \"days\": days})\n        resp.raise_for_status()\n        return resp.json()[\"daily\"]\n\n    def get_bulk(self, cities: list[str]) -> dict[str, dict]:\n        results = {}\n        for city in cities:\n            results[city] = self.get_current(city)\n        return results\n\n    def close(self):\n        self.session.close()\n```",
+    "The get_bulk method should fetch all cities concurrently with asyncio.gather, not sequentially. Show the corrected version.",
+    "Now I need this to work as an async context manager so I can use `async with WeatherClient(...) as client:`. Add __aenter__ and __aexit__.",
+    "Add retry logic with exponential backoff for transient errors (429, 500, 502, 503). Use tenacity or implement it manually.",
+    "Show me how to add a semaphore to limit concurrent requests to 5 in get_bulk, so we don't overwhelm the API. Show the complete final class.",
+    "What are the key differences between the sync and async versions that someone maintaining this code should understand? List the gotchas."
+  ],
+  "expected_patterns": [
+    "async\\s+def|await|aiohttp|httpx\\.AsyncClient",
+    "asyncio\\.gather|gather\\("
+  ],
+  "outcome_description": "Response migrates sync requests to async httpx/aiohttp with concurrent gather in get_bulk"
+}

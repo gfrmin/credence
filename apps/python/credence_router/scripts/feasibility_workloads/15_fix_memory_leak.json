@@ -1,0 +1,17 @@
+{
+  "name": "fix-memory-leak",
+  "task_type": "debug",
+  "system_prompt": "You are a systems programmer debugging a memory issue. Be methodical and use evidence from profiling tools.",
+  "turns": [
+    "Our Python web service is leaking memory — RSS grows from 200MB to 2GB over 24 hours, then OOM-kills. Here's the suspect code. Where's the leak?\n\n```python\nimport weakref\nfrom functools import lru_cache\nfrom datetime import datetime\n\nclass EventProcessor:\n    _instances = []\n\n    def __init__(self, config):\n        self.config = config\n        self.handlers = {}\n        self._callbacks = []\n        EventProcessor._instances.append(self)\n\n    def register_handler(self, event_type, handler):\n        self.handlers[event_type] = handler\n\n    def on_complete(self, callback):\n        self._callbacks.append(callback)\n\n    @lru_cache(maxsize=None)\n    def get_schema(self, event_type):\n        return self._load_schema(event_type)\n\n    def _load_schema(self, event_type):\n        return {\"type\": event_type, \"loaded_at\": datetime.now(), \"processor\": self}\n\n    def process(self, event):\n        schema = self.get_schema(event[\"type\"])\n        handler = self.handlers.get(event[\"type\"])\n        if handler:\n            result = handler(event, schema)\n            for cb in self._callbacks:\n                cb(result)\n            return result\n\n# Usage in request handler\ndef handle_request(request):\n    processor = EventProcessor(request.app.config)\n    processor.register_handler(\"click\", lambda e, s: {\"tracked\": True})\n    processor.on_complete(lambda r: print(f\"Done: {r}\"))\n    return processor.process(request.json)\n```",
+    "Good analysis. Walk through the exact reference chain that prevents garbage collection. Draw the object graph.",
+    "Fix all the memory leaks. Show the corrected code. Explain the tradeoffs of each fix.",
+    "How would you detect this leak in production before it causes an OOM? Show the monitoring setup: what metrics to track, what thresholds to alert on.",
+    "Write a test that proves the leak is fixed: create many EventProcessor instances, process events, then verify with gc and sys.getrefcount that instances are collectible."
+  ],
+  "expected_patterns": [
+    "lru_cache|_instances|class.variable|circular.reference|weakref",
+    "gc|garbage.collect|getrefcount|tracemalloc|objgraph|memory_profiler"
+  ],
+  "outcome_description": "Response identifies multiple memory leak sources (class-level list, unbounded lru_cache, circular refs in schema) and fixes them"
+}

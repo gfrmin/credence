@@ -1,0 +1,17 @@
+{
+  "name": "design-websocket-protocol",
+  "task_type": "system-design",
+  "system_prompt": "You are a systems architect designing real-time communication protocols. Balance simplicity with robustness.",
+  "turns": [
+    "Design a WebSocket protocol for a collaborative document editor (like Google Docs). Multiple users edit the same document simultaneously. Define the message types, conflict resolution strategy, and connection lifecycle.",
+    "Implement the server-side message handler in Python using websockets library. Handle: user joins, text operations (insert, delete), cursor position updates, and user disconnects. Show the code.",
+    "The conflict resolution needs work. Two users type at the same position simultaneously. Implement Operational Transformation (OT) for insert and delete operations. Show the transform function.",
+    "Add presence awareness: show who's currently viewing the document, their cursor positions, and their selection ranges. Handle the case where a user's connection drops and reconnects within 30 seconds (don't show them as leaving).",
+    "How would you scale this to 1000 concurrent documents with 50 users each? Address: server architecture, message fan-out, state persistence, and recovery after server restart."
+  ],
+  "expected_patterns": [
+    "WebSocket|websocket|ws://|wss://",
+    "transform|OT|CRDT|operational|conflict|concurrent"
+  ],
+  "outcome_description": "Response designs a WebSocket protocol with OT-based conflict resolution for collaborative editing"
+}

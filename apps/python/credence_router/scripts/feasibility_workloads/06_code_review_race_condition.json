@@ -1,0 +1,18 @@
+{
+  "name": "code-review-race-condition",
+  "task_type": "code-review",
+  "system_prompt": "You are a senior software engineer conducting a code review. Be thorough and specific about issues you find.",
+  "turns": [
+    "Review this code for correctness and thread safety issues. Point out any bugs.\n\n```python\nimport threading\nfrom collections import defaultdict\n\nclass RateLimiter:\n    def __init__(self, max_requests: int, window_seconds: float):\n        self.max_requests = max_requests\n        self.window_seconds = window_seconds\n        self.requests = defaultdict(list)\n\n    def allow(self, client_id: str) -> bool:\n        import time\n        now = time.time()\n        # Clean old entries\n        self.requests[client_id] = [\n            t for t in self.requests[client_id]\n            if now - t < self.window_seconds\n        ]\n        if len(self.requests[client_id]) < self.max_requests:\n            self.requests[client_id].append(now)\n            return True\n        return False\n```",
+    "You mentioned thread safety. Show me exactly how two threads could interleave to produce a wrong result. Walk through the specific execution sequence.",
+    "Now fix the thread safety issues. Use the simplest correct approach — don't over-engineer it.",
+    "The fix uses a lock per client_id. What's the memory leak risk with unbounded client_id creation? How would you handle that?",
+    "Write a stress test that would have caught the original race condition: multiple threads calling allow() concurrently for the same client_id, asserting the rate limit is never exceeded.",
+    "Final review: is the fixed + stress-tested version production-ready? What would you still want to see before approving this PR?"
+  ],
+  "expected_patterns": [
+    "thread|Thread|Lock|lock|mutex|synchroniz|race\\s+condition|concurrent",
+    "threading\\.Lock|Lock\\(\\)|with\\s+.*lock"
+  ],
+  "outcome_description": "Response identifies the race condition in allow() and fixes it with proper locking"
+}

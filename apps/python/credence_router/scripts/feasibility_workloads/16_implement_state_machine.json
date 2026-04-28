@@ -1,0 +1,17 @@
+{
+  "name": "implement-state-machine",
+  "task_type": "implement",
+  "system_prompt": "You are a backend engineer implementing business logic. Focus on correctness, clear state transitions, and auditability.",
+  "turns": [
+    "Implement a state machine for an e-commerce order lifecycle. States: draft, pending_payment, paid, processing, shipped, delivered, cancelled, refunded. Transitions:\n- draft -> pending_payment (checkout)\n- pending_payment -> paid (payment_received) or cancelled (payment_timeout, user_cancel)\n- paid -> processing (begin_fulfillment)\n- processing -> shipped (ship) or cancelled (cancel_before_ship)\n- shipped -> delivered (confirm_delivery)\n- delivered -> refunded (refund_request within 30 days)\n- cancelled -> refunded (refund if was paid)\n\nShow the state machine with transition guards and side effects.",
+    "Add an audit log that records every transition with: timestamp, from_state, to_state, trigger, actor (user/system), and metadata. The audit log should be append-only and queryable.",
+    "The cancel transition is complex: if the order is 'paid', we need to initiate a refund. If 'processing', we need to halt fulfillment AND refund. If 'shipped', cancel is not allowed. Implement this with proper error handling.",
+    "Add concurrent access protection. Two webhooks might arrive simultaneously (e.g., payment_received and payment_timeout). Only one transition should succeed. Show the implementation using optimistic locking.",
+    "Write property-based tests using Hypothesis that verify: (1) no invalid state transitions are possible, (2) the audit log is complete and consistent, (3) optimistic locking prevents concurrent conflicting transitions."
+  ],
+  "expected_patterns": [
+    "state|State|transition|Transition|StateMachine",
+    "audit|lock|optimistic|version|concurrent"
+  ],
+  "outcome_description": "Response implements a complete order state machine with guards, audit logging, and concurrent access protection"
+}
