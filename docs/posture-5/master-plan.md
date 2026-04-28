@@ -32,6 +32,10 @@ Package credence-proxy for distribution: Docker image tagging, versioned release
 
 Publish v0.1. Write the release announcement.
 
+## Post-Move-2 follow-ups
+
+- **Decouple pricing from source code.** The proxy's `ModelSpec` prices are hardcoded in `provider.py`. Load from a config file or fetch at startup so the cost table cannot silently drift from official pricing again. (Named in Move 1 §5.4.)
+
 ## Deferred to Posture 6
 
 The personal-agent direction — `Connection` abstraction, Maildir reader, Telegram trainer, server loop, schema v4 — is deferred to a later posture (provisionally Posture 6). The design questions from the original Move 9 draft (event-form vs parametric-form convention for email observations, Telegram preference encoding, production persistence schema) require empirical evidence from the proxy's deployment to inform the brain/body interface design. See `docs/posture-6-prep/personal-agent-priors.md` for the preserved design priors.

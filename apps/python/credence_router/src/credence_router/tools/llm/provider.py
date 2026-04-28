@@ -61,7 +61,7 @@ PROVIDER_ENDPOINTS = {
 ALL_MODELS: dict[str, ModelSpec] = {
     "claude-haiku-4-5": ModelSpec(
         name="claude-haiku-4-5", provider="anthropic",
-        input_price_per_1k=0.0008, output_price_per_1k=0.004,
+        input_price_per_1k=0.001, output_price_per_1k=0.005,
         expected_latency=1.0,
         coverage=np.array([0.5, 0.3, 0.4, 0.8, 0.9]),
     ),
@@ -73,19 +73,19 @@ ALL_MODELS: dict[str, ModelSpec] = {
     ),
     "claude-opus-4-6": ModelSpec(
         name="claude-opus-4-6", provider="anthropic",
-        input_price_per_1k=0.015, output_price_per_1k=0.075,
+        input_price_per_1k=0.005, output_price_per_1k=0.025,
         expected_latency=8.0,
         coverage=np.array([0.9, 0.9, 0.9, 0.6, 0.5]),
     ),
-    "gpt-4o-mini": ModelSpec(
-        name="gpt-4o-mini", provider="openai",
-        input_price_per_1k=0.00015, output_price_per_1k=0.0006,
+    "gpt-5.4-mini": ModelSpec(
+        name="gpt-5.4-mini", provider="openai",
+        input_price_per_1k=0.00075, output_price_per_1k=0.0045,
         expected_latency=1.0,
         coverage=np.array([0.5, 0.3, 0.4, 0.7, 0.9]),
     ),
-    "gpt-4o": ModelSpec(
-        name="gpt-4o", provider="openai",
-        input_price_per_1k=0.0025, output_price_per_1k=0.01,
+    "gpt-5.4": ModelSpec(
+        name="gpt-5.4", provider="openai",
+        input_price_per_1k=0.0025, output_price_per_1k=0.015,
         expected_latency=3.0,
         coverage=np.array([0.8, 0.8, 0.7, 0.7, 0.7]),
     ),

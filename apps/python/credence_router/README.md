@@ -57,8 +57,8 @@ The proxy routes across all models whose API key is provided:
 | claude-haiku-4-5 | Anthropic | `ANTHROPIC_API_KEY` |
 | claude-sonnet-4-6 | Anthropic | `ANTHROPIC_API_KEY` |
 | claude-opus-4-6 | Anthropic | `ANTHROPIC_API_KEY` |
-| gpt-4o-mini | OpenAI | `OPENAI_API_KEY` |
-| gpt-4o | OpenAI | `OPENAI_API_KEY` |
+| gpt-5.4-mini | OpenAI | `OPENAI_API_KEY` |
+| gpt-5.4 | OpenAI | `OPENAI_API_KEY` |
 
 Set at least one provider key. The proxy only routes to models with available keys.
 
