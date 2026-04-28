@@ -20,6 +20,7 @@ import httpx
 from fastapi import FastAPI, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
+from starlette.background import BackgroundTask
 
 log = logging.getLogger(__name__)
 
@@ -279,46 +280,45 @@ async def proxy_chat_completions(request: Request):
         model = decision.provider_name
         log.info("LLM routing: '%s...' → %s", user_message[:50], model)
 
+    obs_holder: dict = {}
+
     async def generate():
-        observation = None
-        async for chunk, obs in forward_streaming(body, model):
-            if obs is not None:
-                observation = obs
-            else:
+        async for chunk, obs in forward_streaming(body, model, obs_out=obs_holder):
+            if obs is None:
                 yield chunk
-        if observation is not None:
-            # Schedule async quality judge (runs after response is delivered)
-            if not forced and observation.response_text and os.environ.get("ANTHROPIC_API_KEY"):
-                asyncio.create_task(
-                    _judge_and_update(user_message, observation.response_text, model, observation)
-                )
-            elif not forced:
-                # No judge available — fall back to binary signal
-                _llm_domain.queue_outcome(observation)
-            _request_log.append({
-                "user_message": user_message[:100],
-                "model_selected": model,
-                "input_tokens": observation.input_tokens,
-                "output_tokens": observation.output_tokens,
-                "cost_usd": observation.cost_usd,
-                "ttft_seconds": observation.ttft_seconds,
-                "total_seconds": observation.total_seconds,
-                "useful": observation.useful,
-                "forced": bool(forced),
-            })
-            # Persist LLM state after each request
-            if _llm_state_path and not forced:
-                try:
-                    _llm_domain.save_state(_llm_state_path)
-                except Exception as e:
-                    log.warning("Could not save LLM state: %s", e)
+
+    async def after_stream():
+        observation = obs_holder.get("observation")
+        if observation is None:
+            return
+        if not forced and observation.response_text and os.environ.get("ANTHROPIC_API_KEY"):
+            asyncio.create_task(
+                _judge_and_update(user_message, observation.response_text, model, observation)
+            )
+        elif not forced:
+            _llm_domain.queue_outcome(observation)
+        _request_log.append({
+            "user_message": user_message[:100],
+            "model_selected": model,
+            "input_tokens": observation.input_tokens,
+            "output_tokens": observation.output_tokens,
+            "cost_usd": observation.cost_usd,
+            "ttft_seconds": observation.ttft_seconds,
+            "total_seconds": observation.total_seconds,
+            "useful": observation.useful,
+            "forced": bool(forced),
+        })
+        if _llm_state_path and not forced:
+            try:
+                _llm_domain.save_state(_llm_state_path)
+            except Exception as e:
+                log.warning("Could not save LLM state: %s", e)
 
     return StreamingResponse(
         generate(),
         media_type="text/event-stream",
-        headers={
-            "X-Credence-Model": model,
-        },
+        headers={"X-Credence-Model": model},
+        background=BackgroundTask(after_stream),
     )
 
 
