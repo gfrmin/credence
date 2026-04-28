@@ -1,0 +1,17 @@
+{
+  "name": "refactor-error-handling",
+  "task_type": "refactor",
+  "system_prompt": "You are a helpful coding assistant. Be concise and focus on the code.",
+  "turns": [
+    "These three functions have the same try/except/log/return-None pattern. Extract a common helper or decorator.\n\n```python\nimport logging\nimport requests\n\nlog = logging.getLogger(__name__)\n\ndef fetch_user(user_id):\n    try:\n        resp = requests.get(f\"https://api.example.com/users/{user_id}\")\n        resp.raise_for_status()\n        return resp.json()\n    except requests.RequestException as e:\n        log.error(\"Failed to fetch user %s: %s\", user_id, e)\n        return None\n\ndef fetch_order(order_id):\n    try:\n        resp = requests.get(f\"https://api.example.com/orders/{order_id}\")\n        resp.raise_for_status()\n        return resp.json()\n    except requests.RequestException as e:\n        log.error(\"Failed to fetch order %s: %s\", order_id, e)\n        return None\n\ndef fetch_product(product_id):\n    try:\n        resp = requests.get(f\"https://api.example.com/products/{product_id}\")\n        resp.raise_for_status()\n        return resp.json()\n    except requests.RequestException as e:\n        log.error(\"Failed to fetch product %s: %s\", product_id, e)\n        return None\n```",
+    "Make it a decorator instead of a wrapper function, so the original functions keep their names and signatures.",
+    "The decorator should preserve the function's docstring and signature for type checkers. Use functools.wraps.",
+    "Add a parameter to the decorator for a custom error message prefix.",
+    "Show all three original functions rewritten using the decorator."
+  ],
+  "expected_patterns": [
+    "functools\\.wraps|@wraps",
+    "def\\s+\\w+_handler|def\\s+handle_errors|def\\s+safe_request|def\\s+with_error_handling|def\\s+decorator"
+  ],
+  "outcome_description": "Response extracts a decorator with functools.wraps that handles the repeated error pattern"
+}

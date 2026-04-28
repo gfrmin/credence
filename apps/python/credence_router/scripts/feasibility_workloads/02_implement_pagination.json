@@ -1,0 +1,18 @@
+{
+  "name": "implement-pagination",
+  "task_type": "implement",
+  "system_prompt": "You are a helpful coding assistant. Be concise and focus on the code.",
+  "turns": [
+    "Here's a Flask endpoint that returns all users at once. Add pagination with `page` and `per_page` query parameters, defaulting to page 1 and 20 items per page.\n\n```python\nfrom flask import Flask, jsonify, request\n\napp = Flask(__name__)\nusers = [{\"id\": i, \"name\": f\"User {i}\", \"email\": f\"user{i}@example.com\"} for i in range(100)]\n\n@app.get(\"/users\")\ndef get_users():\n    return jsonify(users)\n```",
+    "Add a response envelope that includes pagination metadata: total count, current page, per_page, and total pages.",
+    "What happens when someone requests a page beyond the last page? Return an empty list with correct metadata, not a 404.",
+    "Extract the pagination logic into a reusable function that works with any list, not just users.",
+    "Add type hints to the pagination function and show the final complete code."
+  ],
+  "expected_patterns": [
+    "page.*per_page|per_page.*page",
+    "\\bslice\\b|\\[.*:.*\\]",
+    "offset|start.*end|page\\s*[*×]\\s*per_page|\\(page\\s*-\\s*1\\)"
+  ],
+  "outcome_description": "Response implements pagination with page/per_page parameters and list slicing"
+}

@@ -1,0 +1,17 @@
+{
+  "name": "write-tests-lru-cache",
+  "task_type": "test",
+  "system_prompt": "You are a helpful coding assistant. Be concise and focus on the code.",
+  "turns": [
+    "Write unit tests for this LRU cache class. Use pytest.\n\n```python\nfrom collections import OrderedDict\n\nclass LRUCache:\n    def __init__(self, capacity: int):\n        self.capacity = capacity\n        self.cache = OrderedDict()\n\n    def get(self, key):\n        if key not in self.cache:\n            return -1\n        self.cache.move_to_end(key)\n        return self.cache[key]\n\n    def put(self, key, value):\n        if key in self.cache:\n            self.cache.move_to_end(key)\n        self.cache[key] = value\n        if len(self.cache) > self.capacity:\n            self.cache.popitem(last=False)\n```",
+    "Add edge case tests: capacity of 1, getting a non-existent key, overwriting an existing key with a new value.",
+    "Add a test that verifies the eviction order is correct: insert 3 items into a capacity-2 cache and check that the least-recently-used item was evicted.",
+    "Add a parametrized test that checks cache behavior for capacities 1, 2, 5, and 10.",
+    "Show the complete test file with all tests, ready to run with pytest."
+  ],
+  "expected_patterns": [
+    "def\\s+test_",
+    "assert.*==|assert.*cache"
+  ],
+  "outcome_description": "Response contains pytest test functions with assert statements for the LRU cache"
+}
