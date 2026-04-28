@@ -1,0 +1,17 @@
+{
+  "name": "explain-modify-fibonacci",
+  "task_type": "explain+modify",
+  "system_prompt": "You are a helpful coding assistant. Be concise and focus on the code.",
+  "turns": [
+    "Explain what this function does step by step. What is the time and space complexity?\n\n```python\ndef fib(n):\n    if n <= 1:\n        return n\n    return fib(n - 1) + fib(n - 2)\n```",
+    "This is very slow for large n. Modify it to use memoization so repeated subproblems aren't recomputed.",
+    "Now show me an iterative version that uses O(1) space instead of the memoized version's O(n).",
+    "Write a comparison function that times all three versions (naive, memoized, iterative) for n=30 and prints the results.",
+    "Which version would you recommend for production use and why?"
+  ],
+  "expected_patterns": [
+    "lru_cache|@cache|memo|functools\\.cache",
+    "O\\(n\\)|linear|memoiz"
+  ],
+  "outcome_description": "Response explains the exponential complexity and adds memoization (lru_cache, @cache, or dict-based)"
+}

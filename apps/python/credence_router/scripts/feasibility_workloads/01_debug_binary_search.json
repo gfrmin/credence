@@ -1,0 +1,18 @@
+{
+  "name": "debug-binary-search",
+  "task_type": "debug",
+  "system_prompt": "You are a helpful coding assistant. Be concise and focus on the code.",
+  "turns": [
+    "Here's my binary search function. It hangs in an infinite loop for some inputs. Can you find the bug?\n\n```python\ndef binary_search(arr, target):\n    lo, hi = 0, len(arr)\n    while lo < hi:\n        mid = (lo + hi) // 2\n        if arr[mid] == target:\n            return mid\n        elif arr[mid] < target:\n            lo = mid\n        else:\n            hi = mid\n    return -1\n```\n\nFor example, `binary_search([1, 3, 5, 7, 9], 9)` never returns.",
+    "Can you show me the corrected version of the full function?",
+    "Trace through the execution of `binary_search([1, 3, 5, 7, 9], 5)` step by step with the corrected code.",
+    "Now add input validation: raise ValueError if the array is not sorted, and handle the empty array case.",
+    "Write 5 test cases using assert statements that would have caught this bug."
+  ],
+  "expected_patterns": [
+    "lo\\s*=\\s*mid\\s*\\+\\s*1",
+    "lo = mid \\+ 1",
+    "low\\s*=\\s*mid\\s*\\+\\s*1"
+  ],
+  "outcome_description": "Response identifies the off-by-one bug (lo = mid should be lo = mid + 1)"
+}
