@@ -131,28 +131,41 @@ def extract_user_message(request_body: bytes) -> str:
 async def forward_streaming(
     request_body: bytes,
     model_name: str,
+    obs_out: dict | None = None,
 ) -> AsyncIterator[tuple[bytes, Observation | None]]:
     """Forward an OpenAI-format request to the correct provider and yield SSE chunks.
 
     The request is forwarded unchanged except for the model field.
     Routes to the provider's OpenAI-compatible endpoint based on model name.
+
+    obs_out: if provided, observation is stored as obs_out["observation"]
+    in a finally block, guaranteeing delivery even on client disconnect.
     """
     spec = ALL_MODELS.get(model_name)
     if spec is None:
         log.error("Unknown model: %s", model_name)
-        yield b"", Observation(completed=False, error_type="unknown_model")
+        obs = Observation(completed=False, error_type="unknown_model")
+        if obs_out is not None:
+            obs_out["observation"] = obs
+        yield b"", obs
         return
 
     endpoint = PROVIDER_ENDPOINTS.get(spec.provider)
     if endpoint is None:
         log.error("Unknown provider: %s", spec.provider)
-        yield b"", Observation(completed=False, error_type="unknown_provider")
+        obs = Observation(completed=False, error_type="unknown_provider")
+        if obs_out is not None:
+            obs_out["observation"] = obs
+        yield b"", obs
         return
 
     api_key = os.environ.get(endpoint["env_var"], "").strip()
     if not api_key:
         log.error("Missing API key for %s: %s not set", spec.provider, endpoint["env_var"])
-        yield b"", Observation(completed=False, error_type="missing_api_key")
+        obs = Observation(completed=False, error_type="missing_api_key")
+        if obs_out is not None:
+            obs_out["observation"] = obs
+        yield b"", obs
         return
 
     base_url = endpoint["base_url"]
@@ -171,101 +184,102 @@ async def forward_streaming(
     completed = False
     error_type = None
     truncated = False
-    response_parts: list[str] = []  # buffer response text for quality judging
+    response_parts: list[str] = []
+    observation = None
 
-    async with httpx.AsyncClient() as client:
-        try:
-            async with client.stream(
-                "POST",
-                base_url,
-                headers={
-                    endpoint["auth_header"]: auth_value,
-                    "Content-Type": "application/json",
-                },
-                content=json.dumps(data),
-                timeout=120.0,
-            ) as response:
-                if response.status_code in (401, 403):
-                    error_type = "auth"
-                    log.error("%s auth failed (HTTP %d)", spec.provider, response.status_code)
-                    raise httpx.HTTPStatusError(
-                        f"Auth failed: {response.status_code}",
-                        request=response.request,
-                        response=response,
-                    )
-                if response.status_code == 429:
-                    error_type = "rate_limit"
-                    log.error("%s rate limited", spec.provider)
-                elif response.status_code >= 500:
-                    error_type = "server_error"
-                    log.error("%s server error: %d", spec.provider, response.status_code)
+    try:
+        async with httpx.AsyncClient() as client:
+            try:
+                async with client.stream(
+                    "POST",
+                    base_url,
+                    headers={
+                        endpoint["auth_header"]: auth_value,
+                        "Content-Type": "application/json",
+                    },
+                    content=json.dumps(data),
+                    timeout=120.0,
+                ) as response:
+                    if response.status_code in (401, 403):
+                        error_type = "auth"
+                        log.error("%s auth failed (HTTP %d)", spec.provider, response.status_code)
+                        raise httpx.HTTPStatusError(
+                            f"Auth failed: {response.status_code}",
+                            request=response.request,
+                            response=response,
+                        )
+                    if response.status_code == 429:
+                        error_type = "rate_limit"
+                        log.error("%s rate limited", spec.provider)
+                    elif response.status_code >= 500:
+                        error_type = "server_error"
+                        log.error("%s server error: %d", spec.provider, response.status_code)
 
-                first_chunk = True
-                async for chunk in response.aiter_bytes():
-                    if first_chunk:
-                        ttft = time.monotonic() - t_start
-                        first_chunk = False
-                    yield chunk, None
+                    first_chunk = True
+                    async for chunk in response.aiter_bytes():
+                        if first_chunk:
+                            ttft = time.monotonic() - t_start
+                            first_chunk = False
+                        yield chunk, None
 
-                    # Parse SSE for usage + finish reason
-                    for line in chunk.decode("utf-8", errors="replace").split("\n"):
-                        if not line.startswith("data: ") or line.strip() == "data: [DONE]":
-                            continue
-                        try:
-                            event = json.loads(line[6:])
-                            # OpenAI format: usage in final chunk
-                            usage = event.get("usage")
-                            if usage:
-                                input_tokens = usage.get("prompt_tokens", usage.get("input_tokens", input_tokens))
-                                output_tokens = usage.get("completion_tokens", usage.get("output_tokens", output_tokens))
-                            # Extract content text for quality judging
-                            choices = event.get("choices", [])
-                            if choices:
-                                delta = choices[0].get("delta", {})
-                                content = delta.get("content")
-                                if content:
-                                    response_parts.append(content)
-                                finish = choices[0].get("finish_reason")
-                                if finish in ("stop", "end_turn"):
-                                    completed = True
-                                elif finish in ("length", "max_tokens"):
-                                    completed = True
-                                    truncated = True
-                        except (json.JSONDecodeError, KeyError, IndexError):
-                            pass
+                        for line in chunk.decode("utf-8", errors="replace").split("\n"):
+                            if not line.startswith("data: ") or line.strip() == "data: [DONE]":
+                                continue
+                            try:
+                                event = json.loads(line[6:])
+                                usage = event.get("usage")
+                                if usage:
+                                    input_tokens = usage.get("prompt_tokens", usage.get("input_tokens", input_tokens))
+                                    output_tokens = usage.get("completion_tokens", usage.get("output_tokens", output_tokens))
+                                choices = event.get("choices", [])
+                                if choices:
+                                    delta = choices[0].get("delta", {})
+                                    content = delta.get("content")
+                                    if content:
+                                        response_parts.append(content)
+                                    finish = choices[0].get("finish_reason")
+                                    if finish in ("stop", "end_turn"):
+                                        completed = True
+                                    elif finish in ("length", "max_tokens"):
+                                        completed = True
+                                        truncated = True
+                            except (json.JSONDecodeError, KeyError, IndexError):
+                                pass
 
-                if error_type is None and not completed:
-                    completed = True
+                    if error_type is None and not completed:
+                        completed = True
 
-        except httpx.TimeoutException:
-            error_type = "timeout"
-            log.error("Request timed out for %s/%s", spec.provider, model_name)
-        except httpx.ConnectError as e:
-            error_type = "timeout"
-            log.error("Connection error for %s: %s", spec.provider, e)
+            except httpx.TimeoutException:
+                error_type = "timeout"
+                log.error("Request timed out for %s/%s", spec.provider, model_name)
+            except httpx.ConnectError as e:
+                error_type = "timeout"
+                log.error("Connection error for %s: %s", spec.provider, e)
+    finally:
+        total_seconds = time.monotonic() - t_start
+        cost = compute_cost(spec, input_tokens, output_tokens)
+        response_text = "".join(response_parts)
 
-    total_seconds = time.monotonic() - t_start
-    cost = compute_cost(spec, input_tokens, output_tokens)
+        observation = Observation(
+            completed=completed and error_type is None,
+            error_type=error_type,
+            ttft_seconds=ttft,
+            total_seconds=total_seconds,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            truncated=truncated,
+            cost_usd=cost,
+            response_text=response_text,
+        )
 
-    response_text = "".join(response_parts)
+        log.info(
+            "%s/%s: %s in %.1fs (ttft=%.2fs, %d+%d tok, $%.4f)",
+            spec.provider, model_name,
+            "ok" if observation.useful else error_type or "failed",
+            total_seconds, ttft, input_tokens, output_tokens, cost,
+        )
 
-    observation = Observation(
-        completed=completed and error_type is None,
-        error_type=error_type,
-        ttft_seconds=ttft,
-        total_seconds=total_seconds,
-        input_tokens=input_tokens,
-        output_tokens=output_tokens,
-        truncated=truncated,
-        cost_usd=cost,
-        response_text=response_text,
-    )
-
-    log.info(
-        "%s/%s: %s in %.1fs (ttft=%.2fs, %d+%d tok, $%.4f)",
-        spec.provider, model_name,
-        "ok" if observation.useful else error_type or "failed",
-        total_seconds, ttft, input_tokens, output_tokens, cost,
-    )
+        if obs_out is not None:
+            obs_out["observation"] = observation
 
     yield b"", observation
