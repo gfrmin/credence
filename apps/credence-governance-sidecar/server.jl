@@ -10,45 +10,68 @@ using Credence
 
 include("instruction_patterns.jl")
 include("brain.jl")
+include("detectors.jl")
 include("persistence.jl")
 
 const DEFAULT_PORT = 3100
 
-function make_state(; max_repetitions::Int=3, prototype_fallback::Bool=true)
+function make_state()
     config_path = joinpath(@__DIR__, "config", "budgets.json")
     budget_table = load_budget_table(config_path)
-    brain = make_brain_state(budget_table;
-                             prototype_fallback_enabled=prototype_fallback,
-                             max_repetitions=max_repetitions)
+    brain = make_brain_state(budget_table)
+
+    read_tools_path = joinpath(@__DIR__, "config", "read_tools.json")
+    read_tools = load_read_tools(read_tools_path)
+
+    detector_windows_path = joinpath(@__DIR__, "config", "detector_windows.json")
+    eu_window_size = if isfile(detector_windows_path)
+        windows = load_detector_windows(detector_windows_path)
+        get(windows, "eu_proceed", DEFAULT_EU_WINDOW_SIZE)
+    else
+        DEFAULT_EU_WINDOW_SIZE
+    end
 
     (; user_id, created_at) = load_sidecar_state!(brain)
 
     history = Dict{String,Any}[]
     state_lock = ReentrantLock()
-    return (; brain, history, start_time=now(), user_id, created_at, state_lock)
+    return (; brain, history, start_time=now(), user_id, created_at, state_lock,
+              read_tools, eu_window_size)
 end
 
 function handle_evaluate(state, body::Dict{String,Any})
     tool_name = get(body, "toolName", "")
     params = Dict{String,Any}(get(body, "params", Dict{String,Any}()))
-    recent = get(body, "recentHistory", Dict{String,Any}[])
-
-    combined_history = vcat(
-        [Dict{String,Any}("toolName" => get(r, "toolName", ""),
-                          "params" => Dict{String,Any}(get(r, "params", Dict{String,Any}())))
-         for r in recent],
-        [Dict{String,Any}("toolName" => get(h, "toolName", ""),
-                          "params" => Dict{String,Any}(get(h, "params", Dict{String,Any}())))
-         for h in state.history]
-    )
-
-    fallback = check_prototype_fallback(state.brain, combined_history, tool_name, params)
-    if fallback !== nothing
-        return fallback
-    end
 
     category = infer_category(tool_name, params)
+
+    sr = check_stationarity(state.brain, state.read_tools, tool_name, params, category)
+    if sr !== nothing && sr.fires
+        return Dict{String,Any}(
+            "action" => "block",
+            "decision" => "halt",
+            "reason" => "Posterior stationary on repeated tool call: '$(sr.tool_name)' " *
+                        "called $(sr.count) times with identical arguments " *
+                        "(outcome_var=$(round(sr.outcome_var, digits=4)) ≤ threshold=$(round(sr.threshold, digits=4)), " *
+                        "window=$(sr.window_size)). Halting.",
+            "signals" => Dict{String,Any}(),
+            "requireApproval" => nothing,
+        )
+    end
+
     result = compute_eu(state.brain, tool_name, category)
+
+    nc = check_no_confidence(state.brain, category, result.eu_proceed, state.eu_window_size)
+    if nc
+        return Dict{String,Any}(
+            "action" => "block",
+            "decision" => "halt",
+            "reason" => "Posterior over next-action value is flat: EU(proceed) has high " *
+                        "coefficient of variation across recent evaluations. Halting.",
+            "signals" => result.signals,
+            "requireApproval" => nothing,
+        )
+    end
 
     response = Dict{String,Any}(
         "action" => result.action,
@@ -84,6 +107,7 @@ function handle_observe(state, body::Dict{String,Any})
                                error_str isa AbstractString ? error_str : nothing,
                                duration_ms isa Real ? duration_ms : nothing)
     update_posterior!(state.brain, tool_name, category, success)
+    record_outcome!(state.brain, tool_name, params, success)
 
     user_approval = get(body, "userApproval", nothing)
     if user_approval !== nothing
@@ -129,8 +153,8 @@ function handle_health(state)
     )
 end
 
-function run_server(; port::Int=DEFAULT_PORT, max_repetitions::Int=3, prototype_fallback::Bool=true)
-    state = make_state(; max_repetitions, prototype_fallback)
+function run_server(; port::Int=DEFAULT_PORT)
+    state = make_state()
     router = HTTP.Router()
 
     HTTP.register!(router, "POST", "/evaluate", function(req)
@@ -171,15 +195,13 @@ function run_server(; port::Int=DEFAULT_PORT, max_repetitions::Int=3, prototype_
     println("Credence governance sidecar starting on port $port")
     println("  user_id = $(state.user_id)")
     println("  state_dir = $(get_state_dir())")
-    println("  prototype_fallback = $prototype_fallback")
-    println("  max_repetitions = $max_repetitions")
     println("  observation_count = $(state.brain.observation_count)")
+    println("  eu_window_size = $(state.eu_window_size)")
+    println("  read_tools = $(state.read_tools)")
     println("  endpoints: POST /evaluate, POST /observe, POST /compaction-preview, GET /health")
 
     HTTP.serve(router, "127.0.0.1", port)
 end
 
 port = parse(Int, get(ENV, "CREDENCE_SIDECAR_PORT", string(DEFAULT_PORT)))
-max_reps = parse(Int, get(ENV, "CREDENCE_MAX_REPETITIONS", "3"))
-fallback = lowercase(get(ENV, "CREDENCE_PROTOTYPE_FALLBACK", "true")) in ("true", "1", "yes")
-run_server(; port, max_repetitions=max_reps, prototype_fallback=fallback)
+run_server(; port)

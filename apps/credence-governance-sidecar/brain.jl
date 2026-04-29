@@ -92,22 +92,22 @@ mutable struct BrainState
     model_quality::Dict{String, Dict{String, BetaMeasure}}
     observation_count::Int
     budget_table::BudgetTable
-    prototype_fallback_enabled::Bool
-    max_repetitions::Int
     registered_instructions::Vector{Dict{String,Any}}
+    tool_args_outcomes::Dict{String, Vector{Bool}}
+    eu_history::Vector{Float64}
+    no_confidence_consecutive::Int
 end
 
-function make_brain_state(budget_table::BudgetTable;
-                          prototype_fallback_enabled::Bool=true,
-                          max_repetitions::Int=3)
+function make_brain_state(budget_table::BudgetTable)
     BrainState(
         Dict{PosteriorKey, BetaMeasure}(),
         Dict{String, Dict{String, BetaMeasure}}(),
         0,
         budget_table,
-        prototype_fallback_enabled,
-        max_repetitions,
         Dict{String,Any}[],
+        Dict{String, Vector{Bool}}(),
+        Float64[],
+        0,
     )
 end
 
@@ -296,41 +296,9 @@ function update_instruction_decay!(state::BrainState, category::String, approved
     deleteat!(state.registered_instructions, retired)
 end
 
-# ── Prototype fallback: repetition counting ──
+# ── Utility: canonical key for per-(tool, args) tracking ──
 
 function canonical_key(tool_name::AbstractString, params::Dict)
     sorted_params = sort(collect(params), by=first)
     return "$tool_name:$(JSON3.write(sorted_params))"
-end
-
-function count_repetitions(history::Vector{Dict{String,Any}}, tool_name::AbstractString, params::Dict)
-    key = canonical_key(tool_name, params)
-    count = 0
-    for entry in history
-        entry_key = canonical_key(
-            get(entry, "toolName", ""),
-            get(entry, "params", Dict{String,Any}())
-        )
-        if entry_key == key
-            count += 1
-        end
-    end
-    return count
-end
-
-function check_prototype_fallback(state::BrainState, history::Vector{Dict{String,Any}},
-                                  tool_name::AbstractString, params::Dict{String,Any})
-    !state.prototype_fallback_enabled && return nothing
-    tool_name in READ_LIKE_TOOLS && return nothing
-    count = count_repetitions(history, tool_name, params)
-    if count >= state.max_repetitions
-        return Dict{String,Any}(
-            "action" => "block",
-            "decision" => "halt",
-            "reason" => "Loop detected: '$tool_name' with identical arguments has been called $count times (threshold: $(state.max_repetitions)). Halting to prevent runaway loop.",
-            "signals" => Dict{String,Any}(),
-            "requireApproval" => nothing,
-        )
-    end
-    return nothing
 end
