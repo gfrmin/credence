@@ -4,6 +4,7 @@
 # Loaded by server.jl; uses Credence substrate types.
 
 using ..Credence
+using Dates
 
 # ── Category inference ──
 
@@ -93,6 +94,7 @@ mutable struct BrainState
     budget_table::BudgetTable
     prototype_fallback_enabled::Bool
     max_repetitions::Int
+    registered_instructions::Vector{Dict{String,Any}}
 end
 
 function make_brain_state(budget_table::BudgetTable;
@@ -105,6 +107,7 @@ function make_brain_state(budget_table::BudgetTable;
         budget_table,
         prototype_fallback_enabled,
         max_repetitions,
+        Dict{String,Any}[],
     )
 end
 
@@ -170,6 +173,21 @@ function compute_eu(state::BrainState, tool_name::AbstractString, category::Abst
     escalate_threshold = 1.0 / sqrt(concentration)  # credence-lint: allow — precedent:display-arithmetic — Amendment 1 threshold derivation
 
     escalate_fires = cv > escalate_threshold && uncertainty > 0.3
+
+    # credence-lint: allow — precedent:display-arithmetic — instruction-based escalation elevation
+    instruction_boost = 0.0
+    for inst in state.registered_instructions
+        if instruction_matches_category(string(inst["action_class"]), category)
+            ps = Float64(inst["prior_strength"])
+            approvals = Int(get(inst, "approvals", 0))
+            denials = Int(get(inst, "denials", 0))
+            denial_rate = (1.0 + denials) / (2.0 + approvals + denials)
+            instruction_boost = max(instruction_boost, ps * denial_rate)
+            escalate_fires = true
+        end
+    end
+    eu_escalate += instruction_boost
+
     # credence-lint: allow — precedent:display-arithmetic — host-level argmax decision logic
     downgrade_fires = comparison_p > downgrade_threshold && eu_downgrade > eu_proceed && eu_proceed > eu_halt
 
@@ -230,6 +248,31 @@ function _make_reason(decision::AbstractString, tool_name::AbstractString,
     else
         ""
     end
+end
+
+# ── Instruction registration ──
+
+const DEFAULT_PRIOR_STRENGTH = 5.0
+
+function register_instruction!(state::BrainState, pattern_id::String, action_class::String;
+                                prior_strength::Float64=DEFAULT_PRIOR_STRENGTH)
+    for inst in state.registered_instructions
+        if inst["pattern"] == pattern_id && inst["action_class"] == action_class
+            inst["last_seen"] = Dates.format(now(Dates.UTC), dateformat"yyyy-mm-ddTHH:MM:SSZ")
+            return false
+        end
+    end
+
+    push!(state.registered_instructions, Dict{String,Any}(
+        "pattern" => pattern_id,
+        "action_class" => action_class,
+        "registered_at" => Dates.format(now(Dates.UTC), dateformat"yyyy-mm-ddTHH:MM:SSZ"),
+        "last_seen" => Dates.format(now(Dates.UTC), dateformat"yyyy-mm-ddTHH:MM:SSZ"),
+        "prior_strength" => prior_strength,
+        "approvals" => 0,
+        "denials" => 0,
+    ))
+    true
 end
 
 # ── Prototype fallback: repetition counting ──

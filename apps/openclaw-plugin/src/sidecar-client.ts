@@ -84,6 +84,19 @@ export class SidecarClient {
     }
   }
 
+  async compactionPreview(messages: unknown[]): Promise<void> {
+    try {
+      await fetch(`${this.baseUrl}/compaction-preview`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ messages }),
+        signal: AbortSignal.timeout(5000),
+      });
+    } catch {
+      // fire-and-forget: sidecar unavailability doesn't block compaction
+    }
+  }
+
   async health(): Promise<boolean> {
     try {
       const response = await fetch(`${this.baseUrl}/health`, {

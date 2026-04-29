@@ -130,6 +130,10 @@ export default {
       });
     });
 
+    api.on("before_compaction", (event: { messages: unknown[] }) => {
+      client.compactionPreview(event.messages);
+    });
+
     api.on("agent_end", async () => {
       recentHistory.length = 0;
       pendingEscalation = null;
