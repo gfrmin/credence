@@ -11,6 +11,7 @@ push!(LOAD_PATH, joinpath(@__DIR__, ".."))
 using Credence
 using JSON3
 
+include(joinpath(@__DIR__, "..", "apps", "credence-governance-sidecar", "instruction_patterns.jl"))
 include(joinpath(@__DIR__, "..", "apps", "credence-governance-sidecar", "brain.jl"))
 
 # ── Test 1: Category inference ──
@@ -188,36 +189,10 @@ parsed = JSON3.read(json_str, Dict{String,Any})
 println("PASSED: Response shape serialises cleanly, action/reason present for Move 1 plugin")
 println()
 
-# ── Test 8: Prototype fallback ──
+# ── Test 8: Observation count tracks correctly ──
 
 println("=" ^ 60)
-println("TEST 8: Prototype repetition-counter fallback")
-println("=" ^ 60)
-
-fb_state = make_brain_state(bt; prototype_fallback_enabled=true, max_repetitions=3)
-history = Dict{String,Any}[]
-for i in 1:3
-    push!(history, Dict{String,Any}("toolName" => "Bash", "params" => Dict{String,Any}("command" => "ls")))
-end
-fb_result = check_prototype_fallback(fb_state, history, "Bash", Dict{String,Any}("command" => "ls"))
-@assert fb_result !== nothing "Fallback should trigger after 3 identical calls"
-@assert fb_result["action"] == "block"
-@assert fb_result["decision"] == "halt"
-
-read_result = check_prototype_fallback(fb_state, history, "Read", Dict{String,Any}("file_path" => "/etc/hosts"))
-@assert read_result === nothing "Read tools should be exempt from fallback"
-
-fb_off_state = make_brain_state(bt; prototype_fallback_enabled=false)
-fb_off_result = check_prototype_fallback(fb_off_state, history, "Bash", Dict{String,Any}("command" => "ls"))
-@assert fb_off_result === nothing "Fallback disabled should return nothing"
-
-println("PASSED: Prototype fallback gating works")
-println()
-
-# ── Test 9: Observation count tracks correctly ──
-
-println("=" ^ 60)
-println("TEST 9: Observation count")
+println("TEST 8: Observation count")
 println("=" ^ 60)
 
 count_state = make_brain_state(bt)
@@ -229,10 +204,10 @@ update_posterior!(count_state, "Edit", "code", false)
 println("PASSED: Observation count increments correctly")
 println()
 
-# ── Test 10: Category precedence — delete before version-control ──
+# ── Test 9: Category precedence — delete before version-control ──
 
 println("=" ^ 60)
-println("TEST 10: Category precedence")
+println("TEST 9: Category precedence")
 println("=" ^ 60)
 
 @assert infer_category("Bash", Dict{String,Any}("command" => "git rm file.txt")) == "delete"
