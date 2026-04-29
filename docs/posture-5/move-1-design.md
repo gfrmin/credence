@@ -1,489 +1,478 @@
-# Move 1 — Benchmark methodology for credence-proxy v0.1
+# Move 1 — OpenClaw integration prototype
 
-## 0. Strategic context
+## 1. Strategic context
 
-Posture 5 path 2: ship credence-proxy v0.1 against the current OAI-compatible
-architecture. Cache savings are out of scope (Move 0 found prompt caching is
-unsupported on the OAI-compatible endpoint). The proxy's cost-savings story is
-**model-tier routing only**: Bayesian EU maximisation selects cheaper models
-(Haiku) when expected quality is sufficient, falling back to costlier models
-(Sonnet, Opus) when the task demands it.
+Posture 5's master plan (amended 2026-04-28) targets a Bayesian governance
+sidecar for agentic harnesses, with OpenClaw as the first integration. The
+routing-only positioning was invalidated by Move 0's cache finding and Move 2's
+routing-collapse benchmark. The MVP is a working OpenClaw plugin that
+demonstrates Bayesian governance of the agent loop.
 
-Move 1 designs a benchmark methodology that validates this claim on
-representative workloads. The methodology must be defensible *for what it
-claims* — model-tier routing savings on coding-shaped workloads — and honest
-about what it doesn't measure (cache savings, multi-provider routing beyond
-Anthropic+OpenAI, production-scale workloads).
+Move 1 is the architectural deep-dive and integration proof. It answers two
+questions: (a) does OpenClaw's plugin surface actually support the interventions
+the master plan assumes? (b) does the sidecar IPC path work at acceptable
+latency? Move 2 builds the production plugin; Move 3 evaluates it. Move 1's job
+is to de-risk both by surfacing architectural surprises before substantial code
+commits.
 
-A named methodological feature: the design isolates routing-induced variance
-from LLM-output variance. Baseline repetitions (always-Sonnet, no routing)
-measure output variance alone; routing repetitions combine output variance with
-routing variance (cold-start learning, model-selection stochasticity). This
-decomposition lets the benchmark report routing's own statistical reliability
-separately from the underlying model stochasticity — a precise answer to "are
-the savings real or noise?" rather than an aggregate one.
+## 2. Scope
 
-Move 0's audit report is a named input: any benchmark that implies cache
-savings contradicts the audit's findings and is dishonest.
+1. Document OpenClaw's integration surface (hook system, persistence layer, tool
+   catalog, model provider configuration, runtime architecture).
+2. Design the sidecar integration architecture (IPC protocol, latency budget,
+   persistence strategy, intervention vocabulary, failure modes).
+3. Build a minimal prototype demonstrating one end-to-end intervention
+   (loop-detection veto on `before_tool_call`) via sidecar IPC.
 
-## 1. Scope
+## 3. Out of scope
 
-Two deliverables, sequenced:
+- Production-grade plugin (Move 2).
+- Full Credence brain wired to sidecar (Move 2).
+- Four-intervention vocabulary beyond prototype's veto-on-loop (Move 2).
+- Targeted demonstration evaluation (Move 3).
+- Multi-harness adapters (post-MVP roadmap).
+- Publication track (post-MVP roadmap).
+- Changes to Credence's existing Julia substrate.
+- Changes to credence-router.
 
-1. **Upfront feasibility check** (pre-benchmark gate). Validates path 2's
-   premise: that Bayesian routing produces meaningful cost savings on
-   representative coding workloads. If the check fails, the methodology design
-   pauses and the value proposition is re-examined. Specified in §Pre-design.
+## 4. Definitions
 
-2. **Benchmark methodology** (the main artefact). Specifies workload selection
-   (§5.1), quality measurement (§5.2), baseline selection (§5.3), cost
-   measurement (§5.4), statistical robustness (§5.5), and deliverable shape
-   (§5.6). Move 2 executes this methodology and produces results.
+**Sidecar**: A separate process (Julia HTTP server) that the TypeScript plugin
+calls via HTTP. The sidecar runs Credence's decision-theoretic machinery; the
+plugin is a thin integration shim in OpenClaw's process.
 
-## 2. Out of scope
-
-- Cache savings measurement (out of v0.1 per path 2).
-- Native Messages API migration design or execution.
-- Multi-provider routing evaluation beyond what the current proxy supports
-  (Anthropic + OpenAI are the two configured providers; Google is named in
-  the provider type but not configured).
-- OpenClaw-version-specific behaviour or OpenClaw integration testing.
-- The benchmark execution itself (Move 2).
-- Publication artefact (post-MVP, post-Move 2).
-
-## Pre-design: upfront feasibility check
-
-### Purpose
-
-The existing `scripts/openclaw_eval.py` 50-categorical-query smoke test reports
-significant savings, but the workload is synthetic (single-turn chat/factual/
-creative queries) and unrepresentative of real coding use. Real agentic-coding
-workloads are multi-turn, dominated by code-category turns where Sonnet's
-reasoning may be genuinely needed, and the Haiku-eligible fraction may be
-smaller than the synthetic eval suggests.
-
-The feasibility check validates that routing produces meaningful savings on
-coding-shaped workloads before committing to the full benchmark methodology.
-Note: the feasibility check's savings numbers are upper-bound estimates because
-beliefs accumulate across workloads (warm-start after the first few). The full
-benchmark's fresh-priors-per-repetition design (§5.5) produces more
-conservative figures that include the cold-start cost every real user pays.
-
-### Specification
-
-**Workloads.** 5 hand-curated multi-turn coding workloads, each 5–8 turns:
-
-| # | Task type | Description shape |
-|---|-----------|-------------------|
-| 1 | Debug | "Here's a traceback, find the bug, propose a fix" |
-| 2 | Implement feature | "Add pagination to this API endpoint" |
-| 3 | Refactor | "Extract this repeated pattern into a helper" |
-| 4 | Write tests | "Write unit tests for this function" |
-| 5 | Explain + modify | "Explain what this code does, then change X" |
-
-Each workload is a conversation driven by a simple client script. The client
-sends OpenAI-format chat-completion requests to the proxy, includes the
-response in the next turn's message history, and records the routing decision,
-token counts, and cost per turn.
-
-**Execution.** Two phases, same as the existing eval's structure:
-
-1. **Baseline phase**: `CREDENCE_FORCE_MODEL=claude-sonnet-4-6`. All turns use
-   Sonnet. Measures the "naive" cost of running everything on Sonnet.
-2. **Routing phase**: no forced model. Bayesian routing enabled with fresh
-   priors. The 5 workloads run in sequence under a single routing state, so
-   beliefs accumulate across workloads. The first 1–2 workloads serve partially
-   as warm-up; the last 2–3 run against informed beliefs. Per-workload costs
-   are reported to show the learning curve.
-
-**Metrics.** Per workload:
-- Total cost under baseline (always-Sonnet).
-- Total cost under routing.
-- Savings percentage.
-- Per-turn routing decisions (which model was selected).
-- Quality signal: task completion (did the conversation produce working code /
-  a correct explanation / passing tests?).
-
-Aggregate: mean savings across the 5 workloads, weighted by token volume.
-
-**Pass threshold: ≥15% aggregate cost savings with no quality degradation.**
-
-Justification: at 15% savings, a team spending $10K/month on LLM API calls
-saves $1,500/month — meaningful enough to justify the proxy's operational
-overhead. Below 10%, the savings are marginal compared to the complexity of
-running a routing proxy. The threshold is conservative: the synthetic eval
-reports 40–60% savings, but representative workloads will have fewer
-Haiku-eligible turns. 15% is the floor for a credible v0.1 cost-savings claim.
-
-**Quality degradation criterion:** the routing phase must achieve the same
-task-completion rate as the baseline phase. A workload that completes
-successfully under Sonnet but fails under routing counts as quality
-degradation, regardless of cost savings.
-
-**Fail outcome.** If aggregate savings < 15%, or if any workload shows quality
-degradation:
-- Report the findings honestly.
-- Pause the methodology design.
-- Re-examine: is the routing's category inference too coarse to distinguish
-  Haiku-eligible turns? Is the EU cost-quality tradeoff miscalibrated? Is the
-  value proposition weaker than assumed?
-- Path 2 may need reshaping (e.g., narrower workload scope, different model
-  tier split, or acknowledging that routing savings are modest).
-
-### Warm-start vs cold-start
-
-With fresh Beta(1,1) priors, the routing's EU calculation reduces to:
-
-```
-EU(model) = reward × 0.5 − cost(model)
-```
-
-Since all models have identical expected reliability (0.5), the cheapest model
-always wins. This is the cold-start problem: uninformed routing always picks
-the cheapest model, which maximises savings but may sacrifice quality.
-
-The feasibility check handles this by running workloads in sequence: beliefs
-update after each turn's quality-judge signal. By workload 3, the routing has
-~15 quality observations and beliefs are meaningfully informed. The per-workload
-cost breakdown shows the learning curve — early workloads may show excessive
-Haiku selection (cold-start), later workloads show calibrated routing.
-
-The full benchmark (Move 2) should report both cold-start and warm-state
-results separately, since users in production will also experience a cold-start
-phase.
+**Intervention**: A governance action the plugin takes on a tool call. Four
+types defined in the master plan: veto-and-downgrade, veto-and-halt,
+route-to-cheaper-model, escalate-to-user-confirmation. The prototype
+demonstrates only veto-and-halt.
 
 ## 5. Design decisions
 
-### 5.1 — Workload selection
+### §5.1 OpenClaw integration surface
 
-**The question.** What constitutes a "representative coding workload" for the
-full benchmark?
+OpenClaw (v2026.4.27) is a TypeScript/Node.js pnpm monorepo built on
+`@mariozechner/pi-coding-agent`. It runs as a single Node.js process with a
+command lane queue serialising agent turns. Plugins run in-process — no
+subprocess boundary between plugin code and the agent loop.
 
-**Sources, in order of preference:**
+#### Hook system
 
-1. **SWE-bench trajectory datasets.** Multiple public datasets on HuggingFace
-   contain full multi-turn agentic coding traces:
-   - `nebius/SWE-agent-trajectories` — 80K trajectories from SWE-agent.
-   - `SWE-bench/SWE-smith-trajectories` — 5K trajectories.
-   - `nebius/SWE-rebench-openhands-trajectories` — OpenHands agent traces.
+OpenClaw has a typed plugin hook system with three hook categories:
 
-   These contain realistic agent-tool interaction sequences. **Adaptation
-   required**: the trajectories use SWE-agent/OpenHands message formats, not
-   standard OpenAI chat-completion format. Adaptation cost is the limiting
-   factor. The methodological payoff of adaptation is quality-signal
-   robustness: SWE-bench instances have ground-truth test suites, so quality
-   measurement uses pass/fail execution rather than LLM judging.
+| Category | Execution | Composition | Examples |
+|---|---|---|---|
+| **Modifying** | Sequential by priority | Results merged per-hook | `before_tool_call`, `before_prompt_build` |
+| **Claiming** | Sequential by priority | First `handled: true` wins | `before_agent_reply` |
+| **Void** | Parallel, fire-and-forget | None | `after_tool_call`, `before_compaction`, `after_compaction`, `agent_end` |
 
-2. **Hand-curated workloads.** Constructed from common agentic-coding patterns
-   (debug, implement, refactor, test, explain). Cheaper to produce, fully
-   controlled, but less representative than real agentic traces.
+All typed hooks are async-capable. Handlers return `Promise<Result | void> | Result | void`.
 
-3. **Personal-use transcripts.** Captured from brief personal use of the proxy
-   against real coding tasks. Most representative but smallest sample.
+**`before_tool_call`** — the primary governance hook:
 
-**Proposal.** The benchmark uses 20 workloads:
+```typescript
+before_tool_call: (
+  event: { toolName: string; params: Record<string, unknown>;
+           runId?: string; toolCallId?: string },
+  ctx: PluginHookToolContext,
+) => Promise<PluginHookBeforeToolCallResult | void>;
 
-- **10 hand-curated** (the feasibility check's 5 plus 5 additional, covering
-  diverse task types and complexity levels).
-- **10 adapted from SWE-bench trajectories** (selected for task-type diversity
-  and moderate turn count — 5–15 turns, filtering out trivially short or
-  excessively long traces).
-
-If SWE-bench adaptation proves heavier than expected (halting trigger: more
-than 4 hours of adaptation work for 10 trajectories), fall back to 20
-hand-curated workloads. The report names which workloads came from which
-source.
-
-**Task-type distribution target:** debug 25%, implement-feature 25%, refactor
-20%, test-writing 15%, explain/chat 15%. The distribution is a target, not a
-rigid requirement; available SWE-bench trajectories may not match this
-distribution exactly.
-
-### 5.2 — Quality measurement
-
-**The question.** How does the benchmark measure whether routing degrades
-quality?
-
-**Ground-truth tasks** (preferred): workloads where the outcome is verifiable
-by execution. "Does the generated code compile?", "Do the generated tests
-pass?", "Does the patch resolve the SWE-bench issue?". Ground truth is
-binary (pass/fail) and sidesteps judging entirely.
-
-For hand-curated workloads: the workload specification includes an expected
-outcome (a function signature, a test that should pass, an error message that
-should disappear). The quality signal is: does the routing phase's output
-meet the same outcome specification the baseline's output meets?
-
-For SWE-bench-adapted workloads: ground truth is the SWE-bench test suite —
-does the generated patch pass the instance's test harness?
-
-**Judged tasks** (fallback): workloads without verifiable outcomes (explain,
-chat-type turns within otherwise-coding workloads). Use Claude Opus 4.6 as
-judge with a structured scoring rubric (correctness 0–10, completeness 0–10,
-relevance 0–10). Composite score: unweighted mean.
-
-**Same-tier-judge concern.** The existing eval uses Haiku judging Haiku outputs
-— a circular quality signal. This benchmark uses:
-- Ground truth (binary, no judge) for all coding outcomes.
-- Opus judging (higher-tier) for non-coding outputs.
-- No model judges its own outputs.
-
-**Quality-degradation threshold.** A workload is quality-degraded if:
-- Ground-truth task: baseline passes but routing fails.
-- Judged task: routing's composite score < baseline's composite score by >1.0
-  point (on 0–10 scale).
-
-The benchmark reports both per-workload quality comparisons and the aggregate
-quality-degradation rate.
-
-### 5.3 — Baseline selection
-
-**The question.** What is cost-savings measured against?
-
-**Primary baseline: always-Sonnet.** Every turn uses `claude-sonnet-4-6` via
-`CREDENCE_FORCE_MODEL`. This is the most defensible baseline because:
-- Most coding harnesses (Cursor, Claude Code, Windsurf) default to a
-  Sonnet-tier model for coding tasks.
-- Sonnet is the proxy's natural comparison point — it's the model users would
-  use if they weren't routing.
-- Savings against always-Sonnet are meaningful and not cherry-picked.
-
-**Secondary baseline: always-Opus.** Reported alongside but not the primary
-claim. Some users run Opus for high-stakes tasks; the always-Opus comparison
-answers "what if you'd been paying Opus prices?" without making it the
-headline number.
-
-**Not included:** always-Haiku baseline (the floor — it's what the routing
-would converge to if quality didn't matter, which is uninteresting) or
-user's-actual-behaviour (requires users in hand, post-MVP).
-
-### 5.4 — Cost measurement
-
-**The question.** How is cost computed, and at what prices?
-
-**Pricing source.** Official Anthropic and OpenAI pricing pages, snapshot at
-benchmark execution date. The report names the snapshot date and the exact
-per-million-token rates used.
-
-**Note: proxy cost table accuracy.** The proxy's hardcoded `ModelSpec` prices
-in `provider.py:62-92` are used for EU routing decisions, not for benchmark
-cost accounting. However, if the proxy's internal prices diverge from actual
-pricing, routing decisions are suboptimal (the EU tradeoff is miscalibrated).
-Any historical cost-savings claims produced using the proxy's current pricing
-should be treated as preliminary until the corrected-pricing benchmark runs.
-Before benchmark execution, the proxy's cost table must be verified against
-current pricing and corrected if needed. Current discrepancies observed:
-
-| Model | Proxy (per 1M input/output) | Actual (per 1M input/output) | Status |
-|-------|-----------------------------|------------------------------|--------|
-| Haiku 4.5 | $0.80 / $4.00 | $1.00 / $5.00 | Uses Haiku 3.5 prices; 20% under |
-| Sonnet 4.6 | $3.00 / $15.00 | $3.00 / $15.00 | Correct |
-| Opus 4.6 | $15.00 / $75.00 | $5.00 / $25.00 | Uses Opus 4.0 prices; **3× over** |
-
-Source: [Anthropic pricing page](https://platform.claude.com/docs/en/docs/about-claude/pricing)
-(snapshot 2026-04-27). Opus 4.5/4.6/4.7 are priced at $5/$25; the proxy's
-$15/$75 matches the deprecated Opus 4.0/4.1 pricing. Haiku 4.5 is $1/$5;
-the proxy's $0.80/$4.00 matches the deprecated Haiku 3.5 pricing.
-
-**Routing impact.** The Opus 3× overpricing means the EU calculation massively
-overestimates Opus's cost, so the routing almost never selects Opus even when
-its quality would justify the actual (much lower) price. The Haiku
-underpricing mildly favours Haiku over what it should. These discrepancies
-affect routing decisions and therefore benchmark results. Correcting the cost
-table is a **pre-benchmark prerequisite**, not a nice-to-have. Post-Move-2
-hardening work should decouple pricing from source code (e.g., a config file
-or API-fetched rates) so the cost table cannot silently drift again.
-
-**Per-turn cost formula:**
-
-```
-cost = (input_tokens × input_rate + output_tokens × output_rate) / 1_000_000
+type PluginHookBeforeToolCallResult = {
+  params?: Record<string, unknown>;    // modified params
+  block?: boolean;                     // if true, blocks execution
+  blockReason?: string;                // shown to agent
+  requireApproval?: {
+    title: string;
+    description: string;
+    severity?: "info" | "warning" | "critical";
+    timeoutMs?: number;
+    timeoutBehavior?: "allow" | "deny";
+    onResolution?: (decision: PluginApprovalResolution) => Promise<void> | void;
+  };
+};
 ```
 
-Where `input_rate` and `output_rate` are the selected model's per-million-token
-prices from the pricing snapshot.
+This hook natively supports the two critical interventions:
+- **Veto**: return `{ block: true, blockReason: "..." }`.
+- **Escalate**: return `{ requireApproval: { ... } }`.
 
-**Aggregate cost metrics:**
-- Per-workload total cost (sum of per-turn costs).
-- Per-workload savings percentage vs baseline: `(baseline_cost - routing_cost) / baseline_cost × 100`.
-- Aggregate savings: mean of per-workload savings percentages.
-- Token-volume-weighted aggregate: per-workload savings weighted by that
-  workload's total token volume (so large workloads contribute proportionally
-  more to the aggregate).
-- Both aggregates reported; the token-volume-weighted figure is the headline
-  number (it represents actual dollar savings better than unweighted mean).
+No default timeout on `before_tool_call`. The plugin can set its own via
+registration options. Multiple plugins compose sequentially in priority order;
+once any plugin returns `block: true`, subsequent handlers are skipped.
 
-**Cache savings: explicitly not measured.** Per Move 0's verdict, no prompt
-caching occurs on the OAI-compatible endpoint. Any reader asking about cache
-savings gets the v0.1 answer: out of scope; native API migration deferred to
-v0.2; see `docs/posture-5/move-0-audit-report.md`.
+**`after_tool_call`** — the observation hook:
 
-### 5.5 — Statistical robustness
+```typescript
+after_tool_call: (
+  event: { toolName: string; params: Record<string, unknown>;
+           result?: unknown; error?: string; durationMs?: number },
+  ctx: PluginHookToolContext,
+) => Promise<void> | void;
+```
 
-**The question.** How does the methodology handle variance from stochastic LLM
-outputs?
+Void hook, runs in parallel. The plugin observes tool outcomes here and sends
+them to the sidecar asynchronously for posterior update. No latency impact on the
+agent loop since it's fire-and-forget.
 
-**Repetitions.** N=3 per workload per mode (baseline and routing). Each
-repetition uses a fresh routing state (for the routing phase) to avoid
-belief-state contamination across repetitions.
+**`before_compaction` / `after_compaction`** — checkpoint hooks:
 
-N=3 is the minimum for computing a standard deviation; N=5 would be
-preferable if API budget permits. The design doc commits to N=3 as the floor;
-Move 2 may run N=5 if the feasibility check's cost data shows the budget is
-comfortable.
+Both are void/parallel. `before_compaction` receives `messageCount`,
+`tokenCount`, `sessionFile`; `after_compaction` adds `compactedCount`. The
+plugin uses `before_compaction` to trigger a sidecar checkpoint (persist
+posterior to disk before context shrinks).
 
-**Reported statistics per workload:**
-- Cost: mean, std, min, max across N repetitions.
-- Savings %: mean, std.
-- Quality: pass rate across N repetitions (for ground-truth tasks); mean
-  judge score ± std (for judged tasks).
+**`before_prompt_build`** — context injection:
 
-**Aggregate statistics:**
-- Mean savings % ± std across workloads.
-- Token-volume-weighted savings % ± propagated std.
-- Quality-degradation rate: fraction of workload-repetition pairs where
-  routing degraded quality vs baseline.
+Modifying hook, sequential. Returns optional `systemPrompt`, `prependContext`,
+`appendContext`. The plugin can inject governance-relevant context (e.g.,
+"the following tools have been vetoed in this session: ...") into the agent's
+system prompt. Not used in the prototype; relevant for Move 2.
 
-**Variance sources.** Two distinct sources:
-1. *Output variance*: the same model produces slightly different outputs per
-   run, leading to different token counts and different task outcomes.
-2. *Routing variance*: with fresh priors per repetition, the routing's
-   cold-start learning curve varies. This is intentional — it captures the
-   real variance a new user would experience.
+**`agent_end`** — session cleanup:
 
-The benchmark reports both sources' contributions where distinguishable
-(baseline repetitions isolate output variance; routing repetitions combine
-both).
+Void hook, 30-second timeout. The plugin triggers a final sidecar checkpoint
+and session summary here.
 
-### 5.6 — Deliverable shape
+**Plugin registration**: Plugins register via `api.registerHook()` or
+`api.hooks?.on()` in their `register()` function. Hooks have optional
+`priority` (higher = runs first) and `timeoutMs` overrides.
 
-**The question.** What does the benchmark output look like?
+**Plugin loading**: Plugins are discovered from bundled, installed (npm/git/
+local), and workspace (`.openclaw/plugins/`) sources. Each plugin declares a
+manifest (package.json or manifest.json) with hook directories.
 
-**Report location:** `docs/posture-5/move-2-benchmark-results.md`.
+#### Persistence layer
 
-**Structure:**
+OpenClaw uses a three-tier memory system:
 
-1. **Executive summary** — one paragraph: savings claim, quality finding,
-   honest scope statement.
+| Tier | Storage | Plugin access |
+|---|---|---|
+| **Hot** | Session transcript (in-memory) | Read via hook context |
+| **Warm** | Daily memory files (`memory/{YYYY-MM-DD}.md`) | Read only |
+| **Cold** | `MEMORY.md` (promoted via dreaming system) | Read only |
 
-2. **Methodology** — compact recapitulation of this design doc's decisions:
-   workload sources, quality measurement, baselines, pricing snapshot, N.
+**Critical constraint: plugins cannot write to MEMORY.md or SQLite.** Both are
+system-controlled. MEMORY.md is written only by the dreaming system's
+short-term promotion logic. SQLite (with sqlite-vec for embeddings) stores
+chunk embeddings and is accessed via read-only connections from plugin code.
 
-3. **Per-workload results table:**
+**Compaction vulnerability**: Compaction strips `toolResult.details` and
+internal runtime context messages. This is the Issue #1084 pattern — confirm
+instructions stored in tool result details get dropped during compaction. Any
+state the Credence plugin needs to persist across compactions cannot rely on
+OpenClaw's persistence layer.
 
-   | Workload | Type | Turns | Sonnet cost | Routing cost | Savings % | Quality |
-   |----------|------|-------|-------------|--------------|-----------|---------|
-   | debug-1 | debug | 6 | $0.042 ± 0.003 | $0.028 ± 0.004 | 33% ± 5% | 3/3 pass |
+**Implication for design**: The posterior must be managed by the sidecar, not
+stored in OpenClaw's persistence. The sidecar owns its own state file, reads
+and writes it directly, and the TypeScript plugin is stateless (or holds only
+a cached copy for latency). The `before_compaction` hook triggers a sidecar
+checkpoint; `agent_end` triggers a final persist. Session restart loads from
+the sidecar's state file.
 
-4. **Aggregate results:**
-   - Mean savings, token-volume-weighted savings.
-   - Quality-degradation rate.
-   - Always-Opus secondary comparison.
+#### Tool catalog
 
-5. **Routing distribution** — per workload: how often each model was selected.
-   Across all workloads: aggregate model-selection distribution. Learning-curve
-   visualization: routing decisions by turn position (early turns vs late
-   turns).
+Core tools are statically defined. Plugins register tool factories at load
+time but cannot modify the core catalog at runtime. MCP tools are
+materialised via the `bundle-mcp` tool during runs. The `before_tool_call`
+hook can modify params or block execution but cannot change the tool catalog
+itself.
 
-6. **Honest limitations:**
-   - Cache savings not measured (Move 0 finding).
-   - Workloads are hand-curated / SWE-bench-adapted, not production transcripts.
-   - N=3 (or 5) repetitions; statistical power is limited.
-   - Cold-start learning curve affects early workloads.
-   - Routing is based on keyword-category inference, not semantic understanding.
+For the governance plugin, the tool catalog is read-only input: the plugin
+observes which tools are called and can block individual calls, but cannot
+add or remove tools from the catalog. This is sufficient for the four
+interventions in the master plan. Veto-and-downgrade (replacing a tool call
+with a cheaper alternative) works by blocking the original call and letting
+the agent re-plan — the blockReason tells the agent why and suggests the
+alternative.
 
-7. **Move 1 input absorbed** — names the Move 0 audit findings that shaped
-   this methodology (no cache measurement, OAI-compatible endpoint only).
+#### Model provider configuration
 
-The deliverable doubles as draft material for the eventual blog post or
-technical write-up. The executive summary and per-workload table are designed
-to be extractable as publication-ready content.
+OpenClaw supports OpenAI-compatible proxy endpoints via config:
+
+```yaml
+models:
+  providers:
+    credence-proxy:
+      baseUrl: "http://localhost:8080/v1"
+      apiKey: "${CREDENCE_API_KEY}"
+      api: "openai-completions"
+      models:
+        - id: "claude-sonnet-4-6"
+          name: "Sonnet via Credence"
+          reasoning: true
+          input: ["text", "image"]
+          contextWindow: 200000
+          maxTokens: 8192
+          cost: { input: 0.003, output: 0.015 }
+```
+
+This means credence-router can be slotted in as a model provider transparently.
+The request shape is OpenAI-compatible regardless of which model OpenClaw routes
+to the proxy. The `PluginHookBeforeModelResolveEvent` hook also allows plugins
+to influence model selection at runtime.
+
+Route-to-cheaper-model intervention can work two ways:
+1. **Plugin-side**: `before_tool_call` returns modified params that trigger a
+   cheaper model for the next LLM call (indirect, via prompt injection in
+   `before_prompt_build`).
+2. **Proxy-side**: credence-router receives all requests and routes by cost/
+   quality posterior (existing functionality, just needs to be configured as
+   the provider).
+
+Option 2 is simpler and reuses existing code. Move 2 should pursue it.
+
+#### Runtime architecture
+
+- Single Node.js process. Plugin hooks execute in the same event loop.
+- Command lane queue serialises agent turns (configurable concurrency).
+- Subprocess execution only for tool calls (bash commands) and external CLI
+  agents, not for the agent loop itself.
+- No explicit latency budget documented for `before_tool_call`, but since
+  it's synchronous and sequential, latency directly adds to every tool call.
+
+### §5.2 Integration architecture
+
+#### IPC mechanism: HTTP sidecar
+
+The TypeScript plugin calls a Julia HTTP server via localhost HTTP. The sidecar
+exposes two endpoints:
+
+| Endpoint | Called from | Purpose |
+|---|---|---|
+| `POST /evaluate` | `before_tool_call` | Evaluate candidate tool call, return intervention decision |
+| `POST /observe` | `after_tool_call` | Report tool outcome for posterior update |
+
+Request/response bodies are JSON. The sidecar is a long-running process started
+before or alongside OpenClaw.
+
+**Why HTTP over alternatives:**
+- HTTP is the simplest cross-language IPC that both TypeScript and Julia speak
+  natively (Julia's `HTTP.jl`, Node's `fetch`).
+- Unix domain sockets would reduce latency (~0.1ms vs ~0.5ms per call) but add
+  platform-specific complexity for no meaningful gain at this scale.
+- stdio/pipe would require managing a child process from the plugin, adding
+  lifecycle complexity.
+- gRPC/protobuf would add a schema layer with no benefit at the prototype stage.
+
+#### Latency budget
+
+**Target: <100ms per `before_tool_call` round-trip.**
+
+Budget breakdown:
+- HTTP round-trip over localhost: ~1ms
+- JSON serialization/deserialization: ~1ms
+- Julia-side EU calculation: ~5–50ms (depending on posterior size)
+- Safety margin: ~48ms
+
+This is acceptable because tool calls themselves take 100ms–10s (bash commands,
+file operations, LLM calls). A 100ms governance check on a tool call that takes
+1s is 10% overhead; on an LLM call that takes 5s, it's 2%. The latency of
+`before_tool_call` is invisible relative to the tool execution itself.
+
+**If the budget is exceeded**: The prototype measures actual round-trip latency
+and reports it. If Julia cold-start or GC pauses push latency above 200ms, the
+design conversation for Move 2 absorbs the finding. Mitigation options include:
+pre-warming the Julia process, pinning the posterior in memory (no per-call disk
+reads), or moving the hot path to a compiled Julia system image.
+
+#### Persistence strategy
+
+The sidecar owns all persistent state. The TypeScript plugin is stateless.
+
+| Event | Action |
+|---|---|
+| **Sidecar start** | Load posterior from `~/.credence/openclaw/{session-id}/state.json`, or initialise fresh priors |
+| **`POST /evaluate`** | Read in-memory posterior, compute EU, return decision. No disk I/O. |
+| **`POST /observe`** | Update in-memory posterior via `condition`. Optionally flush to disk (configurable cadence). |
+| **`before_compaction` hook** | Plugin sends `POST /checkpoint` to sidecar. Sidecar flushes posterior to disk. |
+| **`agent_end` hook** | Plugin sends `POST /checkpoint` to sidecar. Final persist. |
+| **Sidecar shutdown** | Flush posterior to disk. |
+
+**State file format**: JSON. Contains the posterior parameters (for conjugate
+models: alpha/beta per model × category × tool-class), the session ID, and a
+schema version for forward compatibility.
+
+**Why not OpenClaw's persistence**: Plugins cannot write to MEMORY.md or SQLite
+(§5.1). Even if they could, the compaction vulnerability (Issue #1084) means
+state stored in OpenClaw's context would be dropped during compaction. The
+sidecar's own filesystem is the only reliable persistence path.
+
+**Cross-session state**: v0.1 uses per-session posteriors only. Each OpenClaw
+session starts with fresh priors or loads from the most recent checkpoint for
+that session. Cross-session belief sharing (learning from session A to inform
+session B) is deferred to post-MVP. The state directory structure
+(`~/.credence/openclaw/{session-id}/`) supports this future extension without
+schema changes.
+
+#### Intervention vocabulary mapping
+
+The four master-plan interventions map to OpenClaw's hook return values:
+
+| Intervention | Hook | Return value |
+|---|---|---|
+| **Veto-and-halt** | `before_tool_call` | `{ block: true, blockReason: "Credence: EU of continuing is below idle threshold. The last N tool calls have not improved the outcome. Halting to prevent runaway loop." }` |
+| **Veto-and-downgrade** | `before_tool_call` | `{ block: true, blockReason: "Credence: EU favours [alternative tool/approach]. Consider [specific suggestion]." }` |
+| **Route-to-cheaper-model** | Model provider config | credence-router configured as OpenAI-compatible provider; routing happens at the proxy level, transparent to the plugin |
+| **Escalate-to-user-confirmation** | `before_tool_call` | `{ requireApproval: { title: "Credence governance check", description: "...", severity: "warning", timeoutMs: 60000, timeoutBehavior: "deny" } }` |
+
+All four interventions are natively supported by OpenClaw's hook system. No
+workarounds required. This is the strongest finding from Task 1.
+
+#### Failure modes
+
+**Sidecar unavailable**: The plugin fails open. If the sidecar doesn't respond
+within 200ms (configurable), the plugin returns `void` from `before_tool_call`
+(no intervention, no block). OpenClaw runs without governance. A log message
+records the failure. The user sees no protection but also no disruption. This
+is the correct default for the prototype; a production deployment conversation
+would revisit whether fail-open is acceptable for high-stakes tasks.
+
+**Sidecar crash mid-session**: Same as unavailable. The plugin catches the
+connection error and fails open. The posterior for that session is lost unless
+a prior checkpoint was written. The `before_compaction` checkpoint strategy
+limits data loss to at most the observations since the last compaction.
+
+**Plugin exception**: OpenClaw's hook runner catches plugin exceptions and logs
+them. The tool call proceeds as if the plugin wasn't registered. The plugin
+should catch its own exceptions to provide better error messages, but the
+safety net exists.
+
+**Latency spike**: If the sidecar's response time exceeds the plugin's timeout,
+the plugin treats it as unavailable (fail open). The agent proceeds; a log
+message records the spike. Persistent spikes would degrade to no-governance
+mode, which is detectable via monitoring.
+
+#### Multi-instance state management
+
+v0.1 supports per-session posteriors only. Multiple OpenClaw instances (e.g.,
+different terminal sessions, different devices) each have their own sidecar
+process and their own posterior. They do not share state.
+
+Cross-session belief sharing is deferred to post-MVP. When it's needed, the
+architecture supports it: the sidecar's state directory is a filesystem path;
+a shared store (SQLite, Redis, or even a shared filesystem) could replace the
+per-session JSON file without changing the IPC protocol.
+
+### §5.3 Prototype design
+
+#### Plugin scope
+
+A minimal OpenClaw plugin (`apps/openclaw-plugin/`) that:
+1. Registers on `before_tool_call` and `after_tool_call`.
+2. On `before_tool_call`: sends the candidate tool call and recent tool history
+   to the sidecar via `POST /evaluate`.
+3. If the sidecar returns `{ action: "block" }`, returns
+   `{ block: true, blockReason: "..." }` to OpenClaw.
+4. On `after_tool_call`: sends the tool outcome to the sidecar via
+   `POST /observe` (fire-and-forget, no latency impact).
+
+The only intervention demonstrated is **veto-on-loop**: if the sidecar detects
+that the same tool with the same arguments has been called more than N times in
+the recent history, it returns a block decision.
+
+#### Sidecar scope
+
+A minimal Julia HTTP server (`apps/credence-governance-sidecar/`) that:
+1. Listens on `localhost:3100` (configurable).
+2. `POST /evaluate`: receives `{ toolName, params, recentHistory }`, checks for
+   repetition in `recentHistory`, returns `{ action: "proceed" }` or
+   `{ action: "block", reason: "..." }`.
+3. `POST /observe`: receives `{ toolName, params, result, error, durationMs }`,
+   appends to in-memory history. No posterior update in the prototype (the
+   repetition counter is the "brain" for the prototype; Move 2 wires up the
+   actual Credence brain).
+
+The prototype sidecar is deliberately simple. The point is to prove the IPC
+path works, not to demonstrate Bayesian governance. Move 2 replaces the
+repetition counter with the actual brain.
+
+#### Test scenario
+
+A toy OpenClaw task that, without the plugin, enters a loop:
+1. Configure OpenClaw with a task that triggers repeated identical tool calls
+   (e.g., a prompt that causes the agent to run the same shell command
+   repeatedly looking for a file that doesn't exist).
+2. Run without the plugin. Record the number of tool calls, token usage, and
+   wall-clock time until the agent gives up or hits a limit.
+3. Run with the plugin enabled (N=3 repetition threshold). Record when the
+   plugin vetoes, and the resulting tool call count, token usage, and
+   wall-clock time.
+
+Document before/after numbers in `docs/posture-5/move-1-prototype-demo.md`.
 
 ## 6. Risks
 
-**Risk 1: Workload availability.** If SWE-bench trajectory adaptation is
-heavier than expected, the benchmark falls back to 20 hand-curated workloads.
-Hand-curated workloads are less representative than real agentic traces.
-Mitigation: the report names the workload source per workload; readers can
-assess representativeness.
+| Risk | Likelihood | Impact | Mitigation |
+|---|---|---|---|
+| Julia cold-start latency exceeds budget | Medium | `before_tool_call` adds >200ms per call | Pre-warm sidecar; system image; measure in prototype |
+| OpenClaw plugin loading rejects third-party plugins | Low | Users can't install the plugin | Test installation path in prototype; report if friction |
+| `block: true` produces error states OpenClaw doesn't handle gracefully | Low | Blocked tool calls confuse the agent | Test in prototype; document agent behaviour on block |
+| Sidecar process management adds user friction | Medium | Users must start/stop a separate process | Document clearly; consider auto-start in Move 2 |
+| OpenClaw's hook API changes between versions | Medium | Plugin breaks on upgrade | Pin to tested OpenClaw version; document compatibility |
 
-**Risk 2: Feasibility check fails.** If aggregate savings < 15% on
-representative coding workloads, path 2's value proposition is weaker than
-assumed. Mitigation: the feasibility check runs before the full benchmark;
-failure pauses the methodology and triggers a value-proposition conversation
-rather than producing misleading benchmark results.
+## 7. Open design questions
 
-**Risk 3: Judging cost for non-ground-truth tasks.** Opus judging at N=3
-repetitions per workload is expensive if many workloads lack ground truth.
-Mitigation: prioritise ground-truth-bearing workloads (coding outcomes);
-limit judged workloads to ≤5 of the 20; report the asymmetry honestly.
+1. **Should the plugin auto-start the sidecar?** The prototype requires the user
+   to start the sidecar manually. Move 2 could auto-start it as a child process
+   from the plugin's `register()` function. Trade-off: convenience vs. lifecycle
+   complexity (graceful shutdown, port conflicts, process orphaning).
 
-**Risk 4: Pricing snapshot drift.** Anthropic's pricing changes may invalidate
-cost numbers between benchmark execution and publication. Mitigation: the
-report names the snapshot date; cost calculations are parameterised (re-running
-with updated prices is mechanical, not methodological work).
+2. **Should `blockReason` include a suggested alternative?** When the plugin
+   vetoes a tool call, it can include a suggestion in the block reason (e.g.,
+   "try reading the file instead of executing it"). The agent may or may not
+   follow the suggestion. Empirical evidence from the prototype will inform
+   whether suggestions improve agent behaviour or just add noise.
 
-**Risk 5: Routing logic pathology.** Representative workloads may surface
-routing bugs not visible in the synthetic eval (always picks one model
-regardless of category, oscillates between turns, never learns from quality
-signals). Mitigation: the per-workload routing-distribution table makes
-pathologies visible. If routing behaviour is pathological, the benchmark halts
-— the methodology is sound but the substrate isn't ready for benchmarking.
+3. **Is `POST /observe` fire-and-forget acceptable?** The prototype sends
+   observations asynchronously from `after_tool_call` (void hook, no latency
+   impact). If the sidecar is unavailable, the observation is lost. For the
+   prototype this is fine; Move 2 may need a small queue or retry.
 
-**Risk 6: Cold-start dominance.** If most of the 20 workloads run during the
-cold-start phase (before beliefs stabilise), the benchmark measures cold-start
-behaviour rather than steady-state routing. Mitigation: run workloads in
-sequence with accumulating beliefs; report per-workload savings to show the
-learning curve; distinguish cold-start from warm-state results.
+4. **Should the plugin register on `before_prompt_build`?** Injecting governance
+   context into the system prompt (e.g., "these tools have been vetoed") could
+   help the agent avoid re-requesting vetoed tools. Not in the prototype; worth
+   testing in Move 2.
 
-**Risk 7: Proxy cost-table miscalibration (confirmed).** The proxy's hardcoded
-model prices (`provider.py:62-92`) are already known to be wrong: Opus 4.6 is
-priced at 3× actual ($15/$75 vs $5/$25, using deprecated Opus 4.0 rates) and
-Haiku 4.5 is priced 20% under actual ($0.80/$4.00 vs $1.00/$5.00, using Haiku
-3.5 rates). The Opus overpricing means the routing almost never selects Opus
-even when it would be EU-optimal at the real price; this suppresses a routing
-option the benchmark should evaluate. Mitigation: correct the cost table in a
-pre-benchmark PR. The benchmark must run against corrected prices; running
-against miscalibrated prices would measure the performance of a miscalibrated
-router, not the routing methodology.
+## 8. Acceptance criteria
 
-## 7. Test plan (execution shape for Move 2)
+### PR 1 (this design doc)
 
-1. **Verify proxy cost table** against official pricing page. Verification:
-   compare each model's `input_price_per_1k` and `output_price_per_1k` in
-   `provider.py` against the snapshotted pricing page; any discrepancy beyond
-   ±5% (to allow for minor rounding in per-1K vs per-1M conversion) is
-   corrected in a pre-benchmark PR before proceeding.
+- This file exists at `docs/posture-5/move-1-design.md` and follows Posture 4
+  structural conventions.
+- OpenClaw integration surface documented with specific file paths and type
+  signatures from the OpenClaw codebase.
+- Integration architecture specifies IPC mechanism, latency budget, persistence
+  strategy, intervention vocabulary mapping, failure modes, multi-instance
+  state management.
+- Prototype scope named explicitly.
+- Risks surfaced with mitigations.
+- Superseded routing-era design docs relocated to `docs/posture-5/superseded/`.
 
-2. **Run feasibility check** per §Pre-design:
-   - 5 hand-curated multi-turn workloads.
-   - Baseline phase (forced Sonnet) + routing phase (fresh priors, sequential).
-   - Report cost-savings table and quality.
-   - Gate: ≥15% savings, no quality degradation → proceed. Otherwise halt.
+### PR 2 (prototype)
 
-3. **Prepare full workload set** per §5.1:
-   - 10 hand-curated + 10 SWE-bench-adapted (or 20 hand-curated if adaptation
-     is too heavy).
-   - Verify task-type distribution approximates target.
+- `apps/openclaw-plugin/` contains a working OpenClaw plugin registering on
+  `before_tool_call` and `after_tool_call`, calling the sidecar.
+- `apps/credence-governance-sidecar/` contains a working Julia HTTP server
+  exposing `/evaluate` and `/observe`.
+- A documented test scenario demonstrates loop detection: without the plugin
+  the agent loops; with the plugin the loop is vetoed after N calls.
+- `docs/posture-5/move-1-prototype-demo.md` documents before/after numbers.
+- Both directories have `README.md` files explaining local setup.
+- CI passes; existing functionality unchanged.
 
-4. **Run full benchmark** per §5.2–§5.5:
-   - N=3 (or 5) repetitions.
-   - Baseline (forced Sonnet) + routing (fresh priors per rep, sequential
-     across workloads within each rep).
-   - Collect per-turn metrics: model selected, token counts, cost, quality.
+## 9. Move 2 acceptance criteria preview
 
-5. **Compute secondary baseline** (always-Opus): re-price the baseline
-   workloads at Opus rates. No additional API calls needed.
+What Move 2 must deliver beyond the prototype:
 
-6. **Write report** per §5.6 at `docs/posture-5/move-2-benchmark-results.md`.
-
-## Closure
-
-After the benchmark report lands:
-- Move 3 (release engineering) opens, using the benchmark results as the
-  v0.1 claim's evidential basis.
-- The report's honest-limitations section becomes the "future work" input for
-  post-v0.1 (cache savings via native API migration, production-scale
-  evaluation, broader workload coverage).
-- Posture 5's master plan is provisional; refinement after Move 2's findings
-  is appropriate.
+- All four interventions (veto-and-halt, veto-and-downgrade,
+  route-to-cheaper-model, escalate-to-user-confirmation) implemented and
+  tested.
+- Actual Credence brain wired to sidecar (posterior over model × tool ×
+  task-category, updated via `condition`, decisions via `expect`/`optimise`).
+- Persistence across compaction boundaries (checkpoint on `before_compaction`,
+  load on session start).
+- credence-router configured as OpenClaw model provider for
+  route-to-cheaper-model intervention.
+- Installable plugin with documented setup instructions.
+- Targeting the three documented failure modes: Issue #34574 (exec repetition),
+  Issue #1084 (compaction wipes confirm instruction), Issue #65550 (dreaming
+  loops).
