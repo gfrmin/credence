@@ -85,6 +85,11 @@ function handle_observe(state, body::Dict{String,Any})
                                duration_ms isa Real ? duration_ms : nothing)
     update_posterior!(state.brain, tool_name, category, success)
 
+    user_approval = get(body, "userApproval", nothing)
+    if user_approval !== nothing
+        update_instruction_decay!(state.brain, category, user_approval == true)
+    end
+
     return Dict{String,Any}("status" => "ok")
 end
 
