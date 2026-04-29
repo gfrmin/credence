@@ -84,9 +84,10 @@ end
 const DEFAULT_EU_WINDOW_SIZE = 10
 const NO_CONFIDENCE_SPAN = 5
 
-function check_no_confidence(state::BrainState, category::AbstractString,
+function check_no_confidence(state::BrainState, tool_name::AbstractString,
+                             category::AbstractString,
                              eu_proceed::Float64, window_size::Int)::Bool
-    m = get_posterior(state, "", category)
+    m = get_posterior(state, tool_name, category)
 
     push!(state.eu_history, eu_proceed)
     if length(state.eu_history) > window_size
