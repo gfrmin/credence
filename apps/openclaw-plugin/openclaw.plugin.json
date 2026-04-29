@@ -1,0 +1,29 @@
+{
+  "id": "credence-governance",
+  "name": "Credence Governance",
+  "description": "Bayesian governance sidecar — intercepts tool calls, computes expected utility, intervenes on runaway loops and known failure modes",
+  "activation": {
+    "onStartup": true
+  },
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "sidecarUrl": {
+        "type": "string",
+        "description": "URL of the Credence governance sidecar",
+        "default": "http://localhost:3100"
+      },
+      "timeoutMs": {
+        "type": "number",
+        "description": "Timeout for sidecar requests in milliseconds",
+        "default": 200
+      },
+      "maxRepetitions": {
+        "type": "number",
+        "description": "Maximum identical tool calls before veto (prototype only)",
+        "default": 3
+      }
+    }
+  }
+}

@@ -1,0 +1,20 @@
+{
+  "name": "credence-governance",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Credence Bayesian governance plugin for OpenClaw",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "openclaw": {
+    "extensions": ["./src/index.ts"]
+  },
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "typescript": "^5.5.0",
+    "@types/node": "^22.0.0"
+  }
+}
