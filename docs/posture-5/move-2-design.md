@@ -528,6 +528,16 @@ dogma. If the user's behaviour after compaction consistently approves actions
 in the guarded class, the agent learns that the instruction is no longer
 load-bearing and stops escalating.
 
+The decay mechanism has a second, less obvious property: it discovers user
+preferences that the user never explicitly stated. A user who consistently
+denies escalation prompts for a particular action class is providing
+evidence that those actions are undesirable — the posterior shifts even
+though the user never typed "don't do X". The same mechanism that retires
+stale instructions also learns new constraints from the user's approval
+and denial patterns. This is preference discovery via Bayesian updating
+on revealed choices, not a separate feature — it falls out of the same
+posterior that governs escalation thresholds.
+
 #### Known limitations
 
 v0.1's pattern matching misses instructions phrased in unusual ways. Examples:
