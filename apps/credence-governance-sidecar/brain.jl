@@ -275,6 +275,27 @@ function register_instruction!(state::BrainState, pattern_id::String, action_cla
     true
 end
 
+function update_instruction_decay!(state::BrainState, category::String, approved::Bool)
+    retired = Int[]
+    for (i, inst) in enumerate(state.registered_instructions)
+        instruction_matches_category(string(inst["action_class"]), category) || continue
+        if approved
+            inst["approvals"] = get(inst, "approvals", 0) + 1
+        else
+            inst["denials"] = get(inst, "denials", 0) + 1
+        end
+        # credence-lint: allow — precedent:display-arithmetic — retirement threshold check
+        approvals = Int(inst["approvals"])
+        denials = Int(inst["denials"])
+        precision = 2.0 + approvals + denials
+        prior_strength = Float64(inst["prior_strength"])
+        if precision > 10.0 * prior_strength && approvals > denials
+            push!(retired, i)
+        end
+    end
+    deleteat!(state.registered_instructions, retired)
+end
+
 # ── Prototype fallback: repetition counting ──
 
 function canonical_key(tool_name::AbstractString, params::Dict)
