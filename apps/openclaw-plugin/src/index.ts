@@ -11,6 +11,8 @@ type ToolHistoryEntry = {
   timestamp: number;
 };
 
+type SidecarAvailability = "unknown" | "available" | "unavailable";
+
 const HISTORY_WINDOW = 50;
 
 function renderDecision(response: EvaluateResponse): Record<string, unknown> | undefined {
@@ -64,11 +66,21 @@ export default {
     const config = api.config ?? {};
     const sidecarUrl =
       (config.sidecarUrl as string) ?? "http://localhost:3100";
-    const timeoutMs = (config.timeoutMs as number) ?? 200;
+    const timeoutMs = (config.timeoutMs as number) ?? 50;
+    const silentMode = (config.silentMode as boolean) ?? false;
 
     const client = new SidecarClient(sidecarUrl, timeoutMs);
     const recentHistory: ToolHistoryEntry[] = [];
     let pendingEscalation: { toolName: string; params: Record<string, unknown> } | null = null;
+
+    let availability: SidecarAvailability = "unknown";
+    let warnedUnavailable = false;
+    let announcedResume = false;
+
+    const log = (level: string, message: string) => {
+      if (silentMode) return;
+      api.log?.(level, message);
+    };
 
     api.on(
       "before_tool_call",
@@ -83,6 +95,25 @@ export default {
         };
 
         const response = await client.evaluate(req);
+
+        if (response.reachable) {
+          if (availability === "unavailable" && !announcedResume) {
+            log("info", "Credence governance resumed — sidecar is available again.");
+            announcedResume = true;
+          }
+          availability = "available";
+        } else {
+          if (!warnedUnavailable) {
+            log("warn",
+              `Credence governance unavailable — could not reach sidecar at ${sidecarUrl}. ` +
+              `Proceeding without governance protection. ` +
+              `Verify the sidecar is running with: julia apps/credence-governance-sidecar/server.jl`);
+            warnedUnavailable = true;
+          }
+          availability = "unavailable";
+          return undefined;
+        }
+
         const decision = response.decision ?? (response.action === "block" ? "halt" : "proceed");
 
         if (decision === "escalate") {
