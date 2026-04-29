@@ -82,7 +82,8 @@ Concrete deliverables:
 - Posterior update: `/observe` calls `condition` with a BetaBernoulli kernel
   to update the relevant (tool-name, category) posterior. Outcome is binary:
   success (no error, duration within budget) vs failure (error present or
-  timeout).
+  timeout). v0.1 uses a fixed per-tool duration budget table (e.g., `Read`
+  500ms, `Bash` 30s, `Edit` 2s). Learned budgets are post-MVP.
 - Task-category inference: fixed feature-driven mapping (tool name + file
   extension + command pattern → category). Categories: code, documentation,
   delete, deploy, privileged-exec, dependency, version-control, generic.
@@ -155,9 +156,11 @@ Concrete deliverables:
 - Route-to-cheaper-model: no plugin change needed; routing happens at the
   credence-router proxy level. This sub-PR documents the routing
   configuration in the plugin's README.
-- Enriched `/observe` request: include `userApproval` field (true/false/null)
-  so the sidecar can update the preference posterior from escalation
-  responses.
+- Enriched `/observe` request: include `userApproval` field
+  (`boolean | null`) so the sidecar can update the preference posterior
+  from escalation responses. Default is `null` (most tool calls are not
+  escalation responses); only escalation approve/deny produces `true`/
+  `false`. Consumers must not treat `null` as `false`.
 
 **Dependencies.** Sub-PR 1 (the enriched `/evaluate` response to consume).
 
@@ -233,9 +236,12 @@ Concrete deliverables (sidecar side):
   the action-class preference posterior toward uncertainty (equivalent to
   adding prior evidence of "user wants confirmation").
 - Instruction decay: when `/observe` reports a user approval for a guarded
-  action class, update the posterior toward "user approves this". When the
-  posterior's variance for the action class drops below the retirement
-  threshold (1/(α+β) < retirement floor), retire the instruction.
+  action class, update the posterior toward "user approves this". Retirement
+  fires when posterior precision exceeds 10× the prior's precision at
+  registration time — i.e., the sidecar has accumulated ten times more
+  evidence than the instruction contributed. This mirrors Amendment 1's
+  threshold derivation: not a hardcoded floor, but a ratio of posterior
+  precision to prior precision.
 
 Concrete deliverables (plugin side):
 
