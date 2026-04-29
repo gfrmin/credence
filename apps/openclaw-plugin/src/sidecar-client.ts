@@ -8,9 +8,31 @@ export type EvaluateRequest = {
   }>;
 };
 
+export type EvaluateSignals = {
+  alpha: number;
+  beta: number;
+  comparison_p: number;
+  cv: number;
+  eu_proceed: number;
+  eu_halt: number;
+  eu_downgrade: number;
+  eu_escalate: number;
+};
+
+export type RequireApprovalPayload = {
+  title: string;
+  description: string;
+  severity: "warning" | "error" | "info";
+  timeoutMs: number;
+  timeoutBehavior: "deny" | "allow";
+};
+
 export type EvaluateResponse = {
-  action: "proceed" | "block";
+  action: "proceed" | "block" | "escalate";
+  decision?: "proceed" | "halt" | "downgrade" | "route" | "escalate";
   reason?: string;
+  signals?: EvaluateSignals;
+  requireApproval?: RequireApprovalPayload | null;
 };
 
 export type ObserveRequest = {
@@ -20,6 +42,7 @@ export type ObserveRequest = {
   error?: string;
   durationMs?: number;
   timestamp: number;
+  userApproval?: boolean | null;
 };
 
 export class SidecarClient {
