@@ -100,7 +100,7 @@ function save_sidecar_state(brain::BrainState, user_id::String, created_at::Stri
         "updated_at" => now_iso8601(),
         "tool_posteriors" => serialize_tool_posteriors(brain.tool_outcomes),
         "model_posteriors" => serialize_model_posteriors(brain.model_quality),
-        "registered_instructions" => Any[],
+        "registered_instructions" => brain.registered_instructions,
     )
 
     filepath = get_state_path()
@@ -159,6 +159,12 @@ function load_sidecar_state!(brain::BrainState)::@NamedTuple{user_id::String, cr
     brain.tool_outcomes = deserialize_tool_posteriors(data["tool_posteriors"])
     brain.model_quality = deserialize_model_posteriors(data["model_posteriors"])
     brain.observation_count = reconstruct_observation_count(brain.tool_outcomes)
+
+    raw_instructions = get(data, "registered_instructions", Any[])
+    brain.registered_instructions = [
+        Dict{String,Any}(String(k) => v for (k, v) in inst)
+        for inst in raw_instructions
+    ]
 
     (; user_id, created_at)
 end

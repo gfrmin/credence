@@ -8,6 +8,7 @@ const REPO_ROOT = dirname(dirname(@__DIR__))
 push!(LOAD_PATH, REPO_ROOT)
 using Credence
 
+include("instruction_patterns.jl")
 include("brain.jl")
 include("persistence.jl")
 
@@ -88,7 +89,21 @@ function handle_observe(state, body::Dict{String,Any})
 end
 
 function handle_compaction_preview(state, body::Dict{String,Any})
-    return Dict{String,Any}("status" => "ok")
+    messages = get(body, "messages", Any[])
+    messages_vec = messages isa Vector ? messages : collect(messages)
+    matches = match_instructions(messages_vec)
+    registered = String[]
+    for (matched_text, action_class) in matches
+        for pattern in INSTRUCTION_PATTERNS
+            if pattern.action_class == action_class && match(pattern.regex, matched_text) !== nothing
+                if register_instruction!(state.brain, pattern.id, action_class)
+                    push!(registered, "$(pattern.id):$(action_class)")
+                end
+                break
+            end
+        end
+    end
+    return Dict{String,Any}("status" => "ok", "registered" => registered)
 end
 
 function handle_health(state)
