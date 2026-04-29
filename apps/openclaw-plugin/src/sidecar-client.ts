@@ -33,6 +33,7 @@ export type EvaluateResponse = {
   reason?: string;
   signals?: EvaluateSignals;
   requireApproval?: RequireApprovalPayload | null;
+  reachable: boolean;
 };
 
 export type ObserveRequest = {
@@ -63,11 +64,12 @@ export class SidecarClient {
         signal: AbortSignal.timeout(this.timeoutMs),
       });
       if (!response.ok) {
-        return { action: "proceed" };
+        return { action: "proceed", reachable: false };
       }
-      return (await response.json()) as EvaluateResponse;
+      const body = (await response.json()) as EvaluateResponse;
+      return { ...body, reachable: true };
     } catch {
-      return { action: "proceed" };
+      return { action: "proceed", reachable: false };
     }
   }
 
