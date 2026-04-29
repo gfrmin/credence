@@ -36,14 +36,19 @@ plugins:
 1. Plugin registers on `before_tool_call` and `after_tool_call` hooks.
 2. Before each tool call, the plugin sends the candidate call and recent
    history to the sidecar at `POST /evaluate`.
-3. If the sidecar returns `{ action: "block" }`, the plugin vetoes the
-   tool call with a descriptive reason.
-4. After each tool call, the plugin sends the outcome to the sidecar at
-   `POST /observe` (fire-and-forget, no latency impact).
-5. If the sidecar is unavailable, the plugin fails open (no intervention).
+3. The sidecar returns an enriched response with a `decision` field
+   (`proceed`, `halt`, `downgrade`, `route`, or `escalate`) and optional
+   `signals` (alpha, beta, EU values) plus `requireApproval` payload.
+4. The plugin renders the decision as an OpenClaw hook return value:
+   - **proceed / route** — no intervention (`undefined`).
+   - **halt** — block with reason (`{ block: true, blockReason: "..." }`).
+   - **downgrade** — block with reason suggesting an alternative tool.
+   - **escalate** — request user approval (`{ requireApproval: { ... } }`).
+5. After each tool call, the plugin sends the outcome to the sidecar at
+   `POST /observe` (fire-and-forget). If the call was an escalation, the
+   user's approval decision is forwarded as `userApproval: boolean`.
+6. If the sidecar is unavailable, the plugin fails open (no intervention).
 
-## Prototype scope
-
-This prototype demonstrates only **loop detection** (veto when the same tool
-with the same arguments is called more than N times). Move 2 wires up the
-full Credence brain with four intervention types.
+The sidecar response is backwards-compatible with the Move 1 `action`
+field: if `decision` is absent, the plugin falls back to mapping
+`action: "block"` to `halt` and `action: "proceed"` to `proceed`.

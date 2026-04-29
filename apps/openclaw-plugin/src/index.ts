@@ -1,5 +1,9 @@
 import { SidecarClient } from "./sidecar-client.js";
-import type { EvaluateRequest } from "./sidecar-client.js";
+import type {
+  EvaluateRequest,
+  EvaluateResponse,
+  RequireApprovalPayload,
+} from "./sidecar-client.js";
 
 type ToolHistoryEntry = {
   toolName: string;
@@ -8,6 +12,47 @@ type ToolHistoryEntry = {
 };
 
 const HISTORY_WINDOW = 50;
+
+function renderDecision(response: EvaluateResponse): Record<string, unknown> | undefined {
+  const decision = response.decision ?? (response.action === "block" ? "halt" : "proceed");
+
+  switch (decision) {
+    case "proceed":
+    case "route":
+      return undefined;
+
+    case "halt":
+      return {
+        block: true,
+        blockReason: `Credence governance: ${response.reason ?? "tool call vetoed by expected utility calculation"}`,
+      };
+
+    case "downgrade":
+      return {
+        block: true,
+        blockReason: `Credence governance: ${response.reason ?? "alternative tool has higher expected utility"}`,
+      };
+
+    case "escalate": {
+      const payload = response.requireApproval;
+      if (payload != null) {
+        return { requireApproval: payload };
+      }
+      return {
+        requireApproval: {
+          title: "Credence governance check",
+          description: response.reason ?? "The proposed action has uncertain expected utility. Confirm to proceed.",
+          severity: "warning",
+          timeoutMs: 120000,
+          timeoutBehavior: "deny",
+        } satisfies RequireApprovalPayload,
+      };
+    }
+
+    default:
+      return undefined;
+  }
+}
 
 export default {
   id: "credence-governance",
@@ -23,6 +68,7 @@ export default {
 
     const client = new SidecarClient(sidecarUrl, timeoutMs);
     const recentHistory: ToolHistoryEntry[] = [];
+    let pendingEscalation: { toolName: string; params: Record<string, unknown> } | null = null;
 
     api.on(
       "before_tool_call",
@@ -36,16 +82,14 @@ export default {
           recentHistory: recentHistory.slice(-HISTORY_WINDOW),
         };
 
-        const decision = await client.evaluate(req);
+        const response = await client.evaluate(req);
+        const decision = response.decision ?? (response.action === "block" ? "halt" : "proceed");
 
-        if (decision.action === "block") {
-          return {
-            block: true,
-            blockReason: `Credence governance: ${decision.reason ?? "tool call vetoed by expected utility calculation"}`,
-          };
+        if (decision === "escalate") {
+          pendingEscalation = { toolName: event.toolName, params: event.params };
         }
 
-        return undefined;
+        return renderDecision(response);
       },
       { priority: 100 },
     );
@@ -56,6 +100,7 @@ export default {
       result?: unknown;
       error?: string;
       durationMs?: number;
+      userApproval?: boolean;
     }) => {
       const entry: ToolHistoryEntry = {
         toolName: event.toolName,
@@ -67,6 +112,13 @@ export default {
         recentHistory.shift();
       }
 
+      let approval: boolean | null = null;
+      if (pendingEscalation != null &&
+          pendingEscalation.toolName === event.toolName) {
+        approval = event.userApproval ?? true;
+        pendingEscalation = null;
+      }
+
       client.observe({
         toolName: event.toolName,
         params: event.params,
@@ -74,11 +126,13 @@ export default {
         error: event.error,
         durationMs: event.durationMs,
         timestamp: entry.timestamp,
+        userApproval: approval,
       });
     });
 
     api.on("agent_end", async () => {
       recentHistory.length = 0;
+      pendingEscalation = null;
     });
   },
 };
