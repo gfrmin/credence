@@ -1,0 +1,8 @@
+{
+  "Read": 5000,
+  "Edit": 10000,
+  "Write": 10000,
+  "Bash": 30000,
+  "Bash:privileged": 60000,
+  "default": 15000
+}

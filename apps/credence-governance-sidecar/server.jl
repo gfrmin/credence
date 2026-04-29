@@ -3,110 +3,109 @@ using HTTP
 using JSON3
 using Dates
 
+# Load Credence substrate from repo root
+const REPO_ROOT = dirname(dirname(@__DIR__))
+push!(LOAD_PATH, REPO_ROOT)
+using Credence
+
+include("brain.jl")
+
 const DEFAULT_PORT = 3100
-const DEFAULT_MAX_REPETITIONS = 3
 
-mutable struct SidecarState
-    history::Vector{Dict{String,Any}}
-    max_repetitions::Int
-    start_time::DateTime
+function make_state(; max_repetitions::Int=3, prototype_fallback::Bool=true)
+    config_path = joinpath(@__DIR__, "config", "budgets.json")
+    budget_table = load_budget_table(config_path)
+    brain = make_brain_state(budget_table;
+                             prototype_fallback_enabled=prototype_fallback,
+                             max_repetitions=max_repetitions)
+    history = Dict{String,Any}[]
+    return (; brain, history, start_time=now())
 end
 
-function make_state(; max_repetitions=DEFAULT_MAX_REPETITIONS)
-    SidecarState(Dict{String,Any}[], max_repetitions, now())
-end
-
-function canonical_key(tool_name::AbstractString, params::Dict)
-    sorted_params = sort(collect(params), by=first)
-    return "$tool_name:$(JSON3.write(sorted_params))"
-end
-
-function count_repetitions(state::SidecarState, tool_name::AbstractString, params::Dict)
-    key = canonical_key(tool_name, params)
-    count = 0
-    for entry in state.history
-        entry_key = canonical_key(
-            get(entry, "toolName", ""),
-            get(entry, "params", Dict{String,Any}())
-        )
-        if entry_key == key
-            count += 1
-        end
-    end
-    return count
-end
-
-function handle_evaluate(state::SidecarState, body::Dict)
+function handle_evaluate(state, body::Dict{String,Any})
     tool_name = get(body, "toolName", "")
-    params = get(body, "params", Dict{String,Any}())
+    params = Dict{String,Any}(get(body, "params", Dict{String,Any}()))
     recent = get(body, "recentHistory", Dict{String,Any}[])
 
     combined_history = vcat(
         [Dict{String,Any}("toolName" => get(r, "toolName", ""),
-                          "params" => get(r, "params", Dict{String,Any}()))
+                          "params" => Dict{String,Any}(get(r, "params", Dict{String,Any}())))
          for r in recent],
         [Dict{String,Any}("toolName" => get(h, "toolName", ""),
-                          "params" => get(h, "params", Dict{String,Any}()))
+                          "params" => Dict{String,Any}(get(h, "params", Dict{String,Any}())))
          for h in state.history]
     )
 
-    key = canonical_key(tool_name, params)
-    count = 0
-    for entry in combined_history
-        entry_key = canonical_key(
-            get(entry, "toolName", ""),
-            get(entry, "params", Dict{String,Any}())
-        )
-        if entry_key == key
-            count += 1
-        end
+    fallback = check_prototype_fallback(state.brain, combined_history, tool_name, params)
+    if fallback !== nothing
+        return fallback
     end
 
-    if tool_name == "Read"
-        return Dict("action" => "proceed")
-    end
+    category = infer_category(tool_name, params)
+    result = compute_eu(state.brain, tool_name, category)
 
-    if count >= state.max_repetitions
-        return Dict(
-            "action" => "block",
-            "reason" => "Loop detected: '$tool_name' with identical arguments has been called $count times (threshold: $(state.max_repetitions)). Halting to prevent runaway loop."
-        )
-    end
+    response = Dict{String,Any}(
+        "action" => result.action,
+        "decision" => result.decision,
+        "reason" => result.reason,
+        "signals" => result.signals,
+        "requireApproval" => nothing,
+    )
 
-    return Dict("action" => "proceed")
+    return response
 end
 
-function handle_observe(state::SidecarState, body::Dict)
+function handle_observe(state, body::Dict{String,Any})
+    tool_name = get(body, "toolName", "")
+    params = Dict{String,Any}(get(body, "params", Dict{String,Any}()))
+    error_str = get(body, "error", nothing)
+    duration_ms = get(body, "durationMs", nothing)
+
     entry = Dict{String,Any}(
-        "toolName" => get(body, "toolName", ""),
-        "params" => get(body, "params", Dict{String,Any}()),
-        "error" => get(body, "error", nothing),
-        "durationMs" => get(body, "durationMs", nothing),
+        "toolName" => tool_name,
+        "params" => params,
+        "error" => error_str,
+        "durationMs" => duration_ms,
         "timestamp" => get(body, "timestamp", time())
     )
     push!(state.history, entry)
     if length(state.history) > 200
         deleteat!(state.history, 1:length(state.history)-200)
     end
-    return Dict("status" => "ok")
+
+    category = infer_category(tool_name, params)
+    success = classify_outcome(state.brain.budget_table, tool_name, category,
+                               error_str isa AbstractString ? error_str : nothing,
+                               duration_ms isa Real ? duration_ms : nothing)
+    update_posterior!(state.brain, tool_name, category, success)
+
+    return Dict{String,Any}("status" => "ok")
 end
 
-function handle_health(state::SidecarState)
-    return Dict(
+function handle_compaction_preview(state, body::Dict{String,Any})
+    return Dict{String,Any}("status" => "ok")
+end
+
+function handle_health(state)
+    posterior_summary = Dict{String,Any}()
+    for (key, m) in state.brain.tool_outcomes
+        # credence-lint: allow — precedent:display-arithmetic — health endpoint display only
+        posterior_summary["$(key.tool_name):$(key.category)"] = Dict{String,Any}(
+            "alpha" => m.alpha,  # credence-lint: allow — precedent:expect-through-accessor — display for health endpoint
+            "beta" => m.beta,  # credence-lint: allow — precedent:expect-through-accessor — display for health endpoint
+            "mean" => mean(m),  # credence-lint: allow — precedent:display-arithmetic — health endpoint display
+        )
+    end
+    return Dict{String,Any}(
         "status" => "ok",
         "uptime_seconds" => round(Int, Dates.value(now() - state.start_time) / 1000),
-        "history_length" => length(state.history)
+        "observation_count" => state.brain.observation_count,
+        "posterior_summary" => posterior_summary,
     )
 end
 
-function handle_reset(state::SidecarState)
-    empty!(state.history)
-    return Dict("status" => "ok")
-end
-
-function run_server(; port=DEFAULT_PORT, max_repetitions=DEFAULT_MAX_REPETITIONS)
-    state = make_state(; max_repetitions)
-
+function run_server(; port::Int=DEFAULT_PORT, max_repetitions::Int=3, prototype_fallback::Bool=true)
+    state = make_state(; max_repetitions, prototype_fallback)
     router = HTTP.Router()
 
     HTTP.register!(router, "POST", "/evaluate", function(req)
@@ -123,25 +122,29 @@ function run_server(; port=DEFAULT_PORT, max_repetitions=DEFAULT_MAX_REPETITIONS
                             JSON3.write(result))
     end)
 
+    HTTP.register!(router, "POST", "/compaction-preview", function(req)
+        body = JSON3.read(String(req.body), Dict{String,Any})
+        result = handle_compaction_preview(state, body)
+        return HTTP.Response(200, ["Content-Type" => "application/json"],
+                            JSON3.write(result))
+    end)
+
     HTTP.register!(router, "GET", "/health", function(_)
         result = handle_health(state)
         return HTTP.Response(200, ["Content-Type" => "application/json"],
                             JSON3.write(result))
     end)
 
-    HTTP.register!(router, "POST", "/reset", function(_)
-        result = handle_reset(state)
-        return HTTP.Response(200, ["Content-Type" => "application/json"],
-                            JSON3.write(result))
-    end)
-
     println("Credence governance sidecar starting on port $port")
+    println("  prototype_fallback = $prototype_fallback")
     println("  max_repetitions = $max_repetitions")
-    println("  endpoints: POST /evaluate, POST /observe, GET /health, POST /reset")
+    println("  observation_count = $(state.brain.observation_count)")
+    println("  endpoints: POST /evaluate, POST /observe, POST /compaction-preview, GET /health")
 
     HTTP.serve(router, "127.0.0.1", port)
 end
 
 port = parse(Int, get(ENV, "CREDENCE_SIDECAR_PORT", string(DEFAULT_PORT)))
-max_reps = parse(Int, get(ENV, "CREDENCE_MAX_REPETITIONS", string(DEFAULT_MAX_REPETITIONS)))
-run_server(; port, max_repetitions=max_reps)
+max_reps = parse(Int, get(ENV, "CREDENCE_MAX_REPETITIONS", "3"))
+fallback = lowercase(get(ENV, "CREDENCE_PROTOTYPE_FALLBACK", "true")) in ("true", "1", "yes")
+run_server(; port, max_repetitions=max_reps, prototype_fallback=fallback)
