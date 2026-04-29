@@ -61,7 +61,7 @@ function handle_evaluate(state, body::Dict{String,Any})
 
     result = compute_eu(state.brain, tool_name, category)
 
-    nc = check_no_confidence(state.brain, category, result.eu_proceed, state.eu_window_size)
+    nc = check_no_confidence(state.brain, tool_name, category, result.eu_proceed, state.eu_window_size)
     if nc
         return Dict{String,Any}(
             "action" => "block",
