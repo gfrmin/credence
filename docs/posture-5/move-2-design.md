@@ -740,17 +740,19 @@ processing. If compaction completes before the sidecar processes the
 compaction preview, the instruction registration may race with the
 post-compaction tool calls.
 
-**Mitigation.** The sidecar processes the compaction preview synchronously
-within the `/compaction-preview` handler. The HTTP request completes when
-processing finishes. The plugin sends the request and awaits the response
-before returning from the hook handler. Since the hook is void, OpenClaw
-doesn't wait for the plugin's return — but the sidecar's state is updated
-as soon as the HTTP response returns. The race window is the time between
-the sidecar's response and the next `before_tool_call` evaluation, which
-is typically milliseconds. If a tool call arrives during the race window,
-it evaluates against a stale (pre-compaction) posterior, which is
-conservative (the elevated threshold isn't yet active, so the tool call
-proceeds without escalation). The next tool call sees the updated posterior.
+**Mitigation.** The plugin `await`s the sidecar's HTTP response inside the
+hook handler, so the sidecar's state is updated before the handler returns.
+But `before_compaction` is a void hook — OpenClaw does not wait for the
+plugin's handler to return before proceeding. The race window is therefore
+bounded by agent-side latency: the time between OpenClaw firing the hook
+and the agent's next tool call. In practice this is tens of milliseconds
+(the sidecar's `/compaction-preview` handler runs in <10ms; the plugin's
+`await` adds only HTTP round-trip). If a tool call arrives during this
+window, it evaluates against a pre-compaction posterior — the elevated
+threshold is not yet active, so the tool call proceeds without escalation.
+This is the same outcome as not having Credence installed at all: the
+failure mode of the race window is identical to the no-Credence baseline,
+not worse than it.
 
 ## 7. Test plan
 
