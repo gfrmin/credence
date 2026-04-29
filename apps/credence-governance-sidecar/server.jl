@@ -9,6 +9,7 @@ push!(LOAD_PATH, REPO_ROOT)
 using Credence
 
 include("brain.jl")
+include("persistence.jl")
 
 const DEFAULT_PORT = 3100
 
@@ -18,8 +19,12 @@ function make_state(; max_repetitions::Int=3, prototype_fallback::Bool=true)
     brain = make_brain_state(budget_table;
                              prototype_fallback_enabled=prototype_fallback,
                              max_repetitions=max_repetitions)
+
+    (; user_id, created_at) = load_sidecar_state!(brain)
+
     history = Dict{String,Any}[]
-    return (; brain, history, start_time=now())
+    state_lock = ReentrantLock()
+    return (; brain, history, start_time=now(), user_id, created_at, state_lock)
 end
 
 function handle_evaluate(state, body::Dict{String,Any})
@@ -117,14 +122,22 @@ function run_server(; port::Int=DEFAULT_PORT, max_repetitions::Int=3, prototype_
 
     HTTP.register!(router, "POST", "/observe", function(req)
         body = JSON3.read(String(req.body), Dict{String,Any})
-        result = handle_observe(state, body)
+        result = lock(state.state_lock) do
+            r = handle_observe(state, body)
+            save_sidecar_state(state.brain, state.user_id, state.created_at)
+            r
+        end
         return HTTP.Response(200, ["Content-Type" => "application/json"],
                             JSON3.write(result))
     end)
 
     HTTP.register!(router, "POST", "/compaction-preview", function(req)
         body = JSON3.read(String(req.body), Dict{String,Any})
-        result = handle_compaction_preview(state, body)
+        result = lock(state.state_lock) do
+            r = handle_compaction_preview(state, body)
+            save_sidecar_state(state.brain, state.user_id, state.created_at)
+            r
+        end
         return HTTP.Response(200, ["Content-Type" => "application/json"],
                             JSON3.write(result))
     end)
@@ -136,6 +149,8 @@ function run_server(; port::Int=DEFAULT_PORT, max_repetitions::Int=3, prototype_
     end)
 
     println("Credence governance sidecar starting on port $port")
+    println("  user_id = $(state.user_id)")
+    println("  state_dir = $(get_state_dir())")
     println("  prototype_fallback = $prototype_fallback")
     println("  max_repetitions = $max_repetitions")
     println("  observation_count = $(state.brain.observation_count)")
