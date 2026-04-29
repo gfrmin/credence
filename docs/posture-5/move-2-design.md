@@ -120,10 +120,17 @@ posterior's uncertainty about the comparison. The margin condition prevents
 triggering on noise — the sidecar only vetoes when the alternative is
 confidently better, not when the comparison is ambiguous.
 
-The margin is derived from the posterior itself: the sidecar computes the
-probability P(EU(alt) > EU(proceed)) under the current posterior, and triggers
-downgrade when this probability exceeds a threshold (e.g., 0.9). This is a
-Bayesian comparison, not a point-estimate comparison.
+The margin is derived from the posterior itself: the sidecar computes
+P(EU(alt) > EU(proceed)) under the current posterior. Downgrade fires when
+this probability exceeds 1 − 1/(α + β), where α and β are the Beta
+parameters of the tool-success belief for the candidate action class. A
+fresh prior (α = β = 1) yields a threshold of 0.5 — downgrade fires on
+any evidence of alternative superiority, which is correct: the sidecar has
+no reason to prefer the candidate. As observations accumulate, the
+threshold rises toward 1, requiring stronger evidence to override a
+well-established tool. This is not a tuning parameter; it is a consequence
+of demanding that the downgrade decision's confidence scale with the
+posterior's own precision.
 
 In v0.1, the alternative space is limited: the sidecar considers only the
 "read instead of exec" substitution (the dominant pattern from Issue #34574)
@@ -180,12 +187,17 @@ function for the proposed action's class. When the variance-to-mean ratio of
 EU(proceed) exceeds a threshold, the sidecar cannot confidently determine whether
 the user would want this action — the correct response is to ask.
 
-The threshold is derived from the posterior's own uncertainty structure. The
-sidecar computes P(EU(proceed) > 0) and P(EU(proceed) < 0) under the current
-posterior. When both probabilities are substantial (neither exceeds 0.8), the
-action's desirability is genuinely uncertain, and escalation fires. This is the
-"two-sided uncertainty" condition — not "I think this is bad" (that would be
-veto) but "I don't know if this is good or bad" (that is escalation).
+The threshold is derived from the posterior's own concentration. The sidecar
+computes the coefficient of variation (CV) of EU(proceed) under the current
+posterior. When CV exceeds 1/√(α + β) — where α and β are the Beta
+parameters of the action-class preference belief — escalation fires. A fresh
+prior (α = β = 1) yields CV threshold 1/√2 ≈ 0.71, making escalation easy
+to trigger, which is correct: the sidecar has little evidence about user
+preference and should ask. As observations accumulate, √(α + β) grows and
+the threshold tightens, requiring proportionally less uncertainty to stay
+silent. This mirrors the downgrade threshold's derivation: both are
+consequences of scaling decision confidence with posterior precision, not
+independent tuning parameters.
 
 The escalation threshold is also elevated by the compaction-survival mechanism
 (§5.4): when the sidecar detects a lost user instruction, it raises the
