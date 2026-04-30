@@ -63,10 +63,10 @@ export default {
     "Bayesian governance sidecar — intercepts tool calls via expected utility",
 
   register(api: any) {
-    const config = api.config ?? {};
+    const config = api.pluginConfig ?? {};
     const sidecarUrl =
       (config.sidecarUrl as string) ?? "http://localhost:3100";
-    const timeoutMs = (config.timeoutMs as number) ?? 50;
+    const timeoutMs = (config.timeoutMs as number) ?? 200;
     const silentMode = (config.silentMode as boolean) ?? false;
 
     const client = new SidecarClient(sidecarUrl, timeoutMs);
@@ -79,7 +79,8 @@ export default {
 
     const log = (level: string, message: string) => {
       if (silentMode) return;
-      api.log?.(level, message);
+      if (level === "warn") api.logger?.warn(message);
+      else api.logger?.info(message);
     };
 
     api.on(
