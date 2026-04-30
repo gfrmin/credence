@@ -151,8 +151,9 @@ tool names and categories, each producing ambiguous outcomes:
 4. `Read({file: "missing.md"})` — failure.
 5. Repeat with variations for 14+ turns.
 6. **Expected with plugin:** no-confidence detector fires after 5 consecutive
-   evaluations where CV of EU(proceed) exceeds `1/√(α+β)`. Sidecar returns
-   `decision: "halt"`.
+   evaluations where CV of EU(proceed) exceeds `1/√(α+β)` (the 5-consecutive
+   span is the current configured default `NO_CONFIDENCE_SPAN`, tracked for
+   the constants-cleanup PR). Sidecar returns `decision: "halt"`.
 7. **Expected baseline:** agent continues burning context window on
    low-value exploration.
 
@@ -233,16 +234,17 @@ made?
 
 **Decision: scripted sidecar-level demonstrations with mock tool calls.**
 
-The scenarios are *not* run through a live OpenClaw instance. They are
-run as scripted HTTP request sequences against the sidecar, exercising the
-same code paths that the plugin's `before_tool_call` and `after_tool_call`
-hooks invoke. The reasons:
+Move 3's claim is that the *governance mechanism* fires correctly on
+canonical failure-mode signatures. The sidecar IS the governance mechanism.
+A live OpenClaw orchestration would test two things: "the integration is
+functional" (which Move 1 already verified at 4.7ms latency) and "the
+governance fires" (which is what Move 3 actually claims). Sidecar-level
+testing isolates the second — it is the more targeted test for the claim
+being made, not a downgrade from a live-OpenClaw test.
 
 1. **Determinism.** Mock LLM responses and real LLM responses are both
-   irrelevant to what Move 3 demonstrates. The demonstration claim is "the
-   sidecar's mechanism fires correctly on canonical failure-mode signatures."
-   The LLM's reasoning about *why* it chose a tool call is orthogonal — the
-   sidecar evaluates the tool call, not the reasoning.
+   irrelevant to what Move 3 demonstrates. The sidecar evaluates the
+   tool call, not the LLM's reasoning about why it chose the tool call.
 
 2. **Reproducibility.** Anyone with a Julia installation and the repo
    checked out can run `julia evaluations/move-3/run_scenarios.jl`. No
@@ -498,14 +500,15 @@ described narratively, not measured empirically. A sceptic may object that
 the baseline should be a real OpenClaw session without the plugin, producing
 real failure outcomes.
 
-**Mitigation.** The integration path (plugin → HTTP → sidecar) was verified
-in Move 1 at 4.7ms latency. The sidecar's decision logic is identical
-whether called from the plugin or from a test script. What the demonstration
-shows is that the sidecar *would* halt or escalate at the intervention
-point; the baseline is that without the sidecar, the tool call proceeds.
-This is a logical consequence, not an empirical claim that needs separate
-measurement. Running a real OpenClaw session to "prove" that a tool call
-proceeds when nothing blocks it adds ceremony but not evidence.
+**Mitigation.** The no-op path (plugin absent → tool call proceeds
+unblocked) was verified in Move 1's prototype demo. The same path is what
+"without the plugin" means. Running the demonstration through a live
+OpenClaw session would re-verify Move 1's finding without measuring anything
+new about the governance mechanism. The sidecar's decision logic is
+identical whether called from the plugin or from a test script; what the
+demonstration shows is that the sidecar *would* halt or escalate at the
+intervention point. The baseline is the absence of that intervention —
+empirically established by Move 1, not assumed.
 
 ### Risk 3: Scenarios surface implementation bugs
 
