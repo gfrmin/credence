@@ -4,6 +4,7 @@
 # for the appropriate intervention action. Loaded by server.jl.
 
 using ..Credence
+using SpecialFunctions: digamma, logbeta
 
 # ── Configuration ──
 
@@ -25,24 +26,33 @@ function stationarity_window(m::BetaMeasure)::Int
     max(2, ceil(Int, sqrt(concentration)))
 end
 
-function outcome_variance(outcomes::Vector{Bool})::Float64
-    isempty(outcomes) && return 0.0
-    # credence-lint: allow — precedent:display-arithmetic — host-level variance of empirical outcomes
-    μ = sum(outcomes) / length(outcomes)
-    sum((Float64(x) - μ)^2 for x in outcomes) / length(outcomes)
+# KL(Beta(α₁,β₁) || Beta(α₂,β₂)). Legitimate posteriors have α,β ≥ 1
+# (prior is at least Beta(1,1)); digamma is finite there.
+function kl_beta(α₁::Float64, β₁::Float64, α₂::Float64, β₂::Float64)::Float64
+    # credence-lint: allow — precedent:display-arithmetic — host-level KL divergence computation
+    logbeta(α₂, β₂) - logbeta(α₁, β₁) +
+    (α₁ - α₂) * digamma(α₁) +
+    (β₁ - β₂) * digamma(β₁) +
+    (α₂ - α₁ + β₂ - β₁) * digamma(α₁ + β₁)
+end
+
+function fit_beta(outcomes::AbstractVector{Bool})::Tuple{Float64, Float64}
+    s = count(outcomes)
+    (1.0 + s, 1.0 + length(outcomes) - s)
 end
 
 function stationarity_threshold(m::BetaMeasure)::Float64
-    # credence-lint: allow — precedent:display-arithmetic — host-level threshold derivation from posterior predictive variance
-    p = mean(m)
-    p * (1.0 - p) * 0.1  # credence-lint: allow — precedent:display-arithmetic — host-level threshold from posterior mean
+    # credence-lint: allow — precedent:expect-through-accessor — threshold from posterior concentration
+    concentration = m.alpha + m.beta
+    # credence-lint: allow — precedent:display-arithmetic — host-level KL threshold derivation
+    log(1.0 + 1.0 / concentration)
 end
 
 struct StationarityResult
     fires::Bool
     tool_name::String
     count::Int
-    outcome_var::Float64
+    kl::Float64
     threshold::Float64
     window_size::Int
 end
@@ -61,11 +71,17 @@ function check_stationarity(state::BrainState, read_tools::Set{String},
     length(outcomes) < K && return nothing
 
     window = outcomes[max(1, end-K+1):end]
-    ov = outcome_variance(window)
+    half = div(K, 2)
+    half < 1 && return nothing
+    first_half = window[1:half]
+    second_half = window[half+1:end]
+    (α₁, β₁) = fit_beta(first_half)
+    (α₂, β₂) = fit_beta(second_half)
+    kl = kl_beta(α₁, β₁, α₂, β₂)
     thresh = stationarity_threshold(m)
-    fires = ov <= thresh
+    fires = kl < thresh
 
-    StationarityResult(fires, string(tool_name), length(outcomes), ov, thresh, K)
+    StationarityResult(fires, string(tool_name), length(outcomes), kl, thresh, K)
 end
 
 function record_outcome!(state::BrainState, tool_name::AbstractString,
@@ -82,7 +98,23 @@ end
 # ── Detector 3: No-confidence dreaming loops (#65550) ──
 
 const DEFAULT_EU_WINDOW_SIZE = 10
-const NO_CONFIDENCE_SPAN = 5
+
+# Under v0.1's typical posteriors, the variance-based ceiling rarely activates
+# and the floor of 3 dominates. The formula's structure derives from posterior
+# noise properties; the floor captures the architectural minimum span needed to
+# distinguish "sustained" from "transient".
+function no_confidence_span(m::BetaMeasure)::Int
+    # credence-lint: allow — precedent:expect-through-accessor — span derivation from posterior concentration
+    α = m.alpha
+    β = m.beta
+    concentration = α + β
+    # EU = 2p - 1 (linear), so variance(EU) = 4 × variance(p) by delta method
+    # credence-lint: allow — precedent:display-arithmetic — host-level span derivation
+    eu_var = 4.0 * α * β / (concentration^2 * (concentration + 1.0))
+    threshold = 1.0 / sqrt(concentration)
+    raw = ceil(Int, 2.0 * eu_var / threshold^2)
+    clamp(raw, 3, 20)
+end
 
 function check_no_confidence(state::BrainState, tool_name::AbstractString,
                              category::AbstractString,
@@ -115,5 +147,5 @@ function check_no_confidence(state::BrainState, tool_name::AbstractString,
         state.no_confidence_consecutive = 0
     end
 
-    state.no_confidence_consecutive >= NO_CONFIDENCE_SPAN
+    state.no_confidence_consecutive >= no_confidence_span(m)
 end
