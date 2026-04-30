@@ -132,4 +132,58 @@ before it can be loaded by OpenClaw.
 
 ## Smoke test results
 
-_To be appended after Task 5._
+Tested 2026-04-30 against OpenClaw 2026.4.27 (cbc2ba0).
+
+### Build
+
+```
+$ npm run build
+> credence-governance@0.1.0 build
+> tsc
+```
+
+No errors. `dist/index.js`, `dist/sidecar-client.js` + declaration files produced.
+
+### Install
+
+```
+$ openclaw plugins install -l /home/g/git/credence/apps/openclaw-plugin
+Linked plugin path: ~/git/credence/apps/openclaw-plugin
+Restart the gateway to load plugins.
+```
+
+### Verify
+
+```
+$ openclaw plugins list
+Credence Governance | credence-governance | openclaw | enabled | 0.1.0
+
+$ openclaw plugins inspect credence-governance
+Status: loaded
+Format: openclaw
+Shape: hook-only
+Typed hooks:
+  after_tool_call
+  before_compaction
+  before_tool_call (priority 100)
+Diagnostics:
+  WARN: typed hook "agent_end" blocked — requires allowConversationAccess=true
+
+$ openclaw plugins doctor
+credence-governance is hook-only [info]
+```
+
+### Entry point pattern (D11 verification)
+
+**Confirmed: raw `export default { register }` is accepted.** The loader
+loaded the plugin without requiring `definePluginEntry()`. No fix needed.
+
+### New finding: `agent_end` hook requires `allowConversationAccess`
+
+OpenClaw classifies `agent_end` as a conversation-access hook. Non-bundled
+plugins need `hooks.allowConversationAccess: true` in config for it to fire.
+Without this, the plugin's history buffer cleanup doesn't run at agent-turn
+boundaries. Impact is minor — the buffer is bounded (50 entries) and stale
+entries naturally age out. But the config key should be documented.
+
+**Fix:** Added `allowConversationAccess` to README config example.
