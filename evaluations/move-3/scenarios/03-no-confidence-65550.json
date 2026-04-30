@@ -1,0 +1,42 @@
+{
+  "name": "no-confidence-65550",
+  "source": "GitHub Issue #65550 — 94 sessions in 65 minutes, $4.35 of zero-confidence garbage",
+  "description": "Reproduces the no-confidence dreaming-loop failure from Issue #65550: an agent thrashing between low-value actions without converging. Uses two tool categories with asymmetric posteriors — Bash:generic (mostly successful, positive EU) and Edit:code (mostly failing, negative EU) — to produce oscillating EU(proceed) values with non-zero mean. The detector fires after 5 consecutive evaluations where CV exceeds the posterior-derived threshold (NO_CONFIDENCE_SPAN=5, tracked for constants-cleanup PR).",
+  "steps": [
+    {"type": "observe", "toolName": "Bash", "params": {"command": "echo hello"}, "error": null, "durationMs": 5},
+    {"type": "observe", "toolName": "Bash", "params": {"command": "ls src/"}, "error": null, "durationMs": 15},
+    {"type": "observe", "toolName": "Bash", "params": {"command": "find . -name '*.py'"}, "error": null, "durationMs": 150},
+    {"type": "observe", "toolName": "Bash", "params": {"command": "cat README.md"}, "error": null, "durationMs": 10},
+    {"type": "observe", "toolName": "Bash", "params": {"command": "wc -l src/main.py"}, "error": null, "durationMs": 8},
+
+    {"type": "observe", "toolName": "Edit", "params": {"file_path": "app.py", "old_string": "foo", "new_string": "bar"}, "error": "file not found: app.py", "durationMs": 5},
+    {"type": "observe", "toolName": "Edit", "params": {"file_path": "server.py", "old_string": "x", "new_string": "y"}, "error": "file not found: server.py", "durationMs": 3},
+
+    {"type": "evaluate", "toolName": "Bash", "params": {"command": "grep -r 'TODO' ."}},
+    {"type": "evaluate", "toolName": "Edit", "params": {"file_path": "config.py", "old_string": "a", "new_string": "b"}},
+    {"type": "evaluate", "toolName": "Bash", "params": {"command": "python -c 'print(1)'"}},
+    {"type": "evaluate", "toolName": "Edit", "params": {"file_path": "util.py", "old_string": "c", "new_string": "d"}},
+    {"type": "evaluate", "toolName": "Bash", "params": {"command": "head -5 Makefile"}},
+    {"type": "evaluate", "toolName": "Edit", "params": {"file_path": "main.py", "old_string": "e", "new_string": "f"}},
+    {"type": "evaluate", "toolName": "Bash", "params": {"command": "date"}},
+    {"type": "evaluate", "toolName": "Edit", "params": {"file_path": "test.py", "old_string": "g", "new_string": "h"}},
+    {"type": "evaluate", "toolName": "Bash", "params": {"command": "whoami"}},
+    {"type": "evaluate", "toolName": "Edit", "params": {"file_path": "handler.py", "old_string": "i", "new_string": "j"}},
+
+    {"type": "evaluate", "toolName": "Bash", "params": {"command": "pwd"}},
+    {"type": "evaluate", "toolName": "Edit", "params": {"file_path": "routes.py", "old_string": "k", "new_string": "l"}},
+    {"type": "evaluate", "toolName": "Bash", "params": {"command": "env | head"}},
+    {"type": "evaluate", "toolName": "Edit", "params": {"file_path": "models.py", "old_string": "m", "new_string": "n"}},
+    {"type": "evaluate", "toolName": "Bash", "params": {"command": "df -h"}},
+    {"type": "evaluate", "toolName": "Edit", "params": {"file_path": "views.py", "old_string": "o", "new_string": "p"}}
+  ],
+  "expected_outcomes": [
+    {
+      "turn": null,
+      "type": "evaluate",
+      "expected_decision": "halt",
+      "detector": "#65550",
+      "description": "No-confidence detector fires after sustained high-CV EU(proceed) trajectory with asymmetric oscillation between positive-EU and negative-EU tool categories"
+    }
+  ]
+}
