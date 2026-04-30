@@ -78,17 +78,35 @@ The evaluation is a targeted demonstration on the specific failure modes the plu
 
 **Cadence.** Estimated duration: 1–2 weeks if scenarios can be synthesised from issue tracker descriptions; longer if faithful reproductions require setting up specific harness states.
 
+## Closure (2026-04-30)
+
+v0.1 is shippable. All three moves complete. See `posture-5-closure-confirmation.md` for the full closure record.
+
+## Queued for next conversation
+
+**Constants-cleanup follow-up PR.** Three items:
+
+1. **10× retirement ratio** (`brain.jl:292`, `precision > 10.0 * prior_strength`): the multiplier in compaction-survival decay that determines when a registered instruction is retired based on accumulated approval evidence.
+2. **5-consecutive-evaluations span** (`detectors.jl:85`, `NO_CONFIDENCE_SPAN = 5`): how many consecutive high-CV evaluations the #65550 no-confidence detector requires before firing.
+3. **`p*(1-p)*0.1` proxy threshold** (`detectors.jl:38`): the stationarity detector's outcome-variance threshold, currently a fixed 10% fraction of the posterior predictive variance.
+
+All three are configurable defaults in code. The cleanup either moves them to config files with documented defaults, derives them from posterior structure (Amendment 1 form), or accepts them as deployment-tunable parameters with explicit naming. Decision deferred to that PR's design doc.
+
+## v0.1 deployment
+
+The next piece of work after the constants-cleanup PR is getting users running the plugin against real OpenClaw — collecting the deployment evidence the post-MVP roadmap items depend on. This is operational rather than design work and probably wants a Posture 6 conversation.
+
 ## Post-MVP roadmap
 
-Each item is real, tracked, and deferred — not forgotten and not in scope for MVP.
+Each item is real, tracked, and deferred — not forgotten and not in scope for MVP. Roadmap re-affirmed at closure (2026-04-30) with additional items surfaced during the three-move build.
 
 ### Publication track
 
 Two papers, sequenced.
 
-**Paper One** (workshop-shape, weeks not months): *"When Bayesian Routing Collapses: Cost-Quality Trade-offs in Agentic Harness Routing."* Cites arXiv:2602.03478 explicitly; reframes Move 2's routing-collapse benchmark as motivating evidence for governance-over-routing. The superseded benchmark report (`docs/posture-5/superseded/move-2-routing-benchmark-results.md`) is the primary data source. Establishes credibility trail and prior art for Paper Two.
+**Paper One — workshop reframing** (weeks not months): *"When Bayesian Routing Collapses: Cost-Quality Trade-offs in Agentic Harness Routing."* Cites arXiv:2602.03478 explicitly; reframes Move 2's routing-collapse benchmark as motivating evidence for governance-over-routing. The superseded benchmark report (`docs/posture-5/superseded/move-2-routing-benchmark-results.md`) is the primary data source. Establishes credibility trail and prior art for Paper Two. Time-sensitive given the Feb 2026 arXiv paper's freshness.
 
-**Paper Two** (substantive contribution, conference target AISTATS 2027 or NeurIPS 2026): *"Bayesian Governance of Agentic Harnesses: In-Loop Decision-Theoretic Intervention for Cost-Aware, Reliability-Aware Tool Use."* Full architectural pitch with HAL-submitted SWE-bench Pro / τ-bench / RoTBench Pareto frontiers, Bayesian Multi-LLM Orchestration-style ablations, IRD-style utility-function sensitivity validation.
+**Paper Two — substantive contribution** (conference target AISTATS 2027 or NeurIPS 2026): *"Bayesian Governance of Agentic Harnesses: In-Loop Decision-Theoretic Intervention for Cost-Aware, Reliability-Aware Tool Use."* Full architectural pitch with HAL-submitted SWE-bench Pro / τ-bench / RoTBench Pareto frontiers, Bayesian Multi-LLM Orchestration-style ablations, IRD-style utility-function sensitivity validation.
 
 ### Multi-harness expansion
 
@@ -98,15 +116,29 @@ Two adapters, sequenced.
 
 **OpenHands V1 adapter.** Strongest published-numbers comparator (77% on SWE-bench Verified with Sonnet 4.5); academic-grade event-stream architecture with `SecurityAnalyzer` and `ConfirmationPolicy` interfaces built for Bayesian intervention; useful as a benchmarking platform for the publication track.
 
-The architecture in Move 2 should be designed with eventual multi-harness support in mind — Credence-side belief tracking should not bake OpenClaw assumptions deep into the substrate — but adapter implementations are explicitly post-MVP.
-
 ### Personal-agent direction
 
-The previously-shelved Move 9 personal-agent work (Maildir email via mbsync, Telegram trainer with feedback, persistence, server loop) remains deferred to a later posture (provisionally Posture 6). The OpenClaw plugin gives the brain/body interface its first empirical test; by the time the personal-agent direction is queued, there's evidence about what bodies actually need from the brain.
+The previously-shelved Move 9 personal-agent work (Maildir email via mbsync, Telegram trainer with feedback, persistence, server loop) remains deferred to a later posture (provisionally Posture 6). The OpenClaw plugin gives the brain/body interface its first empirical test; by the time the personal-agent direction is queued, there's evidence about what bodies actually need from the brain. Now informed by v0.1 deployment evidence.
 
-### Cache-aware governance
+### Cache-aware governance v2
 
-v1 ships scope-out for cache savings (Move 0 finding: prompt caching unsupported on OAI-compatible endpoint). v2 may absorb cache-aware governance via native Messages API migration if deployment evidence shows cache effects are load-bearing for users. Long-context coding tasks are the most likely place this matters. Tracked but not in MVP scope.
+v1 ships scope-out for cache savings (Move 0 finding: prompt caching unsupported on OAI-compatible endpoint). v2 may absorb cache-aware governance via native Messages API migration if deployment evidence shows cache effects are load-bearing for users. Long-context coding tasks are the most likely place this matters.
+
+### LLM-based instruction extraction
+
+v0.1 uses regex pattern-match (7 patterns, Move 2 design §5.4). False negatives on unusual phrasings are the expected failure mode. v0.2 direction: LLM-based extraction replaces the regex approach.
+
+### Cross-machine state sync
+
+v0.1's per-machine persistence gives each sidecar instance its own posterior trajectory. Multi-machine users experience approximately-the-same-agent (Move 2 design §5.3). Beta-distribution sufficient statistics make future merge well-defined; implementing cross-machine sync makes the approximately-the-same-agent property exact.
+
+### Semantic task categorisation
+
+v0.1 infers tool category from name and argument patterns (code, delete, deploy, version-control, dependency, generic). v0.2 direction: semantic categorisation beyond feature-driven pattern matching.
+
+### Detectors for additional failure modes
+
+v0.1 targets Issues #34574, #1084, #65550. Additional documented OpenClaw failure modes for future detectors: Issues #14729, #41291, #28576. The detector architecture supports adding without rearchitecture — each detector reads the same posterior and triggers the same intervention vocabulary.
 
 ## Superseded material
 
