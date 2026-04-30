@@ -22,7 +22,7 @@ export type EvaluateSignals = {
 export type RequireApprovalPayload = {
   title: string;
   description: string;
-  severity: "warning" | "error" | "info";
+  severity: "info" | "warning" | "critical";
   timeoutMs: number;
   timeoutBehavior: "deny" | "allow";
 };
