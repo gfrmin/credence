@@ -52,7 +52,7 @@ function handle_evaluate(state, body::Dict{String,Any})
             "decision" => "halt",
             "reason" => "Posterior stationary on repeated tool call: '$(sr.tool_name)' " *
                         "called $(sr.count) times with identical arguments " *
-                        "(outcome_var=$(round(sr.outcome_var, digits=4)) ≤ threshold=$(round(sr.threshold, digits=4)), " *
+                        "(KL=$(round(sr.kl, digits=4)) < threshold=$(round(sr.threshold, digits=4)), " *
                         "window=$(sr.window_size)). Halting.",
             "signals" => Dict{String,Any}(),
             "requireApproval" => nothing,

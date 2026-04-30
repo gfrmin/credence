@@ -115,7 +115,7 @@ function execute_step!(brain::BrainState, read_tools::Set{String}, bt::BudgetTab
                               "halt", "block",
                               "Posterior stationary on repeated tool call: '$(sr.tool_name)' " *
                               "called $(sr.count) times with identical arguments " *
-                              "(outcome_var=$(round(sr.outcome_var, digits=4)) ≤ threshold=$(round(sr.threshold, digits=4)), " *
+                              "(KL=$(round(sr.kl, digits=4)) < threshold=$(round(sr.threshold, digits=4)), " *
                               "window=$(sr.window_size))",
                               "#34574", m.alpha, m.beta, 0.0, String[])
         end

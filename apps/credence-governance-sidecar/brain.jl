@@ -287,9 +287,14 @@ function update_instruction_decay!(state::BrainState, category::String, approved
         # credence-lint: allow — precedent:display-arithmetic — retirement threshold check
         approvals = Int(inst["approvals"])
         denials = Int(inst["denials"])
-        precision = 2.0 + approvals + denials
         prior_strength = Float64(inst["prior_strength"])
-        if precision > 10.0 * prior_strength && approvals > denials
+        α_posterior = 1.0 + approvals
+        β_posterior = 1.0 + denials
+        α_prior = 1.0
+        β_prior = prior_strength
+        ratio_inverted = α_posterior * α_prior > β_posterior * β_prior
+        sufficient_evidence = (α_posterior + β_posterior) > 2.0 * (α_prior + β_prior)
+        if ratio_inverted && sufficient_evidence
             push!(retired, i)
         end
     end
