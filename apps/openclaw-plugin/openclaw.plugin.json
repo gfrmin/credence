@@ -18,11 +18,6 @@
         "type": "number",
         "description": "Timeout for sidecar requests in milliseconds",
         "default": 200
-      },
-      "maxRepetitions": {
-        "type": "number",
-        "description": "Maximum identical tool calls before veto (prototype only)",
-        "default": 3
       }
     }
   }
