@@ -1,54 +1,102 @@
 # Credence Governance Plugin for OpenClaw
 
-Prototype OpenClaw plugin that intercepts tool calls via a Credence governance
-sidecar. The sidecar evaluates each candidate tool call and can veto it when
-the expected utility calculation indicates intervention (e.g., loop detection).
+Intercepts tool calls via a Bayesian governance sidecar. The sidecar evaluates
+each candidate tool call by expected utility and can veto runaway loops,
+escalate uncertain actions to the user, or suggest alternatives.
 
 ## Prerequisites
 
-- OpenClaw installed and configured
-- Credence governance sidecar running (see `../credence-governance-sidecar/`)
+- [OpenClaw](https://openclaw.ai) installed (`npm install -g openclaw@latest`)
 - Node.js >= 22
+- Julia >= 1.9 (for the governance sidecar)
 
-## Install
+## Setup
+
+### 1. Start the governance sidecar
 
 ```bash
-# From this directory
-openclaw plugins install . --link
+cd apps/credence-governance-sidecar
+julia --project=. server.jl
 ```
 
-## Configure
+The sidecar listens on `http://localhost:3100` by default. If the sidecar is not
+running when the plugin loads, the plugin warns once and fails open (no
+governance protection until the sidecar comes back).
 
-In `~/.openclaw/config.yaml` (or equivalent):
+### 2. Build and install the plugin
 
-```yaml
-plugins:
-  entries:
-    credence-governance:
-      enabled: true
-      config:
-        sidecarUrl: "http://localhost:3100"
-        timeoutMs: 200
+```bash
+cd apps/openclaw-plugin
+npm install
+npm run build
+
+# Developer (link mode — picks up source changes after gateway restart):
+openclaw plugins install -l "$(pwd)"
+
+# User (copy mode):
+openclaw plugins install "$(pwd)"
+```
+
+### 3. Configure
+
+Add to `~/.openclaw/openclaw.json`:
+
+```json5
+{
+  plugins: {
+    entries: {
+      "credence-governance": {
+        enabled: true,
+        config: {
+          sidecarUrl: "http://localhost:3100",
+          timeoutMs: 200
+        }
+      }
+    }
+  }
+}
+```
+
+Both config values are optional — the defaults shown above apply if omitted.
+
+### 4. Restart the gateway
+
+```bash
+openclaw gateway restart
+```
+
+### 5. Verify
+
+```bash
+openclaw plugins list                          # should show credence-governance enabled
+openclaw plugins inspect credence-governance   # should show all 4 hooks registered
+openclaw plugins doctor                        # should report no errors for this plugin
 ```
 
 ## How it works
 
-1. Plugin registers on `before_tool_call` and `after_tool_call` hooks.
-2. Before each tool call, the plugin sends the candidate call and recent
-   history to the sidecar at `POST /evaluate`.
-3. The sidecar returns an enriched response with a `decision` field
-   (`proceed`, `halt`, `downgrade`, `route`, or `escalate`) and optional
-   `signals` (alpha, beta, EU values) plus `requireApproval` payload.
-4. The plugin renders the decision as an OpenClaw hook return value:
-   - **proceed / route** — no intervention (`undefined`).
-   - **halt** — block with reason (`{ block: true, blockReason: "..." }`).
-   - **downgrade** — block with reason suggesting an alternative tool.
-   - **escalate** — request user approval (`{ requireApproval: { ... } }`).
-5. After each tool call, the plugin sends the outcome to the sidecar at
-   `POST /observe` (fire-and-forget). If the call was an escalation, the
-   user's approval decision is forwarded as `userApproval: boolean`.
-6. If the sidecar is unavailable, the plugin fails open (no intervention).
+1. `before_tool_call`: sends the candidate tool call + recent history to the
+   sidecar at `POST /evaluate`.
+2. Sidecar returns a decision: **proceed**, **halt** (block with reason),
+   **downgrade** (block suggesting alternative), or **escalate** (request user
+   approval).
+3. `after_tool_call`: sends outcome to `POST /observe` (fire-and-forget) so the
+   sidecar can update its posterior.
+4. `before_compaction`: sends messages about to be compacted to
+   `POST /compaction-preview` so the sidecar can detect instruction patterns.
+5. `agent_end`: clears the local history buffer.
 
-The sidecar response is backwards-compatible with the Move 1 `action`
-field: if `decision` is absent, the plugin falls back to mapping
-`action: "block"` to `halt` and `action: "proceed"` to `proceed`.
+## Troubleshooting
+
+**Sidecar not running.** The plugin warns once in the gateway logs and proceeds
+without governance. Start the sidecar and the plugin resumes automatically.
+
+**Plugin not loading.** Run `openclaw plugins doctor` to surface manifest issues.
+Ensure `npm run build` completed successfully (check that `dist/index.js` exists).
+
+**Config not taking effect.** Verify config is under `plugins.entries.credence-governance.config`
+in `~/.openclaw/openclaw.json` (JSON5 format), not at the top level. Restart the
+gateway after config changes.
+
+**Gateway hasn't picked up changes.** After installing or updating the plugin,
+run `openclaw gateway restart`.
