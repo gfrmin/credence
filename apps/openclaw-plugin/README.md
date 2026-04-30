@@ -47,6 +47,9 @@ Add to `~/.openclaw/openclaw.json`:
     entries: {
       "credence-governance": {
         enabled: true,
+        hooks: {
+          allowConversationAccess: true  // needed for agent_end cleanup hook
+        },
         config: {
           sidecarUrl: "http://localhost:3100",
           timeoutMs: 200
@@ -57,7 +60,10 @@ Add to `~/.openclaw/openclaw.json`:
 }
 ```
 
-Both config values are optional — the defaults shown above apply if omitted.
+`sidecarUrl` and `timeoutMs` are optional — the defaults shown above apply if
+omitted. `allowConversationAccess` is required for the `agent_end` hook (clears
+the history buffer between agent turns); without it, the buffer is bounded at 50
+entries and stale entries age out naturally.
 
 ### 4. Restart the gateway
 
