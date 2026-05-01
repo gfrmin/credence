@@ -186,6 +186,17 @@ def _merge_tool_call(acc: list[dict], delta: dict) -> None:
         cur["function"]["arguments"] += fn_delta["arguments"]
 
 
+def _default_decide_fn():
+    """Return the Julia-backed decide callable.
+
+    Extracted as a factory so tests can monkeypatch `server._default_decide_fn`
+    to inject a pure-Python stub without touching juliacall.
+    """
+    from credence_router.tool_decision.decide import decide as julia_decide
+
+    return julia_decide
+
+
 def _default_select_model_fn():
     """Reuse credence-router's existing model-selection via _llm_domain.route().
 
@@ -468,7 +479,6 @@ async def proxy_chat_completions(request: Request):
                 PipelineConfig,
                 run_pipeline,
             )
-            from credence_router.tool_decision.decide import decide as julia_decide
 
             response = run_pipeline(
                 messages=body_json.get("messages", []),
@@ -478,7 +488,7 @@ async def proxy_chat_completions(request: Request):
                     embed_fn=_default_embed_fn(),
                     llm_fn=_default_llm_fn(),
                     select_model_fn=_default_select_model_fn(),
-                    decide_fn=julia_decide,
+                    decide_fn=_default_decide_fn(),
                     ask_cost=float(os.environ.get("CREDENCE_ASK_COST", "0.05")),
                     knn_k=int(os.environ.get("CREDENCE_KNN_K", "3")),
                 ),
