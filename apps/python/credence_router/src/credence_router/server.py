@@ -98,19 +98,121 @@ def _default_embed_fn():
 
 
 def _default_llm_fn():
-    """Forward the chat-completions request to the upstream LLM (stub — Task 11)."""
-    raise NotImplementedError(
-        "Implement _default_llm_fn by adapting credence_router.tools.llm.provider "
-        "to a non-streaming dict response: {model_id, text, tool_calls, usage_cost}."
-    )
+    """Forward the chat-completions request to the upstream LLM.
+
+    Wraps forward_streaming (async generator → raw SSE bytes) into the
+    synchronous LlmFn contract: (messages, tools, model_id) → dict.
+
+    forward_streaming yields (chunk_bytes, Observation | None).  We drain
+    it in a fresh event loop running in a worker thread so we don't conflict
+    with the FastAPI event loop that is already running on the calling thread.
+    """
+    import concurrent.futures
+    import json as _json
+
+    from credence_router.tools.llm.provider import forward_streaming
+
+    def fn(messages: list[dict], tools: list[dict], model_id: str) -> dict:
+        # Build a minimal OpenAI-format request body.
+        body_dict: dict = {"model": model_id, "messages": messages, "stream": True}
+        if tools:
+            body_dict["tools"] = tools
+        request_body = _json.dumps(body_dict).encode()
+
+        async def _collect() -> dict:
+            text_parts: list[str] = []
+            tool_calls: list[dict] = []
+            usage_cost = 0.0
+
+            async for chunk, obs in forward_streaming(request_body, model_id):
+                if not chunk:
+                    # Terminal tuple: (b"", Observation) — extract cost.
+                    if obs is not None:
+                        usage_cost = obs.cost_usd
+                    continue
+                # Parse SSE lines from the chunk.
+                for line in chunk.decode("utf-8", errors="replace").split("\n"):
+                    if not line.startswith("data: ") or line.strip() == "data: [DONE]":
+                        continue
+                    try:
+                        event = _json.loads(line[6:])
+                    except _json.JSONDecodeError:
+                        continue
+                    choices = event.get("choices") or []
+                    if choices:
+                        delta = choices[0].get("delta", {})
+                        content = delta.get("content")
+                        if isinstance(content, str):
+                            text_parts.append(content)
+                        for tc in delta.get("tool_calls") or []:
+                            _merge_tool_call(tool_calls, tc)
+
+            return {
+                "model_id": model_id,
+                "text": "".join(text_parts),
+                "tool_calls": tool_calls,
+                "usage_cost": usage_cost,
+            }
+
+        # Run in a worker thread with its own event loop to avoid
+        # "asyncio.run() cannot be called from a running event loop".
+        def _run_in_thread():
+            import asyncio as _asyncio
+            loop = _asyncio.new_event_loop()
+            try:
+                return loop.run_until_complete(_collect())
+            finally:
+                loop.close()
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+            future = pool.submit(_run_in_thread)
+            return future.result()
+
+    return fn
+
+
+def _merge_tool_call(acc: list[dict], delta: dict) -> None:
+    """Accumulate a streaming tool_call delta into acc."""
+    idx = delta.get("index", 0)
+    while len(acc) <= idx:
+        acc.append({"id": None, "type": "function", "function": {"name": "", "arguments": ""}})
+    cur = acc[idx]
+    if delta.get("id"):
+        cur["id"] = delta["id"]
+    fn_delta = delta.get("function", {})
+    if fn_delta.get("name"):
+        cur["function"]["name"] += fn_delta["name"]
+    if fn_delta.get("arguments"):
+        cur["function"]["arguments"] += fn_delta["arguments"]
 
 
 def _default_select_model_fn():
-    """Reuse credence-router's existing model-selection (stub — Task 11)."""
-    raise NotImplementedError(
-        "Implement _default_select_model_fn by binding credence-router's "
-        "existing per-request model selection (see _llm_domain in startup)."
-    )
+    """Reuse credence-router's existing model-selection via _llm_domain.route().
+
+    If _llm_domain is initialised, extract the last user message and route
+    through the Bayesian EU-maximiser.  Falls back to CREDENCE_DEFAULT_MODEL
+    (or claude-haiku-4-5) when the domain is unavailable (e.g. no API keys).
+    """
+
+    def fn(messages: list[dict], tools: list[dict]) -> str:
+        if _llm_domain is None:
+            return os.environ.get("CREDENCE_DEFAULT_MODEL", "claude-haiku-4-5")
+        # Extract last user text for the routing domain (route() takes a string).
+        user_text = ""
+        for m in reversed(messages):
+            if m.get("role") == "user":
+                content = m.get("content", "")
+                if isinstance(content, str):
+                    user_text = content
+                elif isinstance(content, list):
+                    user_text = " ".join(
+                        b.get("text", "") for b in content if b.get("type") == "text"
+                    )
+                break
+        decision = _llm_domain.route(user_text)
+        return decision.provider_name
+
+    return fn
 
 
 # ---------------------------------------------------------------------------
