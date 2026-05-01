@@ -1,0 +1,54 @@
+; ============================================================
+; tool_decider.bdsl — DSL agent for tool-call decision
+;
+; Action layout (index → action):
+;   0 → execute LLM's proposed tool call
+;   1 → substitute the next-best tool by EU
+;   2 → stop (emit no tool calls)
+;   3 → ask the user for approval
+;
+; The host pre-computes the EU of each action under the current
+; (model, tool) belief, plus the VOI of asking and the cost of
+; asking. The DSL picks the argmax with an ask-gate.
+;
+; Adaptation notes (vs. plan draft):
+;   - `>=` is not a DSL primitive; fold-based argmax doesn't need it.
+;   - Recursive lambda is not supported; argmax is implemented as
+;     fold over (range n) with a (index, value) pair accumulator,
+;     matching the idiom used by stdlib.bdsl's `optimise`.
+;   - `let` is 3-arg (name val body), not Scheme 2-arg ((bindings) body).
+; ============================================================
+
+; ── argmax-list: argmax over a list, returning the winning 0-based index ──
+;
+; Folds over indices 0..n-1, keeping the pair (best-index, best-value).
+; Uses (range n) → [0, 1, ..., n-1] then reduces with fold.
+; Mirrors the (fold … (map … (support actions))) pattern in stdlib.bdsl.
+(define argmax-list
+  (lambda (xs)
+    (first
+      (fold
+        (lambda (best candidate)
+          (if (> (second candidate) (second best))
+            candidate
+            best))
+        (map (lambda (i) (list i (nth xs i)))
+             (range (length xs)))))))
+
+; ── decide-action ──
+; action-eus : list [eu_execute eu_substitute eu_stop eu_ask_floor]
+;   (the eu_ask_floor entry is unused; ask is gated by voi-ask - ask-cost)
+; voi-ask    : expected value of the ask observation
+; ask-cost   : interruption tax constant
+;
+; Returns the chosen action index (0-3).
+(define decide-action
+  (lambda (action-eus voi-ask ask-cost)
+    (let non-ask-eus (list (nth action-eus 0)
+                           (nth action-eus 1)
+                           (nth action-eus 2))
+      (let best-non-ask (argmax-list non-ask-eus)
+        (let best-non-ask-eu (nth non-ask-eus best-non-ask)
+          (if (> (- voi-ask ask-cost) best-non-ask-eu)
+            3
+            best-non-ask))))))
