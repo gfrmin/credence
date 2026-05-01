@@ -53,3 +53,15 @@ Drop-in replacement for `langgraph.prebuilt.create_react_agent`. Builds a real L
 ## Design Principles
 
 Everything is EU maximisation, no hacks, LLM outputs are data. Prefer functional programming. Ruff: line-length = 99.
+
+## Tool-decision mode
+
+`src/credence_router/tool_decision/` extends the gateway with a Bayesian
+tool-call decision layer. Activated by `CREDENCE_TOOL_DECISION=1`. Per
+request: embed each tool, look up posterior `(model, tool) → approval`,
+choose `{execute, substitute, stop, ask}` via `apps/julia/tool_decider/`.
+Observations come from explicit ask-replies and from detected interruptions
+in the next request's message history. Plan + spec links:
+`docs/superpowers/plans/2026-05-01-credence-tool-decision-gateway.md`
+(implementation plan); brainstorm spec at
+`~/.claude/plans/brainstorm-how-this-repo-vast-stonebraker.md`.
