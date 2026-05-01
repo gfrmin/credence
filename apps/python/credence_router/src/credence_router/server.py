@@ -34,6 +34,10 @@ _state_path: Path | None = None
 _llm_state_path: Path | None = None
 _request_log: list[dict] = []
 
+_tool_decision_state = None  # ToolDecisionState | None
+_tool_decision_state_path = None  # Path | None
+_tool_decision_enabled = False
+
 
 class RouteRequest(BaseModel):
     query: str
@@ -43,6 +47,70 @@ class RouteRequest(BaseModel):
 class OutcomeRequest(BaseModel):
     useful: bool
     domain: str = "search"
+
+
+# ---------------------------------------------------------------------------
+# Tool-decision helper factories (stubs; completed in Task 11)
+# ---------------------------------------------------------------------------
+
+
+def _default_embed_fn():
+    """Embedding via OpenAI-compatible /v1/embeddings on credence-router itself.
+
+    For v0 we route through whichever provider has an embeddings endpoint;
+    fall back to a deterministic local pseudo-embedding if no API key is set
+    so tests / smoke runs don't require external creds.
+    """
+    import numpy as np
+
+    api_key = os.environ.get("OPENAI_API_KEY") or os.environ.get("CREDENCE_EMBEDDING_KEY")
+    if api_key:
+        import httpx as _httpx
+
+        url = os.environ.get(
+            "CREDENCE_EMBEDDING_URL",
+            "https://api.openai.com/v1/embeddings",
+        )
+        model = os.environ.get("CREDENCE_EMBEDDING_MODEL", "text-embedding-3-small")
+        client = _httpx.Client(timeout=10.0)
+
+        def fn(text: str):
+            r = client.post(
+                url,
+                headers={"Authorization": f"Bearer {api_key}"},
+                json={"model": model, "input": text},
+            )
+            r.raise_for_status()
+            data = r.json()["data"][0]["embedding"]
+            return np.asarray(data, dtype=np.float32)
+
+        return fn
+
+    log.warning("tool-decision: OPENAI_API_KEY not set, using pseudo-embeddings")
+
+    def fn(text: str):
+        rng = np.random.default_rng(abs(hash(text)) % (2**32))
+        v = rng.standard_normal(64).astype(np.float32)
+        v /= np.linalg.norm(v) + 1e-9
+        return v
+
+    return fn
+
+
+def _default_llm_fn():
+    """Forward the chat-completions request to the upstream LLM (stub — Task 11)."""
+    raise NotImplementedError(
+        "Implement _default_llm_fn by adapting credence_router.tools.llm.provider "
+        "to a non-streaming dict response: {model_id, text, tool_calls, usage_cost}."
+    )
+
+
+def _default_select_model_fn():
+    """Reuse credence-router's existing model-selection (stub — Task 11)."""
+    raise NotImplementedError(
+        "Implement _default_select_model_fn by binding credence-router's "
+        "existing per-request model selection (see _llm_domain in startup)."
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -95,6 +163,22 @@ def startup():
             _llm_domain.load_state(_llm_state_path)
         except Exception as e:
             log.warning("Could not load LLM state: %s", e)
+
+    global _tool_decision_state, _tool_decision_state_path, _tool_decision_enabled
+    _tool_decision_enabled = os.environ.get("CREDENCE_TOOL_DECISION", "0") == "1"
+    if _tool_decision_enabled:
+        from credence_router.tool_decision.state import ToolDecisionState
+
+        _tool_decision_state_path = Path(
+            os.environ.get("CREDENCE_TOOL_DECISION_STATE",
+                           "credence-tool-decision-state.json")
+        )
+        _tool_decision_state = ToolDecisionState(path=_tool_decision_state_path)
+        try:
+            _tool_decision_state.load()
+            log.info("tool-decision: loaded state from %s", _tool_decision_state_path)
+        except Exception as e:  # noqa: BLE001
+            log.warning("tool-decision: could not load state: %s", e)
 
     log.info(
         "Credence proxy started: search=%s, llm=%s",
@@ -160,6 +244,13 @@ def _shutdown_skin():
         except Exception as e:
             log.warning("skin shutdown failed: %s", e)
         _brain = None
+
+    if _tool_decision_state is not None and _tool_decision_state_path is not None:
+        try:
+            _tool_decision_state.save()
+            log.info("tool-decision: saved state to %s", _tool_decision_state_path)
+        except Exception as e:  # noqa: BLE001
+            log.warning("tool-decision: could not save state: %s", e)
 
 
 # ---------------------------------------------------------------------------
@@ -262,6 +353,36 @@ async def proxy_chat_completions(request: Request):
     via their OpenAI-compatible endpoints. Picks the best model for the query,
     streams the response back, and updates beliefs from the outcome.
     """
+    if _tool_decision_enabled and _tool_decision_state is not None:
+        import json as _json
+
+        raw = await request.body()
+        try:
+            body_json = _json.loads(raw)
+        except Exception:
+            body_json = {}
+        if body_json.get("tools"):
+            from credence_router.tool_decision.pipeline import (
+                PipelineConfig,
+                run_pipeline,
+            )
+            from credence_router.tool_decision.decide import decide as julia_decide
+
+            response = run_pipeline(
+                messages=body_json.get("messages", []),
+                tools=body_json.get("tools", []),
+                state=_tool_decision_state,
+                config=PipelineConfig(
+                    embed_fn=_default_embed_fn(),
+                    llm_fn=_default_llm_fn(),
+                    select_model_fn=_default_select_model_fn(),
+                    decide_fn=julia_decide,
+                    ask_cost=float(os.environ.get("CREDENCE_ASK_COST", "0.05")),
+                    knn_k=int(os.environ.get("CREDENCE_KNN_K", "3")),
+                ),
+            )
+            return response
+
     if _llm_domain is None:
         return {"error": "LLM domain not initialised. Set ANTHROPIC_API_KEY and/or OPENAI_API_KEY."}, 503
 
