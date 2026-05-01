@@ -226,6 +226,68 @@ Anthropic API / OpenAI API
 
 The Bayesian model (defined in `examples/router.bdsl`) maintains a joint distribution over reliability and judge concentration per model per category. Learning is Bayesian conditioning — no hyperparameters to tune, no exploration schedule, no decay.
 
+## Tool-decision mode (experimental)
+
+Beyond model routing, `credence-router` can also intercept the *tool calls*
+within an OpenAI chat completion. When `CREDENCE_TOOL_DECISION=1` is set,
+incoming requests with a `tools[]` field are routed through a Bayesian
+decision layer that:
+
+- **embeds each tool** (name + description + schema) and learns a Beta
+  posterior over `(model, tool) → P(user-would-approve)`,
+- **asks for approval** before running tools when the value of information
+  exceeds the interruption tax,
+- **substitutes** alternative tools when the LLM proposes one with low
+  posterior approval,
+- **learns from interruptions** — if the user aborts a tool mid-run (ESC /
+  Ctrl+C), the next request's history reveals the orphaned tool_call, and
+  the gateway updates that `(model, tool)` cell with a strong negative
+  observation.
+
+### Run
+
+```bash
+CREDENCE_TOOL_DECISION=1 \
+  CREDENCE_TOOL_DECISION_STATE=./credence-tool-state.json \
+  CREDENCE_ASK_COST=0.05 \
+  OPENAI_API_KEY=sk-... \
+  credence-router serve
+```
+
+`OPENAI_API_KEY` is used only for tool embeddings. The proxy will fall back
+to deterministic pseudo-embeddings if absent (useful for local smoke tests
+but generalisation across tools is then disabled).
+
+### Use with `pi` (or any OpenAI-compatible agent)
+
+Add to `~/.pi/agent/models.json`:
+
+```json
+{
+  "providers": {
+    "credence-tool": {
+      "baseUrl": "http://localhost:8377/v1",
+      "api": "openai-completions",
+      "apiKey": "any-string",
+      "models": [
+        {
+          "id": "auto",
+          "name": "Credence (tool-decision)",
+          "reasoning": false,
+          "input": ["text"],
+          "contextWindow": 200000,
+          "maxTokens": 8192,
+          "cost": { "input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0 }
+        }
+      ]
+    }
+  }
+}
+```
+
+Then run `pi --provider credence-tool --model auto`. Pi treats the gateway
+like any OpenAI-compatible provider; nothing in pi changes.
+
 ## License
 
 AGPL-3.0-only
