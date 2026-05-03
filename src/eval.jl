@@ -17,8 +17,25 @@ using ..Parse: SExpr, Atom, SList, parse_sexpr, parse_all
 using ..Ontology
 
 export eval_dsl, run_dsl, load_dsl
+export EffectorDecl, FeatureDecl
 
 const Env = Dict{Symbol, Any}
+
+# Declaration records produced by the (effector ...) and (feature ...)
+# DSL forms. Structural per Invariant 2: name and shape live in the type,
+# not as opaque payload. Pass-1 BDSL uses these only as data — the brain
+# never invokes effector behaviour, only enumerates names; the body
+# parses the same source independently (SPEC.md §"The capability
+# manifest" line 118).
+struct EffectorDecl
+    name::Symbol
+    parameters::Vector{@NamedTuple{name::Symbol, type::Symbol}}
+end
+
+struct FeatureDecl
+    name::Symbol
+    space::Space
+end
 
 function default_env()
     Env(
@@ -48,8 +65,33 @@ function default_env()
         :- => -,
         :max => max,
         :min => min,
+
+        # Error and lookup, plus declaration-list accessors. The
+        # accessors pluck the .name field from EffectorDecl/FeatureDecl
+        # records so DSL programs can construct an action-space from
+        # the manifest without reaching into struct internals.
+        :error => Base.error,
+        :lookup => _bdsl_lookup,
+        Symbol("effector-names") => _effector_names,
+        Symbol("feature-names")  => _feature_names,
     )
 end
+
+# (lookup dict key) — `key` is a Symbol (typically from `(quote name)`).
+# Sensor events arrive as Julia `Dict{String,Any}` from JSON3; the
+# symbol-to-string conversion keeps the BDSL surface symbol-shaped while
+# accommodating the wire-side string keys.
+function _bdsl_lookup(d::AbstractDict, k::Symbol)
+    if haskey(d, k)
+        return d[k]
+    end
+    sk = string(k)
+    haskey(d, sk) || error("lookup: key $(repr(k)) not found in dict (have $(collect(keys(d))))")
+    return d[sk]
+end
+
+_effector_names(decls::AbstractVector) = Symbol[d.name for d in decls]
+_feature_names(decls::AbstractVector)  = Symbol[d.name for d in decls]
 
 # ── Atom evaluation ──
 
@@ -141,6 +183,84 @@ function eval_dsl(expr::SList, env::Env)
             length(args) == 3 || error("if requires: condition, then, else")
             cond = eval_dsl(args[1], env)
             return cond ? eval_dsl(args[2], env) : eval_dsl(args[3], env)
+        end
+
+        if sym == :quote
+            length(args) == 1 || error("quote requires exactly one argument")
+            a = args[1]
+            return a isa Atom ? a.value : a
+        end
+
+        if sym == :cond
+            for clause in args
+                clause isa SList || error("cond: each clause must be a list, got $(typeof(clause))")
+                length(clause.items) == 2 || error("cond: each clause must be (test result), got $(length(clause.items)) items")
+                test_expr = clause.items[1]
+                result_expr = clause.items[2]
+                if test_expr isa Atom && test_expr.value === :else
+                    return eval_dsl(result_expr, env)
+                end
+                if eval_dsl(test_expr, env) == true
+                    return eval_dsl(result_expr, env)
+                end
+            end
+            error("cond: no clause matched and no else clause")
+        end
+
+        if sym == :apply
+            length(args) >= 2 || error("apply requires at least: head, list-arg")
+            head_expr = args[1]
+            fixed = @view args[2:end-1]
+            splat_vals = eval_dsl(args[end], env)
+            splat_vals isa AbstractVector ||
+                error("apply: last argument must evaluate to a list, got $(typeof(splat_vals))")
+            new_items = SExpr[head_expr]
+            for f in fixed; push!(new_items, f); end
+            for v in splat_vals
+                if v isa Symbol || v isa Float64 || v isa Int || v isa Bool || v isa String
+                    push!(new_items, Atom(v))
+                else
+                    error("apply: cannot splat value of type $(typeof(v)) " *
+                          "(splat elements must be Symbol/Float64/Int/Bool/String)")
+                end
+            end
+            return eval_dsl(SList(new_items), env)
+        end
+
+        if sym == :effector
+            length(args) >= 1 || error("effector requires at least a name")
+            name_atom = args[1]
+            (name_atom isa Atom && name_atom.value isa Symbol) ||
+                error("effector: name must be a symbol")
+            params = @NamedTuple{name::Symbol, type::Symbol}[]
+            for clause in @view args[2:end]
+                clause isa SList || error("effector: clauses must be lists, got $(typeof(clause))")
+                isempty(clause.items) && error("effector: empty clause")
+                head_atom = clause.items[1]
+                (head_atom isa Atom && head_atom.value === :parameters) ||
+                    error("effector: only (parameters ...) clause supported, got $(head_atom)")
+                for p in @view clause.items[2:end]
+                    p isa SList || error("effector: each parameter must be (name type), got $(typeof(p))")
+                    length(p.items) == 2 || error("effector: each parameter must be (name type)")
+                    pname, ptype = p.items[1], p.items[2]
+                    (pname isa Atom && pname.value isa Symbol) ||
+                        error("effector: parameter name must be a symbol")
+                    (ptype isa Atom && ptype.value isa Symbol) ||
+                        error("effector: parameter type must be a symbol")
+                    push!(params, (name = pname.value, type = ptype.value))
+                end
+            end
+            return EffectorDecl(name_atom.value, params)
+        end
+
+        if sym == :feature
+            length(args) == 2 || error("feature requires: (feature name space-expr)")
+            name_atom = args[1]
+            (name_atom isa Atom && name_atom.value isa Symbol) ||
+                error("feature: name must be a symbol")
+            space = eval_dsl(args[2], env)
+            space isa Space || error("feature: space-expr must evaluate to a Space, got $(typeof(space))")
+            return FeatureDecl(name_atom.value, space)
         end
 
         if sym == :do
