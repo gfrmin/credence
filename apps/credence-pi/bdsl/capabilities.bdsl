@@ -1,0 +1,36 @@
+; ============================================================
+; capabilities.bdsl — the body's effector manifest.
+;
+; Each (effector ...) form declares one tentacle the body has.
+; The brain's action-space is exactly the set of declared
+; effectors. The body's startup verifies every declared
+; effector has a registered implementation and exits with an
+; error if any is missing.
+;
+; This file is read by both sides. Changes to it are
+; deployment events, not runtime events.
+; ============================================================
+
+(define manifest
+  (list
+
+    ; --- ask: synchronously query the user for yes/no approval ---
+    ;
+    ; Parameters:
+    ;   text (string) — the question shown to the user
+    ;
+    ; Returns to the brain (as a subsequent user-responded event):
+    ;   one of: yes, no, timeout
+    (effector ask
+      (parameters (text string)))
+
+    ; --- proceed: allow the proposed tool call to execute ---
+    (effector proceed
+      (parameters))
+
+    ; --- block: refuse the proposed tool call ---
+    ;
+    ; Parameters:
+    ;   reason (string) — shown to pi/the user as the refusal reason
+    (effector block
+      (parameters (reason string)))))

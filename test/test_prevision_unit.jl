@@ -444,5 +444,93 @@ test_shared_reference_contract()
 
 println()
 println("="^60)
+println("Stratum 1 — Gauss-Jacobi polynomial exactness on BetaMeasure")
+println("="^60)
+
+# The post-step-2 implementation of `expect(::BetaMeasure, f::Function)`
+# replaced a uniform Riemann sum (O(1/n²) error) with hand-rolled Gauss-
+# Jacobi quadrature via Golub-Welsch. Polynomials in θ up to degree 2n−1
+# are now *polynomial-exact* in the mathematical sense: the quadrature
+# rule captures the integrand exactly. Computationally, the evaluation
+# is *FP-precision-bounded* — accumulated rounding in the weighted sum
+# leaves residual error around 1e-13 to 1e-15 for well-conditioned
+# Beta(α,β). The assertions below use isapprox(...; atol=1e-12) for the
+# Function path because that tolerance budget reflects FP rounding, not
+# quadrature error. The Identity fast path is arithmetic on α/(α+β),
+# not quadrature, so it remains pinned with `==`.
+
+# ── Function path matches Identity fast path (FP-bounded) ──
+for (α, β) in ((2.0, 2.0), (3.0, 5.0), (1.0, 7.0), (10.5, 0.5))
+    m = BetaMeasure(α, β)
+    direct = expect(m, Identity())
+    via_fn = expect(m, θ -> θ)
+    check("Beta($α, $β): expect(m, θ→θ) ≈ expect(m, Identity()) within 1e-12",
+          isapprox(via_fn, direct; atol=1e-12),
+          "via_fn=$via_fn direct=$direct diff=$(via_fn - direct)")
+end
+
+# ── Linear functions match a·E[θ] + b ──
+for (α, β, a, b) in ((2.0, 2.0, 2.0, -1.0),   # pass1-pref proceed at Beta(2,2)
+                     (3.0, 2.0, 2.0, -1.0),   # pass1-pref proceed at Beta(3,2)
+                     (4.0, 6.0, 5.0, 7.0))    # arbitrary linear
+    m = BetaMeasure(α, β)
+    expected = a * (α / (α + β)) + b
+    actual = expect(m, θ -> a*θ + b)
+    check("Beta($α, $β): expect(m, θ→$(a)θ+$b) ≈ $a·E[θ]+$b within 1e-12",
+          isapprox(actual, expected; atol=1e-12),
+          "actual=$actual expected=$expected diff=$(actual - expected)")
+end
+
+# ── Second moment: E[θ²] = α(α+1) / ((α+β)(α+β+1)) ──
+for (α, β) in ((2.0, 2.0), (3.0, 5.0), (7.0, 2.0))
+    m = BetaMeasure(α, β)
+    expected = α * (α + 1) / ((α + β) * (α + β + 1))
+    actual = expect(m, θ -> θ^2)
+    check("Beta($α, $β): expect(m, θ²) ≈ α(α+1)/((α+β)(α+β+1)) within 1e-12",
+          isapprox(actual, expected; atol=1e-12),
+          "actual=$actual expected=$expected diff=$(actual - expected)")
+end
+
+# ── Fourth moment: confirms exactness deeper than Pass-1 needs ──
+# E[θ^k] for Beta(α,β) = ∏_{j=0}^{k-1} (α+j) / (α+β+j).
+let α = 3.0, β = 5.0
+    m = BetaMeasure(α, β)
+    expected = (α * (α+1) * (α+2) * (α+3)) /
+               ((α+β) * (α+β+1) * (α+β+2) * (α+β+3))
+    actual = expect(m, θ -> θ^4)
+    check("Beta(3, 5): expect(m, θ⁴) ≈ analytical fourth moment within 1e-12",
+          isapprox(actual, expected; atol=1e-12),
+          "actual=$actual expected=$expected diff=$(actual - expected)")
+end
+
+println()
+println("="^60)
+println("Stratum 1 — Dispatch sanity (Identity fast path distinct from Function)")
+println("="^60)
+
+# Reflection-based assertion that the closed-form Identity path is a
+# distinct method from the Gauss-Jacobi Function path. Method
+# distinctness is the load-bearing property: it guarantees that callers
+# of `expect(::BetaMeasure, ::Identity)` continue to reach the closed-
+# form `m.alpha / (m.alpha + m.beta)` and do not silently fall through
+# into quadrature. The signature-shape check is a soft secondary signal;
+# line numbers are intentionally not asserted (file reorganisation
+# under future Pass work would shift them).
+let m_identity = which(expect, Tuple{BetaMeasure, Identity}),
+    m_function = which(expect, Tuple{BetaMeasure, Function})
+    check("which(expect, BetaMeasure, Identity) !== which(expect, BetaMeasure, Function)",
+          m_identity !== m_function,
+          "both resolved to $(m_identity) — Identity fast path lost")
+    check("Identity-method signature names Identity (not Function)",
+          occursin("Identity", string(m_identity.sig)) &&
+            !occursin("Function", string(m_identity.sig)),
+          "got sig $(m_identity.sig)")
+    check("Function-method signature names Function",
+          occursin("Function", string(m_function.sig)),
+          "got sig $(m_function.sig)")
+end
+
+println()
+println("="^60)
 println("ALL STRATUM-1 TESTS PASSED")
 println("="^60)

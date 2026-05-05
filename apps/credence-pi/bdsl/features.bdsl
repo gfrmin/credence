@@ -1,0 +1,36 @@
+; ============================================================
+; features.bdsl — the brain's sensory vocabulary.
+;
+; Each (feature ...) form declares one feature the brain
+; expects to receive in tool-proposed events. The body's
+; startup verifies every declared feature has a registered
+; extractor and exits with an error if any is missing.
+;
+; Pass 1 declares the features but does not condition on them
+; (the posterior is global). Pass 2 will use them in the
+; structure-learning machinery; declaring them now means the
+; observation log already contains the data Pass 2 will want.
+; ============================================================
+
+(define tool-name-space
+  (space :finite read write edit bash grep find ls other))
+
+(define wd-relative-space
+  (space :finite project-root subdirectory outside-project no-path))
+
+(define rep-count-space
+  (space :finite rep-0 rep-1 rep-2 rep-3plus))
+
+(define time-since-user-space
+  (space :finite lt-30s lt-2m lt-10m gt-10m))
+
+(define parent-tool-name-space
+  (space :finite read write edit bash grep find ls other none))
+
+(define features
+  (list
+    (feature tool-name                    tool-name-space)
+    (feature working-directory-relative   wd-relative-space)
+    (feature parent-tool-call-name        parent-tool-name-space)
+    (feature recent-repetition-count      rep-count-space)
+    (feature time-since-last-user-message time-since-user-space)))

@@ -16,6 +16,8 @@ condition, push_measure, draw, prune, truncate, log_marginal.
 """
 module Ontology
 
+using LinearAlgebra: SymTridiagonal, eigen
+
 # ── Move 2: unify Functional hierarchy onto Previsions.TestFunction ──
 import ..Previsions: Prevision
 import ..Previsions: TestFunction, Identity, Projection, NestedProjection,
@@ -503,13 +505,76 @@ function expect(m::CategoricalMeasure, f::Function)
     sum(w[i] * f(m.space.values[i]) for i in eachindex(w))
 end
 
-function expect(m::BetaMeasure, f::Function; n::Int=64)
-    grid = range(1/(2n), 1-1/(2n), length=n)
-    logw = [log_density_at(m, x) for x in grid]
-    max_lw = maximum(logw)
-    w = exp.(logw .- max_lw)
-    w ./= sum(w)
-    sum(w[i] * f(grid[i]) for i in eachindex(w))
+function expect(m::BetaMeasure, f::Function; n::Int=32)
+    # ── Gauss-Jacobi quadrature, hand-rolled via Golub-Welsch ─────────
+    #
+    # Replaces a uniform-grid Riemann sum (O(1/n²) error) that left
+    # voi computations in the BDSL stdlib at ~1e-4 cumulative error —
+    # see apps/credence-pi/SPEC.md and the step-2 stop-and-report.
+    # Polynomials in θ up to degree 2n−1 are now captured exactly by
+    # the quadrature rule; the only residual error is FP rounding in
+    # the weighted sum (typically <1e-13 for well-conditioned cases).
+    #
+    # This is a Pass-1-sufficient numerical fix. The cleaner Pass-2-
+    # or-later answer is to surface typed Functionals at the BDSL
+    # surface so DSL-constructed closures dispatch through
+    # expect(::BetaMeasure, ::TestFunction) — Identity, Linear-
+    # Combination — and reach the closed-form fast paths without
+    # quadrature at all. Until that lands, this method is the path
+    # DSL `lambda` expressions take.
+    #
+    # ── Recurrence and parameter mapping ──
+    #
+    # Three-term recurrence for monic Jacobi polynomials with weight
+    # (1 − x)^a (1 + x)^b on [−1, 1]:
+    #     P_{k+1}(x) = (x − α_k) P_k(x) − β_k P_{k−1}(x)
+    # with
+    #     α_0 = (b − a) / (a + b + 2)
+    #     α_k = (b² − a²) / ((2k + a + b)(2k + a + b + 2))            k ≥ 1
+    #     β_k = 4k(k+a)(k+b)(k+a+b) /
+    #             ((2k + a + b)² · ((2k + a + b)² − 1))               k ≥ 1
+    # (Stoer & Bulirsch, "Introduction to Numerical Analysis", §3.6,
+    # Eq. 3.6.21–3.6.23; equivalently DLMF §18.9.)
+    #
+    # Golub-Welsch: the symmetric tridiagonal Jacobi matrix J_n with
+    # diagonal [α_0, …, α_{n−1}] and off-diagonal [√β_1, …, √β_{n−1}]
+    # has eigenvalues = quadrature nodes (in [−1, 1]) and squared
+    # first-row eigenvector components ∝ quadrature weights.
+    # Normalising Σwᵢ = 1 lets us skip the explicit moment β_0.
+    #
+    # Beta(α_β, β_β) on [0, 1] maps to Jacobi weight on [−1, 1] via
+    # θ = (1 + x) / 2:
+    #     ∫₀¹ f(θ) θ^(α_β−1) (1−θ)^(β_β−1) dθ
+    #       ∝ ∫₋₁¹ f((1+x)/2) (1+x)^(α_β−1) (1−x)^(β_β−1) dx
+    # so set Jacobi parameters
+    #     a = β_β − 1
+    #     b = α_β − 1
+    # and evaluate f at θᵢ = (1 + xᵢ) / 2.
+    #
+    # ── Choice of n ──
+    #
+    # n=32 captures polynomials of degree ≤ 63. Pass 1's pass1-pref is
+    # degree 1; n=16 (degree ≤ 31) would be adequate. n=32 is comfort
+    # margin against unanticipated future preference functions, not
+    # necessity — the cost difference is roughly ~1000 vs ~3000 ops on
+    # a tridiagonal eigendecomposition, both negligible compared to
+    # BDSL evaluation overhead.
+    a = m.beta - 1.0
+    b = m.alpha - 1.0
+    diag = Vector{Float64}(undef, n)
+    offdiag = Vector{Float64}(undef, n - 1)
+    diag[1] = (b - a) / (a + b + 2)
+    for k in 1:n-1
+        s = 2k + a + b
+        diag[k + 1] = (b * b - a * a) / (s * (s + 2))
+        β_k = 4 * k * (k + a) * (k + b) * (k + a + b) / (s * s * ((s * s) - 1))
+        offdiag[k] = sqrt(β_k)
+    end
+    F = eigen(SymTridiagonal(diag, offdiag))
+    nodes = F.values                                      # eigenvalues ∈ [−1, 1]
+    w = (@view F.vectors[1, :]) .^ 2                      # ∝ quadrature weights
+    s_w = sum(w)
+    sum(w[i] * f((1.0 + nodes[i]) / 2) for i in eachindex(w)) / s_w
 end
 
 expect(m::TaggedBetaMeasure, f::Function; kwargs...) = expect(m.beta, f; kwargs...)

@@ -208,6 +208,14 @@ function eval_dsl(expr::SList, env::Env)
         end
 
         if sym == :apply
+            # Pass-1 constraint: splat values are re-wrapped into Atom and
+            # the synthesised SList is re-evaluated. Only Atom-compatible
+            # types — Symbol, Float64, Int, Bool, String — round-trip
+            # cleanly. Splatting Functional/Measure/Kernel values fails
+            # with an explicit error. The only Pass-1 use site is
+            # (apply space :finite (effector-names manifest)), whose
+            # splat source is a Vector{Symbol}. Pass 2 must revisit if
+            # richer splat sources are needed.
             length(args) >= 2 || error("apply requires at least: head, list-arg")
             head_expr = args[1]
             fixed = @view args[2:end-1]

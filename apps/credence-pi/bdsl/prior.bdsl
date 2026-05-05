@@ -1,0 +1,17 @@
+; ============================================================
+; prior.bdsl — prior over P(approve)
+;
+; The Pass 1 belief: a single Beta(2, 2) over the probability
+; that the user would approve a proposed tool call. No
+; conditioning on features; the posterior is global.
+;
+; Pass 2 will replace this with a richer structure (a CEG over
+; features). The public name make-prior is stable; consumers do
+; not change.
+; ============================================================
+
+(define p-approve-space (space :interval 0 1))
+
+(define make-prior
+  (lambda ()
+    (measure p-approve-space :beta 2.0 2.0)))

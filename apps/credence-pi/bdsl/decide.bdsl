@@ -1,0 +1,85 @@
+; ============================================================
+; decide.bdsl — Pass 1 decision program
+;
+; Action space: constructed from the manifest's effectors.
+; Preferences: symmetric over (approve, refuse) for proceed/
+; block; ask is competing against them via voi.
+;
+; At cold-start (Beta(2,2)), proceed and block have EU = 0
+; under symmetric utilities; voi(ask) > 0; ask wins by
+; computation. As observations accumulate, posterior
+; concentrates and proceed or block win in their respective
+; regimes.
+; ============================================================
+
+; The action space comes from the manifest. effector-names
+; extracts the names from the (effector ...) forms.
+(define action-space
+  (apply space :finite (effector-names manifest)))
+
+; Pass 1 preferences:
+;   pref(theta, proceed) =  1.0  if user would approve
+;                        = -1.0  if user would refuse
+;   pref(theta, block)   = -1.0  if user would approve  (refusing what they wanted)
+;                        =  1.0  if user would refuse   (correctly refused)
+;   pref(theta, ask)     =  0.0  unconditional (the cost of interruption is
+;                                 implicit; voi handles the gain)
+;
+; theta is the unknown P(approve). The preference takes theta
+; and returns expected payoff at that theta — proceed pays
+; +1·theta + (-1)·(1-theta) = 2*theta - 1.
+;
+; This is honest EU-max with the three actions live. Pass 2
+; refines.
+(define pass1-pref
+  (lambda (theta action)
+    (cond
+      ((= action (quote proceed)) (- (* 2.0 theta) 1.0))
+      ((= action (quote block))   (- 1.0 (* 2.0 theta)))
+      ((= action (quote ask))     0.0)
+      (else (error "unknown action")))))
+
+; ── Public entry points ──
+
+; decide-action: returns the chosen action symbol, or one of
+; them if there is a tie (optimise's behaviour).
+;
+; voi is computed inline: optimise alone would pick proceed or
+; block by EU and ignore ask. To compete ask fairly, we compute
+; voi over the response kernel and add ask's voi to its base
+; preference of 0. This is the textbook EVPI gate as a
+; computation, not a magic constant.
+(define decide-action
+  (lambda (posterior)
+    (let voi-of-asking
+        (voi posterior approve-kernel action-space pass1-pref
+             (list 0 1))                  ; possible observations
+      (let pref-with-voi
+          (lambda (theta action)
+            (if (= action (quote ask))
+              voi-of-asking
+              (pass1-pref theta action)))
+        (optimise posterior action-space pref-with-voi)))))
+
+; observe-response: returns the updated posterior given a
+; binary response (1 = yes, 0 = no).
+(define observe-response
+  (lambda (posterior obs)
+    (condition posterior approve-kernel obs)))
+
+; followup-after-response: given a user-responded event,
+; returns the follow-up action symbol (proceed for yes, block
+; for no) or nothing for timeout / unrecognised responses.
+;
+; This looks like the body could short-circuit it ("yes means
+; proceed, the body knows that"), but the discipline is the
+; brain decides. The brain's choice happens to be deterministic
+; in Pass 1; in Pass 2 the response might be one of several
+; actions depending on broader context.
+(define followup-after-response
+  (lambda (event)
+    (let response (lookup event (quote response))
+      (cond
+        ((= response "yes") (quote proceed))
+        ((= response "no")  (quote block))
+        (else               (quote nothing))))))
