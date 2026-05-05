@@ -15,11 +15,23 @@ The current draft is called "Credence: A Bayesian Decision-Theoretic Framework f
 ## The Seven Papers
 
 ### Paper 1: "Credence: Bayesian Decision-Theoretic Tool Selection for LLM Agents"
-**Status:** Draft exists. Needs trimming, not expansion.
-**Target:** arXiv cs.AI (cross-list cs.LG, cs.CL) April 2026. Venue: AISTATS 2027 or UAI 2027.
+**Status:** Draft exists. Phase B (branch `paper1/methodology`) revises the methodology before the next rewrite pass.
+**Target:** arXiv cs.AI (cross-list cs.LG, cs.CL). Phase D (LaTeX rewrite) follows Phase B's empirical work; submission target re-baselines accordingly.
 **Length:** 10 pages + references.
 
-**The one sentence:** VOI-based tool selection, derived from first principles, outperforms LLM-prompted reasoning because decision theory is not a prompting problem.
+**The one sentence (Phase B thesis, verbatim):** Bayesian VOI tool selection occupies a non-empty region of the cost-performance Pareto frontier under fair conditions.
+
+**Phase A bootstrap finding (2026-05-04):** Phase A confirmed Greedy − Bayesian Δ = +25.7 [CI +1.2, +51.1], p = 0.04, paired N = 20, motivating the methodology revisions. The greedy ablation (query highest E[reliability] tool once, submit, no VOI, no abstention) beat the full Bayesian agent under v1 conditions. The result is marginally significant; under v1's structural fairness asymmetries (categories given asymmetrically; parametric world knowledge dominates many questions) it is also expected, and motivates the Phase B methodology revisions rather than disputing the v1 design.
+
+**Phase B methodology revisions ("fair conditions"):**
+- (a) Categories are not given to any agent — all agents must infer category from question content.
+- (b) The benchmark includes a slice where parametric world knowledge cannot meaningfully contribute, isolating tool selection from parametric recall.
+- (c) LLM prompts receive the same inferred-category information that the Bayesian agent uses, in equivalent form.
+- (d) The fair-conditions thesis is *positional*: Bayesian occupies a non-empty region of the cost-performance Pareto frontier. It need not dominate; it needs to occupy points no other agent strictly dominates. Phase B is willing to falsify the thesis if the empirical work doesn't support it.
+
+The Phase B branch (`paper1/methodology`) ships a master plan at `docs/paper1/master-plan.md`, scopes Moves B2–B5, and surfaces seven open design questions resolved in conversation.
+
+**Trajectory note.** This is Paper 1's second re-framing in short succession (original "Bayesian beats LLMs" → March 2026 "Bayesian is principled at zero cost" → Phase B "Bayesian occupies a Pareto region under fair conditions"). Each pivot was driven by a specific empirical observation that invalidated a quantitative claim of the previous framing. The trajectory is deliberate epistemic progress, recorded in `papers/NOTES.md` Phase B section; future revisions should not collapse it without a corresponding record of why.
 
 **What stays:**
 - The five axioms (§3.1) — these are architecturally load-bearing
@@ -90,6 +102,8 @@ Keep Freeman & Smith 2011b ONLY if the one-sentence forgetting mention remains.
 **Status:** Seed material in Paper 1's drift experiment. Needs substantial expansion.
 **Target:** arXiv August 2026. Venue: AISTATS 2027 or Bayesian Analysis.
 **Audience:** Bayesian methods community, applied statistics.
+
+**Scope clarifier (Phase B, 2026-05-05):** Paper 1's Phase B methodology revisions (`docs/paper1/master-plan.md`) do not encroach on Paper 3's territory. Drift, non-stationarity, joint inference of category and tool-reliability, and embedding-features-into-reliability all remain Paper 3 / Paper 6 work. Phase B keeps the v1 stationary reliability assumption; the only methodological additions in Paper 1 are category-inference fairness and the tools-only slice.
 
 **Core claim:** LLM APIs are empirically non-stationary (cite Chen et al. 2023). Classical Bayesian forgetting mechanisms — power priors, exponential discounting, changepoint detection — provide principled solutions that current agent frameworks lack entirely.
 
