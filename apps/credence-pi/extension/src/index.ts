@@ -138,6 +138,7 @@ export function installCredencePiExtension(
   };
   const awaiters = new Map<string, Entry>();
   const slims    = new Map<string, Slim>();
+  // PASS-2-NOTE: bounded growth on long-running sessions; consider LRU or per-event-id cleanup if Pass 2 traffic patterns warrant. See apps/credence-pi/PASS-2-NOTES.md.
   const lastEventIdByTool = new Map<string, string>();
 
   function registerAwaiter(
