@@ -765,7 +765,11 @@ Code under `apps/credence-pi/` MUST land with zero `# credence-lint: allow` prag
 
 Two narrow exceptions are pre-sanctioned:
 
-1. Tests under `tests/julia/` that need `precedent:test-oracle` pragmas to assert equality on a posterior's expected value computed via an analytical oracle. Required per line.
+1. Tests under `tests/julia/` that need `precedent:test-oracle` pragmas to assert closed-form correctness of probabilistic primitives against an analytical oracle. Two equality forms are admissible:
+    - **value equality** on scalar outputs of axiom-constrained functions (e.g. `@assert eu_ask == 0.0`);
+    - **structural equality** on a posterior's representation parameters (e.g. `@assert p.alpha == 3.0 && p.beta == 2.0` after a Beta-Bernoulli conjugate update).
+
+   The justification is identical in both cases: tests of the reasoner need an oracle stronger than what production code may use, because the oracle's job is to pin the closed form down. `mean(p)` is non-injective on `BetaPrevision` parameters (`Beta(3,2)` and `Beta(6,4)` share a mean), so coarser accessors lose the invariant the test exists to assert. Production code under `apps/credence-pi/` continues to forbid struct-field access on Prevision categorically — this carve-out is for test oracles only. The slug is `precedent:test-oracle` for both forms; we are widening the scope, not adding a sibling precedent. Required per line.
 2. Display-only arithmetic in single-line `@info` log statements (e.g. `@info "voi=$(round(v, digits=3))"`). The arithmetic and the log call must be on the same line; multi-line composition is forbidden. `precedent:display-arithmetic`.
 
 Anything else: stop and report.
@@ -775,8 +779,8 @@ Anything else: stop and report.
 Update `.github/workflows/publish-image.yml` to add to `unit-tests`:
 
 1. `for f in apps/credence-pi/tests/julia/*.jl; do julia "$f"; done` after the existing Python pytest step.
-2. `cd apps/credence-pi/extension && npm install && npm run build && cd ../tests/typescript && npm test`.
-3. `python tools/credence-lint/credence_lint.py apps/credence-pi/` (zero violations expected).
+2. `cd apps/credence-pi/extension && npm install && npm run build && npm test` — the extension's `package.json` registers the TypeScript test entry; the test runner resolves `tests/typescript/*.test.ts` from the extension's working directory.
+3. `python3 tools/credence-lint/credence_lint.py --repo-root . check apps/credence-pi/` (zero violations expected).
 
 ## Sequencing
 

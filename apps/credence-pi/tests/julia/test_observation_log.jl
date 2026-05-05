@@ -1,4 +1,5 @@
 #!/usr/bin/env julia
+# Role: tests
 """
     test_observation_log.jl — Step 3 of credence-pi.
 

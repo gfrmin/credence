@@ -1,4 +1,5 @@
 #!/usr/bin/env julia
+# Role: tests
 """
     test_bdsl.jl — Step 2 of credence-pi: Pass-1 BDSL programs.
 
@@ -108,7 +109,7 @@ let prior   = ENV_[Symbol("make-prior")](),
 
     @assert isapprox(eu_proceed, 0.0; atol=TOL)  # credence-lint: allow — precedent:test-oracle — analytical EU(proceed)=0 at Beta(2,2)
     @assert isapprox(eu_block,   0.0; atol=TOL)  # credence-lint: allow — precedent:test-oracle — analytical EU(block)=0 at Beta(2,2)
-    @assert eu_ask == 0.0                         # ask is constant 0 — no quadrature involved
+    @assert eu_ask == 0.0  # credence-lint: allow — precedent:test-oracle — pass1-pref returns the literal 0.0 for :ask, so EU is exactly 0 (no quadrature)
     ok("EU(proceed) = EU(block) = 0 at Beta(2,2) under pass1-pref (polynomial-exact, FP-bounded ≤ 1e-12)")
 
     # voi(ask) computed by stdlib.bdsl's voi composition.
@@ -130,15 +131,15 @@ let prior  = ENV_[Symbol("make-prior")](),
 
     p1 = obs_fn(prior, 1)
     @assert p1 isa BetaMeasure
-    @assert p1.alpha == 3.0 && p1.beta == 2.0
+    @assert p1.alpha == 3.0 && p1.beta == 2.0  # credence-lint: allow — precedent:test-oracle — closed-form Beta-Bernoulli update; mean() is non-injective on the parameters this oracle pins down
     ok("observe-response 1 turns Beta(2,2) into Beta(3,2) (exact)")
 
     p0 = obs_fn(prior, 0)
-    @assert p0.alpha == 2.0 && p0.beta == 3.0
+    @assert p0.alpha == 2.0 && p0.beta == 3.0  # credence-lint: allow — precedent:test-oracle — closed-form Beta-Bernoulli update on obs=0
     ok("observe-response 0 turns Beta(2,2) into Beta(2,3) (exact)")
 
     p_yes_no = obs_fn(obs_fn(prior, 1), 0)
-    @assert p_yes_no.alpha == 3.0 && p_yes_no.beta == 3.0
+    @assert p_yes_no.alpha == 3.0 && p_yes_no.beta == 3.0  # credence-lint: allow — precedent:test-oracle — sequential conjugate update commutes; mean alone wouldn't pin the parameters
     ok("observe-response 1 then 0 yields Beta(3,3)")
 end
 
@@ -180,12 +181,12 @@ let obs_fn = ENV_[Symbol("observe-response")],
     prior  = ENV_[Symbol("make-prior")]()
 
     p_two_yes = obs_fn(obs_fn(prior, 1), 1)
-    @assert p_two_yes.alpha == 4.0 && p_two_yes.beta == 2.0
+    @assert p_two_yes.alpha == 4.0 && p_two_yes.beta == 2.0  # credence-lint: allow — precedent:test-oracle — pins the exact posterior shape used by the decide-action oracle on the next line
     @assert decide(p_two_yes) === :proceed
     ok("after two yeses (Beta(4,2)), decide-action returns :proceed")
 
     p_two_no = obs_fn(obs_fn(prior, 0), 0)
-    @assert p_two_no.alpha == 2.0 && p_two_no.beta == 4.0
+    @assert p_two_no.alpha == 2.0 && p_two_no.beta == 4.0  # credence-lint: allow — precedent:test-oracle — pins the exact posterior shape used by the decide-action oracle on the next line
     @assert decide(p_two_no) === :block
     ok("after two nos (Beta(2,4)), decide-action returns :block")
 end
