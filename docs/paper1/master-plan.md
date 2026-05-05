@@ -131,6 +131,11 @@ evaluation showing posterior calibration on held-out questions.
 
 **Depends on:** OQ1, OQ2, OQ3 resolved. No other move.
 
+**Design doc:** `docs/paper1/move-2-design.md` (B2a — surfaces evidence
+for OQ1 + OQ2 joint resolution; splits OQ2(b) into (b-NB) Gaussian
+Naive Bayes and (b-PG) Pólya-Gamma multinomial logistic per the B2a
+finding that the master plan's sub-bullet is ambiguous).
+
 ### B3 — Tools-only slice
 
 Construct a slice of ~50 questions where parametric world knowledge cannot
