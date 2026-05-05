@@ -135,11 +135,11 @@ Wire shape:
   "session_id": "sess_xyz",
   "timestamp": "2026-05-03T14:22:11.421Z",
   "features": {
-    "tool_name": "bash",
-    "working_directory_relative": "subdirectory",
-    "parent_tool_call_name": "read",
-    "recent_repetition_count": "rep_1",
-    "time_since_last_user_message": "lt_2m"
+    "tool-name": "bash",
+    "working-directory-relative": "subdirectory",
+    "parent-tool-call-name": "read",
+    "recent-repetition-count": "rep-1",
+    "time-since-last-user-message": "lt-2m"
   },
   "proposed_call": {
     "tool_name": "bash",
@@ -148,7 +148,7 @@ Wire shape:
 }
 ```
 
-The `features` dict is the body's sensory output. Each value is a symbol from a space declared in `bdsl/features.bdsl`. The body's startup-time verifier ensures every declared feature has a registered extractor.
+The `features` dict is the body's sensory output. Both keys and values are kebab-case strings matching `bdsl/features.bdsl` declarations verbatim — feature names match the `(feature ...)` declarations and values are members of the corresponding `(space :finite ...)` declarations. The body's startup-time verifier ensures every declared feature has a registered extractor whose outputs are a subset of the declared space's members. (Top-level wire-envelope fields — `event_type`, `event_id`, `in_response_to`, `session_id`, `timestamp`, `proposed_call`, `outcome` — remain snake_case; only the `features` dict is BDSL-shaped, because BDSL is the source of truth for the brain's declared sensory vocabulary.)
 
 The `proposed_call` field rides along not as input to feature extraction (extraction has already happened) but for the daemon to render `ask` text from. Pass 2 may move ask-text rendering into the body and drop this field; Pass 1 keeps it for daemon-side templating.
 
@@ -615,13 +615,11 @@ export const extractors = {
 };
 
 export function extractFeatures(event: ToolCallEvent, session: Session): Features {
-  return {
-    "tool_name": extractors["tool-name"](event, session),
-    "working_directory_relative": extractors["working-directory-relative"](event, session),
-    "parent_tool_call_name": extractors["parent-tool-call-name"](event, session),
-    "recent_repetition_count": extractors["recent-repetition-count"](event, session),
-    "time_since_last_user_message": extractors["time-since-last-user-message"](event, session),
-  };
+  const out: Features = {};
+  for (const [name, fn] of Object.entries(extractors)) {
+    out[name] = fn(event, session);
+  }
+  return out;
 }
 ```
 
@@ -646,10 +644,10 @@ export function extractRecentRepetitionCount(
   const matches = recentToolCalls.filter(
     m => (KNOWN_TOOLS.has(m.toolName.toLowerCase()) ? m.toolName.toLowerCase() : "other") === target
   ).length;
-  if (matches === 0) return "rep_0";
-  if (matches === 1) return "rep_1";
-  if (matches === 2) return "rep_2";
-  return "rep_3plus";
+  if (matches === 0) return "rep-0";
+  if (matches === 1) return "rep-1";
+  if (matches === 2) return "rep-2";
+  return "rep-3plus";
 }
 ```
 
@@ -661,13 +659,13 @@ export function extractTimeSinceLastUserMessage(
   session: Session,
 ): string {
   const userMessages = session.agent.state.messages.filter(m => m.role === "user");
-  if (userMessages.length === 0) return "gt_10m";
+  if (userMessages.length === 0) return "gt-10m";
   const last = userMessages[userMessages.length - 1];
   const elapsed = (Date.now() - new Date(last.timestamp).getTime()) / 1000;
-  if (elapsed < 30)  return "lt_30s";
-  if (elapsed < 120) return "lt_2m";
-  if (elapsed < 600) return "lt_10m";
-  return "gt_10m";
+  if (elapsed < 30)  return "lt-30s";
+  if (elapsed < 120) return "lt-2m";
+  if (elapsed < 600) return "lt-10m";
+  return "gt-10m";
 }
 ```
 
