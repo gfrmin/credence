@@ -1,3 +1,4 @@
+# Role: brain
 """
     observation_log.jl — append-only JSONL observation log for credence-pi.
 

@@ -1,4 +1,5 @@
 #!/usr/bin/env julia
+# Role: tests
 """
     test_server.jl — Step 4 of credence-pi: daemon transport.
 

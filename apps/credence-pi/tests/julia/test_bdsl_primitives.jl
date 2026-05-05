@@ -1,4 +1,5 @@
 #!/usr/bin/env julia
+# Role: tests
 """
     test_bdsl_primitives.jl — Step 1 of credence-pi: primitives audit.
 

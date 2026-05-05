@@ -1,3 +1,4 @@
+# Role: brain
 """
     server.jl — credence-pi daemon transport.
 
