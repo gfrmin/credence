@@ -84,3 +84,130 @@ An architecture paper presenting Credence, a Bayesian decision-theoretic framewo
 - Primary: cs.AI
 - Cross-list: cs.LG, cs.CL
 - License: CC BY 4.0
+
+---
+
+## Phase B (May 2026): methodology pivot
+
+Phase B is the second methodology re-framing of Paper 1 in short
+succession. The trajectory is recorded here as deliberate epistemic
+progress so it does not silently overwrite. Branch:
+`paper1/methodology`. Master plan: `docs/paper1/master-plan.md`.
+
+### Trajectory of three re-framings
+
+**1. Original (Feb 2026 draft, now obsolete).** "Bayesian +129.5 vs best
+LLM +10.8 — Bayesian dominates LLMs even under unequal conditions." This
+framing is the one preserved in the "Three headline results" section
+above (lines 16-19 of this file). Empirically invalidated by the March
+2026 benchmark redesign (frontier-LLM comparison).
+
+**2. Interim (March 2026 redesign).** "Bayesian is the principled, zero-
+cost approach; frontier LLMs win on raw score but at API cost." Pivot
+triggered by Haiku 4.5 +445.5 vs Bayesian +163.7 in the redesigned
+benchmark — frontier LLMs answer 30+/50 questions from world knowledge
+alone (`papers/RESULTS.md`). This framing is what `papers/CLAUDE.md`
+"Updated headline results" currently reflects (lines 13-34). The bullet
+above this section ("Three headline results") is *not* updated to this
+framing — it preserves the original framing for historical record. Phase
+D's paper rewrite will resolve the inconsistency by editing the LaTeX
+source rather than these notes.
+
+**3. Phase B (May 2026, current).** "Bayesian VOI tool selection
+occupies a non-empty region of the cost-performance Pareto frontier
+under fair conditions." Pivot triggered by the Phase A bootstrap result
+(`papers/paper1/bootstrap-results.md`, 2026-05-04) and recognition of
+the v1 fairness asymmetries. Phase B implements the new conditions in
+Moves B2–B5 on branch `paper1/methodology`.
+
+Each pivot was driven by a specific empirical observation that
+invalidated a quantitative claim of the previous framing:
+- Pivot 1 → 2: frontier-LLM dominance.
+- Pivot 2 → 3: greedy-ablation result + v1 fairness asymmetries.
+
+The trajectory is deliberate. Future revisions of Paper 1 should not
+collapse the history into a single "current" framing without a
+corresponding record of the empirical observation that drove the
+collapse.
+
+### Phase B pivot rationale
+
+The v1 framing ("Bayesian is principled at zero cost") survives as far
+as it goes — Bayesian is +163.7 at $0 cost and 0.016s/q; that is true
+and remains a real cost-performance datum. But the framing under-claims
+relative to the framework's actual value proposition. VOI tool selection
+is not just "the best you can do for free" — under the conditions where
+parametric world knowledge cannot substitute for tool selection, and
+where category-routing is something the agent has to do rather than
+something handed to it, the Bayesian framework is *the* principled
+mechanism for the problem. Phase B's job is to find the conditions under
+which that claim is empirically defensible, and report honestly if it
+isn't.
+
+### Greedy ablation result interpretation
+
+Phase A's bootstrap (`papers/paper1/bootstrap-results.md`, 2026-05-04):
+Greedy − Bayesian Δ = +25.75, 95% CI [+1.15, +51.10], p = 0.0386, paired
+N = 20.
+
+**Honest framing:**
+- Marginally significant. p = 0.0386 is one chance in twenty-six of a
+  false positive at the 0.05 threshold. Lower CI bound +1.15 — barely
+  positive. Magnitude is uncertain even where the sign is.
+- *Expected* under v1 conditions, not surprising. When the category is
+  given (the v1 setup), the marginal value of VOI's tool-by-tool
+  exploration shrinks: the reliability matrix already concentrates on
+  the right tool for this category, and abstention can hurt when the
+  best-tool mean reliability is already high enough that submission EU
+  is positive on average. The greedy ablation exploits exactly this
+  structure.
+- The framework's value emerges under fair conditions (Phase B's
+  thesis), not under v1 conditions. The v1 result does not refute the
+  framework; it refutes the v1 *evaluation*.
+- Avoid dishonest framings: "Bayesian was wrong" (no — under different
+  conditions it isn't), "the bootstrap was underpowered" (CI is wide but
+  the test was correctly specified), "greedy is just an artifact"
+  (`precedent:baseline-comparison` sanctions greedy as a deliberate
+  non-Bayesian baseline; it is not an artifact).
+
+### Amin (2026) and MACLA (2026) positioning
+
+**MACLA (Forouzandeh et al., AAMAS 2026, arXiv 2512.18950)** — already
+documented in this file's Positioning section (top of file) and Section 2
+rewrite plan (`papers/CLAUDE.md` §2.1). The single most relevant
+Bayesian mechanism in the LLM-agent literature: Beta posteriors for
+procedure selection. Phase B does not change MACLA's positioning — the
+gap remains "MACLA selects multi-step procedures, not individual tools,
+and does not compute VOI." Phase B's category-inference component does
+not encroach on MACLA's procedure-selection territory.
+
+**Amin (2026)** — flagged in earlier conversation as a positioning
+concern; specific reference and concern details not yet recorded in this
+file. Placeholder for Guy to expand at next opportunity. If Amin (2026)
+is the same memory cited in earlier Posture/Paper-1 sessions, it likely
+warrants its own subsection here once the citation surfaces. Not load-
+bearing for Phase B's methodology design — Phase B can proceed without
+this resolved — but should be in place before Phase D (paper rewrite).
+
+### Phase B scope and out-of-scope
+
+In scope (this branch):
+- Category inference (B2)
+- Tools-only slice (B3)
+- Fairness-equalised LLM prompting (B4)
+- Re-run benchmark + Pareto analysis (B5)
+
+Out of scope (deferred to other Papers / Phase D):
+- Drift / non-stationarity → Paper 3
+- Joint category+reliability inference → Paper 3 / Paper 6
+- Embedding-into-reliability → Paper 3 / Paper 6
+- Information-geometric / cheap-design connections → Paper 4
+- CIRL / preference learning → Paper 5
+- CEG / staged-tree connections → Paper 6
+- Programs-as-options → Paper 7
+- LaTeX rewrite → Phase D
+- DSL primitive additions → not expected; if category inference cannot
+  be expressed in existing primitives that is itself a finding worth
+  separate discussion
+
+See `docs/paper1/master-plan.md` §5 for the canonical out-of-scope list.
