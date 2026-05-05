@@ -784,7 +784,7 @@ Update `.github/workflows/publish-image.yml` to add to `unit-tests`:
 
 Each step ends in a working commit; conversation review between steps. Stop and report if any step uncovers a structural question this spec does not anticipate.
 
-1. **BDSL primitives audit.** Verify which of `cond`, `apply`, `effector-names`, `feature-names`, the `effector` form, and the `feature` form exist or can be expressed in `src/eval.jl`'s default environment. Add what's missing. The list is short because the brain's BDSL no longer manipulates raw data — only declares structure and reasons mathematically. Stop and report.
+1. **BDSL primitives audit.** Verify which of `cond`, `apply`, `effector-names`, `feature-names`, the `effector` form, and the `feature` form exist or can be expressed in `src/eval.jl`'s default environment. Add what's missing. The list is short because the brain's BDSL no longer manipulates raw data — only declares structure and reasons mathematically. Note on `apply`: the Pass-1 implementation re-wraps splat values into atoms, so it cleanly splats only Atom-compatible types (Symbol, Float64, Int, Bool, String). The only Pass-1 use site is `(apply space :finite (effector-names manifest))` over a `Vector{Symbol}`; Pass 2 must revisit if richer splat sources (Functional, Measure, Kernel) are needed. Stop and report.
 
 2. **BDSL programs.** `capabilities.bdsl`, `features.bdsl`, `prior.bdsl`, `kernel.bdsl`, `decide.bdsl`. Plus `tests/julia/test_bdsl.jl`. Verify: programs load; manifest yields three-action space; cold-start `decide-action` returns `:ask` (because voi(ask) > 0 and EU(proceed) = EU(block) = 0); observations update posterior; voi decreases as posterior concentrates; followup-after-response returns proceed/block correctly. Stop and report.
 
