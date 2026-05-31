@@ -56,6 +56,12 @@ end
 
 argmax_cat(post::Dict{Symbol,Float64}) = findmax(post)[2]
 
+function loo_accuracy(X::Matrix{Float64}, y::Vector{Symbol})
+    posts = loo_category_inference(X, y)
+    correct = count(i -> argmax_cat(posts[i]) == y[i], eachindex(y))
+    correct / length(y)
+end
+
 println("="^60)
 println("Paper 1 B2b — Gaussian-NB category inference")
 println("="^60)
@@ -132,6 +138,44 @@ let
           length(post) == 1, "len=$(length(post))")
 end
 
+# ── Test 6: LOO accuracy beats chance by a clear margin (B2b.3) ──
+# No magic threshold tied to the generator: substantially-better-than-
+# chance with a 0.2 margin (author Correction 2).
+let
+    cats = [:alpha, :beta, :gamma]
+    K = length(cats)
+    X, y = synth_dataset(cats, 8; sep=3.0, noise=1.0, noise_seed=77)
+    acc = loo_accuracy(X, y)
+    check("LOO accuracy beats chance by ≥0.2 on separated data",
+          acc > 1.0 / K + 0.2, "acc=$acc, threshold=$(1.0 / K + 0.2)")
+end
+
+# ── Test 7: direction-only — separated beats overlapping (B2b.3) ──
+# The stronger calibration test: no hardcoded threshold, only that more
+# separable classes are easier to recover under LOO.
+let
+    cats = [:alpha, :beta, :gamma]
+    Xsep, ysep = synth_dataset(cats, 8; sep=3.0, noise=1.0, noise_seed=77)
+    Xov,  yov  = synth_dataset(cats, 8; sep=0.5, noise=2.0, noise_seed=77)
+    acc_sep = loo_accuracy(Xsep, ysep)
+    acc_ov  = loo_accuracy(Xov,  yov)
+    check("LOO accuracy: separated > overlapping",
+          acc_sep > acc_ov, "separated=$acc_sep, overlapping=$acc_ov")
+end
+
+# ── Test 8: LOO output structure (B2b.3) ──
+let
+    cats = [:alpha, :beta, :gamma]
+    X, y = synth_dataset(cats, 5; noise_seed=3)
+    N = length(y)
+    posts = loo_category_inference(X, y)
+    check("LOO output has length N", length(posts) == N, "len=$(length(posts))")
+    check("each LOO entry carries all categories",
+          all(p -> Set(keys(p)) == Set(cats), posts))
+    check("each LOO entry sums to 1.0 (atol 1e-10)",
+          all(p -> abs(sum(values(p)) - 1.0) < 1e-10, posts))
+end
+
 println("="^60)
-println("ALL $(_PASS[]) CHECKS PASSED (B2b.2)")
+println("ALL $(_PASS[]) CHECKS PASSED (B2b.2 + B2b.3)")
 println("="^60)
