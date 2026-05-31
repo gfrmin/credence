@@ -17,6 +17,13 @@ abstract type LikelihoodFamily end
 abstract type LeafFamily <: LikelihoodFamily end
 
 struct BetaBernoulli <: LeafFamily end
+# Fractional / soft-evidence Bernoulli. The observation is a pair
+# `(outcome, weight)` with `weight ∈ [0,1]` (e.g. a category posterior
+# π_c); the conjugate update credits `weight` pseudo-counts:
+# `α += weight·outcome, β += weight·(1-outcome)`. The strict unit-count
+# `BetaBernoulli` above is left untouched (it still errors on non-{0,1}).
+# Rationale + worked example: docs/paper1/move-2c-design.md.
+struct WeightedBernoulli <: LeafFamily end
 struct Flat <: LeafFamily end
 struct PushOnly <: LikelihoodFamily end
 

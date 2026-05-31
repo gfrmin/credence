@@ -12,6 +12,8 @@
 function maybe_conjugate(p::BetaPrevision, k::Kernel)
     if k.likelihood_family isa BetaBernoulli
         return ConjugatePrevision(p, k.likelihood_family)
+    elseif k.likelihood_family isa WeightedBernoulli
+        return ConjugatePrevision(p, k.likelihood_family)
     elseif k.likelihood_family isa Flat
         return ConjugatePrevision(p, k.likelihood_family)
     end
@@ -30,6 +32,22 @@ end
 
 function update(cp::ConjugatePrevision{BetaPrevision, Flat}, obs)
     cp  # no-op
+end
+
+# Fractional / soft-evidence update. `obs = (outcome, weight)` with
+# outcome ∈ {0, 1} and weight ≥ 0 (a category posterior π_c). Credits
+# `weight` pseudo-counts: α += weight·outcome, β += weight·(1-outcome).
+# Reduces exactly to the unit-count BetaBernoulli update at weight = 1.
+function update(cp::ConjugatePrevision{BetaPrevision, WeightedBernoulli}, obs)
+    outcome, weight = obs
+    o = Float64(outcome)
+    w = Float64(weight)
+    (o == 0.0 || o == 1.0) || error("WeightedBernoulli update: outcome must be ∈ {0, 1}, got $outcome")
+    w >= 0.0 || error("WeightedBernoulli update: weight must be ≥ 0, got $weight")
+    ConjugatePrevision(
+        BetaPrevision(cp.prior.alpha + w * o, cp.prior.beta + w * (1.0 - o)),
+        cp.likelihood,
+    )
 end
 
 # ── Pair: (GaussianPrevision, NormalNormal) ──
