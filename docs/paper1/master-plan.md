@@ -441,11 +441,17 @@ categories) and the update. The exact posterior is a mixture
 non-conjugate → a K-way split per observation); its growth is a
 *computational* cost handled by **metacomputation** (EU over
 computational strategies — the spec's "On metareasoning"), not by a
-bolted-on approximation. The mechanism, the substrate extension it needs,
-and the depth of the metacomputation for Paper 1 are specified in the B2c
-design doc (`docs/paper1/move-2c-design.md`). Both agents still receive
-the identical soft posterior (OQ5); the agent's exact internal update is
-not an asymmetry in the information surface.
+bolted-on approximation. **Resolved (2026-05-31):** the metacomputation's
+conclusion is the **full-posterior-weighted update** — credit each
+category by its posterior weight (`α_{t,c} += π_c·correct`,
+`β_{t,c} += π_c·wrong`), a genuine `condition` via a new
+`WeightedBernoulli` conjugate family. It uses the *whole* posterior
+(unlike MAP, which discards it) and is the resource-rational realisation
+of the exact mixture (exact retention costs `K^n` for negligible gain).
+Mechanism, substrate, and the worked example: B2c design doc
+(`docs/paper1/move-2c-design.md`). Both agents still receive the
+identical soft posterior (OQ5); the agent's internal update is not an
+asymmetry in the information surface.
 
 **B2b execution split.** B2b lands as a split: **B2b.1–B2b.3**
 (this master-plan addendum, the `category_inference` module, and LOO
