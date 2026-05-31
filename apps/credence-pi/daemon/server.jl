@@ -423,6 +423,9 @@ function start_daemon(; port::Int,
         end
     end
 
+    # `dispatch` is a streaming handler (takes an HTTP.Stream). The
+    # `stream=true` kwarg requires HTTP 1.11.x; newer/older builds removed
+    # it, which is why HTTP is pinned to ~1.11 in Project.toml [compat].
     server = HTTP.serve!(dispatch, host, port; stream=true)
     (server, state)
 end
