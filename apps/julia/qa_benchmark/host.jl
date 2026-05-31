@@ -25,6 +25,8 @@ using Random
 include(joinpath(@__DIR__, "environment.jl"))
 include(joinpath(@__DIR__, "metrics.jl"))
 include(joinpath(@__DIR__, "llm_agent.jl"))
+include(joinpath(@__DIR__, "category_inference.jl"))
+include(joinpath(@__DIR__, "category_update.jl"))
 
 const DB_PATH = joinpath(@__DIR__, "results", "benchmark.db")
 
@@ -36,15 +38,57 @@ const UPDATE_ON_RESPONSE = DSL_ENV[Symbol("update-on-response")]
 const ANSWER_KERNEL = DSL_ENV[Symbol("answer-kernel")]
 const RELIABILITY_KERNEL = DSL_ENV[Symbol("reliability-kernel")]
 
+# --- Inferred-category posteriors (offline embedding fixture) ---
+
+const FIXTURE_DIR = joinpath(@__DIR__, "fixtures")
+
+"""
+    category_posteriors_from_fixture() -> Dict{String, Vector{Float64}}
+
+Load the committed sentence-embedding fixture and compute the
+leave-one-out category posterior for every question (id → soft posterior
+aligned to CATEGORIES). Used to run the Bayesian agent under *inferred*
+("fair") categories. Fully offline — sentence-transformers is not needed.
+"""
+function category_posteriors_from_fixture()
+    bank = JSON3.read(read(joinpath(FIXTURE_DIR, "question_bank.json"), String))
+    emb = JSON3.read(read(joinpath(FIXTURE_DIR, "question_embeddings.json"), String))
+    byid = emb.embeddings
+    N = length(bank)
+    D = emb.dim
+    X = Matrix{Float64}(undef, N, D)
+    cats = Vector{Symbol}(undef, N)
+    ids = Vector{String}(undef, N)
+    for (i, q) in enumerate(bank)
+        X[i, :] = Float64.(byid[Symbol(q.id)])
+        cats[i] = Symbol(q.category)
+        ids[i] = String(q.id)
+    end
+    posts = loo_category_inference(X, cats)
+    out = Dict{String,Vector{Float64}}()
+    for i in 1:N
+        out[ids[i]] = [get(posts[i], Symbol(c), 0.0) for c in CATEGORIES]
+    end
+    out
+end
+
 # --- Bayesian agent ---
 
 function run_bayesian_seed(tools::Vector{SimulatedTool},
                            questions::Vector{Question},
                            response_table::Matrix{Int};
                            use_voi::Bool=true, learn::Bool=true,
-                           allow_abstain::Bool=true, greedy::Bool=false)
+                           allow_abstain::Bool=true, greedy::Bool=false,
+                           category_posteriors::Union{Nothing,Dict{String,Vector{Float64}}}=nothing)
     n_tools = length(tools)
     n_cats = length(CATEGORIES)
+
+    # When `category_posteriors` is supplied (id → soft posterior over
+    # CATEGORIES), the agent runs under *inferred* categories (Paper 1 fair
+    # conditions): decisions marginalise reliability over the posterior and
+    # learning is the full-posterior-weighted update (B2c). Otherwise it
+    # uses the given category (one-hot) — the v1 path, bit-for-bit.
+    inferred = category_posteriors !== nothing
 
     rel_betas = [BetaPrevision(1.0, 1.0) for _ in 1:n_tools, _ in 1:n_cats]
 
@@ -55,7 +99,15 @@ function run_bayesian_seed(tools::Vector{SimulatedTool},
 
     for (qi, q) in enumerate(questions)
         q_t0 = time()
-        cat_idx = findfirst(==(q.category), CATEGORIES)
+        # Category context: given (one-hot) or inferred soft posterior π.
+        cat_idx = inferred ? 0 : findfirst(==(q.category), CATEGORIES)
+        π = inferred ? category_posteriors[q.id] : Float64[]
+        # Per-tool reliability belief at this question: a single Beta under
+        # the given category, or the π-marginalised MixturePrevision (B2c)
+        # when categories are inferred. rel_betas is constant within a
+        # question (learning happens after the decision).
+        rel(t) = inferred ? marginal_reliability(rel_betas[t, :], π) : rel_betas[t, cat_idx]
+        relmean(t) = inferred ? expect(rel(t), r -> r) : mean(rel_betas[t, cat_idx])
         answer_measure = CategoricalMeasure(Finite(Float64[0, 1, 2, 3]))
         available = collect(1:n_tools)
         tool_responses = Dict{Int,Int}()
@@ -63,7 +115,7 @@ function run_bayesian_seed(tools::Vector{SimulatedTool},
 
         if greedy
             # Query tool with highest E[reliability], submit its answer directly
-            best_t = argmax(t -> mean(rel_betas[t, cat_idx]), 1:n_tools)  # credence-lint: allow — precedent:baseline-comparison — greedy baseline: argmax over mean reliability, intentionally non-Bayesian for paper comparison
+            best_t = argmax(relmean, 1:n_tools)  # credence-lint: allow — precedent:baseline-comparison — greedy baseline: argmax over mean reliability, intentionally non-Bayesian for paper comparison
             q_cost += tools[best_t].cost
             response = response_table[qi, best_t]
             tool_responses[best_t] = response
@@ -81,7 +133,7 @@ function run_bayesian_seed(tools::Vector{SimulatedTool},
                 q_cost += tools[t].cost
                 response = response_table[qi, t]
                 tool_responses[t] = response
-                k = ANSWER_KERNEL(rel_betas[t, cat_idx], 4.0)
+                k = ANSWER_KERNEL(rel(t), 4.0)
                 answer_measure = UPDATE_ON_RESPONSE(answer_measure, k, Float64(response))
             end
             # Submit argmax or abstain based on EU
@@ -110,7 +162,7 @@ function run_bayesian_seed(tools::Vector{SimulatedTool},
         else
             # Full VOI loop
             while true
-                rel_measures = [rel_betas[t, cat_idx] for t in available]
+                rel_measures = [rel(t) for t in available]
                 costs_jl = Float64[tools[t].cost for t in available]
                 # qa_benchmark assumes all tools always respond (no coverage
                 # uncertainty in this domain), so pass uniform 1.0 — preserves
@@ -131,7 +183,7 @@ function run_bayesian_seed(tools::Vector{SimulatedTool},
                     response = response_table[qi, tool_idx]
                     tool_responses[tool_idx] = response
 
-                    k = ANSWER_KERNEL(rel_betas[tool_idx, cat_idx], 4.0)
+                    k = ANSWER_KERNEL(rel(tool_idx), 4.0)
                     answer_measure = UPDATE_ON_RESPONSE(answer_measure, k, Float64(response))
 
                     filter!(!=(tool_idx), available)
@@ -173,10 +225,18 @@ function run_bayesian_seed(tools::Vector{SimulatedTool},
 
         # Reliability learning (skip if learn=false)
         if learn
-            for (t, resp) in tool_responses
-                rel_betas[t, cat_idx] = condition(
-                    rel_betas[t, cat_idx], RELIABILITY_KERNEL,
-                    resp == q.correct_index ? 1.0 : 0.0)
+            if inferred
+                # Full-posterior-weighted update across all categories (B2c).
+                for (t, resp) in tool_responses
+                    rel_betas[t, :] = update_reliability(
+                        rel_betas[t, :], π, resp == q.correct_index ? 1 : 0)
+                end
+            else
+                for (t, resp) in tool_responses
+                    rel_betas[t, cat_idx] = condition(
+                        rel_betas[t, cat_idx], RELIABILITY_KERNEL,
+                        resp == q.correct_index ? 1.0 : 0.0)
+                end
             end
         end
     end
@@ -325,6 +385,12 @@ function main()
     # Fast agents
     if !args.llm_only
     println(stderr, "\n--- Fast agents ---")
+    # Inferred-category posteriors from the offline embedding fixture (if
+    # present): adds the "bayesian_inferred" agent — the Bayesian agent
+    # under fair (inferred, not given) categories.
+    cat_post = isfile(joinpath(FIXTURE_DIR, "question_embeddings.json")) ?
+        category_posteriors_from_fixture() : nothing
+    cat_post === nothing && println(stderr, "  (no embedding fixture — skipping bayesian_inferred)")
     for seed in 0:args.n_seeds-1
         rng = MersenneTwister(seed)
         questions = get_questions(; seed)
@@ -332,12 +398,17 @@ function main()
 
         random_rng = MersenneTwister(seed + 1_000_000)
 
-        for (name, runner) in [
+        agents = Tuple{String,Function}[
             ("bayesian",    () -> run_bayesian_seed(tools, questions, response_table)),
             ("single_best", () -> run_single_best_seed(tools, questions, response_table)),
             ("random",      () -> run_random_seed(tools, questions, response_table, random_rng)),
             ("all_tools",   () -> run_all_tools_seed(tools, questions, response_table)),
         ]
+        if cat_post !== nothing
+            push!(agents, ("bayesian_inferred",
+                () -> run_bayesian_seed(tools, questions, response_table; category_posteriors=cat_post)))
+        end
+        for (name, runner) in agents
             result = runner()
             result = SeedResult(seed, result.records, result.total_score,
                                result.total_reward, result.total_tool_cost, result.wall_time_s)
@@ -418,4 +489,6 @@ function main()
     println(summary_table(all_results)); flush(stdout)
 end
 
-main()
+if abspath(PROGRAM_FILE) == @__FILE__
+    main()
+end
