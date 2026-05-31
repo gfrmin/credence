@@ -203,8 +203,12 @@ collapse (an earlier draft proposed MAP; rejected, since it discards
 information the agent paid for and weakens the principled-Bayesian
 claim). The exact posterior is a mixture; its growth is handled by
 metacomputation (EU over computational strategies), per the spec's "On
-metareasoning". Mechanism + substrate extension in the B2c design doc
-(`docs/paper1/move-2c-design.md`); see also `master-plan.md` §4a.
+metareasoning". **Resolved:** the runtime update is the full-posterior-
+weighted (resource-rational) one — credit each category by π_c via a new
+`WeightedBernoulli` conjugate family — which uses the whole posterior and
+tracks the exact mixture to third-decimal accuracy. Mechanism + substrate
+in the B2c design doc (`docs/paper1/move-2c-design.md`); see also
+`master-plan.md` §4a.
 
 In scope (this branch):
 - Category inference (B2)

@@ -159,40 +159,52 @@ the single component `Beta(3,3)·Beta(1,1)`. ADF: `rel[1] → Beta(3,3)`,
 `rel[2] → Beta(1,1)`. Both equal today's unit-count update
 `Beta(2,3) --correct--> Beta(3,3)`. `==`.
 
-## 7. Open design questions
+## 7. Resolved decisions (was: open questions)
 
-1. **Is the strategy spectrum (exact / pruned / ADF) one mechanism under
-   metacomputation, or do we ship a single fixed strategy for Paper 1?**
-   Framing all three as EU-selected computational strategies is the
-   constitution-pure answer, but it requires a cost model in the utility.
-   The alternative is to implement *one* strategy now (recommended:
-   start from exact mixture + a retention cap, with ADF as the cap=1
-   degenerate) and defer the EU-over-strategies selector. Argue whether
-   Paper 1 needs the full metacomputation or a named, fixed default.
+The author resolved these with one observation: **Paper 1 is a utility/EU
+paper anyway.** The agent already trades *tool cost* against *information
+value* (that is what VOI is); trading *compute cost* against *inference
+value* — metacomputation — is the identical move, native to the paper.
+The metacomputation's *conclusion* settles the mechanism, because exact
+mixture retention costs `K^n` compute for a third-decimal accuracy gain
+(§6: `E[θ]` 0.465 exact vs 0.474 weighted).
 
-2. **Default strategy + retention budget.** If a fixed default: exact
-   mixture with top-`m` pruning (what `m`? chosen how — fixed, or a
-   tail-mass threshold via `prune`'s `threshold`?), or ADF-collapse
-   (tractable, on the conjugate fast path, but mean-field)? The
-   Performance-Problems protocol governs: if a 50-question run with the
-   exact/pruned path exceeds a wall-clock budget, **halt and report** —
-   do not silently downgrade to ADF.
+1. **One principle, not a spectrum to ship.** The strategy is the
+   resource-rational realisation of the exact mixture: the **full-
+   posterior-weighted (ADF / expected-sufficient-statistics) update**.
+   The exact mixture is the documented *reference*, not the runtime path.
+   We do **not** build an EU-over-strategies selector loop (that needs
+   compute as an explicit utility term — a Paper 4 / cheap-design
+   extension); the resource-rational justification is prose.
 
-3. **Residency of the decision-side marginalisation.** Does the host
-   build the `MixturePrevision` over π and pass it (bdsl unchanged — D3
-   stays true), or does `agent.bdsl` take π and the per-category Betas
-   and marginalise? Invariant 2 says the `MixturePrevision` is the
-   declared structure; recommendation is host-builds, bdsl-consumes, but
-   confirm against the answer-kernel's current signature.
+2. **No retention budget / no pruning machinery.** The weighted update is
+   the cap→single-component projection; there is no top-`m` to choose. A
+   test validates weighted ≈ exact-mixture on the §6 case (so the
+   negligible-loss claim is empirical, not asserted). The exact-mixture
+   `MixturePrevision` reliability state is *not* implemented as runtime
+   (it explodes by construction).
 
-4. **Substrate-change discipline for `WeightedBernoulli`.** Adding a
-   `LeafFamily` + conjugate pair is sanctioned vocabulary growth
-   (constitution: "named distributions … may be added"), but it touches
-   `src/`. Does it ride in the B2c code PR, or land as its own
-   substrate PR first (capture-canonical, stratum-2 conjugate test)
-   ahead of the host wiring? This is the one place the B2b "no new
-   `LeafFamily`/`ConjugatePrevision`" refusal is lifted — that refusal
-   lived under the now-reversed MAP regime.
+3. **Residency: host builds, bdsl consumes.** The host constructs the
+   category-marginalised `MixturePrevision` over π for the decision side
+   and runs the `WeightedBernoulli` `condition`s for the update side. The
+   `MixturePrevision` is the declared structure (Invariant 2). `agent.bdsl`
+   changes only if the reliability kernel must *declare* the new family —
+   verified at implementation (the kernel is constructed Julia-side, so
+   D3 likely holds).
+
+4. **Substrate (`WeightedBernoulli`) lands with the B2c mechanism PR.**
+   A new `LeafFamily` + conjugate pair is sanctioned vocabulary growth
+   ("named distributions … may be added"); it ships with a stratum-2
+   conjugate test and the degenerate `==` capture-canonical guard (§5),
+   and does **not** touch the strict unit-count `BetaBernoulli`. This is
+   where the B2b "no new `LeafFamily`/`ConjugatePrevision`" refusal is
+   lifted — that refusal lived under the now-reversed MAP regime.
+
+**One residual genuine open question** (for the B2c *code* review, not a
+blocker now): on the decision side, is the answer-kernel's `expect` over
+a `MixturePrevision` of Betas numerically identical to the current
+`expect` over a single Beta when π is one-hot? Must be asserted `==`, not
+assumed — confirm the mixture-of-one-component path collapses exactly.
 
 ## 8. Risk + mitigation
 
