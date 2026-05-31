@@ -344,9 +344,10 @@ audits.
 > **Resolved (2026-05-31): soft category distribution.** Both agents
 > receive the full posterior `P(category=·)` per question, not a hard
 > label — the symmetric surface for VOI. The Bayesian agent's
-> *internal* use of that posterior is governed by modelling assumption
-> (γ) below (it collapses to MAP for its own conjugate updates), but
-> the information surface handed to every agent is identical and soft.
+> *internal* use of that posterior is governed by the reliability-update
+> note below (it conditions exactly under category uncertainty — the
+> full posterior, not a MAP collapse), and the information surface
+> handed to every agent is identical and soft.
 > Per-tool reliability profiles are *not* exposed (the third
 > sub-option is too far — it removes the very uncertainty the paper is
 > about).
@@ -421,19 +422,30 @@ model — not a *discriminative* multinomial logistic. Paper language
 rename rides along with the Phase D rewrite of `credence.tex`; nothing
 currently on master mis-names it.
 
-**Modelling assumption (γ) — MAP category for the Bayesian agent's
-updates.** The Bayesian agent uses **MAP category assignment** from the
-LOO classifier for both decision-time tool selection
-(`rel_betas[:, argmax_c]`) and outcome-time reliability updates.
-Posterior-weighted reliability updates would require a *weighted
-conjugate update* substrate extension (fractional Beta pseudocounts),
-which `src/conjugate.jl` does not support — its Beta-Bernoulli `update`
-coerces evidence to unit pseudocounts and errors on fractional
-observations. That extension is out of scope for Paper 1 and is
-reserved for Paper 3 / a future Posture move. Crucially, **both agents
-receive the identical soft posterior** (OQ5); the MAP-collapse is
-internal to the Bayesian agent's reasoning, not an asymmetry in the
-information surface.
+**Reliability updates under category uncertainty — exact conditioning,
+not MAP (revised 2026-05-31).** An earlier draft of this section proposed
+collapsing the category posterior to its MAP value for the Bayesian
+agent's reliability updates, on the grounds that `src/conjugate.jl`'s
+Beta-Bernoulli `update` coerces evidence to unit pseudocounts. That is
+**rejected**: MAP discards information the agent has paid for (cf.
+`feedback_no_discard_posterior_info`) and weakens the paper's
+principled-Bayesian claim — the substrate limitation is a reason to
+extend the substrate, not to approximate. From first principles
+(A3: learning is conditioning; Invariant 1: only `condition` changes
+weights, and uncertainty is encoded in the hypothesis space so
+`condition` can learn it), the agent carries the category uncertainty in
+the reliability hypothesis space and updates by **exact conditioning**.
+The soft posterior π enters **both** the decision (VOI marginalised over
+categories) and the update. The exact posterior is a mixture
+(`P(correct|θ)=Σ_c π_c θ_{t,c}` against a product-of-Betas prior is
+non-conjugate → a K-way split per observation); its growth is a
+*computational* cost handled by **metacomputation** (EU over
+computational strategies — the spec's "On metareasoning"), not by a
+bolted-on approximation. The mechanism, the substrate extension it needs,
+and the depth of the metacomputation for Paper 1 are specified in the B2c
+design doc (`docs/paper1/move-2c-design.md`). Both agents still receive
+the identical soft posterior (OQ5); the agent's exact internal update is
+not an asymmetry in the information surface.
 
 **B2b execution split.** B2b lands as a split: **B2b.1–B2b.3**
 (this master-plan addendum, the `category_inference` module, and LOO
