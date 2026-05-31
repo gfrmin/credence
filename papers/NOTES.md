@@ -191,18 +191,20 @@ this resolved — but should be in place before Phase D (paper rewrite).
 
 ### Phase B scope and out-of-scope
 
-**Modelling assumption (γ), recorded for the write-up (B2b, 2026-05-31).**
-The category-inference component (B2) is **Gaussian Naive Bayes on
-sentence embeddings with a Dirichlet class prior** — a generative model,
-not a discriminative multinomial logistic; describe it as such in §3.
-Both agents receive the *identical soft category posterior*. The
-Bayesian agent then uses **MAP category assignment** internally, for
-both decision-time tool selection and outcome-time reliability updates.
-Posterior-weighted reliability updates would need a weighted-conjugate-
-update substrate extension (fractional Beta pseudocounts) that the DSL
-does not have and that is reserved for Paper 3; the MAP collapse is
-internal to the Bayesian agent's reasoning, not an asymmetry in the
-shared information surface. See `docs/paper1/master-plan.md` §4a.
+**Modelling notes for the write-up (B2b, 2026-05-31; revised).** The
+category-inference component (B2) is **Gaussian Naive Bayes on sentence
+embeddings with a Dirichlet class prior** — a generative model, not a
+discriminative multinomial logistic; describe it as such in §3. Both
+agents receive the *identical soft category posterior*. The Bayesian
+agent then updates tool reliability by **exact conditioning under
+category uncertainty** — the full posterior enters both the decision
+(VOI marginalised over categories) and the update — **not** a MAP
+collapse (an earlier draft proposed MAP; rejected, since it discards
+information the agent paid for and weakens the principled-Bayesian
+claim). The exact posterior is a mixture; its growth is handled by
+metacomputation (EU over computational strategies), per the spec's "On
+metareasoning". Mechanism + substrate extension in the B2c design doc
+(`docs/paper1/move-2c-design.md`); see also `master-plan.md` §4a.
 
 In scope (this branch):
 - Category inference (B2)
