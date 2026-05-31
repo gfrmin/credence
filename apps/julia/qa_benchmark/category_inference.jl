@@ -176,3 +176,30 @@ function infer(clf::CategoryClassifier, embedding::Vector{Float64})
     w = weights(post)
     Dict(cats[i] => w[i] for i in eachindex(cats))
 end
+
+"""
+    loo_category_inference(embeddings::Matrix{Float64}, categories::Vector{Symbol})
+        -> Vector{Dict{Symbol, Float64}}
+
+Leave-one-out cross-validated category inference (master-plan OQ3(c)).
+For each row `i`, fit a classifier on every other row and infer on row
+`i`. Returns one soft posterior per input row, in input order. Cost is
+`N` fits of `O(N·D)` each, i.e. `O(N²·D)`.
+"""
+function loo_category_inference(embeddings::Matrix{Float64}, categories::Vector{Symbol})
+    N = size(embeddings, 1)
+    N == length(categories) ||
+        error("loo_category_inference: embeddings rows ($N) must match categories length ($(length(categories)))")
+    N >= 2 ||
+        error("loo_category_inference: need at least two (embedding, category) pairs for leave-one-out")
+
+    out = Vector{Dict{Symbol,Float64}}(undef, N)
+    keep = trues(N)
+    for i in 1:N
+        keep[i] = false
+        clf = fit(embeddings[keep, :], categories[keep])
+        out[i] = infer(clf, embeddings[i, :])
+        keep[i] = true
+    end
+    out
+end
