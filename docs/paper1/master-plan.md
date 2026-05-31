@@ -218,6 +218,13 @@ auditability (b). Each option also has a different relationship with the
 "learnable observation model" claim in `SPEC.md` §4.2, which Guy may want
 to weigh in resolution.
 
+> **Resolved (2026-05-31): (c) body-side, identical implementation.**
+> Each agent runs the *same* category-inference machinery on the
+> question's embedding; fairness is enforced by identical
+> implementation, audited per evaluation. Aligns with `SPEC.md` §6
+> (perception in the body). The shared module is
+> `apps/julia/qa_benchmark/category_inference.jl` (B2b).
+
 ### OQ2 — what is the form of the Bayesian multinomial logistic?
 
 The paper claim is "Bayesian." Three candidates:
@@ -248,6 +255,17 @@ implementation cost. The answer affects both B2's design doc and how
 aggressively §3 of the paper can lean on "principled Bayesian inference"
 language.
 
+> **Resolved (2026-05-31): (b-NB) Gaussian Naive Bayes on embeddings
+> with a Dirichlet class prior.** The B2a design doc
+> (`docs/paper1/move-2-design.md` §3.1) verifies this reduces to
+> existing credence primitives — per-(class, dim) NormalGamma conjugate
+> updates plus a Dirichlet class prior, Student-t marginal predictive —
+> with no new primitives. The Pólya-Gamma multinomial-logistic path
+> (b-PG, §3.2) is rejected: it needs a Pólya-Gamma augmentation
+> primitive that does not exist and is out of scope for Paper 1. See
+> the classifier-naming addendum below — "Naive Bayes", not
+> "discriminative multinomial logistic".
+
 ### OQ3 — calibration set design
 
 Category inference is a perception model. It needs to be calibrated.
@@ -266,6 +284,13 @@ Where does the calibration data come from?
 (c) is most defensible if compute allows. The choice also bears on B2/B3
 coupling: if (c), B3's tools-only-slice questions need category labels
 ahead of B2's evaluation pass; if (a)/(b), the coupling is looser.
+
+> **Resolved (2026-05-31): (c) cross-validated leave-one-out.** Every
+> question receives a category inference from a classifier fit on all
+> *other* questions — no held-out set, cleanest fairness story.
+> Implemented as `loo_category_inference` (B2b.3). This couples B2/B3:
+> the tools-only slice's questions must carry category labels ahead of
+> B2's evaluation pass (B3 owns that).
 
 ### OQ4 — tools-only slice composition
 
@@ -290,6 +315,9 @@ slice's mean per-tool reliability must remain calibrated against the
 existing reliability matrix — generating a slice where every question
 favours one tool over-trivialises the comparison.
 
+> **Status: open — B3 territory.** Resolved when the tools-only slice
+> is designed. Not required for B2b.
+
 ### OQ5 — fairness equalisation specifics
 
 LLM prompts must receive equivalent category information to whatever the
@@ -313,6 +341,16 @@ Bayesian agent's posterior uses. What does this look like concretely?
 The author resolves. Be aware that OQ5's resolution determines what B4
 audits.
 
+> **Resolved (2026-05-31): soft category distribution.** Both agents
+> receive the full posterior `P(category=·)` per question, not a hard
+> label — the symmetric surface for VOI. The Bayesian agent's
+> *internal* use of that posterior is governed by modelling assumption
+> (γ) below (it collapses to MAP for its own conjugate updates), but
+> the information surface handed to every agent is identical and soft.
+> Per-tool reliability profiles are *not* exposed (the third
+> sub-option is too far — it removes the very uncertainty the paper is
+> about).
+
 ### OQ6 — slice integration: parallel evaluation track or unified benchmark?
 
 (Surfaced in B1 reading.) Two architectural shapes for B3's slice:
@@ -331,6 +369,9 @@ audits.
 
 Affects B3's deliverable and B5's Pareto-plot shape. The author resolves;
 (a) is probably cleanest unless the power calculation in OQ7 forces (b).
+
+> **Status: open — B3 territory.** Resolved alongside OQ4 when the
+> slice's integration shape is decided. Not required for B2b.
 
 ### OQ7 — statistical power for the Pareto-region claim
 
@@ -357,6 +398,51 @@ Pareto-region claim is unsupported.
 (c) is the rigorous version. (b) is the safe version. The choice depends
 on Guy's appetite for benchmarking compute and how high the bar is for
 the Pareto-membership claim to be defensible.
+
+> **Resolved (2026-05-31): N = 100 paired seeds for cheap agents,
+> N = 50 for LLM agents.** Narrows the CIs enough for the positional
+> Pareto-membership claim while keeping LLM API spend bounded. Recorded
+> here for the B4/B5 seed budget; *not* load-bearing for B2b. Revisit
+> against a pilot power calculation (option (c)) if the relevant
+> frontier comparison turns out to have a small effect.
+
+---
+
+## 4a. Phase B2b resolutions and addenda (2026-05-31)
+
+The B2b session (`paper1/category-inference`) resolves OQ1, OQ2, OQ3,
+OQ5, and OQ7 as recorded inline above, and adds three notes.
+
+**Classifier naming (paper-language correction).** The category-
+inference component implemented in B2b is **Gaussian Naive Bayes on
+sentence embeddings with a Dirichlet class prior** — a *generative*
+model — not a *discriminative* multinomial logistic. Paper language
+(and `credence.tex` §3.3, when written) must describe it as such. This
+rename rides along with the Phase D rewrite of `credence.tex`; nothing
+currently on master mis-names it.
+
+**Modelling assumption (γ) — MAP category for the Bayesian agent's
+updates.** The Bayesian agent uses **MAP category assignment** from the
+LOO classifier for both decision-time tool selection
+(`rel_betas[:, argmax_c]`) and outcome-time reliability updates.
+Posterior-weighted reliability updates would require a *weighted
+conjugate update* substrate extension (fractional Beta pseudocounts),
+which `src/conjugate.jl` does not support — its Beta-Bernoulli `update`
+coerces evidence to unit pseudocounts and errors on fractional
+observations. That extension is out of scope for Paper 1 and is
+reserved for Paper 3 / a future Posture move. Crucially, **both agents
+receive the identical soft posterior** (OQ5); the MAP-collapse is
+internal to the Bayesian agent's reasoning, not an asymmetry in the
+information surface.
+
+**B2b execution split.** B2b lands as a split: **B2b.1–B2b.3**
+(this master-plan addendum, the `category_inference` module, and LOO
+calibration) ship in PR `paper1/category-inference`; **B2b.4–B2b.6**
+(host + `llm_agent` wiring — "B2c") follow in a separate PR. The split
+point is forced by the embedding gate: everything past B2b.3 needs real
+question-bank embeddings, which the B2a design doc (§5) defers to a
+later step, and which collide with the no-`sentence-transformers`
+dependency constraint. B2b ships and tests on synthetic embeddings.
 
 ---
 
