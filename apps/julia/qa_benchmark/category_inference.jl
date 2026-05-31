@@ -102,18 +102,40 @@ _inference_kernel(params::Matrix{NormalGammaPrevision}, cats::Vector{Symbol}) = 
     likelihood_family = Flat(),
 )
 
+# Per-dimension feature standardisation. Raw sentence embeddings are
+# anisotropic — per-dimension scales vary widely — which swamps the vague
+# NormalGamma prior and collapses the classifier to the majority class
+# (raw real-embedding LOO accuracy ≈ chance). Standardising each dimension
+# to zero mean / unit variance, computed on the *training* embeddings only
+# (hence leak-free under LOO), is the standard Gaussian-NB preprocessing
+# and is what makes the classifier discriminate on real embeddings. This
+# is feature/perception scaling, not probability arithmetic.
+function _feature_stats(embeddings::Matrix{Float64})
+    n = size(embeddings, 1)
+    μ = vec(sum(embeddings, dims=1)) ./ n
+    σ² = vec(sum((embeddings .- μ') .^ 2, dims=1)) ./ max(n - 1, 1)
+    μ, max.(sqrt.(σ²), 1e-9)
+end
+
+_standardize(x::AbstractVector, μ::Vector{Float64}, σ::Vector{Float64}) =
+    (Float64.(x) .- μ) ./ σ
+
 """
     CategoryClassifier
 
 A fitted Gaussian-NB category classifier. `class_prior` is the Dirichlet
 posterior over the K categories; `params` is the K×D matrix of
-per-(class, dimension) Normal-Gamma posteriors; `categories` is the
-sorted category vocabulary (length K).
+per-(class, dimension) Normal-Gamma posteriors over the *standardised*
+features; `categories` is the sorted category vocabulary (length K);
+`feature_mean`/`feature_std` are the per-dimension standardisation stats
+fit from the training embeddings.
 """
 struct CategoryClassifier
     class_prior::DirichletPrevision
     params::Matrix{NormalGammaPrevision}   # K × D
     categories::Vector{Symbol}             # sorted, length K
+    feature_mean::Vector{Float64}          # D
+    feature_std::Vector{Float64}           # D
 end
 
 """
@@ -135,6 +157,9 @@ function fit(embeddings::Matrix{Float64}, categories::Vector{Symbol})
     K = length(cats)
     D = size(embeddings, 2)
 
+    # Standardise features on the training embeddings (leak-free under LOO).
+    μ, σ = _feature_stats(embeddings)
+
     class_prior = DirichletPrevision(ones(K))
     params = [NormalGammaPrevision(_NG_PRIOR.κ, _NG_PRIOR.μ, _NG_PRIOR.α, _NG_PRIOR.β)
               for _ in 1:K, _ in 1:D]
@@ -143,13 +168,14 @@ function fit(embeddings::Matrix{Float64}, categories::Vector{Symbol})
     for i in 1:N
         c = categories[i]
         cidx = findfirst(==(c), cats)
+        z = _standardize(view(embeddings, i, :), μ, σ)
         class_prior = condition(class_prior, class_kernel, c)
         for j in 1:D
-            params[cidx, j] = condition(params[cidx, j], SCALAR_OBS_KERNEL, embeddings[i, j])
+            params[cidx, j] = condition(params[cidx, j], SCALAR_OBS_KERNEL, z[j])
         end
     end
 
-    CategoryClassifier(class_prior, params, cats)
+    CategoryClassifier(class_prior, params, cats, μ, σ)
 end
 
 """
@@ -171,7 +197,9 @@ function infer(clf::CategoryClassifier, embedding::Vector{Float64})
     cat_prior = CategoricalMeasure(Finite(cats), log_class)
 
     nb_k = _inference_kernel(clf.params, cats)
-    post = condition(cat_prior, nb_k, embedding)
+    # Standardise the query with the training stats before the NB density.
+    z = _standardize(embedding, clf.feature_mean, clf.feature_std)
+    post = condition(cat_prior, nb_k, z)
 
     w = weights(post)
     Dict(cats[i] => w[i] for i in eachindex(cats))
