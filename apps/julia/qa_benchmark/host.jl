@@ -79,7 +79,8 @@ function run_bayesian_seed(tools::Vector{SimulatedTool},
                            response_table::Matrix{Int};
                            use_voi::Bool=true, learn::Bool=true,
                            allow_abstain::Bool=true, greedy::Bool=false,
-                           category_posteriors::Union{Nothing,Dict{String,Vector{Float64}}}=nothing)
+                           category_posteriors::Union{Nothing,Dict{String,Vector{Float64}}}=nothing,
+                           init_reliability::Union{Nothing,AbstractMatrix}=nothing)
     n_tools = length(tools)
     n_cats = length(CATEGORIES)
 
@@ -90,7 +91,13 @@ function run_bayesian_seed(tools::Vector{SimulatedTool},
     # uses the given category (one-hot) — the v1 path, bit-for-bit.
     inferred = category_posteriors !== nothing
 
-    rel_betas = [BetaPrevision(1.0, 1.0) for _ in 1:n_tools, _ in 1:n_cats]
+    # init_reliability seeds the per-(tool,category) reliability beliefs. With
+    # learn=false this gives the *known-reliability ceiling* — myopic-EU acting
+    # on the true θ table (the asymptote of perfect exploration). Default prior
+    # Beta(1,1) is the normal learning start.
+    rel_betas = init_reliability === nothing ?
+        [BetaPrevision(1.0, 1.0) for _ in 1:n_tools, _ in 1:n_cats] :
+        copy(init_reliability)
 
     records = QuestionResult[]
     total_reward = 0.0
@@ -405,8 +412,20 @@ function main()
             ("all_tools",   () -> run_all_tools_seed(tools, questions, response_table)),
         ]
         if cat_post !== nothing
+            # Paper 1 fair-condition roster: every category-using agent run
+            # under *inferred* (not given) categories, paired on the same seed.
+            # The oracle counterparts (`bayesian`, `ablation_*`) stay only as a
+            # legacy "price of inference" skyline; they are NOT on the fair
+            # Pareto. The LLM agents (raw question text, no category) are reused
+            # from the saved DB — see docs/paper1 B4.
             push!(agents, ("bayesian_inferred",
                 () -> run_bayesian_seed(tools, questions, response_table; category_posteriors=cat_post)))
+            push!(agents, ("greedy_inferred",
+                () -> run_bayesian_seed(tools, questions, response_table; greedy=true, category_posteriors=cat_post)))
+            push!(agents, ("no_voi_inferred",
+                () -> run_bayesian_seed(tools, questions, response_table; use_voi=false, category_posteriors=cat_post)))
+            push!(agents, ("no_learning_inferred",
+                () -> run_bayesian_seed(tools, questions, response_table; learn=false, category_posteriors=cat_post)))
         end
         for (name, runner) in agents
             result = runner()
