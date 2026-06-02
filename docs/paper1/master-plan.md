@@ -154,33 +154,43 @@ must carry category labels for B2's calibration; depending on OQ3's
 resolution this may or may not couple the moves tightly). OQ4, OQ6
 resolved.
 
-### B4 — Fairness-equalised LLM prompting
+### B4/B5 — Fair re-run, Pareto, and the exploration-duality finding (EXECUTED 2026-06)
 
-Equip `apps/julia/qa_benchmark/llm_agent.jl` with the OQ5-resolved
-category-information surface: hard label, soft distribution, with or
-without per-tool reliability profile. Audit symmetry: whatever the
-Bayesian agent reads from B2 must reach the LLM in equivalent form, with
-no extra information leaking in either direction.
+**OQ5 reversed — no π-injection.** The fair leveller is *input symmetry* (every
+agent sees the same raw question text), not information-surface symmetry. By the
+data-processing inequality the inferred posterior π = f(text) carries no category
+information the LLM (holding the full text) lacks; injecting it would only import
+the classifier's error rate. So the saved no-category Haiku + Llama runs *are* the
+fair LLM condition — **reused, not re-run** (offline, $0; reuse validated bit-exact
+by `scripts/paper1-pairing-gate.jl`). "Category known" (oracle) is dropped as a
+tested condition, kept only as a price-of-inference skyline. (The earlier
+"B4 = equip llm_agent.jl with a category surface" plan is void.)
 
-**Deliverable:** updated `llm_agent.jl` + symmetry audit doc + per-prompt
-diff against the v1 prompts.
+**The result inverts the Phase B thesis — and that inversion is the contribution.**
+Phase B bet that fair conditions would reveal VOI's value (masked under v1's given
+categories). The data refutes the bet: under inferred categories the greedy>VOI
+gap *widens* (+25.7 → +39.2), because VOI is more sensitive to category-inference
+noise. The honest finding (full argument + tables: `papers/RESULTS.md`):
 
-**Depends on:** B2 (category inference output), OQ5 resolved.
+- Cost-efficiency is earned by the **belief substrate** (reliability learning +
+  category inference), **not** the VOI action layer. The Bayesian *family* owns
+  the cost-conscious frontier (greedy dominates the free Llama; Haiku is the paid
+  point); VOI specifically is not a robust frontier point (£/point-fragile).
+- **The action layer is not the engine:** myopic VOI loses to optimistic-greedy
+  (−39, sig.); the gating experiments cap *any* action-policy gain at ≤+16 over
+  greedy (known-θ ceiling 306, reachable ~205, horizon-locked); the inference
+  lever (40–53) dwarfs it.
+- **Exploration-duality law (per-category):** greedy wins where the best tool is
+  expensive or only moderately separated; VOI wins only where a cheap tool is
+  dominant by a wide margin (numerical/calculator). Mix-crossover ~40% vs the
+  actual 20%.
 
-### B5 — Re-run benchmark and Pareto analysis
-
-Run all agents (Bayesian, frontier LLM, local LLM, baselines, ablations)
-under the new conditions. Generate the cost-performance Pareto plot.
-Verify the thesis: Bayesian occupies a non-empty Pareto region. If it
-does not, do not paper over it — Paper 1 either reframes again or reports
-the negative result honestly.
-
-**Deliverable:** new tables in `papers/RESULTS.md`, updated paired-
-bootstrap results, Pareto plot, explicit frontier-membership statement.
-Paper 1 LaTeX rewrite (Phase D) is downstream of B5; B5 stops at the
-empirical artefact.
-
-**Depends on:** B2, B3, B4 all complete and integrated. OQ7 resolved.
+**Thesis broadened** from "Bayesian *VOI* tool selection" to "Bayesian tool
+selection"; VOI scoped to its cheap-and-dominant-tool niche; narrated as
+principled-prior → empirical-correction. Genre: analysis/architecture, arXiv
+cs.AI. Deliverables: `papers/RESULTS.md` (locked argument), `papers/paper1/pareto.*`,
+`scripts/paper1-*`. The Paper 1 LaTeX rewrite (Phase C/D) is downstream, written
+against the locked RESULTS.md.
 
 ---
 
@@ -351,6 +361,17 @@ audits.
 > Per-tool reliability profiles are *not* exposed (the third
 > sub-option is too far — it removes the very uncertainty the paper is
 > about).
+
+> **SUPERSEDED (2026-06, B4): no π-injection at all.** The "soft distribution"
+> resolution was reversed during the B4 write-up. The fair leveller is *input
+> symmetry* — every agent sees the same raw question text — not information-
+> surface symmetry. By the data-processing inequality, the inferred posterior
+> π is a deterministic lossy function of the text (`category → text → π`) and
+> carries **no** category information the LLM lacks; handing it to the LLM only
+> imports the classifier's error rate (contamination with a known sign), and is
+> a component of one competitor's method, not a property of the environment.
+> So the saved no-category LLM runs *are* the fair condition; they are reused,
+> not re-run. See the executed B4/B5 section above and `papers/RESULTS.md`.
 
 ### OQ6 — slice integration: parallel evaluation track or unified benchmark?
 
