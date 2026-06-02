@@ -289,6 +289,15 @@ function handle_sensor_event(state::DaemonState,
     elseif event_type == "tool-completed"
         # Pass 1: log only. Pass 2 will condition on outcome features.
 
+    elseif event_type == "turn-cost"
+        # Pass 2 / Move 1: per-turn token + USD cost, emitted by the
+        # OpenClaw-plugin body's llm_output hook. Logged for the
+        # dollars-saved surface (Move 2) and the cost-denominated
+        # utility; the brain does not condition on it and emits no
+        # signal. Logged-first like every event (step 1 above), so the
+        # branch only documents intent and suppresses the unknown-type
+        # warning.
+
     else
         @warn "handle_sensor_event: unknown event_type" event_type
     end

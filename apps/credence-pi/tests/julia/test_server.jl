@@ -231,6 +231,42 @@ let path = tempname() * ".jsonl"
     rm(path)
 end
 
+# ── 4b. handle_sensor_event: turn-cost is log-only ─────────────────────
+#
+# Move 1 (Pass 2): the OpenClaw-plugin body emits per-turn token/USD
+# cost via its llm_output hook. The daemon logs it (for the dollars-
+# saved surface and the cost-denominated utility, both Move 2) but does
+# NOT condition the posterior and emits NO signal — exactly like
+# tool-completed.
+
+let path = tempname() * ".jsonl"
+    state = fresh_state(; tmp_log=path)
+    before = expect(state.posterior[], Identity())
+
+    turn_cost = Dict{String, Any}(
+        "event_type"   => "turn-cost",
+        "event_id"     => "evt_tc1",
+        "session_id"   => "test",
+        "usd"          => 0.0123,
+        "total_tokens" => 1500,
+        "model"        => "claude-opus-4-8",
+    )
+    ack = handle_sensor_event(state, turn_cost)
+    @assert ack["ack"] == true && ack["event_id"] == "evt_tc1"
+    @assert isempty(snapshot(state.signal_queue))
+    @assert isapprox(expect(state.posterior[], Identity()), before; atol=TOL)
+    ok("turn-cost: log-only, no signal emitted, posterior unchanged")
+
+    records = Server.ObservationLog.read_log(path)
+    @assert length(records) == 1
+    @assert records[1].event["event_type"] == "turn-cost"
+    @assert records[1].event["usd"] == 0.0123
+    @assert records[1].event["total_tokens"] == 1500
+    ok("turn-cost: logged with cost fields intact for the Move-2 dollars-saved surface")
+
+    rm(path)
+end
+
 # ── 5. End-to-end: HTTP /sensor + SSE /signals ─────────────────────────
 #
 # Spin up a real HTTP server on an ephemeral port, open an SSE

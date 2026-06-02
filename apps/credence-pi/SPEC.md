@@ -195,6 +195,29 @@ Wire shape:
 
 Pass 1's BDSL does nothing with this event — it's collected for forward compatibility with Pass 2's secondary-signal observation model. The brain logs it and returns no signal. Worth shipping it now so the observation log contains the data Pass 2 will want.
 
+### `turn-cost` (Pass 2 — Move 1)
+
+Emitted by the OpenClaw-plugin body's `llm_output` hook once per agent turn, carrying the turn's token usage and the reconstructed USD cost (`calculateCost(model, usage)` from `openclaw/plugin-sdk/llm`; pi/OpenClaw do not hand plugins a dollar figure directly). The daemon logs it; the brain does not condition on it and emits no signal. It is the cost signal the dollars-saved surface and the cost-denominated utility (both Move 2) read back from the log.
+
+Wire shape:
+```json
+{
+  "event_type": "turn-cost",
+  "event_id": "evt_a1b2c3",
+  "session_id": "sess_xyz",
+  "timestamp": "2026-06-02T14:22:11.421Z",
+  "usd": 0.0123,
+  "total_tokens": 1500,
+  "input_tokens": 1200,
+  "output_tokens": 300,
+  "cache_read": 0,
+  "cache_write": 0,
+  "model": "claude-opus-4-8"
+}
+```
+
+`usd` is `null` when the provider reports zero cost or the model cannot be priced; the Move-2 surface applies a token×price fallback. Only the envelope is snake_case; there is no `features` dict here — cost is not a declared brain feature in Move 1 (it feeds the host-side savings surface and, in Move 2, a cost-denominated Functional).
+
 ## Effector signals
 
 One outbound message type, parameterised by effector name.
