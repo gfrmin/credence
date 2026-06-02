@@ -46,9 +46,16 @@
 ; tool costs, and the abstain/submit payoffs, choose:
 ;   submit answer | abstain | query a tool
 ;
-; This is pure EU maximisation. The "exploration" of uncertain
-; tools happens naturally through VOI — no epsilon-greedy,
-; no exploration bonus.
+; This is pure single-question EU maximisation — no epsilon-greedy,
+; no exploration bonus (those would violate the single-reasoner invariant).
+; NOTE (Paper 1 B4): the VOI here is MYOPIC — it values information only for
+; the CURRENT question's decision, never for future questions. So exploration
+; does NOT "emerge naturally" through VOI as once claimed: this is a Bayesian
+; *learner*, not a Bayesian *explorer*. Under cost pressure it economises onto
+; cheap tools and under-explores expensive-but-reliable ones, and is beaten by
+; an optimistic-greedy rule on the benchmark. The short horizon caps any
+; exploration gain at ~+16 (scripts/paper1-reachable.jl: ceiling 306, reachable
+; ~205); adequate exploration would require horizon-aware VOI (future work).
 (define agent-step
   (lambda (answer-measure reliability-measures tool-costs coverage-probs submit-value abstain-value penalty-wrong)
     (let n (length (support answer-space))

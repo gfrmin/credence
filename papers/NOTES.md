@@ -144,6 +144,24 @@ mechanism for the problem. Phase B's job is to find the conditions under
 which that claim is empirically defensible, and report honestly if it
 isn't.
 
+### Phase B4 outcome (2026-06): the bet was refuted — and that is the result
+
+Phase B's bet (above) was that fair conditions would vindicate VOI: remove the
+given-category advantage and the marginal value of VOI's tool-by-tool reasoning
+would show. **The data refuted it.** Under inferred categories the greedy>VOI gap
+*widened* (+25.7 → +39.2) — VOI is more sensitive to category-inference noise
+than greedy. The honest, stronger result is the inversion: cost-efficiency is
+earned by the **belief substrate** (reliability learning + category inference),
+not the VOI action layer. Myopic VOI is a Bayesian *learner*, not an *explorer*,
+and loses to optimistic-greedy at this horizon and mix; gating experiments cap
+any action-policy gain at ≤+16 over greedy (known-θ ceiling 306, reachable ~205,
+horizon-locked), while the inference lever is 40–53. Thesis broadened to
+"Bayesian tool selection," VOI scoped to its cheap-and-dominant-tool niche;
+genre = analysis/architecture (arXiv cs.AI). This is Pivot 3 → 4, driven (per the
+discipline above) by the specific observation that fair conditions *widened*
+rather than closed the greedy–VOI gap. Full locked argument + tables:
+`papers/RESULTS.md`; OQ5 reversed to no-π-injection (master-plan B4/B5 section).
+
 ### Greedy ablation result interpretation
 
 Phase A's bootstrap (`papers/paper1/bootstrap-results.md`, 2026-05-04):
