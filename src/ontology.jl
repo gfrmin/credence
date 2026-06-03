@@ -1071,6 +1071,28 @@ function _predictive_ll(m::Measure, k::Kernel, obs; n_samples::Int=200)
     log(max(total / n_samples, 1e-300))
 end
 
+# Exact product predictive for a per-factor-routed kernel (Move 3). The factors
+# are independent, so the joint log-predictive is the SUM of per-factor
+# log-predictives; a factor whose resolved family is Flat contributes a no-op
+# observation (log-predictive 0). The sum therefore collapses to exactly the
+# firing factor's predictive — the structure marginal-likelihood term the
+# BMA layer (an enclosing MixturePrevision) reweights by. Non-routed product
+# kernels keep the generic (sampling) behaviour, unchanged.
+# See docs/credence-pi-pass-2/move-3-design.md.
+function _predictive_ll(m::ProductMeasure, k::Kernel, obs)
+    if k.factor_selector === nothing &&
+       (k.likelihood_family isa FiringByTag || k.likelihood_family isa DispatchByComponent)
+        total = 0.0
+        for f in m.factors
+            fam = _resolve_likelihood_family(k.likelihood_family, f)
+            fam isa Flat && continue
+            total += _predictive_ll(f, _with_resolved_family(k, fam), obs)
+        end
+        return total
+    end
+    invoke(_predictive_ll, Tuple{Measure, Kernel, Any}, m, k, obs)
+end
+
 # ── Prevision-level _predictive_ll (Move 7: supports MixturePrevision condition) ──
 
 _predictive_ll(p::BetaPrevision, k::Kernel, obs) =
@@ -1210,7 +1232,21 @@ end
 
 function condition(m::ProductMeasure, k::Kernel, obs; kwargs...)
     fs = k.factor_selector
-    fs === nothing && return _condition_particle(m, k, obs; kwargs...)
+    if fs === nothing
+        # Per-factor-routed product conditioning (Move 3 — credence-pi feature
+        # brain). A FiringByTag / DispatchByComponent kernel routes the
+        # observation to each factor INDEPENDENTLY by the factor's own tag: the
+        # firing factor updates via its conjugate, non-firing factors resolve
+        # to Flat (the registered no-op, conjugate.jl) and pass through
+        # unchanged. Cells of a structure are independent parameters (a
+        # product), NOT competing hypotheses (a mixture), so we return a
+        # ProductMeasure — leaving an enclosing structure-BMA MixturePrevision
+        # un-flattened. See docs/credence-pi-pass-2/move-3-design.md.
+        if k.likelihood_family isa FiringByTag || k.likelihood_family isa DispatchByComponent
+            return ProductMeasure(Measure[condition(f, k, obs) for f in m.factors])
+        end
+        return _condition_particle(m, k, obs; kwargs...)
+    end
 
     d = fs.discrete_index
     cat = m.factors[d]::CategoricalMeasure
