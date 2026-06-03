@@ -59,13 +59,12 @@ function timeSinceUserBucket(elapsedMs: number | undefined): string {
 function workingDirRelative(
   ctx: ToolContext,
   event: BeforeToolCallEvent,
-  nowTool: string,
 ): string {
   const root = ctx.workspaceDir;
   const paths = event.derivedPaths ?? [];
   if (paths.length === 0) {
     // No path-bearing tool (e.g. a bare bash with no file args we can see).
-    return nowTool === "bash" || nowTool === "other" ? "no-path" : "no-path";
+    return "no-path";
   }
   if (!root) return "no-path";
   const norm = (p: string) => p.replace(/\/+$/, "");
@@ -124,7 +123,7 @@ export class FeatureTracker {
 
     const features: Features = {
       "tool-name": tool,
-      "working-directory-relative": workingDirRelative(ctx, event, tool),
+      "working-directory-relative": workingDirRelative(ctx, event),
       "parent-tool-call-name": parent,
       "recent-repetition-count": repBucket,
       "time-since-last-user-message": timeSinceUserBucket(elapsed),

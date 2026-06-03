@@ -46,6 +46,10 @@ export interface TurnCost {
   model: string | null;
 }
 
+function escapeRegExp(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 function resolvePrice(
   model: string | undefined,
   table: PriceTable,
@@ -54,10 +58,13 @@ function resolvePrice(
   const m = model.toLowerCase();
   // Exact match first.
   if (table[m]) return table[m];
-  // Longest family-substring match.
+  // Longest key that appears as a SEGMENT of the id — anchored at the
+  // start or after a non-alphanumeric separator. So "o3" matches
+  // "o3-mini" and "openai/o3" but NOT "foo3"; longest match wins.
   let best: { key: string; price: ModelPrice } | undefined;
   for (const [key, price] of Object.entries(table)) {
-    if (m.includes(key) && (best === undefined || key.length > best.key.length)) {
+    const re = new RegExp(`(^|[^a-z0-9])${escapeRegExp(key)}`);
+    if (re.test(m) && (best === undefined || key.length > best.key.length)) {
       best = { key, price };
     }
   }
