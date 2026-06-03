@@ -53,8 +53,14 @@ interception point is an OpenClaw **plugin** `before_tool_call` hook. See
 |---|---|---|
 | `daemonUrl` | `http://127.0.0.1:8787` | credence-pi daemon base URL |
 | `hookTimeoutMs` | `3000` | max wait for the daemon decision before failing open |
+| `approvalTimeoutMs` | `120000` | how long OpenClaw waits for the user on an `ask` before denying |
+| `redactToolInputs` | `false` | omit tool-call inputs from sensor events (they can carry secrets); ask-preview becomes generic |
 | `silent` | `false` | suppress info/warn logs |
 | `pricing` | — | per-model USD/Mtok overrides: `{ "<model>": { "input": n, "output": n, "cacheRead": n, "cacheWrite": n } }` |
+
+**Privacy:** by default the daemon logs `proposed_call.input` (commands, paths) to
+`~/.credence-pi/observations.jsonl`. Set `redactToolInputs: true` to keep inputs out of the log.
+Fail-open warnings are emitted once per outage (re-armed when the daemon recovers).
 
 The built-in price table is approximate; set `pricing` for an exact
 dollars-saved figure for your providers. Unknown/unpriced models log

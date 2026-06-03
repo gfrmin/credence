@@ -108,6 +108,21 @@ export interface OpenClawPluginApi {
   // This plugin's resolved config (validated against openclaw.plugin.json).
   pluginConfig?: Record<string, unknown>;
 
+  // Cleanup hooks run on reset/delete/reload paths
+  // (OpenClaw src/plugins/host-hooks.ts PluginRuntimeLifecycleRegistration).
+  // Optional so the plugin still loads on hosts that predate it.
+  lifecycle?: {
+    registerRuntimeLifecycle: (registration: {
+      id: string;
+      description?: string;
+      cleanup?: (ctx: {
+        reason?: string;
+        sessionKey?: string;
+        runId?: string;
+      }) => void | Promise<void>;
+    }) => void;
+  };
+
   on(
     hook: "before_tool_call",
     handler: HookHandler<BeforeToolCallEvent, BeforeToolCallResult>,

@@ -16,6 +16,10 @@
 //     itself decide proceed/block on the reply.
 //   - Fail-open everywhere: daemon unreachable / slow ⇒ the tool proceeds,
 //     with one warning per outage.
+//
+// The orchestration lives in `createGovernor`, separated from `register`
+// so it can be unit-tested with an injected DaemonClient (see
+// tests/index.test.ts).
 
 import { randomUUID } from "node:crypto";
 
@@ -26,10 +30,14 @@ import {
   type Logger,
 } from "./daemon-client.js";
 import { FeatureTracker } from "./features.js";
-import { buildPriceTable, computeTurnCost } from "./cost.js";
+import { buildPriceTable, computeTurnCost, type PriceTable } from "./cost.js";
 import type {
   PluginEntry,
+  BeforeToolCallEvent,
   BeforeToolCallResult,
+  AfterToolCallEvent,
+  LlmOutputEvent,
+  ToolContext,
   RequireApprovalPayload,
 } from "./openclaw-types.js";
 
@@ -100,6 +108,162 @@ export function mapSignal(
   }
 }
 
+export interface GovernorOpts {
+  hookTimeoutMs: number;
+  approvalTimeoutMs: number;
+  priceTable: PriceTable;
+  redactToolInputs: boolean;
+  log: Logger;
+}
+
+export interface Governor {
+  beforeToolCall: (
+    event: BeforeToolCallEvent,
+    ctx: ToolContext,
+  ) => Promise<BeforeToolCallResult | undefined>;
+  afterToolCall: (event: AfterToolCallEvent, ctx: ToolContext) => Promise<void>;
+  llmOutput: (event: LlmOutputEvent, ctx: ToolContext) => Promise<void>;
+  cleanup: () => void;
+  /** Test/inspection accessor: in-flight tool_call awaiters. */
+  pendingCount: () => number;
+}
+
+// The governance orchestration over an injected DaemonClient. register()
+// wires this to the OpenClaw hook API; tests drive it with a fake client.
+export function createGovernor(
+  client: DaemonClient,
+  opts: GovernorOpts,
+): Governor {
+  const { hookTimeoutMs, approvalTimeoutMs, priceTable, redactToolInputs, log } =
+    opts;
+  const tracker = new FeatureTracker();
+
+  // event_id -> resolver for the awaited effector signal. The single SSE
+  // consumer dispatches signals here by in_response_to. Unmatched signals
+  // (e.g. an ask-followup after the hook already resolved) find no resolver
+  // and are dropped.
+  const awaiters = new Map<string, (sig: SignalEnvelope | undefined) => void>();
+
+  const sse = client.connectSignalsStream((sig) => {
+    const resolve = awaiters.get(sig.in_response_to);
+    if (resolve) resolve(sig);
+  });
+
+  let warnedDown = false;
+  let announcedUp = false;
+  let down = false;
+
+  async function beforeToolCall(
+    event: BeforeToolCallEvent,
+    ctx: ToolContext,
+  ): Promise<BeforeToolCallResult | undefined> {
+    const eventId = newEventId();
+    const signalPromise = new Promise<SignalEnvelope | undefined>((resolve) => {
+      const timer = setTimeout(() => {
+        awaiters.delete(eventId);
+        resolve(undefined);
+      }, hookTimeoutMs);
+      awaiters.set(eventId, (sig) => {
+        clearTimeout(timer);
+        awaiters.delete(eventId);
+        resolve(sig);
+      });
+    });
+
+    const features = tracker.extractAndRecord(event, ctx);
+    const post = await client.postSensor({
+      event_type: "tool-proposed",
+      event_id: eventId,
+      session_id: ctx.sessionId ?? ctx.sessionKey ?? "",
+      timestamp: new Date().toISOString(),
+      features,
+      // Tool inputs can carry secrets (commands, tokens). Operators may
+      // redact them; the brain does not condition on input (Move 1), only
+      // the daemon's ask-text preview uses it.
+      proposed_call: {
+        tool_name: event.toolName,
+        input: redactToolInputs ? null : event.params,
+      },
+    });
+
+    if (!post.ok) {
+      const r = awaiters.get(eventId);
+      if (r) r(undefined); // clean up timer + awaiter
+      if (!warnedDown) {
+        log(
+          `credence-pi: daemon unreachable at the configured URL; proceeding without governance`,
+        );
+        warnedDown = true;
+      }
+      down = true;
+      announcedUp = false;
+      return undefined; // fail open
+    }
+    if (down && !announcedUp) {
+      log("credence-pi: daemon reachable again; governance resumed");
+      announcedUp = true;
+      down = false;
+      warnedDown = false; // re-arm the unreachable warning for the next outage
+    }
+
+    const sig = await signalPromise;
+    return mapSignal(sig, eventId, client, approvalTimeoutMs);
+  }
+
+  async function afterToolCall(
+    event: AfterToolCallEvent,
+    _ctx: ToolContext,
+  ): Promise<void> {
+    // Correlate by the stable toolCallId (tools run in parallel).
+    await client.postSensor({
+      event_type: "tool-completed",
+      event_id: newEventId(),
+      in_response_to: event.toolCallId ?? "",
+      timestamp: new Date().toISOString(),
+      outcome: {
+        success: event.error == null,
+        duration_ms: event.durationMs ?? null,
+        result_summary: null,
+        error: event.error ?? null,
+      },
+    });
+  }
+
+  async function llmOutput(
+    event: LlmOutputEvent,
+    ctx: ToolContext,
+  ): Promise<void> {
+    const tc = computeTurnCost(event, priceTable);
+    await client.postSensor({
+      event_type: "turn-cost",
+      event_id: newEventId(),
+      session_id: ctx.sessionId ?? event.sessionId ?? "",
+      timestamp: new Date().toISOString(),
+      usd: tc.usd,
+      total_tokens: tc.total_tokens,
+      input_tokens: tc.input_tokens,
+      output_tokens: tc.output_tokens,
+      cache_read: tc.cache_read,
+      cache_write: tc.cache_write,
+      model: tc.model,
+    });
+  }
+
+  function cleanup(): void {
+    sse.close();
+    for (const resolve of awaiters.values()) resolve(undefined);
+    awaiters.clear();
+  }
+
+  return {
+    beforeToolCall,
+    afterToolCall,
+    llmOutput,
+    cleanup,
+    pendingCount: () => awaiters.size,
+  };
+}
+
 const plugin: PluginEntry = {
   id: "credence-pi",
   name: "credence-pi governance",
@@ -119,6 +283,7 @@ const plugin: PluginEntry = {
         ? cfg.approvalTimeoutMs
         : DEFAULT_APPROVAL_TIMEOUT_MS;
     const silent = cfg.silent === true;
+    const redactToolInputs = cfg.redactToolInputs === true;
     const priceTable = buildPriceTable(cfg.pricing);
 
     const log: Logger = (m, e) => {
@@ -132,120 +297,44 @@ const plugin: PluginEntry = {
       timeoutMs: hookTimeoutMs,
       logger: log,
     });
-    const tracker = new FeatureTracker();
-
-    // event_id -> resolver for the awaited effector signal. The single SSE
-    // consumer dispatches signals here by in_response_to. Unmatched
-    // signals (e.g. an ask-followup after the hook already resolved) find
-    // no resolver and are dropped.
-    const awaiters = new Map<string, (sig: SignalEnvelope | undefined) => void>();
-
-    const sse = client.connectSignalsStream((sig) => {
-      const resolve = awaiters.get(sig.in_response_to);
-      if (resolve) resolve(sig);
-    });
-    void sse; // SSE runs for the plugin's lifetime; OpenClaw owns shutdown.
-
-    let warnedDown = false;
-    let announcedUp = false;
-    let down = false;
-
-    // 1. Tool-call interception (no allowConversationAccess needed).
-    api.on(
-      "before_tool_call",
-      async (event, ctx): Promise<BeforeToolCallResult | void> => {
-        const eventId = newEventId();
-        const signalPromise = new Promise<SignalEnvelope | undefined>(
-          (resolve) => {
-            const timer = setTimeout(() => {
-              awaiters.delete(eventId);
-              resolve(undefined);
-            }, hookTimeoutMs);
-            awaiters.set(eventId, (sig) => {
-              clearTimeout(timer);
-              awaiters.delete(eventId);
-              resolve(sig);
-            });
-          },
-        );
-
-        const features = tracker.extractAndRecord(event, ctx);
-        const post = await client.postSensor({
-          event_type: "tool-proposed",
-          event_id: eventId,
-          session_id: ctx.sessionId ?? ctx.sessionKey ?? "",
-          timestamp: new Date().toISOString(),
-          features,
-          proposed_call: { tool_name: event.toolName, input: event.params },
-        });
-
-        if (!post.ok) {
-          const r = awaiters.get(eventId);
-          if (r) r(undefined); // clean up timer + awaiter
-          if (!warnedDown) {
-            log(
-              `credence-pi: daemon unreachable at ${daemonUrl}; proceeding without governance`,
-            );
-            warnedDown = true;
-          }
-          down = true;
-          announcedUp = false;
-          return undefined; // fail open
-        }
-        if (down && !announcedUp) {
-          log("credence-pi: daemon reachable again; governance resumed");
-          announcedUp = true;
-          down = false;
-        }
-
-        const sig = await signalPromise;
-        return mapSignal(sig, eventId, client, approvalTimeoutMs);
-      },
-      { priority: 100, timeoutMs: hookTimeoutMs + 1_000 },
-    );
-
-    // 2. Tool outcome (no allowConversationAccess needed). Correlate by
-    //    the stable toolCallId (tools run in parallel).
-    api.on("after_tool_call", async (event, _ctx) => {
-      await client.postSensor({
-        event_type: "tool-completed",
-        event_id: newEventId(),
-        in_response_to: event.toolCallId ?? "",
-        timestamp: new Date().toISOString(),
-        outcome: {
-          success: event.error == null,
-          duration_ms: event.durationMs ?? null,
-          result_summary: null,
-          error: event.error ?? null,
-        },
-      });
+    const gov = createGovernor(client, {
+      hookTimeoutMs,
+      approvalTimeoutMs,
+      priceTable,
+      redactToolInputs,
+      log,
     });
 
-    // 3. Per-turn cost (REQUIRES plugins.entries.credence-pi.hooks
-    //    .allowConversationAccess: true). Wrapped so a blocked
-    //    registration never breaks governance — cost is just absent.
+    api.on("before_tool_call", gov.beforeToolCall, {
+      priority: 100,
+      timeoutMs: hookTimeoutMs + 1_000,
+    });
+    api.on("after_tool_call", gov.afterToolCall);
+
+    // Per-turn cost REQUIRES plugins.entries.credence-pi.hooks
+    // .allowConversationAccess: true. Wrapped so a blocked registration
+    // never breaks governance — cost is just absent.
     try {
-      api.on("llm_output", async (event, ctx) => {
-        const tc = computeTurnCost(event, priceTable);
-        await client.postSensor({
-          event_type: "turn-cost",
-          event_id: newEventId(),
-          session_id: ctx.sessionId ?? event.sessionId ?? "",
-          timestamp: new Date().toISOString(),
-          usd: tc.usd,
-          total_tokens: tc.total_tokens,
-          input_tokens: tc.input_tokens,
-          output_tokens: tc.output_tokens,
-          cache_read: tc.cache_read,
-          cache_write: tc.cache_write,
-          model: tc.model,
-        });
-      });
+      api.on("llm_output", gov.llmOutput);
     } catch (err) {
       log(
         "credence-pi: llm_output hook unavailable (set hooks.allowConversationAccess:true for the cost signal)",
         err,
       );
+    }
+
+    // Close the SSE stream + drain awaiters on reset/delete/reload so a
+    // hot-reload does not accumulate daemon connections. Optional-chained
+    // for hosts predating the lifecycle API.
+    try {
+      api.lifecycle?.registerRuntimeLifecycle?.({
+        id: "credence-pi-governor",
+        description:
+          "Close the credence-pi daemon SSE stream and drain pending tool-call awaiters.",
+        cleanup: () => gov.cleanup(),
+      });
+    } catch (err) {
+      log("credence-pi: could not register lifecycle cleanup", err);
     }
   },
 };

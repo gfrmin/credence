@@ -19,6 +19,16 @@
         "description": "Max time to await the daemon's decision before failing open (proceeding without governance).",
         "default": 3000
       },
+      "approvalTimeoutMs": {
+        "type": "number",
+        "description": "How long OpenClaw waits for the user on an `ask` (requireApproval) before applying timeoutBehavior=deny.",
+        "default": 120000
+      },
+      "redactToolInputs": {
+        "type": "boolean",
+        "description": "Omit tool-call inputs from sensor events sent to the daemon (they can carry secrets/commands). Governance still works; the ask-dialog preview becomes generic.",
+        "default": false
+      },
       "silent": {
         "type": "boolean",
         "description": "Suppress info/warn logging.",
