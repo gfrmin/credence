@@ -76,6 +76,13 @@ jobs:
           npm run build
           npm test
 
+      - name: credence-pi OpenClaw-plugin build + tests
+        working-directory: apps/credence-pi/openclaw-plugin
+        run: |
+          npm install
+          npm run build
+          npm test
+
   smoke-build:
     name: Build amd64 + smoke test
     runs-on: ubuntu-latest
