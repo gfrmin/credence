@@ -223,6 +223,19 @@ the enqueued signal (with `signal_type`, `signal_id`, `in_response_to`,
 function emit_signal!(state::DaemonState, in_response_to::AbstractString,
                       action::Symbol, sensor_event::AbstractDict)::Dict{String, Any}
     eff = action_to_signal(action, sensor_event)
+    # Log the decision (event_type "decision") before emitting, so the
+    # dollars-saved surface (savings.jl) can account for governance the
+    # body never reports back — chiefly silent auto-blocks/auto-proceeds
+    # that produce no user-responded event. Decision records are DERIVED
+    # (replay reconstructs the posterior and hence the decisions from the
+    # logged sensor events), so they do not affect replay correctness:
+    # replay_user_responses ignores them. action_to_signal above has
+    # already validated `action`, so only manifest actions are logged.
+    append_event!(state.log_path, Dict{String, Any}(
+        "event_type"     => "decision",
+        "in_response_to" => string(in_response_to),
+        "action"         => string(action),
+    ))
     n = Threads.atomic_add!(_SIGNAL_ID_COUNTER, 1)
     signal = Dict{String, Any}(
         "signal_type"     => "effector",

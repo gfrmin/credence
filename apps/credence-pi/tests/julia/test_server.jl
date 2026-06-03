@@ -222,11 +222,15 @@ let path = tempname() * ".jsonl"
     @assert isapprox(expect(state.posterior[], Identity()), 3.0 / 5.0; atol=TOL)
     ok("tool-completed: log-only, no signal emitted, posterior unchanged")
 
-    # Verify log accumulated all three events.
+    # Verify log accumulated all events in order — including the "decision"
+    # records emit_signal! writes alongside each effector signal (for the
+    # dollars-saved surface; replay ignores them).
     records = Server.ObservationLog.read_log(path)
     @assert [r.event["event_type"] for r in records] ==
-            ["tool-proposed", "user-responded", "tool-completed"]
-    ok("handle_sensor_event flow appends log entries in order")
+            ["tool-proposed", "decision", "user-responded", "decision", "tool-completed"]
+    @assert records[2].event["action"] == "ask"
+    @assert records[4].event["action"] == "proceed"
+    ok("handle_sensor_event flow appends sensor + decision log entries in order")
 
     rm(path)
 end
