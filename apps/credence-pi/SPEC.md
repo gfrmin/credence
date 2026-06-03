@@ -218,6 +218,22 @@ Wire shape:
 
 `usd` is `null` when the provider reports zero cost or the model cannot be priced; the Move-2 surface applies a token×price fallback. Only the envelope is snake_case; there is no `features` dict here — cost is not a declared brain feature in Move 1 (it feeds the host-side savings surface and, in Move 2, a cost-denominated Functional).
 
+### `decision` records (Pass 2 — Move 2, daemon-emitted)
+
+Not a sensor event — the daemon writes one to the observation log whenever
+it emits an effector signal, so the dollars-saved surface can account for
+governance the body never reports back (chiefly silent auto-blocks /
+auto-proceeds, which produce no `user-responded`). Shape:
+
+```json
+{ "event_type": "decision", "in_response_to": "<tool-proposed event_id>", "action": "ask" }
+```
+
+`action` is one of `ask` / `proceed` / `block`. DERIVED: replay
+reconstructs the posterior (and hence the decisions) from the logged
+sensor events, so `replay_user_responses` ignores `decision` records and
+they do not affect replay correctness.
+
 ## Effector signals
 
 One outbound message type, parameterised by effector name.
