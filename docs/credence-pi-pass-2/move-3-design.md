@@ -21,10 +21,16 @@ blocking once it has been denied a few times.
   `P(X)`, which a decision never consumes and which cancels from the structure posterior. So the
   decision-relevant structure space is precisely **which features are parents of A** — edges *into* A.
 - **Prior over edges.** Each of the 5 feature→A edges is present independently with probability
-  `p = 0.5` ⇒ a **uniform prior over the 2⁵ = 32 structures**. We deliberately keep `p = 0.5` for the
-  first cut so that Occam falls out of the *marginal likelihood* rather than being smuggled into the
-  prior as a sparsity bias we would then have to defend. `p < 0.5` is reintroduced later as a
-  documented belief, once we have observed whether the 32 structures fragment as expected (Open Q1).
+  `p = 0.5` ⇒ a **uniform prior over the 2⁵ = 32 structures**. Framed precisely (the loose claim
+  "no bias in the prior" is wrong): independent inclusion at 0.5 gives **neutral per-edge marginals**
+  (`P(edge) = 0.5`, the decision-relevant quantity — so decisions are clean), but it induces a
+  `Binomial(5, 0.5)` prior on the *number of parents* (20/32 of the mass on 2–3-parent structures,
+  1/32 each on ∅ and all-edges). So there *is* an implicit complexity prior favouring medium
+  complexity; it is immaterial at five features and the *marginal likelihood* (not the prior) does the
+  Occam work. It stops being immaterial at scale — independent-inclusion priors do not self-correct
+  for multiplicity — where the **Scott–Berger** fix (a `Beta` hyperprior on `p`, i.e.
+  uniform-on-model-size) becomes the right move. `p < 0.5` is reintroduced later as a documented
+  belief, once we have watched whether the 32 structures fragment as expected (Open Q1).
 - **Per-structure belief.** Structure `S` (parent set) has one cell per element of the cross-product
   of its parents' finite spaces; each cell carries an independent `Beta(2,2)` over that context's
   approval rate. `∅` = a single cell = today's global brain; all-5-edges = the full ~4608-cell
@@ -45,6 +51,58 @@ What the edge prior does **not** capture is the *parameterisation of A's CPD*: t
 structure jumps straight to the full interaction table, skipping "both matter, no interaction / merged
 cells" (context-specific independence). That ladder is the **staged-tree / CEG** refinement = the
 fine-pooling frontier (Open Q2), out of scope for Move 3.
+
+## Architecture: where the brain lives (Route B — settled via expert review)
+
+The Pass-1 brain is five `.bdsl` files. This move asked: should the structure-BMA brain stay in the
+DSL (expand the S-expression surface with `mixture`/`product`/tagged-cell/firing-kernel constructors —
+**Route A**), or become a typed Julia brain-side module that *declares* the structure family +
+readout Functionals and *calls* the Tier-1 ops, with the `.bdsl` keeping the declared data —
+**Route B**? Settled on **Route B** via a written expert exchange. The decisive reasons:
+
+1. **There is almost no orchestration here.** The per-decision path is three calls — `condition`,
+   `expect` over a `LinearCombination`, `optimise`/`voi` — Pass-1's exact shape. What looked like
+   "orchestration" (enumerate 32 structures, allocate globally-unique tags, assemble the
+   mixture-of-products, build the per-context `FiringByTag`) is **construction of a typed belief
+   object too large to transcribe by hand** (a 32-component mixture of up-to-4608-cell products), not
+   reasoning over it. Route B accepts that this *declaration* is generated, not typed out — which is
+   exactly the constitution's canonical shape: applications **declare** data (Spaces, Measures,
+   Kernels, **Functionals**) and **call** Tier-1 primitives. The DSL's keep was never "every belief
+   object is hand-written in `.bdsl`"; it was "every belief *change* and every *decision* routes
+   through the primitives + stdlib." Route B preserves that whole.
+2. **A 32-structure brain is not human-auditable in *either* language.** Nobody reads it to verify
+   it. What a governance buyer can audit is the *invariant*: the policy provably cannot do
+   un-Bayesian arithmetic. At Pass-1 size "read the source" was a credible trust story; at 32
+   structures it has to become "the source is machine-checked to route through four primitives" — and
+   that story is *stronger* under Route-B-plus-lint than under a sprawling generated S-expression.
+
+**The guardrail Route B requires (non-optional).** The thin DSL surface was a *forcing function*:
+Invariant 1 held because there was no syntax for raw probability arithmetic — you could not extract a
+predictive and threshold it host-side because you could not say it. Julia can say it. So Route B
+**replaces the lost forcing function with an enforced one**: a `credence-lint` rule that flags raw
+arithmetic on belief-derived scalars (`weights`/`mean`/`expect`/predictive outputs) inside `brain/`.
+The canonical violation it must catch: pulling the scalar `P(approve | X)` out and doing the
+`{proceed, ask, block}` argmax in host arithmetic instead of handing the belief + the typed cost
+Functional to `optimise`. Without the lint, Invariant 1 is prose.
+
+**Library / wiring split (keeps `brain/` from rotting into a God-module).**
+- **(i) The typed belief-object constructors** — `MixturePrevision`, `ProductPrevision`,
+  `TaggedBetaPrevision`, `FiringByTag` — already live in `src/` and earn a *contract test*
+  (`test/test_product_bma_routing.jl` is that contract; it exercises construction → routing →
+  reweight end-to-end). These recur in Pass-3 CEG and the embedding extension.
+- **(ii) The credence-pi assembly** (`apps/credence-pi/brain/`) names the five features, the edge
+  prior `p`, and the cost utility, and wires them. The generic structure-BMA assembly functions
+  (edge-subset enumeration, tag allocation, mixture-of-products build, per-context kernel, `belief_at_X`
+  view) are factored as their own functions, *liftable* to `src/` when the CEG/embedding second
+  consumer concretely needs them (deferred per the extract-at-second-consumer rule — the assembly API
+  for staged trees is not yet known).
+
+**The sharper constitutional line this settles (durable).** DSL surface = constructors of the four
+**frozen types** only (`space`/`measure`/`kernel`). Compositions *within* a frozen type — and
+`Mixture`/`Product` *are* Previsions, not new types — are **stdlib**. Stdlib that **builds typed
+objects** is Julia (the execution layer); stdlib that **composes primitives** is `.bdsl` (`voi`,
+`optimise`). This permanently answers "should `mixture` be a DSL builtin": **no** — it is a Prevision
+composition, hence stdlib, hence (object-building) Julia.
 
 ## The declared shape, and the one genuinely-missing substrate piece
 
@@ -102,17 +160,58 @@ canalised (every weight-change still goes through the conjugate registry). The f
 not change. It is the kind of "implement the missing part of the Prevision machine" the author
 sanctioned; it is *not* a host reimplementation and *not* a second learning mechanism.
 
-With Code-1 in place, learning is a single `condition(top_mixture, kernel_F(X), obs)`; the
-model-averaged readout is a `LinearCombination` Functional over structures of `NestedProjection`s into
-each structure's cell-for-X, fed to `expect` — **not** a host loop.
+With Code-1 in place, learning is a single `condition(top_mixture, kernel_F(X), obs)`.
+
+**The decision side runs on a transient view, not the top object** (this refines the original
+"`LinearCombination` of `NestedProjection`s" sketch, which fails because the cell-for-X sits at a
+*different factor index* in each structure, so no single index-projection reads it across the
+heterogeneous mixture). Instead, for context X build
+
+    belief_at_X = MixturePrevision([ structure_s's cell-for-X : s ∈ structures ], top.log_weights)
+
+— **pure construction**: select each structure's cell-for-X (a `TaggedBetaPrevision`) and copy the
+*structure posterior weights* verbatim. No arithmetic on probabilities; the weights came from
+`condition`. Then the model-averaged readout is `expect(belief_at_X, Identity())` (closed-form
+`α/(α+β)` per component, weighted by the mixture), and the decision is `optimise`/`voi` over
+`belief_at_X` with typed linear-utility Functionals.
+
+**Equivalence lemma (why the view is exact for `voi` too).** Conditioning `belief_at_X` with a plain
+`BetaBernoulli` kernel updates each component (= each structure's cell-for-X) and reweights the
+structures by that cell's predictive — which is *identical* to Code-1's reweighting of `top` by
+`condition(top, FiringByTag_F(X), obs)` (the firing cell's predictive *is* the structure
+marginal-likelihood term). So `value`/`voi` computed on the view equal those for the full decision.
+Consequence: the whole decision path needs only pre-existing mixture/Beta `expect`/`condition` — **no
+new `Functional` type** (an earlier `TagProjection` idea is unnecessary).
 
 ## Decision + utility
 
-`decide-action` consumes the model-averaged predictive at the current X and runs EU-max over
-`{proceed, ask, block}` with `voi` gating `ask` — the Pass-1 mechanism (`bdsl/decide.bdsl`), now
-per-context. **Utility is linear in dollars**: EU-max then literally maximises expected dollars
-saved, so the optimised objective equals the headline KPI. Concavity, if wanted, comes later from an
-explicit *budget-state*, not `log(cost)` (Open Q3).
+`decide-action(top, features, cost)` builds `belief_at_X` and runs EU-max over `{proceed, ask, block}`
+with `voi` gating `ask` — the Pass-1 mechanism, now per-context.
+
+**Utility is linear in dollars.** With approval latent θ = `P(approve | X)`, the call's cost `c` (the
+per-turn USD estimate the body reports via `turn-cost`), and a false-block penalty `L` (config — the
+opportunity cost of blocking a call the user wanted), measured relative to a proceed baseline:
+
+    EU(proceed) = 0
+    EU(block)   = (1−θ)·c − θ·L           # save c on a wasteful call; lose L on a wanted one
+    EU(ask)     = voi − q                  # EVPI of one yes/no, minus interruption cost q
+
+EU-max then literally maximises expected dollars saved, so the optimised objective equals the headline
+KPI. `block` wins iff θ < c/(c+L): a cost-sensitive threshold, not a fixed one. At cold-start (every
+cell `Beta(2,2)`, θ=0.5 everywhere) with sensible `c < L`, `EU(block) < 0` and `voi > 0`, so **ask
+wins by computation** (calibration-friendly; matches Pass-1). Concavity, if wanted, comes later from
+an explicit *budget-state*, not `log(cost)` (Open Q3).
+
+**The typed-decision substrate (the only new piece beyond Code-1).** `EU(proceed)`/`EU(block)` are
+typed `LinearCombination`s over `Identity` — `expect(belief_at_X, LinearCombination([(−(c+L),
+Identity())], c))` is closed-form, never opaque-closure quadrature. `voi` is computed by a **typed
+`optimise`/`value`/`voi`/`net_voi` in `src/stdlib.jl`** that takes a *functional-per-action* preference
+(the same shape the skin's `handle_optimise` already dispatches inline — this **canonicalises and
+dedupes** that logic; it is not new capability). `ask`'s voi-gated EU enters `optimise` as a **constant
+`LinearCombination`** (`voi − q`), so all three actions are compared through the *one* canonical argmax
+— no host-side action selection (Invariant 1). Three exact Prevision-level `_predictive_ll` methods
+(`BetaPrevision`/`TaggedBetaPrevision`/`MixturePrevision`, mirroring the existing Measure-level ones)
+complete the gap that lets the typed `voi` reweight exactly.
 
 ## Architecture (body / sensor / skin / brain) — restated, and the two fixes
 
@@ -130,24 +229,66 @@ Bright line: **the body sends raw percepts; every probability and routing decisi
 
 ## What this lands (files)
 
-- **Code-1 (substrate):** `src/ontology.jl` (per-factor-routed `condition(::ProductMeasure/::ProductPrevision,…)`
-  + exact `_predictive_ll(::ProductPrevision,…)`); possibly a thin helper to build the
-  globally-unique-tag `FiringByTag` kernel from a context. `test/test_*.jl` oracle tests.
-- **Code-2 (brain):** rewrite `apps/credence-pi/bdsl/prior.bdsl` (the structure mixture + tagged
-  cells), `kernel.bdsl`, `decide.bdsl` (per-context EU-max + linear cost utility, readout via
-  `LinearCombination`); wire features into `decide-action`/`observe-response`; fix the replay
-  context-join (`daemon/observation_log.jl`, `daemon/server.jl`). `apps/credence-pi/tests/julia/`.
+- **Code-1 (substrate — DONE, committed `e45e9e8`):** `src/ontology.jl` per-factor-routed
+  `condition(::ProductMeasure, FiringByTag)` + exact `_predictive_ll(::ProductMeasure)`;
+  `test/test_product_bma_routing.jl` (18-check oracle; also the constructor contract test).
+- **Code-1b (typed-decision substrate):** `src/stdlib.jl` typed `optimise`/`value`/`eu`/`voi`/`net_voi`
+  over a functional-per-action preference (canonicalises the skin's inline `functional_per_action`
+  loop); `src/ontology.jl` three exact Prevision-level `_predictive_ll` methods; `src/Credence.jl`
+  exports. `test/test_typed_decision.jl`.
+- **Code-2 (brain — Route B):** `apps/credence-pi/brain/feature_brain.jl` — generic structure-BMA
+  assembly (edge enumeration, tag allocation, mixture-of-products build, per-context `FiringByTag`,
+  `belief_at_X` view, linear-cost Functionals) + credence-pi wiring (`make-prior`/`decide-action`/
+  `observe-response` injected into the env from the declared feature spaces + prior `p` + cost
+  utility; daemon call-site unchanged). The Pass-1 `prior.bdsl`/`kernel.bdsl`/`decide.bdsl` reasoning
+  is retired in favour of the Julia brain; `features.bdsl`/`capabilities.bdsl` stay as declared data.
+  Daemon: forward features into `decide-action` (`server.jl` Fix 1), per-turn cost plumbing, and the
+  replay context-join `replay_user_responses → (context, obs)` (`observation_log.jl`/`server.jl`
+  Fix 2). `apps/credence-pi/tests/julia/test_feature_brain.jl` (oracle reproduction + decision-margin
+  instrumentation + cold-start-asks + degenerate reductions).
+- **Lint (the Route-B guardrail):** `tools/credence-lint/credence_lint.py` rule flagging raw
+  arithmetic on belief-derived scalars inside `apps/credence-pi/brain/`; corpus self-test entry.
 - **Code-3 (demo + savings):** extend `demo/governance_demo.jl` to show the surgical win — block the
   repeated loop while still proceeding/asking on a novel call. `savings.jl` unchanged.
+
+## Feature cardinality vs recurrence (the real over-pooling risk)
+
+The "complex structures never split / over-pool forever" worry is real but it is **not** a `p` or a
+marginal-likelihood pathology — it is **feature cardinality vs context recurrence**. A feature earns
+its edge only through *recurrence of its values*: BMA learns "knowing F helps" by predicting a *repeat*
+of an F-value better than the pool does, and that reward requires a *second visit* to a cell. A feature
+whose values are effectively unique per observation can never accumulate per-cell evidence — every
+cell sees its first and only observation, predicts the prior mean, and the structure including it is
+permanently penalised for fragmentation while never being rewarded. So **the cardinality of each
+declared `Space` is a brain-relevant design parameter** that decides whether each edge is even
+learnable.
+
+For Move 3's five features this is **already handled** and verified:
+- All five spaces are modest finite buckets (8·4·9·4·4 = 4608 cells at the all-edges vertex).
+- `time-since-last-user-message` — the one in the danger zone if it were ever continuous/fine-binned —
+  is declared as 4 coarse buckets (`lt-30s lt-2m lt-10m gt-10m`) **and** the body emits exactly those
+  buckets (`openclaw-plugin/src/features/.../time_since_user.ts` returns one of the four strings, never
+  a raw number — verified). The bucketing directive is satisfied at *both* the declaration and the
+  perception layer.
+- `recent-repetition-count` recurs by construction — which is *why* the G1 spike fired, and a caveat
+  on the spike: its clean result is partly an artefact of exercising the one feature immune to the
+  recurrence problem. The remaining three (`tool-name`, `working-directory-relative`,
+  `parent-tool-call-name`) recur naturally.
 
 ## Honesty
 
 - The surgical win is *demonstrated on synthetic data with exact oracle tests*; real-world efficacy
   still needs the user-gated deploy. No efficacy claim is made from synthetic data.
-- `p = 0.5` is a chosen prior, stated as such; the marginal likelihood (not the prior) does the
-  Occam work for the first cut.
+- `p = 0.5` gives **neutral per-edge marginals** (not "no prior bias"; it is `Binomial(5,0.5)` on
+  parent count — see "Prior over edges"); the marginal likelihood does the Occam work for the first cut.
 - Cost is per-turn (pi exposes no per-tool usage); the linear-cost utility uses the per-turn estimate,
   flagged where it surfaces.
+- **Decision margin must be instrumented, not assumed.** The spike reached 0.72 structure posterior →
+  predictive 0.5→0.32 → block on six observations. That margin *shrinks* as features that fragment
+  without informing are added (each dilutes the model-averaged predictive back toward the pool). The
+  oracle test reports the structure-weight at which EU-max flips `proceed→block` and the head-room
+  above it at 0.72 — the win is only "surgical" if `block` fires at a posterior reachable on the
+  handful of calls a real loop gives.
 
 ## Verification
 
