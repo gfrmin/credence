@@ -53,9 +53,15 @@
 ; does NOT "emerge naturally" through VOI as once claimed: this is a Bayesian
 ; *learner*, not a Bayesian *explorer*. Under cost pressure it economises onto
 ; cheap tools and under-explores expensive-but-reliable ones, and is beaten by
-; an optimistic-greedy rule on the benchmark. The short horizon caps any
-; exploration gain at ~+16 (scripts/paper1-reachable.jl: ceiling 306, reachable
-; ~205); adequate exploration would require horizon-aware VOI (future work).
+; an optimistic-greedy rule on the benchmark.
+; The fix — `horizon-step` below — values information over the remaining
+; question horizon (still pure EU-max, exploration emergent). It BEATS greedy
+; when categories are given (oracle: 216.8 vs 189.4, scripts/paper1-horizon-gate.jl
+; pins the exact decoupled ceiling at 211.8) but LOSES under inferred (fair)
+; categories (scripts/paper1-horizon-inferred.jl), because category-attribution
+; noise corrupts the per-category reliability signal exploration depends on —
+; under every credit rule. The exploration advantage is contingent on attribution
+; quality; that contingency is the Paper 1 finding, not a defect of this code.
 (define agent-step
   (lambda (answer-measure reliability-measures tool-costs coverage-probs submit-value abstain-value penalty-wrong)
     (let n (length (support answer-space))
@@ -103,3 +109,101 @@
 (define update-on-response
   (lambda (answer-measure k response)
     (condition answer-measure k response)))
+
+; ============================================================
+; horizon-step — horizon-aware VOI tool selection (Paper 1 B4)
+;
+; agent-step's VOI is MYOPIC: it values a query only for the
+; current question's answer decision, so it never explores a tool
+; whose answer it won't submit — a Bayesian *learner*, not a
+; Bayesian *explorer*. horizon-step values a PROBE by its expected
+; improvement to the best single-submit over the REMAINING
+; (horizon - 1) same-category questions, minus the probe fee.
+; Exploration is EMERGENT from EU maximisation over the question
+; horizon — no epsilon-greedy, no exploration bonus.
+;
+; Mechanism (decoupled, faithful to the host: every queried tool is
+; learned from ground-truth feedback): submit one tool s, and
+; optionally probe one tool r for information only. Returns
+; (list submit-tool probe-tool), 0-indexed; probe-tool = -1 = no probe.
+;
+; Depth-1 lookahead: the (horizon - 1) factor amortises a probe's
+; information value over the remaining same-category questions. The
+; exact (unbounded-depth) ceiling and this depth-1 capture are
+; pinned by scripts/paper1-horizon-gate.jl (greedy 189.4 < depth-1
+; 217.6 < — exact decoupled ceiling 211.8).
+; ============================================================
+
+; max of a non-empty numeric list
+(define hv-maxlist
+  (lambda (lst) (fold (lambda (a b) (if (> a b) a b)) lst)))
+
+; expected submit reward (pre-cost) of a reliability belief
+(define hv-reward
+  (lambda (rel rplus rminus)
+    (+ (* (mean rel) rplus) (* (- 1.0 (mean rel)) rminus))))
+
+; best single-submit EU over all tools for ONE fresh question
+(define hv-one-q
+  (lambda (rels costs rplus rminus)
+    (hv-maxlist
+      (map (lambda (i) (- (hv-reward (nth rels i) rplus rminus) (nth costs i)))
+           (range (length rels))))))
+
+; replace element i of a list with v
+(define hv-set
+  (lambda (lst i v)
+    (map (lambda (j) (if (= j i) v (nth lst j))) (range (length lst)))))
+
+; condition a reliability belief on a correctness outcome (1.0 / 0.0)
+(define hv-learn
+  (lambda (rel outcome) (condition rel reliability-kernel outcome)))
+
+; depth-1 horizon value of action (submit s, probe r); r < 0 = no probe
+(define hv-action-value
+  (lambda (rels costs horizon rplus rminus s r)
+    (let ps (mean (nth rels s))
+    (let imm (- (hv-reward (nth rels s) rplus rminus) (nth costs s))
+      (if (< r 0)
+        ; submit-only s: s's outcome teaches s for future questions
+        (let rels-c (hv-set rels s (hv-learn (nth rels s) 1.0))
+        (let rels-w (hv-set rels s (hv-learn (nth rels s) 0.0))
+          (+ imm (* (- horizon 1.0)
+                    (+ (* ps (hv-one-q rels-c costs rplus rminus))
+                       (* (- 1.0 ps) (hv-one-q rels-w costs rplus rminus)))))))
+        ; submit s + probe r: both outcomes teach for future questions
+        (let pr (mean (nth rels r))
+        (let imm2 (- imm (nth costs r))
+        (let s-c (hv-learn (nth rels s) 1.0)
+        (let s-w (hv-learn (nth rels s) 0.0)
+        (let r-c (hv-learn (nth rels r) 1.0)
+        (let r-w (hv-learn (nth rels r) 0.0)
+          (+ imm2 (* (- horizon 1.0)
+            (+ (* ps pr                  (hv-one-q (hv-set (hv-set rels s s-c) r r-c) costs rplus rminus))
+               (* ps (- 1.0 pr)          (hv-one-q (hv-set (hv-set rels s s-c) r r-w) costs rplus rminus))
+               (* (- 1.0 ps) pr          (hv-one-q (hv-set (hv-set rels s s-w) r r-c) costs rplus rminus))
+               (* (- 1.0 ps) (- 1.0 pr)  (hv-one-q (hv-set (hv-set rels s s-w) r r-w) costs rplus rminus))))))))))))))))
+
+; horizon-step: choose (submit s, probe r) maximising depth-1 horizon value
+(define horizon-step
+  (lambda (reliability-measures tool-costs horizon submit-value abstain-value penalty-wrong)
+    (let rels reliability-measures
+    (let costs tool-costs
+    (let rplus submit-value
+    (let rminus penalty-wrong
+    (let n (length rels)
+      (let result
+        (fold-init
+          (lambda (best s)
+            (fold-init
+              (lambda (best2 rr)
+                (let r (- rr 1)                       ; rr in 0..n -> r in -1..n-1
+                  (if (= r s)
+                    best2                              ; cannot probe the submit tool
+                    (let v (hv-action-value rels costs horizon rplus rminus s r)
+                      (if (> v (nth best2 2)) (list s r v) best2)))))
+              best
+              (range (+ n 1))))
+          (list 0 -1 -1000000.0)
+          (range n))
+        (list (nth result 0) (nth result 1))))))))))
