@@ -6,12 +6,16 @@
 # on learned θ). Maximise over k. The peak is the best any explore-then-exploit
 # schedule can reach given ~10-15 questions/category.
 #
-# Result: peaks at k=1 = 205.0 then COLLAPSES (k=2=187 < k=0=189) — two rounds is
-# worse than not exploring. The horizon affords ~one exploration round, which
-# cannot recover the 101-pt gap to the 306 ceiling. So horizon-aware VOI tops out
-# at ≤+16 over free greedy: horizon-locked. The bound is conservative (query-all,
-# majority-vote, fixed-k all slack it down); the SHAPE is family-robust. Offline:
-#   julia --project=. scripts/paper1-reachable.jl
+# Result: this CONSERVATIVE scheme (query-ALL on explore questions, MAJORITY-vote
+# submit) peaks at k=1 = 205.0 then collapses. SUPERSEDED INTERPRETATION: an
+# earlier reading took this as "horizon-locked, ≤+16, horizon-aware VOI is future
+# work." That was an artifact of query-all's cost + majority-vote's wasted signal.
+# The decoupled scheme (probe a subset for the FEE only, submit the best-LEARNED
+# answer — the deployed mechanism) reaches 248 / exact-optimum 211.8, +22 over
+# greedy: scripts/paper1-horizon-gate.jl. horizon-aware VOI was then BUILT
+# (agent.bdsl:horizon-step, oracle 216.8 > greedy 189.4). This script is retained
+# as the conservative-bound provenance; the live ceiling is paper1-horizon-gate.jl.
+# Offline:  julia --project=. scripts/paper1-reachable.jl
 const ROOT = normpath(joinpath(@__DIR__, ".."))
 include(joinpath(ROOT, "apps", "julia", "qa_benchmark", "host.jl"))
 using Random
