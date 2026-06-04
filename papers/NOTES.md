@@ -144,23 +144,38 @@ mechanism for the problem. Phase B's job is to find the conditions under
 which that claim is empirically defensible, and report honestly if it
 isn't.
 
-### Phase B4 outcome (2026-06): the bet was refuted — and that is the result
+### Phase B4 outcome (2026-06): the exploration–attribution contingency
 
-Phase B's bet (above) was that fair conditions would vindicate VOI: remove the
-given-category advantage and the marginal value of VOI's tool-by-tool reasoning
-would show. **The data refuted it.** Under inferred categories the greedy>VOI gap
-*widened* (+25.7 → +39.2) — VOI is more sensitive to category-inference noise
-than greedy. The honest, stronger result is the inversion: cost-efficiency is
-earned by the **belief substrate** (reliability learning + category inference),
-not the VOI action layer. Myopic VOI is a Bayesian *learner*, not an *explorer*,
-and loses to optimistic-greedy at this horizon and mix; gating experiments cap
-any action-policy gain at ≤+16 over greedy (known-θ ceiling 306, reachable ~205,
-horizon-locked), while the inference lever is 40–53. Thesis broadened to
-"Bayesian tool selection," VOI scoped to its cheap-and-dominant-tool niche;
-genre = analysis/architecture (arXiv cs.AI). This is Pivot 3 → 4, driven (per the
-discipline above) by the specific observation that fair conditions *widened*
-rather than closed the greedy–VOI gap. Full locked argument + tables:
-`papers/RESULTS.md`; OQ5 reversed to no-π-injection (master-plan B4/B5 section).
+Phase B's bet was that fair conditions would vindicate VOI. The data refined it
+into a sharper, falsifiable law. Trajectory (each step driven, per the discipline
+above, by a specific observation; full provenance in `docs/paper1/b4-*.md`):
+
+1. Myopic VOI loses to greedy in **both** conditions (oracle −25.7, fair −39.2) —
+   it is a Bayesian *learner*, not an *explorer* (never probes a tool whose answer
+   it won't submit). Under-exploration, not a substrate defect.
+2. A first gating pass (conservative query-all/majority `paper1-reachable.jl`) read
+   this as "horizon-locked, ≤+16, future work." **That was wrong** — an artifact of
+   the conservative scheme. The *decoupled* mechanism (probe for the fee, submit the
+   best-learned answer — the deployed update) reaches an exact horizon-optimum of
+   211.8, +22 over greedy (`paper1-horizon-gate.jl`).
+3. So **horizon-aware VOI was built** (`agent.bdsl:horizon-step`, pure EU-max over
+   the question horizon) and **beats greedy with given categories: 216.8 vs 189.4
+   (+27)**, depth-1 sufficient (`paper1-horizon-depth.jl`).
+4. But under **inferred** categories it **loses** to greedy, robustly across submit
+   policy, probe intensity, confidence gating, and all three credit rules
+   (soft/hard/post; `paper1-horizon-inferred.jl`). Category-attribution noise
+   corrupts the per-category reliability signal exploration depends on; minimal-query
+   optimism wins.
+
+**The finding (the contingency law):** exploration's value in category-conditioned
+tool selection is contingent on attribution quality. +27 oracle and the fair loss
+are two points on one curve. The substrate is vindicated both conditions; VOI is
+the frugal frontier point (dominates Llama); greedy is a Bayesian-family member, so
+the family owns the cheap frontier. Genre = empirical "when does VOI pay" study with
+a constitution-clean method + mechanism (arXiv cs.AI). Bonus: the credit-rule ×
+query-strategy interaction, and B2c-soft-credit shown a suboptimal silent
+approximation to post-credit (constitution follow-up, `b4-credit-rule-verdict.md`).
+Full locked argument + tables: `papers/RESULTS.md`; OQ5 reversed to no-π-injection.
 
 ### Greedy ablation result interpretation
 
