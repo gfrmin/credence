@@ -177,6 +177,33 @@ query-strategy interaction, and B2c-soft-credit shown a suboptimal silent
 approximation to post-credit (constitution follow-up, `b4-credit-rule-verdict.md`).
 Full locked argument + tables: `papers/RESULTS.md`; OQ5 reversed to no-π-injection.
 
+### Phase C (2026-06): `credence.tex` reframed to the contingency law
+
+The paper LaTeX (the master plan's "Phase D" rewrite, executed as **Phase C**) was
+rewritten against the locked `papers/RESULTS.md`, inferred-primary:
+
+- **Abstract + contributions** lead with the contingency law; the v1
+  "+163.7 / optimal zero-cost / 37% of frontier / dominating 3×" parity gloss is gone.
+- **§3.4** adds the myopic-vs-horizon-aware VOI distinction (a horizon-VOI equation;
+  exploration emergent from pure EU-max). **§3.5/§4** introduce category *inference* —
+  a Gaussian Naive-Bayes classifier (LOO 0.78), named generatively, **not**
+  discriminative multinomial logistic — with oracle/inferred as the two conditions;
+  optimism-greedy promoted from "ablation" to a principled Bayesian-family member;
+  LLMs reused on raw text (DPI / input-symmetry, no π-injection).
+- **§5** restructured to the decomposition + three pillars: main fair table, the
+  contingency-law decomposition (horizon +27 oracle / greedy +15 fair), the credit-rule
+  de-confound (greedy wins soft/hard/post), the per-category mechanism, the oracle
+  skyline. B2c-soft-credit disclosed as a suboptimal approximation in methods; the 2nd
+  interaction law kept strictly subordinate; the accuracy paradox retained as secondary.
+- **Figure** `pareto.{pdf,png}` regenerated: Panel A the contingency-law slope chart
+  (the horizon×greedy crossover), Panel B the cost frontier. **PDF rebuilds clean**
+  (17 pp, no undefined refs). The cost axis is tool *cost* per question throughout —
+  the product-order Llama-domination is on cost (1.32 < 1.44), not call-count
+  (corrected from a loose "fewer tool-calls" phrasing in RESULTS.md).
+
+Issue #111 (migrate deployed inferred agents from B2c soft-credit to posterior-weighted
+credit) is code follow-up, **not** part of Phase C.
+
 ### Greedy ablation result interpretation
 
 Phase A's bootstrap (`papers/paper1/bootstrap-results.md`, 2026-05-04):
@@ -257,7 +284,7 @@ Out of scope (deferred to other Papers / Phase D):
 - CIRL / preference learning → Paper 5
 - CEG / staged-tree connections → Paper 6
 - Programs-as-options → Paper 7
-- LaTeX rewrite → Phase D
+- LaTeX rewrite → **done as Phase C** (the master plan's "Phase D"); see below
 - DSL primitive additions → not expected; if category inference cannot
   be expressed in existing primitives that is itself a finding worth
   separate discussion
