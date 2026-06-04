@@ -797,6 +797,19 @@ function expect(p::Prevision, lc::LinearCombination)
     total
 end
 
+# Disambiguate MixturePrevision × LinearCombination — both `expect(::MixturePrevision,
+# ::TestFunction)` and `expect(::Prevision, ::LinearCombination)` match. Expand by
+# linearity, delegating each sub-functional back to the mixture recursion (exact,
+# closed-form on scalar leaves). Exercised by the credence-pi feature brain's
+# per-context EU readout (LinearCombination over Identity on a mixture of cells).
+function expect(p::MixturePrevision, lc::LinearCombination)
+    total = lc.offset
+    for (c, f) in lc.terms
+        total += c * expect(p, f)
+    end
+    total
+end
+
 # Measure-level probability via indicator kernel. The generic path
 # integrates the indicator over the measure's support; specialised
 # methods handle component-level events (TagSet on MixtureMeasure).
