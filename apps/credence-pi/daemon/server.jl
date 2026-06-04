@@ -32,12 +32,19 @@ using JSON3
 using Random: randstring
 
 include(joinpath(@__DIR__, "observation_log.jl"))
-using .ObservationLog: append_event!, replay_user_responses
+using .ObservationLog: append_event!, replay_user_responses, replay_contexts
 
 # Pull the parent's Credence module — server.jl runs under the test/run
 # loader which has already done `using Credence`.
 import Main: Credence
 using .Credence: Eval, Parse
+
+# The Route-B feature-conditioned brain (Pass 2): typed Julia that declares the
+# structure-BMA family + Functionals and calls the Tier-1 ops. `wire_brain!`
+# injects make-prior / decide-action / observe-response / followup-after-response
+# into the BDSL env, so the call-sites below are unchanged in shape.
+include(joinpath(@__DIR__, "..", "brain", "feature_brain.jl"))
+using .FeatureBrain: wire_brain!
 
 export start_daemon, stop_daemon, DaemonState
 export SignalQueue, enqueue!, snapshot, drain!
@@ -114,6 +121,12 @@ mutable struct DaemonState
     log_path::String
     bdsl_dir::String
     closing::Threads.Atomic{Bool}
+    # Pass 2: per-turn cost (latest priced turn-cost USD, or nothing) feeds the
+    # cost-denominated utility; `pending_contexts` rejoins a user-responded to the
+    # features of its originating tool-proposed (by event_id) so the brain
+    # conditions on the right cell. Both are transport bookkeeping, not reasoning.
+    last_cost::Ref{Any}
+    pending_contexts::Dict{String, Any}
 end
 
 """
@@ -129,12 +142,18 @@ function load_env(bdsl_dir::AbstractString)::Eval.Env
     for expr in Parse.parse_all(read(stdlib_path, String))
         Eval.eval_dsl(expr, env)
     end
-    for fname in ("capabilities.bdsl", "features.bdsl",
-                  "prior.bdsl", "kernel.bdsl", "decide.bdsl")
+    # Pass 2 / Route B: the `.bdsl` files carry DECLARED DATA only — the
+    # capability manifest, the feature spaces, and the utility constants. The
+    # reasoning (make-prior / decide-action / observe-response) is injected by the
+    # typed Julia brain via `wire_brain!`, which reads the declared feature spaces
+    # and utility constants out of this same env. (The Pass-1 prior/kernel/decide
+    # `.bdsl` brain is retired — see docs/credence-pi-pass-2/move-3-design.md.)
+    for fname in ("capabilities.bdsl", "features.bdsl", "utility.bdsl")
         for expr in Parse.parse_all(read(joinpath(bdsl_dir, fname), String))
             Eval.eval_dsl(expr, env)
         end
     end
+    wire_brain!(env)
     env
 end
 
@@ -149,11 +168,14 @@ function init_state(; bdsl_dir::AbstractString, log_path::AbstractString)::Daemo
     env = load_env(bdsl_dir)
     posterior = env[Symbol("make-prior")]()
     obs_fn = env[Symbol("observe-response")]
-    for o in replay_user_responses(log_path)
-        posterior = obs_fn(posterior, o)
+    # Pass 2: replay each user-responded REJOINED to its tool-proposed features
+    # (by in_response_to), so the feature-conditioned update lands in the right
+    # cell. `replay_contexts` yields (features, obs) pairs in log order.
+    for (features, o) in replay_contexts(log_path)
+        posterior = obs_fn(posterior, features, o)
     end
     DaemonState(env, Ref{Any}(posterior), SignalQueue(), log_path, bdsl_dir,
-                Threads.Atomic{Bool}(false))
+                Threads.Atomic{Bool}(false), Ref{Any}(nothing), Dict{String, Any}())
 end
 
 # ── Signal templating ──────────────────────────────────────────────────
@@ -279,23 +301,42 @@ function handle_sensor_event(state::DaemonState,
     # 2. Dispatch.
     event_type = get(event_dict, "event_type", "")
     if event_type == "tool-proposed"
+        # Fix 1: forward the raw feature dict + the latest per-turn cost into the
+        # brain. Transport only — the cell-mapping / EU-max happens brain-side.
+        # The features are also stashed so the matching user-responded can rejoin
+        # them (Fix 2 / context-join).
+        features = get(event_dict, "features", nothing)
+        event_id = string(get(event_dict, "event_id", ""))
+        features === nothing &&
+            error("tool-proposed event $event_id missing required 'features' (Pass 2 brain)")
+        state.pending_contexts[event_id] = features
         decide = state.env[Symbol("decide-action")]
-        action = decide(state.posterior[])
+        action = decide(state.posterior[], features, state.last_cost[])
         action isa Symbol || error("decide-action returned non-Symbol: $(typeof(action))")
-        emit_signal!(state, string(get(event_dict, "event_id", "")),
-                     action, event_dict)
+        emit_signal!(state, event_id, action, event_dict)
 
     elseif event_type == "user-responded"
+        in_response_to = string(get(event_dict, "in_response_to", ""))
         response = get(event_dict, "response", "")
         if response == "yes" || response == "no"
-            obs = response == "yes" ? 1 : 0
-            obs_fn = state.env[Symbol("observe-response")]
-            state.posterior[] = obs_fn(state.posterior[], obs)
+            # Fix 2: rejoin to the originating tool-proposed's features so the
+            # update lands in the right cell. A response with no remembered
+            # context (e.g. daemon restarted mid-turn — the in-memory map is
+            # empty until replay rebuilds it) is logged but not conditioned on,
+            # rather than mis-conditioned against a guessed context.
+            features = get(state.pending_contexts, in_response_to, nothing)
+            if features !== nothing
+                obs = response == "yes" ? 1 : 0
+                obs_fn = state.env[Symbol("observe-response")]
+                state.posterior[] = obs_fn(state.posterior[], features, obs)
+            else
+                @warn "user-responded with no remembered context; not conditioning" in_response_to
+            end
+            delete!(state.pending_contexts, in_response_to)
         end
         followup_fn = state.env[Symbol("followup-after-response")]
         followup = followup_fn(event_dict)
         if followup isa Symbol && followup !== :nothing
-            in_response_to = string(get(event_dict, "in_response_to", ""))
             emit_signal!(state, in_response_to, followup, event_dict)
         end
 
@@ -303,13 +344,12 @@ function handle_sensor_event(state::DaemonState,
         # Pass 1: log only. Pass 2 will condition on outcome features.
 
     elseif event_type == "turn-cost"
-        # Pass 2 / Move 1: per-turn token + USD cost, emitted by the
-        # OpenClaw-plugin body's llm_output hook. Logged for the
-        # dollars-saved surface (Move 2) and the cost-denominated
-        # utility; the brain does not condition on it and emits no
-        # signal. Logged-first like every event (step 1 above), so the
-        # branch only documents intent and suppresses the unknown-type
-        # warning.
+        # Per-turn USD cost (OpenClaw-plugin llm_output hook). Logged for the
+        # dollars-saved surface and stashed as the latest cost estimate for the
+        # cost-denominated utility (decide-action reads `state.last_cost`). The
+        # brain does not CONDITION on it and emits no signal. `usd` may be null
+        # (model unpriced) — the brain falls back to a configured per-call cost.
+        state.last_cost[] = get(event_dict, "usd", nothing)
 
     else
         @warn "handle_sensor_event: unknown event_type" event_type

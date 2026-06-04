@@ -1,0 +1,41 @@
+; ============================================================
+; utility.bdsl — declared utility + prior constants (Pass 2).
+;
+; DATA the operator sets, read by the typed Julia brain
+; (apps/credence-pi/brain/feature_brain.jl) at wire time. Per
+; Route B (docs/credence-pi-pass-2/move-3-design.md): the .bdsl
+; declares the numbers a human chooses; the Julia brain builds
+; the (too-large-to-transcribe) belief object and runs EU-max.
+;
+; The brain falls back to these same defaults if the file is
+; absent, so they are documentation as much as configuration.
+; ============================================================
+
+; Prior over BN edges: each feature→approval edge included
+; independently with this probability. 0.5 ⇒ uniform over the
+; 2⁵ = 32 structures (neutral per-edge marginals; the marginal
+; likelihood does the Occam work). See "Prior over edges".
+(define edge-inclusion-prior 0.5)
+
+; Per-cell prior: Beta(α, β) over each context's approval rate.
+(define cell-prior-alpha 2.0)
+(define cell-prior-beta 2.0)
+
+; False-block aversion λ (unitless): how many wrongly-blocked
+; wanted calls equal one allowed wasteful call. Block wins iff
+; P(approve|X) < 1/(1+λ); λ=1 ⇒ neutral threshold 0.5. Raise it
+; to make the governor more conservative (block only when more
+; certain a call is unwanted).
+(define false-block-aversion 1.0)
+
+; Interruption cost q (dollars): the disutility of asking the
+; user. EU(ask) = voi − q, so the brain only asks when one
+; yes/no is worth more than q. At cold-start voi = 0.1·c, so q
+; below that lets a fresh, modestly-priced call ask (learn)
+; rather than proceed blindly.
+(define interrupt-cost 0.02)
+
+; Fallback per-call cost (dollars) used when the body reports no
+; priced turn-cost (model unpriced / hook unavailable). Scales
+; the stakes; does not move the block/proceed threshold.
+(define fallback-call-cost 0.5)
