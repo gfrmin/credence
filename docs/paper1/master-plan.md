@@ -195,7 +195,10 @@ findings: credit-rule × query-strategy interaction; B2c soft-credit shown a
 suboptimal silent approximation to post-credit (constitution follow-up,
 `docs/paper1/b4-credit-rule-verdict.md`). Deliverables: `papers/RESULTS.md`,
 `scripts/paper1-horizon-*`, `agent.bdsl:horizon-step` + host wiring. The Paper 1
-LaTeX rewrite (Phase C/D) is downstream, against the locked RESULTS.md.
+LaTeX rewrite (this plan's "Phase D") was executed downstream as **Phase C**
+(2026-06) against the locked RESULTS.md: `credence.tex` reframed inferred-primary to
+the contingency law, `pareto.{pdf,png}` regenerated, PDF rebuilt clean. See
+`papers/NOTES.md` "Phase C" for the section-by-section summary.
 
 ---
 
@@ -444,9 +447,10 @@ OQ5, and OQ7 as recorded inline above, and adds three notes.
 inference component implemented in B2b is **Gaussian Naive Bayes on
 sentence embeddings with a Dirichlet class prior** — a *generative*
 model — not a *discriminative* multinomial logistic. Paper language
-(and `credence.tex` §3.3, when written) must describe it as such. This
-rename rides along with the Phase D rewrite of `credence.tex`; nothing
-currently on master mis-names it.
+(and `credence.tex`, when written) must describe it as such. **Done
+(Phase C, 2026-06):** `credence.tex` §3.5/§4 introduce it as Gaussian
+Naive Bayes, generatively named; the rewrite contains no "multinomial
+logistic" prose. Nothing on master mis-names it.
 
 **Reliability updates under category uncertainty — exact conditioning,
 not MAP (revised 2026-05-31).** An earlier draft of this section proposed
@@ -513,8 +517,9 @@ something is tempting to slip in, it goes here instead.
 - **Preference learning from implicit feedback / extended CIRL** — Paper 5.
 - **CEG model selection / staged-tree connections** — Paper 6.
 - **Programs-as-options / closed-loop policy framework** — Paper 7.
-- **Paper 1 LaTeX rewrite** — Phase D, after B5. Phase B does not edit
-  `papers/paper1/credence.tex`.
+- **Paper 1 LaTeX rewrite** — done downstream as **Phase C** (2026-06), after
+  B4 landed. Phase B did not edit `papers/paper1/credence.tex`; Phase C did,
+  against the locked `papers/RESULTS.md`.
 - **DSL primitive additions** — none expected. If category inference can
   be expressed in existing primitives (`condition`, `expect`, `voi`,
   `MixtureMeasure`, `CategoricalMeasure`, `Kernel`), B2 uses them. Adding
@@ -541,9 +546,10 @@ Phase B is finished when all of the following hold:
   in region X / does not occupy a non-empty Pareto region" — explicit,
   verifiable from the new RESULTS.md tables.
 - Updated paired-bootstrap results in `papers/paper1/bootstrap-results.md`.
-- Phase D (paper LaTeX rewrite) ready to begin: B5's deliverables are
-  sufficient material for the paper rewrite, and the rewrite plan can be
-  scoped without further empirical work.
+- Paper LaTeX rewrite ready to begin: B4's deliverables (the locked
+  `papers/RESULTS.md`) are sufficient material, and the rewrite can be scoped
+  without further empirical work. **Executed as Phase C (2026-06)** — see the
+  "Phase C" note in `papers/NOTES.md`.
 
 If after B5 the thesis is not supported (Bayesian does not occupy a non-
 empty Pareto region under fair conditions), Paper 1 either reframes again
