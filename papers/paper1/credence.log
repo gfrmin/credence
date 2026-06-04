@@ -1,4 +1,4 @@
-This is pdfTeX, Version 3.141592653-2.6-1.40.29 (TeX Live 2026/Arch Linux) (preloaded format=pdflatex 2026.4.7)  4 JUN 2026 17:50
+This is pdfTeX, Version 3.141592653-2.6-1.40.29 (TeX Live 2026/Arch Linux) (preloaded format=pdflatex 2026.4.7)  4 JUN 2026 22:38
 entering extended mode
  restricted \write18 enabled.
  %&-line parsing enabled.
@@ -519,25 +519,31 @@ File: umsb.fd 2013/01/14 v3.01 AMS symbols B
 {/var/lib/texmf/fonts/map/pdftex/updmap/pdftex.map}{/usr/share/texmf-dist/fonts
 /enc/dvips/cm-super/cm-super-t1.enc}{/usr/share/texmf-dist/fonts/enc/dvips/cm-s
 uper/cm-super-ts1.enc}]
-[2] [3] [4]
-Overfull \hbox (10.69923pt too wide) in paragraph at lines 170--171
+[2] [3] [4] [5]
+Overfull \hbox (10.69923pt too wide) in paragraph at lines 172--173
  []\T1/cmr/bx/n/10.95 Non-stationarity.[] \T1/cmr/m/n/10.95 The core frame-work
  han-dles dis-tri-bu-tional drift through stan-dard Beta-Bernoulli
  []
 
-[5] [6] [7] [8]
-Overfull \hbox (13.97505pt too wide) in paragraph at lines 296--297
+[6] [7] [8]
+Overfull \hbox (6.92116pt too wide) in paragraph at lines 295--296
+[]\T1/cmr/bx/n/10.95 Claude Haiku 4.5 \T1/cmr/m/n/10.95 (claude-haiku-4-5-20251
+001): a pro-duc-tion com-mer-cial model---Anthropic's
+ []
+
+
+Overfull \hbox (13.97505pt too wide) in paragraph at lines 298--299
 \T1/cmr/m/n/10.95 The com-par-i-son is be-tween decision-making paradigms---Bay
 esian EU max-imi-sa-tion vs. LLM-prompted
  []
 
 [9]
-<pareto.pdf, id=360, 859.51111pt x 323.0306pt>
+<pareto.pdf, id=357, 859.51111pt x 323.0306pt>
 File: pareto.pdf Graphic file (type pdf)
 <use pareto.pdf>
-Package pdftex.def Info: pareto.pdf  used on input line 321.
+Package pdftex.def Info: pareto.pdf  used on input line 323.
 (pdftex.def)             Requested size: 469.75502pt x 176.54848pt.
- [10 <./pareto.pdf>] [11] [12] [13] [14] [15] [16] [17] (./credence.aux)
+ [10] [11 <./pareto.pdf>] [12] [13] [14] [15] [16] [17] [18] (./credence.aux)
  ***********
 LaTeX2e <2025-11-01>
 L3 programming layer <2026-01-19>
@@ -546,13 +552,13 @@ Package rerunfilecheck Info: File `credence.out' has not changed.
 (rerunfilecheck)             Checksum: 1906AEAEB868A4C44E8A99B0AD524233;3980.
  ) 
 Here is how much of TeX's memory you used:
- 14304 strings out of 469503
- 228051 string characters out of 5470409
- 654499 words of memory out of 5000000
+ 14306 strings out of 469503
+ 228069 string characters out of 5470409
+ 654826 words of memory out of 5000000
  42631 multiletter control sequences out of 15000+600000
  654844 words of font info for 108 fonts, out of 8000000 for 9000
  14 hyphenation exceptions out of 8191
- 75i,12n,79p,1687b,605s stack positions out of 10000i,1000n,20000p,200000b,200000s
+ 75i,12n,79p,1708b,613s stack positions out of 10000i,1000n,20000p,200000b,200000s
 </usr/share/texmf-dist/fonts/type1/public/amsfonts/cm/cmbx10.pfb></usr/share/
 texmf-dist/fonts/type1/public/amsfonts/cm/cmex10.pfb></usr/share/texmf-dist/fon
 ts/type1/public/amsfonts/cm/cmmi10.pfb></usr/share/texmf-dist/fonts/type1/publi
@@ -577,10 +583,10 @@ dist/fonts/type1/public/cm-super/sfrm1728.pfb></usr/share/texmf-dist/fonts/type
 er/sfti1095.pfb></usr/share/texmf-dist/fonts/type1/public/cm-super/sftt0900.pfb
 ></usr/share/texmf-dist/fonts/type1/public/cm-super/sftt1095.pfb></usr/share/te
 xmf-dist/fonts/type1/public/cm-super/sfxc1440.pfb>
-Output written on credence.pdf (17 pages, 559355 bytes).
+Output written on credence.pdf (18 pages, 562065 bytes).
 PDF statistics:
- 691 PDF objects out of 1000 (max. 8388607)
- 534 compressed objects within 6 object streams
- 138 named destinations out of 1000 (max. 500000)
+ 698 PDF objects out of 1000 (max. 8388607)
+ 540 compressed objects within 6 object streams
+ 140 named destinations out of 1000 (max. 500000)
  190 words of extra memory for PDF output out of 10000 (max. 10000000)
 

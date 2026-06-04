@@ -94,14 +94,14 @@ for a, (lab, col, mk, sz) in style.items():
 axB.plot([AG["single_best"]["tcost"], AG["greedy_inferred"]["tcost"]],
          [AG["single_best"]["reward"], AG["greedy_inferred"]["reward"]],
          "--", color="#1f77b4", alpha=0.5, zorder=1)
-axB.annotate("Haiku pays\n$0.0032/Q", (AG["claude-haiku-4-5-20251001"]["tcost"],
+axB.annotate("Haiku\n(only paid agent:\n$0.0032/Q)", (AG["claude-haiku-4-5-20251001"]["tcost"],
              AG["claude-haiku-4-5-20251001"]["reward"]), textcoords="offset points",
-             xytext=(8, -22), fontsize=8, color="#d62728")
-axB.annotate("VOI: frugal frontier point\n(dominates free Llama)",
+             xytext=(10, -30), fontsize=8, color="#d62728")
+axB.annotate("myopic VOI: frugal $0 point\n(dominates free Llama)",
              (AG["bayesian_inferred"]["tcost"], AG["bayesian_inferred"]["reward"]),
              textcoords="offset points", xytext=(6, -30), fontsize=7.5, color="#1f77b4")
 axB.set_xlabel("tool cost per question"); axB.set_ylabel("gross reward (per seed)")
-axB.set_title("(B) Cost--reward frontier: the family owns the cheap regime",
+axB.set_title("(B) Cost--reward frontier: the family owns the zero-dollar frontier",
               fontsize=10.5)
 axB.legend(fontsize=7.5, loc="center right"); axB.grid(alpha=0.25)
 
