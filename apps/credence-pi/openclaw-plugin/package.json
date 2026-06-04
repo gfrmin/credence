@@ -1,11 +1,36 @@
 {
-  "name": "credence-pi-openclaw",
+  "name": "@gfrmin/credence-pi-openclaw",
   "version": "0.1.0",
   "type": "module",
   "description": "credence-pi body: OpenClaw plugin that governs tool calls via the credence-pi Bayesian brain (before_tool_call -> allow/block/ask) and logs outcomes + per-turn cost.",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
+  "license": "AGPL-3.0-or-later",
+  "author": "Guy Freeman",
+  "homepage": "https://github.com/gfrmin/credence/tree/master/apps/credence-pi",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/gfrmin/credence.git",
+    "directory": "apps/credence-pi/openclaw-plugin"
+  },
+  "keywords": [
+    "openclaw",
+    "openclaw-plugin",
+    "ai-agent",
+    "governance",
+    "bayesian",
+    "tool-call",
+    "llm-cost",
+    "expected-utility"
+  ],
+  "files": [
+    "dist",
+    "src",
+    "openclaw.plugin.json",
+    "README.md"
+  ],
   "openclaw": {
+    "extensions": ["./src/index.ts"],
     "runtimeExtensions": ["./dist/index.js"],
     "compat": {
       "pluginApi": ">=2026.3.24-beta.2",

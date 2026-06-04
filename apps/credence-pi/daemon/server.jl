@@ -478,6 +478,13 @@ function start_daemon(; port::Int,
             _handle_sensor_stream(state, stream)
         elseif method == "GET" && target == "/signals"
             sse_handler(stream)
+        elseif method == "GET" && target == "/ready"
+            # Liveness probe (transport only — no reasoning). Used by the
+            # Docker HEALTHCHECK and the deploy smoke test.
+            HTTP.setstatus(stream, 200)
+            HTTP.setheader(stream, "Content-Type" => "text/plain")
+            HTTP.startwrite(stream)
+            write(stream, "ok\n")
         else
             HTTP.setstatus(stream, 404)
             HTTP.startwrite(stream)

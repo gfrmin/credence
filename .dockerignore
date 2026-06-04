@@ -35,3 +35,7 @@ test/
 
 # Bayesian IF (separate application)
 apps/python/bayesian_if/
+
+# Node
+node_modules/
+**/node_modules/

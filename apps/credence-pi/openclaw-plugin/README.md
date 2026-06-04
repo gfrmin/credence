@@ -32,20 +32,24 @@ interception point is an OpenClaw **plugin** `before_tool_call` hook. See
 
 ## Install (operator)
 
-1. Start the brain daemon (see `apps/credence-pi/daemon/README.md`):
-   it listens on `http://127.0.0.1:8787`.
+1. Start the brain daemon — it listens on `http://127.0.0.1:8787`. Either run
+   the published image
+   (`docker run -p 8787:8787 -v ~/.credence-pi:/root/.credence-pi ghcr.io/gfrmin/credence-pi-daemon`)
+   or run it from source
+   (`julia --project=<repo-root> apps/credence-pi/daemon/main.jl`).
+   See `apps/credence-pi/daemon/README.md`.
 2. Build the plugin: `cd apps/credence-pi/openclaw-plugin && npm install && npm run build`.
-3. Link it into OpenClaw: `openclaw plugins install -l apps/credence-pi/openclaw-plugin`
-   then `openclaw plugins enable credence-pi`.
-4. For the **cost signal**, enable conversation hooks for this plugin in
-   OpenClaw config:
-   ```jsonc
-   { "plugins": { "entries": { "credence-pi": { "hooks": { "allowConversationAccess": true } } } } }
-   ```
-   (Governance — allow/block/ask — works without this; only the per-turn
-   cost logging needs it.)
-5. Restart the gateway: `openclaw gateway restart`.
-6. Verify: `openclaw plugins inspect credence-pi --runtime --json`.
+3. Install it into OpenClaw. From a published registry:
+   `openclaw plugins install @gfrmin/credence-pi-openclaw`; or link a local
+   checkout for development: `openclaw plugins install -l apps/credence-pi/openclaw-plugin`.
+   Then `openclaw plugins enable credence-pi`.
+4. **Per-turn cost signal.** On current OpenClaw (≥ 2026.6.2) the `llm_output`
+   cost hook is active out of the box — no extra config. (Older builds gated it
+   behind a since-removed `plugins.entries.credence-pi.hooks.allowConversationAccess`
+   flag; that key is now rejected by the config schema.) Governance —
+   allow/block/ask — never depended on it.
+5. Restart the gateway so it picks up the plugin.
+6. Verify it loaded: `openclaw plugins list` shows `credence-pi` as `loaded`.
 
 ## Config (`openclaw.plugin.json` → `configSchema`)
 
