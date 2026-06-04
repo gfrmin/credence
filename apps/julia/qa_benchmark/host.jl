@@ -37,6 +37,7 @@ const AGENT_STEP = DSL_ENV[Symbol("agent-step")]
 const UPDATE_ON_RESPONSE = DSL_ENV[Symbol("update-on-response")]
 const ANSWER_KERNEL = DSL_ENV[Symbol("answer-kernel")]
 const RELIABILITY_KERNEL = DSL_ENV[Symbol("reliability-kernel")]
+const HORIZON_STEP = DSL_ENV[Symbol("horizon-step")]
 
 # --- Inferred-category posteriors (offline embedding fixture) ---
 
@@ -255,6 +256,60 @@ end
 
 # --- Baseline agents ---
 
+# --- Horizon-aware VOI agent (Paper 1 B4) ---
+
+"""
+    run_horizon_seed(tools, questions, response_table; init_reliability=nothing)
+
+Horizon-aware VOI agent (DSL `horizon-step`): per question, submit one tool and
+optionally probe one tool for information, choosing the pair that maximises the
+expected best-submit over the remaining same-category questions (pure EU-max over
+the horizon — exploration emergent). Oracle condition (categories given): a single
+Beta per (tool, category), per-category horizon. Beats greedy here (the
+exploration the myopic `agent-step` lacks); under inferred categories the
+advantage is denied by attribution noise — see scripts/paper1-horizon-inferred.jl.
+"""
+function run_horizon_seed(tools::Vector{SimulatedTool},
+                          questions::Vector{Question},
+                          response_table::Matrix{Int};
+                          init_reliability::Union{Nothing,AbstractMatrix}=nothing)
+    n_tools = length(tools); n_cats = length(CATEGORIES)
+    rel_betas = init_reliability === nothing ?
+        [BetaPrevision(1.0, 1.0) for _ in 1:n_tools, _ in 1:n_cats] : copy(init_reliability)
+    costs = Float64[tools[t].cost for t in 1:n_tools]
+    cat_of = [findfirst(==(q.category), CATEGORIES) for q in questions]
+    # remaining same-category questions incl. current (stream order) = the horizon
+    remaining = zeros(Int, length(questions)); seen = zeros(Int, n_cats)
+    for qi in length(questions):-1:1
+        c = cat_of[qi]; seen[c] += 1; remaining[qi] = seen[c]
+    end
+    records = QuestionResult[]; total_reward = 0.0; total_tool_cost = 0.0; t_start = time()
+    for (qi, q) in enumerate(questions)
+        q_t0 = time(); ci = cat_of[qi]
+        rels = [rel_betas[t, ci] for t in 1:n_tools]
+        res = HORIZON_STEP(rels, costs, Float64(remaining[qi]),
+                           REWARD_CORRECT, REWARD_ABSTAIN, PENALTY_WRONG)
+        s = Int(res[1]) + 1; r = Int(res[2])
+        tool_responses = Dict{Int,Int}()
+        q_cost = costs[s]
+        submitted = response_table[qi, s]; tool_responses[s] = submitted
+        was_correct = submitted == q.correct_index
+        reward = was_correct ? REWARD_CORRECT : PENALTY_WRONG
+        rel_betas[s, ci] = condition(rel_betas[s, ci], RELIABILITY_KERNEL, was_correct ? 1.0 : 0.0)
+        if r >= 0
+            rt = r + 1; q_cost += costs[rt]
+            resp_r = response_table[qi, rt]; tool_responses[rt] = resp_r
+            rel_betas[rt, ci] = condition(rel_betas[rt, ci], RELIABILITY_KERNEL,
+                                          (resp_r == q.correct_index) ? 1.0 : 0.0)
+        end
+        total_reward += reward; total_tool_cost += q_cost
+        push!(records, QuestionResult(q.id, q.category, collect(keys(tool_responses)),
+            tool_responses, submitted, was_correct, reward, q_cost, time() - q_t0, 0, 0))
+    end
+    SeedResult(0, records, total_reward - total_tool_cost,
+               total_reward, total_tool_cost, time() - t_start)
+end
+
 function run_single_best_seed(tools::Vector{SimulatedTool},
                               questions::Vector{Question},
                               response_table::Matrix{Int};
@@ -407,6 +462,7 @@ function main()
 
         agents = Tuple{String,Function}[
             ("bayesian",    () -> run_bayesian_seed(tools, questions, response_table)),
+            ("horizon",     () -> run_horizon_seed(tools, questions, response_table)),
             ("single_best", () -> run_single_best_seed(tools, questions, response_table)),
             ("random",      () -> run_random_seed(tools, questions, response_table, random_rng)),
             ("all_tools",   () -> run_all_tools_seed(tools, questions, response_table)),
