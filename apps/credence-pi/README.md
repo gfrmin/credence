@@ -1,51 +1,66 @@
 # credence-pi
 
-Pass-1 implementation of the body-brain governance loop for the pi
-extension surface. The brain is a Julia daemon that loads BDSL programs
-and holds a Beta posterior over `P(approve)`. The body is a TypeScript
-extension that hooks pi's `tool_call` and exchanges sensor events /
-effector signals with the brain over HTTP.
+In-loop Bayesian governance for agentic coding/agent tools. The **brain** is
+a Julia daemon that loads BDSL programs and holds a posterior over
+`P(approve | context)`; the **body** hooks an agent's tool-call boundary and
+exchanges sensor events / effector signals with the brain over HTTP, mapping
+the brain's expected-utility decision to **proceed / ask / block**.
 
-The binding specification is [`SPEC.md`](./SPEC.md). Read it before
-making changes; the body-brain split, the wire schema, and the lint
-pragma policy are not negotiable in Pass 1.
+As of Pass 2 the brain is **feature-conditioned**: it learns a different
+approval rate per context via *structure-BMA* — a Bayesian model average over
+which of the declared features (`tool-name`, `working-directory-relative`,
+`parent-tool-call-name`, `recent-repetition-count`, `time-since-last-user-message`)
+drive approval. This is what lets it do the surgical thing a single global
+posterior cannot: block a repeated wasteful loop while still allowing a novel
+call, at the same moment.
+
+The binding specification is [`SPEC.md`](./SPEC.md). Read it before making
+changes; the body-brain split, the wire schema, and the lint pragma policy are
+not negotiable.
 
 ## Layout
 
-    bdsl/        — capabilities, features, prior, kernel, decide
-    daemon/      — Julia HTTP server holding the BDSL environment
-    extension/   — TypeScript pi-side body
-    tests/julia/ — Julia tests for BDSL + daemon
-    tests/typescript/ — TS tests for manifest, features, client, hooks
+    bdsl/            — declared data: capabilities, features, utility constants
+    brain/           — feature_brain.jl: typed Julia that declares the
+                       structure-BMA family + readout Functionals and calls
+                       the Tier-1 axiom ops (the Route-B brain)
+    daemon/          — Julia HTTP server (server.jl) + standalone entrypoint
+                       (main.jl); holds the posterior, replays the log
+    openclaw-plugin/ — OpenClaw body (installable plugin; the published surface)
+    extension/       — pi-side body (targets the pi coding agent directly)
+    demo/            — governance_demo.jl: the surgical win, end to end
+    tests/julia/     — Julia tests (feature_brain, server, observation_log, …)
+    tests/typescript/— TS tests for the bodies
 
-See [`daemon/README.md`](./daemon/README.md) and
-[`extension/README.md`](./extension/README.md) for run instructions.
+The two bodies share one brain and one wire (POST `/sensor`, SSE `/signals`).
+
+## Run (operator)
+
+The published OpenClaw plugin is `@gfrmin/credence-pi-openclaw`. See
+[`openclaw-plugin/README.md`](./openclaw-plugin/README.md) for the install
+runbook and [`daemon/README.md`](./daemon/README.md) for running the brain
+(from source via `daemon/main.jl`, or the `ghcr.io/gfrmin/credence-pi-daemon`
+image).
 
 ## Develop
 
     # Julia tests (one file at a time):
-    julia --project=. apps/credence-pi/tests/julia/test_bdsl.jl
-    julia --project=. apps/credence-pi/tests/julia/test_observation_log.jl
-    julia --project=. apps/credence-pi/tests/julia/test_server.jl
-    julia --project=. apps/credence-pi/tests/julia/test_bdsl_primitives.jl
+    julia --project=<repo-root> apps/credence-pi/tests/julia/test_feature_brain.jl
+    julia --project=<repo-root> apps/credence-pi/tests/julia/test_server.jl
+    julia --project=<repo-root> apps/credence-pi/tests/julia/test_observation_log.jl
 
-    # TypeScript build + tests:
-    cd apps/credence-pi/extension
-    npm install
-    npm run build
-    npm test
+    # TypeScript build + tests (OpenClaw body):
+    cd apps/credence-pi/openclaw-plugin && npm install && npm run build && npm test
 
-    # Lint:
+    # Lint (credence-pi's stricter rule — zero production-side pragmas):
     python3 tools/credence-lint/credence_lint.py --repo-root . check apps/credence-pi/
 
-## Pass-1 scope
+## Scope
 
-Single Beta(2,2) prior, no feature conditioning at decision time, three
-effectors (`ask`, `proceed`, `block`). EVPI is computed inline by the
-stdlib `voi`; nothing is hard-coded as a magic number. Pass 2 will
-replace the global posterior with a CEG over features without
-disturbing the wire schema or the body — that is the architectural
-payoff of the Pass-1 discipline.
-
-See `SPEC.md` § "Out of scope (Pass 1)" and "Decisions deferred to
-Pass 2" for the line.
+Three effectors (`ask`, `proceed`, `block`) chosen by expected-utility
+maximisation with a linear-cost utility; `ask` is gated by value-of-information
+(`voi`). EVPI and the decision threshold are computed by the stdlib, never
+hard-coded. Pass 2 replaced Pass 1's single global Beta with the
+feature-conditioned structure-BMA brain without disturbing the wire schema or
+the bodies — the architectural payoff of the body-brain discipline. See
+`SPEC.md` and `docs/credence-pi-pass-2/`.

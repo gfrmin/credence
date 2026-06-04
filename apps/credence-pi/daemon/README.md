@@ -18,9 +18,20 @@ and calls the public entry points (`decide-action`, `observe-response`,
 
 ## Run
 
-    julia --project=. apps/credence-pi/daemon/server.jl
+    julia --project=<repo-root> apps/credence-pi/daemon/main.jl
 
-Default bind is `127.0.0.1:8787`. The observation log is appended to
+`main.jl` is the standalone entrypoint: it loads `Credence`, starts the
+HTTP server, and blocks until signalled. (`server.jl` is a module that
+expects `Credence` already loaded in `Main` — it is `include`d by
+`main.jl`, the tests, and the demo, not run directly.) Or run the
+published image:
+
+    docker run -p 8787:8787 -v ~/.credence-pi:/root/.credence-pi \
+      ghcr.io/gfrmin/credence-pi-daemon
+
+Default bind is `127.0.0.1:8787`. Override via environment:
+`CREDENCE_PI_HOST`, `CREDENCE_PI_PORT`, `CREDENCE_PI_BDSL_DIR`,
+`CREDENCE_PI_LOG`. The observation log is appended to
 `~/.credence-pi/observations.jsonl`; on startup the daemon replays the
 log to reconstruct the posterior.
 

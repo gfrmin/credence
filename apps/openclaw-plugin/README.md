@@ -1,5 +1,13 @@
 # Credence Governance Plugin for OpenClaw
 
+> **⚠️ DEPRECATED — superseded by `credence-pi`.** This Posture-5 sidecar
+> (id `credence-governance`) is retired in favour of the credence-pi
+> body-brain governor at `apps/credence-pi/openclaw-plugin/` (id `credence-pi`),
+> which learns **per-context** `P(approve | features)` via the Credence DSL
+> instead of hard-coded detectors. This package is kept for provenance only;
+> it is **not published** and should not be installed for new use. Install
+> `@gfrmin/credence-pi-openclaw` instead.
+
 Intercepts tool calls via a Bayesian governance sidecar. The sidecar evaluates
 each candidate tool call by expected utility and can veto runaway loops,
 escalate uncertain actions to the user, or suggest alternatives.
