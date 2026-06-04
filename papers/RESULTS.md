@@ -79,10 +79,12 @@ attribution-noise mechanism, robust across every credit rule) is the finding.
 - **New:** (a) the **contingency law** — exploration's value ⟂ category-attribution
   quality, crossover between oracle and a 0.78-accurate classifier; (b) the
   **credit-rule × query-strategy interaction** — zero-leakage hard-credit is best
-  for exploration-heavy policies, worst for minimal-query greedy; (c) **B2c
-  soft-credit is a measurably suboptimal silent approximation** to the proper
-  posterior-weighted update (post-credit beats it even for deployed greedy) — a
-  constitution follow-up, see `docs/paper1/b4-credit-rule-verdict.md`.
+  for exploration-heavy policies, worst for minimal-query greedy. This is a
+  *structural coupling*, **not** a route to exploration winning: even hard-credit
+  (exploration's best case) leaves horizon-VOI 12 behind greedy. Subordinate to (a).
+  (c) **B2c soft-credit is a measurably suboptimal silent approximation** to the
+  proper posterior-weighted update (post-credit beats it even for deployed greedy)
+  — disclosed in methods below; code migration tracked in issue #111.
 
 ### Scoping commitments (state plainly, scope precisely, do not soften)
 
@@ -214,11 +216,20 @@ horizon-probing) across the credit-assignment rule:
 
 Greedy wins fair under all three. Better attribution helps exploration (soft→hard
 +13.7) and hurts minimal-query greedy (−7.3), narrowing the gap to −12 at best,
-never closing it. **Oracle (perfect attribution) is the only regime where
-horizon-VOI wins.** The fair loss is a property of imperfect attribution, not of
-soft-credit or any submit/probe/gating choice. (Post-credit beating B2c even for
-greedy, 151.4 vs 149.8, is the separate constitution note — B2c is a suboptimal
-silent approximation to the proper posterior-weighted update.)
+**never closing it** — the proper rule (`post`) lands worse than hard precisely
+because it lifts greedy too. **Oracle (perfect attribution) is the only regime
+where horizon-VOI wins.** The fair loss is a property of imperfect attribution,
+not of any one credit rule or any submit/probe/gating choice.
+
+**Methods caveat (disclosed, not deferred).** The deployed/headline numbers use
+B2c soft-credit — a tractable approximation to the proper posterior-weighted
+update the foundations endorse. The proper rule (`post`) lifts the greedy baseline
+(149.8 → 151.4), and **greedy wins fair under it as under soft and hard** (table),
+so the approximation is *not* what produces the contingency result — if anything
+the proper rule favours the minimal-query baseline. We state this rather than have
+it discovered: the deployed rule is an acknowledged, directionally-understood
+approximation; the code migration is tracked in issue #111. (Detail:
+`docs/paper1/b4-credit-rule-verdict.md`.)
 
 ## Pillar (iii) — why myopic VOI under-explores (the per-category mechanism)
 
