@@ -48,7 +48,7 @@
 \begin{abstract}
 Current LLM agent frameworks select tools through prompting heuristics without any formal mechanism for evaluating whether a tool query is worth its cost. We introduce \credence{}, a Bayesian decision-theoretic framework that derives tool selection from first principles: agents maintain conjugate beliefs about tool reliability, update them from observed outcomes, and select queries by maximising expected utility via value-of-information calculations. The framework is grounded in five axioms---Bayesian conditioning, expected utility integration, EU maximisation, a Solomonoff complexity prior, and a cooperative inverse reinforcement learning (CIRL) alignment commitment---from which all agent behaviour is derived rather than engineered.
 
-On a controlled benchmark, \credence{} scores $+163.7$ at zero API cost and $0.016$ seconds per question, dominating all non-LLM baselines by at least $3\times$. A frontier LLM (Claude Haiku~4.5) scores $+445.5$ with $97.5\%$ accuracy but costs \$3.24 per 1000 questions and runs $167\times$ slower; a local LLM (Llama~3.1 8B) scores $+79.3$---half the Bayesian agent---demonstrating that LLM-based tool selection without world knowledge underperforms principled statistical methods. Among non-LLM agents, we identify an \emph{accuracy paradox}: querying all tools achieves the highest accuracy ($64.4\%$) but the worst score ($-67.0$), because tool costs destroy the margin. Ablation confirms that reliability learning is the dominant component ($-159.9$ without it). These results establish \credence{} as the optimal zero-cost tool selection strategy and demonstrate that principled Bayesian methods offer a practical alternative when API cost or latency constraints preclude frontier model deployment.
+We study \emph{when} this pays, on a controlled benchmark of category-dependent tool reliability, under two conditions: question categories \emph{given} (oracle) and \emph{inferred} by a Gaussian Naive-Bayes classifier on offline sentence embeddings (leave-one-out accuracy $0.78$). Our central finding is a \emph{contingency law}: the value of exploration is contingent on category-attribution quality. A horizon-aware VOI policy---valuing information over the remaining question horizon by pure expected-utility maximisation, with exploration emergent rather than engineered---\emph{beats} an optimism-under-uncertainty greedy rule by $+27$ when categories are given, but \emph{loses} once they are inferred, because attribution noise corrupts the per-category reliability signal exploration depends on. The crossover is robust across every credit-assignment rule we test. Independently of which action policy wins, the Bayesian substrate owns the cost-efficient frontier: the VOI agent dominates a free local LLM (Llama~3.1~8B) in both tool cost and score, and only a paid frontier model (Claude Haiku~4.5, $97.5\%$ accuracy at \$3.24 per 1000 questions) beats the family's $56$--$64\%$ at real dollar cost. We also surface an \emph{accuracy paradox}---querying all tools reaches the highest non-LLM accuracy yet the worst score ($-67.0$), as tool costs destroy the margin---and confirm reliability learning as the dominant component. We frame these as laws about \emph{when} principled tool selection pays, not a claim that value-of-information is universally optimal.
 \end{abstract}
 
 % ============================================================
@@ -63,7 +63,7 @@ This paper argues that the tool selection problem is fundamentally a \emph{decis
 
 We introduce \credence{}, a framework built on five axioms from which all agent behaviour is derived. The key insight is that tool queries are information-gathering actions whose value can be computed exactly: the \emph{value of information} (VOI) of querying a tool is the expected utility of observing the tool's response and then acting optimally, minus the expected utility of acting on current beliefs alone. A query is worth making if and only if its VOI exceeds its cost. This is not a heuristic---it is a theorem of Bayesian decision theory \citep{raiffa1961applied, degroot1984optimal}.
 
-\paragraph{Contributions.} (1) We present a principled framework for LLM tool selection grounded in Bayesian decision theory and CIRL, requiring no LLM calls for the decision-making layer itself. (2) We identify the \emph{accuracy paradox}: among agents that depend on tool selection, higher accuracy can coexist with lower net value, because accuracy-maximising agents over-query. (3) We demonstrate empirically that a local LLM agent (Llama~3.1 8B) underperforms the Bayesian agent despite using native tool-calling, and that a frontier LLM (Claude Haiku~4.5) outperforms it only at non-trivial API cost (\$3.24 per 1000 questions) and $167\times$ higher latency. (4) Ablation confirms that reliability learning is the single most valuable component of the framework.
+\paragraph{Contributions.} (1) We present a principled framework for LLM tool selection grounded in Bayesian decision theory and CIRL, requiring no LLM calls for the decision-making layer itself. (2) Our headline empirical finding is a \emph{contingency law}: the value of exploration in category-conditioned tool selection is contingent on category-attribution quality. With \emph{given} categories a horizon-aware VOI policy beats an optimism-greedy rule by $+27$; with \emph{inferred} categories (a $0.78$-accuracy classifier) it loses, because attribution noise corrupts the per-category reliability signal---a crossover robust across every credit-assignment rule we test. (3) We introduce \emph{horizon-aware VOI}, a constitution-clean exploration mechanism: it values information over the remaining question horizon by pure expected-utility maximisation, with exploration emergent (no $\varepsilon$-greedy, no exploration bonus), and a depth-1 lookahead already attains the exact finite-horizon ceiling in our benchmark. (4) We characterise the \emph{cost-efficient frontier}: the Bayesian family owns the cheap regime in both conditions---the VOI agent dominates a free local LLM in tool cost \emph{and} score, and only a paid frontier model beats it---and we surface, as a secondary observation, the \emph{accuracy paradox} (highest accuracy coincides with worst score when tool costs are non-zero). (5) As a subordinate structural result we report a credit-rule $\times$ query-strategy interaction, and we disclose that the deployed credit rule is an acknowledged approximation to the proper posterior-weighted update.
 
 \paragraph{Connection to prior work.} The present framework builds on two lines of research. First, the theory of \emph{embodied agent design} due to \citet{ay2015geometric}, which formalises the separation between an agent's controller (brain) and its sensorimotor apparatus (body and environment), and argues that control architectures should be \emph{sufficient} for expressing desired behaviours while remaining \emph{concise}---the principle of cheap design. In \credence{}, the ``brain'' is the Bayesian decision layer; the ``body'' is the LLM and external tools. The LLM is treated as a \emph{prosthetic}---a noisy sensor whose reliability is learned, not a decision-maker.
 
@@ -90,11 +90,11 @@ Cost-aware approaches to LLM tool use span five tiers of increasing formality: (
 
 \citet{kapoor2025agents} demonstrate that agent evaluation without cost accounting is misleading---accuracy alone fails to capture real-world value. \citet{wang2024tokeneconomies} show that budget-aware reasoning strategies outperform unconstrained ones, and \citet{erol2025costofpass} propose an economic framework for model evaluation that accounts for inference cost. \citet{wang2025epistemic} argue that agents should invoke tools ``only when epistemically necessary,'' defining a knowledge boundary concept but providing no computational mechanism. A Bayesian VOI framework provides exactly the mechanism they call for.
 
-Our benchmark results (\S\ref{sec:results}) illustrate the cost-performance frontier: a local LLM with cost-awareness prompts and tool-calling still scores half the Bayesian agent, whilst a frontier LLM outperforms it only at non-trivial API cost. Natural language cannot express the quantitative tradeoff between information gain and query cost that VOI captures analytically. \citet{desabbata2024metareasoning} reach a complementary conclusion from the metareasoning perspective: LLMs benefit from explicit computational cost-benefit analysis rather than implicit prompt-level reasoning.
+Our benchmark results (\S\ref{sec:results}) illustrate the cost-performance frontier: a local LLM with cost-awareness prompts and tool-calling still scores barely half the best zero-cost Bayesian agent, whilst a frontier LLM outperforms it only at non-trivial API cost. Natural language cannot express the quantitative tradeoff between information gain and query cost that VOI captures analytically. \citet{desabbata2024metareasoning} reach a complementary conclusion from the metareasoning perspective: LLMs benefit from explicit computational cost-benefit analysis rather than implicit prompt-level reasoning.
 
 \subsection{Theoretical Foundations}
 
-\paragraph{Embodied agent design.} \citet{ay2015geometric} formalises the sensorimotor loop as a causal model with Markov kernels and shows that an agent's controller need not be a universal approximator---it suffices to match the behavioural repertoire afforded by its embodiment. This \emph{cheap design} principle \citep{pfeifer2006body, montufar2015cheap} motivates \credence{}'s architecture: the Bayesian decision layer is far simpler than the LLM it coordinates, yet sufficient for optimal tool selection given the embodiment constraints (available tools and their reliability profiles).
+\paragraph{Embodied agent design.} \citet{ay2015geometric} formalises the sensorimotor loop as a causal model with Markov kernels and shows that an agent's controller need not be a universal approximator---it suffices to match the behavioural repertoire afforded by its embodiment. This \emph{cheap design} principle \citep{pfeifer2006body, montufar2015cheap} motivates \credence{}'s architecture: the Bayesian decision layer is far simpler than the LLM it coordinates, yet sufficient for effective tool selection given the embodiment constraints (available tools and their reliability profiles).
 
 \paragraph{Graphical models.} Chain event graphs \citep{smith2008chain, freeman2011bayesian, thwaites2009keod} generalise Bayesian networks to handle context-specific independence with conjugate model selection via product Dirichlet priors. Dynamic staged trees \citep{freeman2011dynamic} extend this to non-stationary time series through multi-process switching models. The per-tool, per-category Beta-Bernoulli reliability model in \credence{} is a specialisation of the product Dirichlet conjugate framework developed for chain event graph model selection \citep{freeman2011bayesian}, where \citet[Theorem~18]{freeman2011bayesian} showed that path and floret independence assumptions characterise the Dirichlet prior on staged tree parameters. Each tool-category pair in \credence{} corresponds to a floret in the CEG sense, with the correct/incorrect outcome defining a two-edge floret whose natural conjugate prior is Beta.
 
@@ -217,8 +217,18 @@ As $\alpha_{t,c} + \beta_{t,c} \to \infty$, the posterior variance $\mathrm{Var}
 
 This ensures that the agent's querying naturally terminates: after sufficiently many observations, no tool query is worth its cost.
 
+\paragraph{Myopic versus horizon-aware VOI.}
+The VOI of \cref{eq:voi} is \emph{myopic}: it values tool~$t$'s response only for the current question's decision. An agent maximising it is a Bayesian \emph{learner}---it updates beliefs from every response it sees---but not a Bayesian \emph{explorer}: it never pays to query a tool whose response it will not submit, since under \cref{eq:voi} a query that cannot change the current submission has zero value. When the same category recurs across a question stream, this \emph{under}-explores---the agent never pays to discover an expensive-but-reliable tool whose value would be amortised over future questions.
+
+The fix is to value information over the \emph{horizon}. Suppose a category recurs over $h$ remaining questions. A probe of tool~$t$ now (paying $r_t$, observing $x$) yields an updated belief $b \mid x$ that improves the best single-submit decision on each of the remaining $h-1$ questions. The horizon-aware value of the probe is
+\begin{equation}
+  \VOI_h(t \mid b) = (h-1)\,\bigl(\E_{x \sim p_t}[\EU^*(b \mid x)] - \EU^*(b)\bigr) - r_t,
+  \label{eq:voi_horizon}
+\end{equation}
+and the agent probes the tool with the highest positive $\VOI_h$, then submits the answer its accumulated beliefs best support. This is the \emph{decoupled} formulation: a probe is paid for its information alone, while the submission uses everything learned---which is exactly how a deployed agent that queries tools and then commits to its best estimate behaves. \Cref{eq:voi_horizon} is the depth-1 lookahead; the exact ceiling is finite-horizon backward induction over the belief-MDP, which a depth-1 policy already attains in our benchmark (\S\ref{sec:results}). Crucially, this remains pure expected-utility maximisation: exploration is \emph{emergent} from the horizon, never injected as an $\varepsilon$-greedy rule or an exploration bonus.
+
 \paragraph{Category-specific beliefs.}
-The agent maintains separate Beta parameters for each tool-category pair. In the current benchmark, question categories are provided by the environment; the agent uses them to index into the appropriate reliability beliefs. This allows the agent to learn, for example, that the calculator is perfectly reliable for numerical questions but uninformative for others, without any text features or domain knowledge.
+The agent maintains separate Beta parameters for each tool-category pair, indexed by the question's category. This lets it learn, for example, that the calculator is perfectly reliable for numerical questions but uninformative for others. Crucially, the category need not be \emph{given}: we evaluate both an \emph{oracle} condition (categories supplied by the environment) and a \emph{fair, inferred} condition in which a lightweight classifier predicts the category from the question text (\S\ref{sec:inference}). Whether attribution is exact or noisy turns out to govern whether exploration pays at all---the central finding of this paper.
 
 
 % ============================================================
@@ -252,9 +262,31 @@ D (LLM Direct)      & 0.65 & 0.50 & 0.45 & 0.40 & 0.72 & 2 \\
 
 \paragraph{Scoring.} Correct answer: $+10$. Wrong answer: $-5$. Abstention: $0$. Tool costs as in \cref{tab:tools}. The asymmetric payoff creates a break-even submission threshold of $p_{\text{correct}} > 1/3$.
 
+\subsection{Category Inference: Oracle and Fair Conditions}
+\label{sec:inference}
+
+Reliability is category-dependent (\cref{tab:tools}), so a category-conditioned agent must know which category each question belongs to. We evaluate two conditions:
+
+\begin{itemize}
+\item \textbf{Oracle (given).} The environment supplies the true category. This is the idealised condition of the original benchmark; we retain it as a \emph{price-of-inference reference}, not as the deployment assumption.
+\item \textbf{Inferred (fair).} The agent receives only the raw question text and predicts the category with a lightweight classifier. This is the condition a deployed agent actually faces.
+\end{itemize}
+
+\paragraph{The classifier.} We use a \emph{Gaussian Naive-Bayes} classifier on offline sentence embeddings (a frozen MiniLM encoder): a \emph{generative}, class-conditional model that fits, for each category $c$, an axis-aligned Gaussian $\mathcal{N}(\mu_c, \mathrm{diag}(\sigma_c^2))$ over the embedding dimensions and a categorical prior, predicting $\Prob(c \mid \text{text}) \propto \Prob(c)\,\prod_d \mathcal{N}(e_d; \mu_{c,d}, \sigma_{c,d}^2)$. It is deliberately \emph{not} a discriminative multinomial-logistic model: the generative form requires no iterative optimisation, is conjugate-compatible with the rest of the framework, and exposes a calibrated class posterior. On the 50-question bank its leave-one-out accuracy is $0.78$ (with leak-free per-dimension standardisation), well above the $0.20$ five-class chance rate but far from perfect---which is precisely what makes the fair condition informative.
+
+\paragraph{Using the posterior.} In the inferred condition the classifier emits a posterior $\pi = (\pi_1, \ldots, \pi_C)$ over categories. The agent indexes its reliability beliefs through $\pi$ rather than a one-hot category, and credits each reliability update to category $c$ in proportion to $\pi_c$ (soft credit-assignment). This is where attribution noise enters the belief substrate: a misattributed update injects evidence about one category into another's reliability estimate. The soft rule is a tractable approximation to the proper posterior-weighted update; we make this approximation and its consequences explicit in \S\ref{sec:contingency}.
+
+\paragraph{LLM fairness.} The LLM agents (below) are evaluated on the raw question text with no category information---the same input every agent's classifier sees. By the data-processing inequality, the inferred posterior $\pi$ is a deterministic lossy function of the text and carries no category information an LLM lacks; injecting it would merely import the classifier's error rate. We therefore reuse the saved no-category LLM runs as the fair-condition LLM baselines (verified to reproduce the paired per-seed responses bit-exactly).
+
 \subsection{Agents Compared}
 
-\paragraph{\credence{} (Bayesian).} The full framework of \cref{sec:framework}. Beta(1,1) priors per tool-category pair, VOI-based tool selection. No LLM calls. Implemented in ${\sim}200$ lines of Julia.
+\paragraph{The Bayesian family.} Three action policies share one belief substrate---Beta(1,1) priors per tool-category pair, reliability learning by conjugate update, no LLM calls, ${\sim}200$ lines of Julia. They differ only in how they act on the beliefs:
+\begin{itemize}
+\item \textbf{Myopic VOI} --- the VOI rule of \cref{eq:voi} (the original \credence{} agent): query while some tool's single-question VOI exceeds its cost, then submit or abstain.
+\item \textbf{Optimism-greedy} --- query the single tool of highest posterior-mean reliability for the category and submit its answer. This is optimism-under-uncertainty, a \emph{principled} Bayesian-family member (not a heuristic foil); it learns reliability exactly as the others do and differs only in committing to its current best tool rather than computing VOI.
+\item \textbf{Horizon-aware VOI} --- the rule of \cref{eq:voi_horizon}: probe by horizon value, then submit the best-learned answer.
+\end{itemize}
+Each policy is run in both the oracle and inferred conditions (\S\ref{sec:inference}); we write e.g.\ ``VOI (inferred)'' for the fair-condition variant.
 
 \paragraph{LLM agents.} Two LLM-based agents, both using native tool-calling (structured API, not text parsing). Both receive the same system prompt describing the four tools, scoring rules, the option to abstain, and a rolling history of the last 10 outcomes.
 \begin{itemize}
@@ -269,9 +301,11 @@ The comparison is between decision-making paradigms---Bayesian EU maximisation v
 
 \paragraph{Random.} Queries a random tool, submits its response. Lower bound.
 
+\paragraph{Learning ablations.} Two further variants isolate the belief substrate (used in \S\ref{sec:ablation}): \textbf{no-VOI} queries all four tools every question and majority-votes (learning, but no information-value gating); \textbf{no-learning} freezes the priors (VOI gating, but no reliability updates).
+
 \subsection{Experimental Protocol}
 
-All results are averaged over 20 random seeds, with 50 questions per seed. Tool responses are pre-generated per seed so that all agents see identical (question, tool) outputs, ensuring a fair comparison. LLM agents use native tool-calling via structured API. Tool reliabilities are fixed as in \cref{tab:tools} throughout.
+All results are averaged over 20 random seeds, with 50 questions per seed. Tool responses are pre-generated per seed so that all agents see identical (question, tool) outputs, ensuring a fair comparison; in the inferred condition the category classifier is likewise fixed across agents. LLM agents use native tool-calling via structured API and are evaluated on raw question text (\S\ref{sec:inference}). Tool reliabilities are fixed as in \cref{tab:tools} throughout. The exact horizon-aware ceilings (decoupled backward induction, depth sweep, matched-prior control) and the credit-rule de-confound are computed by separate offline scripts released with the code.
 
 
 % ============================================================
@@ -280,67 +314,147 @@ All results are averaged over 20 random seeds, with 50 questions per seed. Tool 
 \section{Results}
 \label{sec:results}
 
-\subsection{Stationary Environment}
+We report the \emph{fair} (inferred-category) condition as primary and retain the oracle (given-category) condition as a price-of-inference reference. The central result is a contingency law (\S\ref{sec:contingency}); around it we establish three pillars---the Bayesian substrate earns the cost-efficient frontier (\S\ref{sec:frontier}); exploration is fixable but its value is contingent on attribution quality (\S\ref{sec:contingency}); and a per-category mechanism explains why (\S\ref{sec:percat}). \Cref{fig:contingency} previews both the law and the frontier. Throughout, the cost axis is \emph{tool cost} per question (the budget that enters the score), not raw tool-call count.
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=\textwidth]{pareto.pdf}
+\caption{\textbf{(A) The contingency law.} Horizon-aware VOI beats optimism-greedy by $+27$ when categories are \emph{given} (oracle) and loses by $15$ once they are \emph{inferred} (a $0.78$-accuracy classifier); the crossover is the contribution. Myopic VOI (faint) loses in both conditions. \textbf{(B) The cost--reward frontier.} The Bayesian family owns the cheap regime: the VOI agent is the frugal point that dominates the free local Llama (lower tool cost \emph{and} higher reward), greedy is the higher-scoring family point, and only paid Haiku sits above them.}
+\label{fig:contingency}
+\end{figure}
+
+\subsection{Main Results (Fair Condition)}
+\label{sec:main}
 
 \begin{table}[t]
 \centering
-\caption{Benchmark results (mean $\pm$ std over 20 seeds, 50 questions per seed). API Cost is the total across all 1000 questions.}
-\label{tab:stationary}
+\caption{Main results---fair (inferred-category) condition, mean over 20 paired seeds, 50 questions/seed. ``Reward'' is gross ($\sum +10/{-}5/0$, before tool cost); ``Score'' $=$ reward $-$ tool cost. ``Cost/Q'' is tool cost per question; ``Acc.\%'' is the overall correct rate (abstentions count as incorrect). LLM agents are the reused no-category runs (\S\ref{sec:inference}). API \$ is per question.}
+\label{tab:main}
 \small
-\begin{tabular}{@{}lrrrrrrr@{}}
+\begin{tabular}{@{}lrrrrrr@{}}
 \toprule
-Agent & Score & Acc. & Abst.\% & Tools/Q & Cost/Q & Time/Q (s) & API Cost \\
+Agent & Score & Reward & Acc.\% & Abst.\% & Cost/Q & API \$/Q \\
 \midrule
-Claude Haiku 4.5 & $\mathbf{+445.5 \pm 13.9}$ & \textbf{0.975} & 0.000 & 0.59 & 0.71 & 2.67 & \$3.24 \\
-\credence{} (Bayesian) & $\mathbf{+163.7 \pm 51.7}$ & 0.647 & 0.045 & 0.96 & 1.25 & 0.016 & \$0.00 \\
-Llama 3.1 8B & $+79.3 \pm 36.7$ & 0.594 & 0.229 & 0.90 & 1.44 & 1.56 & \$0.00 \\
-Random & $+55.4 \pm 48.7$ & 0.509 & 0.000 & 1.00 & 1.53 & ${\sim}0$ & \$0.00 \\
-Single-Best-Tool & $+44.2 \pm 50.1$ & 0.459 & 0.000 & 1.00 & 1.00 & ${\sim}0$ & \$0.00 \\
-All-Tools & $-67.0 \pm 65.7$ & 0.644 & 0.000 & 4.00 & 6.00 & ${\sim}0$ & \$0.00 \\
+Claude Haiku 4.5 (reused) & $\mathbf{+445.5}$ & $481.2$ & $\mathbf{97.5}$ & $0.0$ & $0.71$ & $0.0032$ \\
+Optimism-greedy & $+149.6$ & $230.8$ & $64.1$ & $0.0$ & $1.62$ & $0$ \\
+Horizon-aware VOI & $+134.2$ & --- & $63.6$ & $0.0$ & $1.77$ & $0$ \\
+Myopic VOI & $+110.4$ & $176.5$ & $56.2$ & $2.0$ & $1.32$ & $0$ \\
+Llama 3.1 8B (reused) & $+79.3$ & $151.5$ & $45.9$ & $22.9$ & $1.44$ & $0$ \\
+Random & $+55.4$ & $131.8$ & $50.9$ & $0.0$ & $1.53$ & $0$ \\
+Single-Best-Tool & $+44.2$ & $94.2$ & $45.9$ & $0.0$ & $1.00$ & $0$ \\
+No-learning & $+3.8$ & $53.8$ & $40.5$ & $0.0$ & $1.00$ & $0$ \\
+No-VOI (query-all) & $-24.5$ & $275.5$ & $69.3$ & $2.3$ & $6.00$ & $0$ \\
+All-Tools & $-67.0$ & $233.0$ & $64.4$ & $0.0$ & $6.00$ & $0$ \\
 \bottomrule
 \end{tabular}
 \end{table}
 
+\Cref{tab:main} establishes the substrate. Every \emph{learning} policy buries the non-learning baselines (no-learning $+3.8 \approx$ chance-with-cost), and the Bayesian family occupies the cost-efficient region. The myopic-VOI agent dominates the free local Llama in the \emph{product order}---lower tool cost ($1.32 < 1.44$) \emph{and} higher score ($+110.4 > +79.3$)---making it the frugal frontier point, while optimism-greedy is the higher-scoring family member ($+149.6$) at a larger tool budget. Only paid Haiku ($+445.5$, $97.5\%$ accuracy) scores above the family, at \$3.24 per 1000 questions; the family answers $56$--$64\%$ correctly at \$0. We state the accuracy subtraction plainly---the claim is cost-efficiency, not parity.
 
-\Cref{tab:stationary} reveals a cost-performance frontier. Claude Haiku~4.5 dominates on raw score ($+445.5$), answering $97.5\%$ of questions correctly whilst using fewer tools per question ($0.59$) than any other agent---it answers over half of all questions from world knowledge alone, without querying any tool. However, this performance costs \$3.24 per 1000 questions and $2.67$ seconds per question. \credence{} scores $+163.7$ at zero API cost and $0.016$ seconds per question---$37\%$ of the frontier LLM's score at $0\%$ of its cost and $0.6\%$ of its latency.
+\subsection{The Contingency Law}
+\label{sec:contingency}
 
-Haiku~4.5's high score is partly attributable to answering $54\%$ of questions from world knowledge without tool use---a capability the Bayesian agent lacks by design, since it has no internal knowledge and \emph{must} query tools. The comparison is most informative among agents that depend on tool selection for their performance.
-
-\paragraph{The accuracy paradox.}
-Among non-LLM agents, higher accuracy coexists with lower net value. All-Tools achieves the highest non-LLM accuracy ($64.4\%$) but the worst score ($-67.0$) because querying all four tools costs $6.0$ per question, destroying the margin. \credence{} achieves comparable accuracy ($64.7\%$) whilst spending only $1.25$ per question on tools. The net score is:
-\begin{equation}
-  \text{Score} = \sum_{q=1}^Q \bigl[v_q \cdot \mathbf{1}[\text{correct}_q] + v_{\text{wrong}} \cdot \mathbf{1}[\text{wrong}_q]\bigr] - \sum_{q=1}^Q \text{cost}_q,
-\end{equation}
-where $v_q = v_{\text{correct}}$ if the agent submits correctly, $v_{\text{wrong}}$ if incorrectly, and $0$ if abstaining. Maximising the first sum (accuracy) is not equivalent to maximising the full expression when costs are non-zero.
-
-\paragraph{Bayesian vs.\ local LLM.}
-Llama~3.1 8B scores $+79.3$---less than half the Bayesian agent's score---despite using native tool-calling. It abstains too aggressively ($22.9\%$ vs.\ $4.5\%$) and achieves lower accuracy on submitted answers ($59.4\%$ vs.\ $64.7\%$). A local 8B model lacks the world knowledge to compete with either the Bayesian agent's principled tool selection or a frontier model's parametric knowledge.
-
-\paragraph{Bayesian vs.\ baselines.}
-Among zero-cost agents, \credence{} dominates: it scores $3.0\times$ higher than Random ($+55.4$) and $3.7\times$ higher than Single-Best-Tool ($+44.2$). The gap reflects the combined value of VOI-based tool selection, reliability learning, and selective abstention.
-
-\subsection{Ablation Study}
+Holding the belief substrate fixed and varying only the action policy and the category condition decomposes performance into two points on one curve (\cref{tab:decomp}).
 
 \begin{table}[t]
 \centering
-\caption{Ablation study: effect of removing individual components (20 seeds, 50 questions per seed).}
-\label{tab:ablation}
+\caption{The decomposition: score by action policy $\times$ category condition (same Beta-Bernoulli substrate throughout). The winner flips between conditions---this crossover is the contingency law. Reference ceilings (oracle): exact decoupled horizon optimum $211.8$, attained by a depth-1 lookahead ($217.6$); known-$\theta$ upper bound $306.2$.}
+\label{tab:decomp}
+\small
+\begin{tabular}{@{}lrrr@{}}
+\toprule
+Policy & Oracle (given) & Inferred (fair) & Inference penalty \\
+\midrule
+Myopic VOI & $163.7$ & $110.4$ & $-53.3$ \\
+Optimism-greedy & $189.4$ & $149.6$ & $-39.6$ \\
+Horizon-aware VOI & $\mathbf{216.8}$ & $134.2$ & $-82.6$ \\
+\midrule
+Winner & horizon-VOI $\mathbf{+27}$ & greedy $\mathbf{+15}$ & --- \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\paragraph{Exploration is fixable---with given categories.} Myopic VOI under-explores (\S\ref{sec:percat}) and loses to greedy in both conditions ($-25.7$ oracle, $-39.2$ fair). Horizon-aware VOI fixes this: valuing information over the remaining same-category questions (pure EU maximisation---no $\varepsilon$-greedy, no bonus) lifts the oracle score to $+216.8$, \textbf{beating greedy by $+27$}. The exact decoupled horizon optimum is $211.8$, and a \emph{depth-1} lookahead already attains it ($217.6$), so the win is not an artefact of unbounded search.
+
+\paragraph{But the advantage is contingent on attribution quality.} Under inferred categories every exploratory query injects misattribution noise into per-category reliability learning, and the advantage evaporates: horizon-aware VOI is the \emph{most} inference-sensitive policy ($-82.6$), and greedy wins the fair condition. Isolating exploration (greedy's cost-blind submission plus horizon-probing) across the credit-assignment rule shows the loss is a property of imperfect attribution, not of any one rule (\cref{tab:credit}).
+
+\begin{table}[t]
+\centering
+\caption{Exploration under inferred categories, isolated across the credit-assignment rule (cost-blind submission $+$ horizon-probing harness). Greedy wins under all three rules; better attribution narrows but never closes the gap.}
+\label{tab:credit}
+\small
 \begin{tabular}{@{}lrrrl@{}}
 \toprule
-Variant & Score & $\Delta$ & Tools/Q & Effect \\
+Credit rule & Greedy & Horizon-VOI & Gap & \\
 \midrule
-Full \credence{} & $+163.7 \pm 51.7$ & --- & 0.96 \\
-Greedy best & $+189.4 \pm 38.9$ & $+25.7$ & 1.00 & Picks most reliable tool; no VOI needed \\
-No abstention & $+156.9 \pm 60.4$ & $-6.8$ & 0.96 & Forced submissions on low confidence \\
-No VOI (query all) & $+38.2 \pm 56.8$ & $-125.5$ & 4.00 & Highest accuracy (79.1\%) but cost destroys margin \\
-No learning & $+3.8 \pm 44.7$ & $-159.9$ & 1.00 & Barely above zero; cannot identify good tools \\
+soft ($\pi_c$; deployed) & $149.8$ & $116.7$ & $-33.1$ & fractional leak to every category \\
+hard ($\argmax_c \pi_c$) & $142.5$ & $130.4$ & $\mathbf{-12.1}$ & zero leak; exploration's best case \\
+post ($\pi_c \cdot$ likelihood) & $151.4$ & $126.7$ & $-24.6$ & the proper posterior-weighted rule \\
 \bottomrule
 \end{tabular}
 \end{table}
 
-Reliability learning is the dominant component: removing it ($-159.9$) reduces the agent to near-zero performance, because without learning the agent cannot identify which tools are reliable for which question categories. Removing VOI ($-125.5$) forces the agent to query all four tools on every question; it achieves the highest accuracy of any non-LLM agent ($79.1\%$) but the cost of $6.0$ per question destroys the margin---the same mechanism that makes All-Tools the worst-scoring agent in \cref{tab:stationary}. Abstention contributes modestly ($-6.8$).
+Better attribution helps exploration (soft$\to$hard, $+13.7$) and \emph{hurts} minimal-query greedy ($-7.3$), narrowing the gap to $-12$ at best but never closing it; the proper posterior-weighted rule (\texttt{post}) lands between, because it lifts greedy too. Oracle attribution is the only regime in which horizon-aware VOI wins. \textbf{The value of exploration is contingent on category-attribution quality}---the $+27$ oracle result and the fair loss are two points on one curve, and the $0.78$ classifier sits below the break-even.
 
-The greedy variant---which queries the single tool with highest expected reliability and submits its answer directly---slightly outperforms the full framework ($+189.4$ vs.\ $+163.7$). This occurs because the greedy agent commits to the most reliable tool per category (often the more expensive Knowledge Base at cost~$2$), whilst the full agent's VOI calculation sometimes favours cheaper but less reliable tools. The greedy agent also never abstains, and in this payoff structure the forced submissions are net positive. However, the greedy agent's success depends entirely on learning: without it, greedy reduces to picking an arbitrary tool. The key insight is that \emph{learning which tools are reliable is the primary contribution}; VOI provides the mechanism to prevent wasteful over-querying when tool costs are significant relative to information gain.
+\paragraph{Methods caveat: the deployed credit rule is an approximation.} The deployed and headline numbers use \emph{soft} credit-assignment---crediting each category by the classifier posterior $\pi_c$---a tractable approximation to the proper posterior-weighted update $\pi_c \cdot \text{likelihood}$ (\texttt{post} in \cref{tab:credit}). We disclose rather than bury this: \texttt{post} \emph{raises} the greedy baseline ($149.8 \to 151.4$), and greedy still wins the fair condition under it, so the approximation does not manufacture the contingency result---if anything the proper rule favours the minimal-query baseline. Migrating the deployed agents to the proper rule is engineering follow-up.
+
+\paragraph{A subordinate interaction.} \Cref{tab:credit} also exhibits a credit-rule $\times$ query-strategy interaction: zero-leakage hard credit is best for exploration-heavy policies and worst for minimal-query greedy. This is a structural coupling, \emph{not} a route to exploration winning---even in its best case (hard credit) horizon-aware VOI trails greedy by $12$. We report it as strictly subordinate to the contingency law.
+
+\subsection{The Cost-Efficient Frontier}
+\label{sec:frontier}
+
+Pillar~(i) holds in both conditions: reliability learning plus category inference buys the cost-efficient position. The product-order domination of the free Llama by the VOI agent is significant under a paired-seed bootstrap (95\% CI, $B{=}10^4$): greedy${-}$Llama $+70.2$ $[+49.8, +91.2]$, VOI${-}$single-best $+66.2$ $[+44.4, +88.1]$, VOI${-}$Llama $+31.1$ $[+6.2, +56.2]$.
+
+\paragraph{The cost-of-a-tool-call honesty.} Domination depends on how the two cost axes (dollars, tool-calls) are traded. Under a scalarised cost $\text{\$} + p \cdot (\text{tool-calls})$, the VOI agent is undominated only in a narrow band $p \approx 0.001$--$0.005$ per call: below it greedy dominates, above it Haiku. So the \emph{scalarised}-frontier claim is made at the family level (via greedy), while the VOI agent's robust claim is the product-order domination of Llama; Haiku is the paid-frontier point. We make both claims and overclaim neither.
+
+\paragraph{The accuracy paradox (secondary).} Among non-LLM agents, higher accuracy coexists with lower net value: the query-all agents (no-VOI, all-tools) reach the highest non-LLM accuracy ($69$--$64\%$) but the worst scores ($-24.5$, $-67.0$), because a tool budget of $6.0$ per question destroys the margin. Maximising $\sum_q [\,v\cdot\mathbf{1}(\text{correct}) + v_{\text{wrong}}\cdot\mathbf{1}(\text{wrong})\,] - \sum_q \text{cost}_q$ is not the same as maximising its first sum when costs are non-zero.
+
+\subsection{Why Myopic VOI Under-Explores}
+\label{sec:percat}
+
+\begin{table}[t]
+\centering
+\caption{Per-category accuracy and net score per question (after tool cost), fair condition: myopic VOI vs optimism-greedy ($\star$ marks the most reliable tool). Greedy wins four of five categories; VOI wins only \emph{numerical}, where the best tool is both cheap (cost~$1$) and dominant ($1.00$-reliable).}
+\label{tab:percat}
+\small
+\begin{tabular}{@{}llrrr@{}}
+\toprule
+Category & Best tool & Myopic VOI (acc / net) & Greedy (acc / net) & $\Delta$ net \\
+\midrule
+factual & $\star$KB (c2) & $70.7\%$ / $+4.11$ & $84.0\%$ / $+5.84$ & $-1.73$ \\
+misconceptions & $\star$KB (c2) & $38.6\%$ / $-0.52$ & $57.9\%$ / $+1.99$ & $-2.51$ \\
+recent events & $\star$web (c1) & $45.6\%$ / $+1.09$ & $55.6\%$ / $+1.98$ & $-0.88$ \\
+reasoning & $\star$llm (c2) & $42.5\%$ / $+0.12$ & $49.0\%$ / $+0.75$ & $-0.62$ \\
+\textbf{numerical} & $\star$calc (c1) & $69.0\%$ / $\mathbf{+4.24}$ & $60.5\%$ / $+2.48$ & $\mathbf{+1.76}$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The myopic VOI of \cref{eq:voi} values information only for the current question. Under Beta(1,1) priors every tool's net VOI is $2.5 - \text{cost}$, so the agent economises onto cheap tools and \emph{never pays to discover} an expensive-but-reliable tool whose value would amortise over future same-category questions (its knowledge-base query rate on KB-best categories crawls from $4\%$ to $31\%$ over a seed, versus greedy's optimistic $25\% \to 66\%$). It therefore wins only where the best tool is both cheap and dominant by a wide margin---\emph{numerical}, where the cost-$1$ calculator is $1.00$-reliable (\cref{tab:percat}); greedy wins the other four categories. This is exactly the under-exploration that horizon-aware VOI fixes (\S\ref{sec:contingency}), and the aggregate is its mix-weighted projection: VOI overtakes greedy only above a ${\sim}40\%$ numerical share, versus the benchmark's $20\%$.
+
+\subsection{Ablations and the Oracle Skyline}
+\label{sec:ablation}
+
+\begin{table}[t]
+\centering
+\caption{Oracle skyline (given categories), 20 seeds---the price-of-inference reference for \cref{tab:main}. ``Cost/Q'' is tool cost per question.}
+\label{tab:skyline}
+\small
+\begin{tabular}{@{}lrrr@{}}
+\toprule
+Agent (oracle) & Score & Acc.\% & Cost/Q \\
+\midrule
+Horizon-aware VOI & $\mathbf{+216.8}$ & $74.0$ & $1.76$ \\
+Optimism-greedy & $+189.4$ & $68.6$ & $1.50$ \\
+Myopic VOI & $+163.7$ & $62.0$ & $1.25$ \\
+No abstention & $+156.9$ & $62.6$ & $1.25$ \\
+No VOI (query-all) & $+38.2$ & $77.9$ & $6.00$ \\
+No learning & $+3.8$ & $40.5$ & $1.00$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\Cref{tab:skyline} gives the oracle skyline---the price-of-inference reference for the fair results of \cref{tab:main}. Reliability learning is the dominant component: freezing it collapses the agent to chance-with-cost ($+3.8$). Removing VOI (querying all four tools) reaches the highest accuracy but the worst score---the accuracy paradox again. The optimism-greedy agent, far from being a quirk that ``beats the full framework,'' is simply the optimism-under-uncertainty member of the same Bayesian family; the substantive question this paper answers is not greedy-versus-VOI in the abstract but \emph{under what conditions} each wins. Category inference, finally, is the dominant lever: it costs the VOI agent ${\sim}53$ points and greedy ${\sim}40$ (\cref{tab:decomp})---both dwarfing the ${\le}27$ any exploration policy buys---so the single most valuable improvement is a better classifier, not a better action rule.
 
 
 % ============================================================
@@ -349,21 +463,24 @@ The greedy variant---which queries the single tool with highest expected reliabi
 \section{Discussion}
 \label{sec:discussion}
 
+\paragraph{When does exploration pay?}
+The headline result is a contingency, not a verdict. With \emph{given} categories, horizon-aware VOI is the best policy we tested---exploration, valued correctly over the horizon and kept inside pure expected-utility maximisation, beats optimism-greedy by $+27$. With \emph{inferred} categories at a realistic $0.78$ classifier accuracy, the same policy loses, because the per-category reliability signal that exploration exploits is exactly what attribution noise corrupts. The binding constraint on whether to explore is therefore \emph{attribution quality}, not value-of-information in principle; and since category inference costs far more than any exploration policy can recover (\S\ref{sec:ablation}), the dominant lever for a deployed agent is a better classifier, not a cleverer action rule. We read this as a law that should generalise to any category-conditioned sequential decision problem with a learned context label: the value of an exploratory action is bounded by the fidelity with which its outcome can be attributed to the right context.
+
 \paragraph{Why accuracy is the wrong metric.}
-The accuracy paradox is not merely an artefact of our scoring system. Any deployment context with non-zero query costs---API fees, latency, rate limits---creates a divergence between accuracy and net value. Among non-LLM agents, All-Tools achieves the highest accuracy ($64.4\%$) but the worst score ($-67.0$). Even for the frontier LLM, the relevant metric is score-per-dollar: Haiku~4.5 achieves $2.7\times$ the Bayesian agent's score but at infinite cost relative to the Bayesian agent's zero. The correct metric is expected utility, which accounts for both the value of correct answers and the cost of obtaining them.
+The accuracy paradox is not merely an artefact of our scoring system. Any deployment context with non-zero query costs---API fees, latency, rate limits---creates a divergence between accuracy and net value. Among non-LLM agents, the query-all agents reach the highest accuracy ($69$--$64\%$) but the worst scores ($-24.5$, $-67.0$). Even for the frontier LLM, the relevant metric is score-per-dollar: Haiku~4.5 outscores the best \$0 agent several-fold but at strictly positive dollar cost. The correct metric is expected utility, which accounts for both the value of correct answers and the cost of obtaining them.
 
 \paragraph{Cheap design for LLM agents.}
-\citet{ay2015geometric} argues that an embodied agent's controller need not be a universal approximator---it need only be sufficient for expressing desired behaviours given the agent's embodiment constraints. The \credence{} decision layer demonstrates this principle: a Julia inference engine maintaining Beta distributions and computing VOI outperforms a local LLM-based decision-maker that is orders of magnitude more complex, and achieves $37\%$ of a frontier model's score at zero cost. The LLM is powerful but expensive; using it for decisions that admit analytical solutions---resource allocation under uncertainty---is the opposite of cheap design.
+\citet{ay2015geometric} argues that an embodied agent's controller need not be a universal approximator---it need only be sufficient for expressing desired behaviours given the agent's embodiment constraints. The \credence{} decision layer demonstrates this principle: a Julia inference engine maintaining Beta distributions and computing VOI outperforms a local LLM-based decision-maker that is orders of magnitude more complex, dominating the free local model outright at zero dollar cost. The LLM is powerful but expensive; using it for decisions that admit analytical solutions---resource allocation under uncertainty---is the opposite of cheap design.
 
 The analogy to Ay's exponential family policy models (\citealt{ay2015geometric}, Proposition~1) is suggestive: just as Ay shows that policies parameterised by a small number of ``feature vectors'' derived from the embodiment constraints can be embodied universal approximators, the \credence{} decision layer achieves strong performance using only the sufficient statistics of the Beta posteriors. The ``feature vectors'' are the tool-category reliability estimates; the ``embodiment constraints'' are the tools' true (unknown) reliability profiles.
 
-The computational asymmetry is stark: the \credence{} decision layer processes each question in $0.016$ seconds (closed-form Beta posterior updates and VOI computation), whilst the frontier LLM requires $2.67$ seconds---a $167\times$ difference driven entirely by LLM inference overhead for tool selection decisions that admit analytical solutions. \Cref{tab:stationary} reports wall-clock time per question for each agent.
+The computational asymmetry is stark: the \credence{} decision layer processes each question in $0.016$ seconds (closed-form Beta posterior updates and VOI computation), whilst the frontier LLM requires $2.67$ seconds---a $167\times$ difference driven entirely by LLM inference overhead for tool selection decisions that admit analytical solutions.
 
 \paragraph{Connection to dynamic staged trees.}
 The per-tool, per-category Beta parameters in \credence{} are structurally analogous to the stage parameters in a chain event graph \citep{freeman2011bayesian}: each tool-category pair is a ``situation'' in the event tree sense, with its own Dirichlet-distributed transition probabilities. The agent's task of learning which tools are reliable for which categories mirrors the CEG model selection problem of learning which situations share the same stage (i.e., the same transition distribution).
 
 \paragraph{Limitations.}
-The current evaluation uses simulated tools with known ground truth, which limits ecological validity. The question bank is small (50 questions) and question categories are provided to the agent rather than inferred. We include a frontier LLM (Claude Haiku~4.5), which comprehensively outperforms \credence{} on raw score ($+445.5$ vs.\ $+163.7$), demonstrating that world knowledge accessible through a frontier model's parameters can compensate for the lack of principled tool selection. However, this comes at an API cost (\$3.24 per 1000 questions) and latency ($2.67$s per question) that may be prohibitive at scale. The current framework assumes tools return independent responses---correlated errors between tools are not modelled. Distributional drift experiments are deferred to future work.
+The current evaluation uses simulated tools with known ground truth, which limits ecological validity, and the question bank is small (50 questions). Category inference uses a single off-the-shelf classifier at $0.78$ accuracy; since attribution quality is the binding constraint we identify, the contingency law's crossover point is specific to that accuracy, and a stronger classifier would shift it. A frontier LLM (Claude Haiku~4.5) comprehensively outscores the Bayesian family ($+445.5$ vs.\ $+149.6$ for the best \$0 agent), demonstrating that parametric world knowledge can substitute for principled tool selection---but at an API cost (\$3.24 per 1000 questions) and latency ($2.67$\,s per question) that may be prohibitive at scale. The framework assumes tools return independent responses---correlated errors are not modelled---and the deployed inferred agents use the soft credit-assignment approximation (\S\ref{sec:contingency}) rather than the proper posterior-weighted update. Distributional drift experiments are deferred to future work.
 
 
 % ============================================================
@@ -372,11 +489,11 @@ The current evaluation uses simulated tools with known ground truth, which limit
 \section{Conclusion and Future Work}
 \label{sec:conclusion}
 
-We have presented \credence{}, a Bayesian decision-theoretic framework for LLM tool selection that derives agent behaviour from five axioms rather than engineering it through prompting. On a controlled benchmark, \credence{} achieves the highest score among zero-cost agents ($+163.7$), dominating all non-LLM baselines by at least $3\times$. A frontier LLM (Claude Haiku~4.5) outperforms it on raw score ($+445.5$) but at non-trivial API cost and $167\times$ higher latency. These results establish a cost-performance frontier: principled Bayesian methods are optimal when cost or latency constraints preclude frontier model deployment, and remain relevant as a decision-making layer even when frontier models are available.
+We have presented \credence{}, a Bayesian decision-theoretic framework for LLM tool selection that derives agent behaviour from five axioms rather than engineering it through prompting, and used it to ask \emph{when} value-of-information tool selection pays. Our central finding is a contingency law: a horizon-aware VOI policy---constitution-clean, with exploration emergent from pure expected-utility maximisation rather than an $\varepsilon$-greedy or bonus heuristic---beats an optimism-greedy rule by $+27$ when question categories are given, but loses once they are inferred by a $0.78$-accuracy classifier, because category-attribution noise corrupts the per-category reliability signal exploration depends on. Independently of which action policy wins, the Bayesian substrate owns the cost-efficient frontier: it dominates a free local LLM outright and is beaten only by a frontier model at real dollar cost. The lesson for practice is that, under imperfect category attribution, the dominant lever is better inference, not cleverer exploration.
 
-Several extensions are immediate. First, evaluation with real (non-simulated) tools to establish ecological validity. Second, distributional drift experiments to evaluate the framework's robustness to non-stationary tool reliability. Third, the full \credence{} architecture extends beyond tool selection to a general-purpose agent framework with programs represented as DSL expressions (closed-loop policies in the sense of \citealt{sutton1999between}), meta-actions that modify the hypothesis space, and grammar evolution for discovering abstractions---a ``strange loop'' where the agent improves its own capacity for improvement. This broader architecture, grounded in the same five axioms, will be presented in a companion paper.
+Several extensions follow directly. First, and most valuable per our ablation, a stronger category classifier: inference, not the action rule, is the dominant lever, and higher attribution accuracy would shift the contingency law's crossover toward exploration. Second, migrating the deployed inferred agents from the soft credit-assignment approximation to the proper posterior-weighted update (\S\ref{sec:contingency}). Third, evaluation with real (non-simulated) tools and distributional-drift experiments, to establish ecological validity and robustness to non-stationary reliability. Fourth, the full \credence{} architecture extends beyond tool selection to a general-purpose agent framework with programs represented as DSL expressions (closed-loop policies in the sense of \citealt{sutton1999between}), meta-actions that modify the hypothesis space, and grammar evolution for discovering abstractions---a ``strange loop'' where the agent improves its own capacity for improvement, to be presented in a companion paper.
 
-Third, the CIRL alignment axiom (\cref{sec:axioms}) opens a natural connection to the preference learning literature: the agent's beliefs about user preferences can be updated from implicit feedback (clicks, corrections, task completions) using the same conjugate machinery that tracks tool reliability. This positions \credence{} not merely as an agent framework but as an alignment-by-construction approach, where safety properties follow from the axioms rather than being imposed as constraints.
+Finally, the CIRL alignment axiom (\cref{sec:axioms}) opens a natural connection to the preference learning literature: the agent's beliefs about user preferences can be updated from implicit feedback (clicks, corrections, task completions) using the same conjugate machinery that tracks tool reliability. This positions \credence{} not merely as an agent framework but as an alignment-by-construction approach, where safety properties follow from the axioms rather than being imposed as constraints.
 
 \paragraph{Reproducibility.} Code and data are available at \url{https://github.com/gfrmin/credence}. All experiments use fixed random seeds.
 
