@@ -154,7 +154,7 @@ must carry category labels for B2's calibration; depending on OQ3's
 resolution this may or may not couple the moves tightly). OQ4, OQ6
 resolved.
 
-### B4/B5 — Fair re-run, Pareto, and the exploration-duality finding (EXECUTED 2026-06)
+### B4/B5 — Fair re-run, horizon-aware VOI, and the contingency law (EXECUTED 2026-06)
 
 **OQ5 reversed — no π-injection.** The fair leveller is *input symmetry* (every
 agent sees the same raw question text), not information-surface symmetry. By the
@@ -166,31 +166,36 @@ by `scripts/paper1-pairing-gate.jl`). "Category known" (oracle) is dropped as a
 tested condition, kept only as a price-of-inference skyline. (The earlier
 "B4 = equip llm_agent.jl with a category surface" plan is void.)
 
-**The result inverts the Phase B thesis — and that inversion is the contribution.**
-Phase B bet that fair conditions would reveal VOI's value (masked under v1's given
-categories). The data refutes the bet: under inferred categories the greedy>VOI
-gap *widens* (+25.7 → +39.2), because VOI is more sensitive to category-inference
-noise. The honest finding (full argument + tables: `papers/RESULTS.md`):
+**The result refines the Phase B thesis into a contingency law — the contribution.**
+Phase B bet that fair conditions would reveal VOI's value. The arc (full provenance
+in `docs/paper1/b4-*.md`; locked argument + tables in `papers/RESULTS.md`):
 
-- Cost-efficiency is earned by the **belief substrate** (reliability learning +
-  category inference), **not** the VOI action layer. The Bayesian *family* owns
-  the cost-conscious frontier (greedy dominates the free Llama; Haiku is the paid
-  point); VOI specifically is not a robust frontier point (£/point-fragile).
-- **The action layer is not the engine:** myopic VOI loses to optimistic-greedy
-  (−39, sig.); the gating experiments cap *any* action-policy gain at ≤+16 over
-  greedy (known-θ ceiling 306, reachable ~205, horizon-locked); the inference
-  lever (40–53) dwarfs it.
-- **Exploration-duality law (per-category):** greedy wins where the best tool is
-  expensive or only moderately separated; VOI wins only where a cheap tool is
-  dominant by a wide margin (numerical/calculator). Mix-crossover ~40% vs the
-  actual 20%.
+- Myopic VOI loses to greedy in **both** conditions (oracle −25.7, fair −39.2):
+  it under-explores (a Bayesian *learner*, not an *explorer*). A first conservative
+  gating pass misread this as "horizon-locked, ≤+16, future work"; the *decoupled*
+  mechanism (probe for the fee, submit best-learned — the deployed update) reaches
+  an exact horizon-optimum of 211.8, +22 over greedy (`paper1-horizon-gate.jl`).
+- **Horizon-aware VOI was built** (`agent.bdsl:horizon-step`, pure EU-max over the
+  question horizon — exploration emergent) and **beats greedy with given categories:
+  216.8 vs 189.4 (+27)**, depth-1 sufficient (`paper1-horizon-depth.jl`).
+- **But under inferred categories it loses** to greedy, robustly across submit
+  policy, probe intensity, confidence gating, and all three credit rules
+  (`paper1-horizon-inferred.jl`). Attribution noise corrupts the per-category signal
+  exploration depends on; minimal-query optimism wins.
+- **The contingency law:** exploration's value is contingent on category-attribution
+  quality. The substrate is vindicated both conditions; VOI is the frugal frontier
+  point (dominates Llama, product-order); the family owns the cost-conscious frontier.
+- **Per-category mechanism (why myopic VOI under-explores):** with Beta(1,1) priors
+  net-VOI is `2.5 − cost`, so it economises onto cheap tools and never pays to
+  discover the expensive-but-reliable one. Mix-crossover ~40% vs the actual 20%.
 
-**Thesis broadened** from "Bayesian *VOI* tool selection" to "Bayesian tool
-selection"; VOI scoped to its cheap-and-dominant-tool niche; narrated as
-principled-prior → empirical-correction. Genre: analysis/architecture, arXiv
-cs.AI. Deliverables: `papers/RESULTS.md` (locked argument), `papers/paper1/pareto.*`,
-`scripts/paper1-*`. The Paper 1 LaTeX rewrite (Phase C/D) is downstream, written
-against the locked RESULTS.md.
+Genre: empirical "when does Bayesian VOI tool selection pay" study with a
+constitution-clean method (horizon-aware VOI) + mechanism, arXiv cs.AI. Bonus
+findings: credit-rule × query-strategy interaction; B2c soft-credit shown a
+suboptimal silent approximation to post-credit (constitution follow-up,
+`docs/paper1/b4-credit-rule-verdict.md`). Deliverables: `papers/RESULTS.md`,
+`scripts/paper1-horizon-*`, `agent.bdsl:horizon-step` + host wiring. The Paper 1
+LaTeX rewrite (Phase C/D) is downstream, against the locked RESULTS.md.
 
 ---
 
