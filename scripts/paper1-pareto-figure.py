@@ -1,15 +1,22 @@
 #!/usr/bin/env python3
-"""Paper 1 B4 figure — cost–reward frontier + the exploration duality.
+"""Paper 1 figure — the exploration--attribution contingency law + the cost frontier.
 
-Panel A: gross reward vs tool cost/Q. The Bayesian family (greedy, VOI) owns the
-cost-conscious frontier; Haiku is the paid-$ frontier point; Llama is dominated.
-Panel B: per-category net/Q, VOI vs greedy — the lopsided duality (greedy wins 4
-of 5; VOI wins only numerical, the cheap-and-dominant-by-a-wide-margin tool).
+Panel A (headline): the decomposition as a slope chart. Horizon-aware VOI beats
+optimism-greedy with *given* categories (+27) and loses under *inferred* ones; the
+crossover between the two conditions IS the contingency law. Myopic VOI shown faint
+(loses both). Decomposition numbers are locked in papers/RESULTS.md ("THE
+DECOMPOSITION"): the oracle column and the inferred greedy/myopic points come from
+the host DB; the inferred horizon point (134.2) comes from
+scripts/paper1-horizon-inferred.jl. Hard-coded here because they span scripts.
+
+Panel B: gross reward vs tool cost/Q. The Bayesian family (greedy, VOI) owns the
+cost-conscious frontier; VOI is the frugal point that dominates the free local Llama
+(fewer calls AND higher score); Haiku is the paid-$ frontier point; Llama dominated.
 
   python3 scripts/paper1-pareto-figure.py
 Writes papers/paper1/pareto.{pdf,png}.
 """
-import sqlite3, json, os, statistics as st
+import sqlite3, os, statistics as st
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
@@ -19,8 +26,13 @@ DB = os.path.join(HERE, "..", "apps", "julia", "qa_benchmark", "results", "bench
 OUT = os.path.join(HERE, "..", "papers", "paper1")
 con = sqlite3.connect(DB); con.row_factory = sqlite3.Row
 QPS = 50
-CATS = ["factual", "numerical", "recent_events", "misconceptions", "reasoning"]
-CATLAB = ["factual", "numerical", "recent", "misconc", "reasoning"]
+
+# Locked decomposition (papers/RESULTS.md): (oracle/given, inferred/fair) score.
+DECOMP = {
+    "horizon-aware VOI": (216.8, 134.2),
+    "optimism-greedy":   (189.4, 149.6),
+    "myopic VOI":        (163.7, 110.4),
+}
 
 
 def agg(agent):
@@ -32,21 +44,37 @@ def agg(agent):
                 api=st.mean(r["total_api_cost_usd"] for r in rr) / QPS)
 
 
-def per_cat_net(agent):
-    out = {c: [0.0, 0] for c in CATS}
-    for r in con.execute("SELECT q.category c, q.reward rw, q.tool_cost tc FROM questions q "
-                         "JOIN runs r ON q.run_id=r.id WHERE r.agent=?", (agent,)):
-        out[r["c"]][0] += r["rw"] - r["tc"]; out[r["c"]][1] += 1
-    return [out[c][0] / out[c][1] for c in CATS]
-
-
 AG = {a: agg(a) for a in ["bayesian_inferred", "greedy_inferred", "llama3.1",
                           "claude-haiku-4-5-20251001", "single_best", "random",
                           "all_tools", "no_voi_inferred"]}
 
 fig, (axA, axB) = plt.subplots(1, 2, figsize=(12, 4.6))
 
-# ---- Panel A: frontier ----
+# ---- Panel A: the contingency law (slope chart) ----
+xs = [0, 1]
+pa_style = {  # colour, marker, linewidth, alpha, markersize
+    "horizon-aware VOI": ("#2ca02c", "o", 2.4, 1.0, 8),
+    "optimism-greedy":   ("#ff7f0e", "s", 2.4, 1.0, 8),
+    "myopic VOI":        ("#9467bd", "D", 1.3, 0.45, 6),
+}
+for name, (y_oracle, y_inf) in DECOMP.items():
+    col, mk, lw, al, ms = pa_style[name]
+    axA.plot(xs, [y_oracle, y_inf], marker=mk, color=col, lw=lw, alpha=al, ms=ms,
+             markeredgecolor="black", markeredgewidth=0.4, label=name, zorder=3)
+# the two gaps that ARE the law, annotated at the line midpoints
+axA.annotate("horizon $+27$", (0.0, (216.8 + 189.4) / 2), textcoords="offset points",
+             xytext=(10, -3), fontsize=8.5, color="#2ca02c", fontweight="bold", ha="left")
+axA.annotate("greedy $+15$", (1.0, (149.6 + 134.2) / 2), textcoords="offset points",
+             xytext=(-10, -2), fontsize=8.5, color="#ff7f0e", fontweight="bold", ha="right")
+axA.set_xlim(-0.4, 1.4)
+axA.set_xticks(xs)
+axA.set_xticklabels(["given\n(oracle)", "inferred\n(NB, LOO 0.78)"])
+axA.set_ylabel("score (per seed)")
+axA.set_title("(A) Contingency law: exploration's value $\\perp$ attribution quality",
+              fontsize=10.5)
+axA.legend(fontsize=8, loc="lower left"); axA.grid(alpha=0.25, axis="y")
+
+# ---- Panel B: cost-reward frontier ----
 style = {
     "greedy_inferred":   ("Bayesian: greedy", "#1f77b4", "o", 90),
     "bayesian_inferred": ("Bayesian: VOI",    "#1f77b4", "D", 70),
@@ -59,35 +87,23 @@ style = {
 }
 for a, (lab, col, mk, sz) in style.items():
     d = AG[a]
-    axA.errorbar(d["tcost"], d["reward"], yerr=d["rsd"], fmt=mk, color=col,
+    axB.errorbar(d["tcost"], d["reward"], yerr=d["rsd"], fmt=mk, color=col,
                  ms=(sz**0.5), capsize=3, alpha=0.9, label=lab,
                  markeredgecolor="black", markeredgewidth=0.4, zorder=3)
-# family cheap-frontier line: single_best -> greedy (the $0 frontier), then up to Haiku
-axA.plot([AG["single_best"]["tcost"], AG["greedy_inferred"]["tcost"]],
+# family cheap-frontier line: single_best -> greedy (the $0 frontier)
+axB.plot([AG["single_best"]["tcost"], AG["greedy_inferred"]["tcost"]],
          [AG["single_best"]["reward"], AG["greedy_inferred"]["reward"]],
          "--", color="#1f77b4", alpha=0.5, zorder=1)
-axA.annotate("Haiku pays\n$0.0032/Q", (AG["claude-haiku-4-5-20251001"]["tcost"],
+axB.annotate("Haiku pays\n$0.0032/Q", (AG["claude-haiku-4-5-20251001"]["tcost"],
              AG["claude-haiku-4-5-20251001"]["reward"]), textcoords="offset points",
              xytext=(8, -22), fontsize=8, color="#d62728")
-axA.annotate("VOI dominated by its\ngreedy sibling", (AG["bayesian_inferred"]["tcost"],
-             AG["bayesian_inferred"]["reward"]), textcoords="offset points",
-             xytext=(6, -30), fontsize=7.5, color="#1f77b4")
-axA.set_xlabel("tool cost per question"); axA.set_ylabel("gross reward (per seed)")
-axA.set_title("(A) Cost–reward frontier: the family owns the cheap regime")
-axA.legend(fontsize=7.5, loc="center right"); axA.grid(alpha=0.25)
-
-# ---- Panel B: duality ----
-nb, ng = per_cat_net("bayesian_inferred"), per_cat_net("greedy_inferred")
-x = range(len(CATS)); w = 0.38
-axB.bar([i - w/2 for i in x], nb, w, label="VOI", color="#1f77b4")
-axB.bar([i + w/2 for i in x], ng, w, label="greedy", color="#9ecae1")
-axB.axhline(0, color="black", lw=0.6)
-axB.set_xticks(list(x)); axB.set_xticklabels(CATLAB, fontsize=8)
-axB.set_ylabel("net score per question")
-axB.set_title("(B) Exploration duality: greedy wins 4/5; VOI only numerical")
-axB.annotate("VOI wins\n(cheap+dominant)", (1, max(nb[1], ng[1]) + 0.2),
-             fontsize=7.5, ha="center", color="#1f77b4")
-axB.legend(fontsize=8); axB.grid(alpha=0.25, axis="y")
+axB.annotate("VOI: frugal frontier point\n(dominates free Llama)",
+             (AG["bayesian_inferred"]["tcost"], AG["bayesian_inferred"]["reward"]),
+             textcoords="offset points", xytext=(6, -30), fontsize=7.5, color="#1f77b4")
+axB.set_xlabel("tool cost per question"); axB.set_ylabel("gross reward (per seed)")
+axB.set_title("(B) Cost--reward frontier: the family owns the cheap regime",
+              fontsize=10.5)
+axB.legend(fontsize=7.5, loc="center right"); axB.grid(alpha=0.25)
 
 fig.tight_layout()
 os.makedirs(OUT, exist_ok=True)
