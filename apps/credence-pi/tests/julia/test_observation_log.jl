@@ -1,44 +1,21 @@
 #!/usr/bin/env julia
 # Role: tests
 """
-    test_observation_log.jl — Step 3 of credence-pi.
+    test_observation_log.jl — the credence-pi observation log.
 
-Round-trip, schema rejection, malformed-line tolerance, and the
-end-to-end replay assertion: a fresh BDSL environment that ingests a
-log produced by an earlier session must recover a posterior whose
-expectations match the in-memory posterior of the producing session.
-
-State-equivalence is asserted through `expect`, not struct-field
-access. The "no struct internals in tests" rule is constitutional
-(Invariant 3, single-responsibility representations); it applies here
-even though the comparison happens between two BetaMeasures whose
-.alpha/.beta we could trivially read.
+Round-trip, schema rejection, malformed-line tolerance, the Pass-1
+`replay_user_responses` subset extraction, and the Pass-2
+`replay_contexts` join (rejoin each user-responded to the features of its
+originating tool-proposed, by in_response_to). The end-to-end "a fresh
+daemon replays the log and recovers the same posterior" property lives in
+test_server.jl §6, asserted through the public `weights` accessor.
 """
 
 push!(LOAD_PATH, joinpath(@__DIR__, "..", "..", "..", "..", "src"))
 using Credence
-using Credence.Previsions: Identity
 
 include(joinpath(@__DIR__, "..", "..", "daemon", "observation_log.jl"))
 using .ObservationLog
-
-const BDSL_DIR = joinpath(@__DIR__, "..", "..", "bdsl")
-
-function load_pass1_env()
-    env = Credence.Eval.default_env()
-    env[:__toplevel__] = true
-    stdlib_path = joinpath(@__DIR__, "..", "..", "..", "..", "src", "stdlib.bdsl")
-    for expr in Credence.Parse.parse_all(read(stdlib_path, String))
-        Credence.Eval.eval_dsl(expr, env)
-    end
-    for fname in ("capabilities.bdsl", "features.bdsl",
-                  "prior.bdsl", "kernel.bdsl", "decide.bdsl")
-        for expr in Credence.Parse.parse_all(read(joinpath(BDSL_DIR, fname), String))
-            Credence.Eval.eval_dsl(expr, env)
-        end
-    end
-    env
-end
 
 const PASSED = String[]
 function ok(name)
@@ -130,79 +107,46 @@ let path = tempname() * ".jsonl"
     rm(path)
 end
 
-# ── 4. End-to-end replay: log-replayed posterior == in-memory posterior ─
+# ── 4. replay_contexts: rejoin each user-responded to its tool-proposed ─
 #
-# State-equivalence asserted through `expect`, not struct access. We
-# compare both the first moment (Identity functional, dispatches to the
-# closed-form α/(α+β)) and the second moment (a polynomial closure that
-# routes through the post-step-2 Gauss-Jacobi quadrature path). Both
-# matching to 1e-12 demonstrates the full BetaMeasure state agrees,
-# without reading α/β directly.
-
-function replay_to_posterior(env, path)
-    posterior = env[Symbol("make-prior")]()
-    obs_fn    = env[Symbol("observe-response")]
-    for o in replay_user_responses(path)
-        posterior = obs_fn(posterior, o)
-    end
-    posterior
-end
+# Pass 2: a feature-conditioned update needs WHICH CELL, so replay must carry the
+# features of the originating tool-proposed (joined by in_response_to ==
+# event_id). Orphan responses (no matching tool-proposed) are dropped — the
+# daemon cannot place them in a cell. (The end-to-end "replay reconstructs the
+# same posterior" property is asserted in test_server.jl §6.)
 
 let path = tempname() * ".jsonl"
-    # Session A: produce a sequence of observations, build the posterior
-    # in memory, and append each user-responded event to the log.
-    env_a = load_pass1_env()
-    obs_fn_a = env_a[Symbol("observe-response")]
-    posterior_a = env_a[Symbol("make-prior")]()
-    for (response, obs) in (("yes", 1), ("yes", 1), ("no", 0),
-                            ("yes", 1), ("no", 0))
-        append_event!(path, Dict("event_type" => "user-responded",
-                                 "response" => response))
-        posterior_a = obs_fn_a(posterior_a, obs)
-    end
+    fA = Dict("tool-name" => "bash", "recent-repetition-count" => "rep-0")
+    fB = Dict("tool-name" => "read", "recent-repetition-count" => "rep-3plus")
+    append_event!(path, Dict("event_type" => "tool-proposed", "event_id" => "p1", "features" => fA))
+    append_event!(path, Dict("event_type" => "user-responded", "in_response_to" => "p1", "response" => "yes"))
+    append_event!(path, Dict("event_type" => "tool-completed", "in_response_to" => "p1"))
+    # Orphan: a response whose tool-proposed is absent from the log.
+    append_event!(path, Dict("event_type" => "user-responded", "in_response_to" => "ghost", "response" => "no"))
+    # Timeout is dropped (not yes/no).
+    append_event!(path, Dict("event_type" => "tool-proposed", "event_id" => "p2", "features" => fB))
+    append_event!(path, Dict("event_type" => "user-responded", "in_response_to" => "p2", "response" => "timeout"))
+    append_event!(path, Dict("event_type" => "tool-proposed", "event_id" => "p3", "features" => fB))
+    append_event!(path, Dict("event_type" => "user-responded", "in_response_to" => "p3", "response" => "no"))
 
-    # Mix in a tool-proposed and a tool-completed event that the BDSL
-    # never conditions on. The replay must ignore them.
-    append_event!(path, Dict("event_type" => "tool-proposed", "event_id" => "x"))
-    append_event!(path, Dict("event_type" => "tool-completed",
-                             "in_response_to" => "x"))
-
-    # Session B: fresh BDSL environment, fresh prior, replay from log.
-    env_b = load_pass1_env()
-    posterior_b = replay_to_posterior(env_b, path)
-
-    # First moment via the Identity fast path (closed-form on Beta).
-    mean_a = expect(posterior_a, Identity())
-    mean_b = expect(posterior_b, Identity())
-    @assert isapprox(mean_a, mean_b; atol=TOL)
-    ok("end-to-end replay: E[θ] of replayed posterior matches in-memory within 1e-12")
-
-    # Second moment via a polynomial closure — exercises the Gauss-
-    # Jacobi quadrature path. If the replay had reconstructed a
-    # different posterior, the closure-evaluated second moments would
-    # diverge well above 1e-12.
-    sq_a = expect(posterior_a, θ -> θ^2)
-    sq_b = expect(posterior_b, θ -> θ^2)
-    @assert isapprox(sq_a, sq_b; atol=TOL)
-    ok("end-to-end replay: E[θ²] of replayed posterior matches in-memory within 1e-12")
+    ctxs = replay_contexts(path)
+    @assert length(ctxs) == 2
+    @assert ctxs[1][2] == 1 && ctxs[1][1]["tool-name"] == "bash"
+    @assert ctxs[2][2] == 0 && ctxs[2][1]["tool-name"] == "read"
+    ok("replay_contexts joins yes/no responses to their tool-proposed features, in order")
+    ok("replay_contexts drops orphan responses and timeouts (no cell to place them)")
 
     rm(path)
 end
 
-# ── 5. Replay on missing log file is a no-op (returns prior) ───────────
+# ── 5. Replay on a missing log file is a no-op (empty) ─────────────────
 
 let path = tempname() * ".jsonl"   # never created
     @assert !isfile(path)
     @assert read_log(path) == ObservationLog.LogRecord[]
     @assert replay_user_responses(path) == Int[]
-
-    env = load_pass1_env()
-    prior      = env[Symbol("make-prior")]()
-    replayed   = replay_to_posterior(env, path)
-    @assert isapprox(expect(prior, Identity()),
-                     expect(replayed, Identity());
-                     atol=TOL)
-    ok("replay against a missing log file is a no-op (returns prior unchanged)")
+    @assert replay_contexts(path) == Tuple{Any, Int}[]
+    ok("replay against a missing log file is a no-op (empty contexts)")
 end
 
 # ── 6. fsync: hard-power-cut survival is the property we want, but we

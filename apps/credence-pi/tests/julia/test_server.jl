@@ -1,23 +1,27 @@
 #!/usr/bin/env julia
 # Role: tests
 """
-    test_server.jl — Step 4 of credence-pi: daemon transport.
+    test_server.jl — credence-pi daemon transport (Pass 2 / Route B).
 
-Covers:
+Covers the TRANSPORT layer (the brain math itself is in test_feature_brain.jl):
   - SignalQueue: bounded capacity, oldest-dropped-on-overflow.
   - action_to_signal: per-effector wire shape.
-  - handle_sensor_event: log-first ordering (the load-bearing invariant)
-    including the BDSL-failure case where the log is written but no
-    signal is emitted.
-  - End-to-end HTTP: POST /sensor returns ack and emits an SSE signal;
-    GET /signals receives the signal as a `data:` line.
-  - Daemon restart: a fresh DaemonState reconstructs the posterior by
-    replaying the log, asserted through `expect`, not struct fields.
+  - handle_sensor_event: log-first ordering (the load-bearing invariant),
+    including the brain-failure case where the log is written but no signal
+    is emitted.
+  - Fix 1 (features → decide): a tool-proposed event forwards its feature dict
+    into the brain; a feature-less event is rejected.
+  - Fix 2 (context-join): a user-responded conditions on the features of its
+    originating tool-proposed (by in_response_to); an orphan response does not.
+  - turn-cost: stashed as the latest cost estimate; no signal; belief untouched.
+  - Daemon restart: a fresh DaemonState reconstructs the SAME posterior by
+    replaying the log, asserted through `weights` (structure posterior), not
+    struct internals.
 """
 
 push!(LOAD_PATH, joinpath(@__DIR__, "..", "..", "..", "..", "src"))
 using Credence
-using Credence.Previsions: Identity
+using Credence: Identity, weights, expect
 using HTTP
 using JSON3
 using Sockets: listen, getsockname
@@ -27,6 +31,7 @@ using .Server
 using .Server: DaemonState, SignalQueue, init_state, handle_sensor_event,
                action_to_signal, emit_signal!, snapshot, drain!,
                start_daemon, stop_daemon
+using .Server.FeatureBrain: build_model_from_env, belief_at_context, context_from_features
 
 const BDSL_DIR = joinpath(@__DIR__, "..", "..", "bdsl")
 const TOL = 1e-12
@@ -35,6 +40,21 @@ const PASSED = String[]
 function ok(name)
     push!(PASSED, name)
     println("PASSED: ", name)
+end
+
+# A complete feature dict over the five declared features.
+feats(; tool="bash", wd="project-root", parent="none", rep="rep-0", since="lt-30s") =
+    Dict{String, Any}("tool-name" => tool,
+                      "working-directory-relative" => wd,
+                      "parent-tool-call-name" => parent,
+                      "recent-repetition-count" => rep,
+                      "time-since-last-user-message" => since)
+
+# Predictive P(approve|X) off a posterior, via the brain's per-context view.
+function predict(state, features)
+    model = build_model_from_env(state.env)
+    X = context_from_features(model, features)
+    expect(belief_at_context(model, state.posterior[], X), Identity())
 end
 
 # ── 1. SignalQueue overflow ────────────────────────────────────────────
@@ -107,30 +127,21 @@ let
     ok("action_to_signal raises on actions outside the manifest")
 end
 
-# ── 3. handle_sensor_event: log-first ordering ─────────────────────────
-#
-# The user emphasised this in the step-4 instructions: "append to
-# observation log FIRST, THEN call into BDSL, THEN emit signal." If
-# the BDSL fails, the log must already contain the event. The test
-# injects a BDSL-evaluation failure by replacing decide-action in the
-# environment with a closure that throws.
+fresh_state(; tmp_log) = init_state(; bdsl_dir = BDSL_DIR, log_path = tmp_log)
 
-function fresh_state(; tmp_log)
-    init_state(; bdsl_dir=BDSL_DIR, log_path=tmp_log)
-end
+# ── 3. handle_sensor_event: log-first ordering survives a brain failure ──
 
 let path = tempname() * ".jsonl"
-    state = fresh_state(; tmp_log=path)
-    # Sabotage decide-action AFTER state init, so the env is otherwise
-    # consistent.
-    state.env[Symbol("decide-action")] = posterior -> error("simulated BDSL failure")
+    state = fresh_state(; tmp_log = path)
+    # Sabotage decide-action (now 3-arg: posterior, features, cost) AFTER init.
+    state.env[Symbol("decide-action")] = (posterior, features, cost) -> error("simulated brain failure")
 
     event = Dict{String, Any}(
-        "event_type"    => "tool-proposed",
-        "event_id"      => "evt_failbdsl",
-        "session_id"    => "test",
-        "proposed_call" => Dict("tool_name" => "bash",
-                                "input"     => Dict("command" => "echo")),
+        "event_type" => "tool-proposed",
+        "event_id"   => "evt_failbrain",
+        "session_id" => "test",
+        "features"   => feats(),
+        "proposed_call" => Dict("tool_name" => "bash", "input" => Dict("command" => "echo")),
     )
 
     raised = false
@@ -138,148 +149,117 @@ let path = tempname() * ".jsonl"
         handle_sensor_event(state, event)
     catch e
         raised = true
-        @assert occursin("simulated BDSL failure", string(e))
+        @assert occursin("simulated brain failure", string(e))
     end
     @assert raised
-    ok("handle_sensor_event propagates BDSL failures to the caller")
+    ok("handle_sensor_event propagates brain failures to the caller")
 
-    # Log already contains the event despite the BDSL failure.
     log_records = Server.ObservationLog.read_log(path)
     @assert length(log_records) == 1
-    @assert log_records[1].event["event_id"] == "evt_failbdsl"
-    ok("log-first invariant: failed BDSL call still leaves the event in the log")
+    @assert log_records[1].event["event_id"] == "evt_failbrain"
+    ok("log-first invariant: failed brain call still leaves the event in the log")
 
-    # No signal emitted.
     @assert isempty(snapshot(state.signal_queue))
-    ok("log-first invariant: no signal emitted when BDSL raises")
-
-    # Restart: fresh env, replay log. Posterior is unchanged (tool-
-    # proposed events don't update belief). Assert via expect, not by
-    # reading struct fields.
-    restarted = fresh_state(; tmp_log=path)
-    pristine = fresh_state(; tmp_log=tempname() * ".jsonl")  # empty-log state
-    @assert isapprox(expect(restarted.posterior[], Identity()),
-                     expect(pristine.posterior[],  Identity());
-                     atol=TOL)
-    ok("log-first invariant: restart from log reconstructs the same posterior (tool-proposed leaves belief untouched)")
-
+    ok("log-first invariant: no signal emitted when the brain raises")
     rm(path)
 end
 
-# ── 4. handle_sensor_event: normal flow ────────────────────────────────
+# ── 3b. Fix 1: a tool-proposed without features is rejected ──────────────
 
 let path = tempname() * ".jsonl"
-    state = fresh_state(; tmp_log=path)
+    state = fresh_state(; tmp_log = path)
+    raised = false
+    try
+        handle_sensor_event(state, Dict{String, Any}(
+            "event_type" => "tool-proposed", "event_id" => "evt_nofeat"))
+    catch e
+        raised = true
+        @assert occursin("missing required 'features'", string(e))
+    end
+    @assert raised
+    ok("Fix 1: tool-proposed without a feature dict is rejected (Pass-2 brain needs X)")
+    rm(path)
+end
 
-    # Cold start: tool-proposed should yield :ask (voi gate at Beta(2,2)).
+# ── 4. Normal flow: cold-start asks; context-join conditions on the cell ──
+
+let path = tempname() * ".jsonl"
+    state = fresh_state(; tmp_log = path)
+    ctx = feats(tool = "bash", rep = "rep-0")
+
+    p_before = predict(state, ctx)
+    @assert isapprox(p_before, 0.5; atol = TOL)
+    ok("cold-start predictive P(approve|X) = 0.5")
+
     proposed = Dict{String, Any}(
-        "event_type"    => "tool-proposed",
-        "event_id"      => "evt_p1",
-        "proposed_call" => Dict("tool_name" => "bash",
-                                "input"     => Dict("command" => "ls")),
+        "event_type" => "tool-proposed", "event_id" => "evt_p1",
+        "features" => ctx,
+        "proposed_call" => Dict("tool_name" => "bash", "input" => Dict("command" => "ls")),
     )
     ack = handle_sensor_event(state, proposed)
     @assert ack["ack"] == true && ack["event_id"] == "evt_p1"
     sigs = snapshot(state.signal_queue)
-    @assert length(sigs) == 1
-    @assert sigs[1]["effector"] == "ask"
+    @assert length(sigs) == 1 && sigs[1]["effector"] == "ask"
     @assert sigs[1]["in_response_to"] == "evt_p1"
-    ok("tool-proposed at cold start: ack returned, single :ask signal queued")
+    ok("tool-proposed at cold start: single :ask signal queued (voi gate)")
 
     drain!(state.signal_queue)
 
-    # user-responded yes → conditions on obs=1, then followup-after-response
-    # returns :proceed which is emitted with in_response_to=evt_p1.
-    user_resp = Dict{String, Any}(
-        "event_type"     => "user-responded",
-        "event_id"       => "evt_r1",
-        "in_response_to" => "evt_p1",
-        "response"       => "yes",
-    )
-    handle_sensor_event(state, user_resp)
+    # user-responded yes → context-join to evt_p1's features → condition; the
+    # predictive at X rises; followup :proceed emitted.
+    handle_sensor_event(state, Dict{String, Any}(
+        "event_type" => "user-responded", "event_id" => "evt_r1",
+        "in_response_to" => "evt_p1", "response" => "yes"))
     sigs2 = snapshot(state.signal_queue)
-    @assert length(sigs2) == 1
-    @assert sigs2[1]["effector"] == "proceed"
+    @assert length(sigs2) == 1 && sigs2[1]["effector"] == "proceed"
     @assert sigs2[1]["in_response_to"] == "evt_p1"
-    ok("user-responded yes: posterior conditions and a :proceed follow-up is emitted")
+    ok("user-responded yes: context-joined, :proceed follow-up emitted")
 
-    # Posterior should now be Beta(3,2). Verify via expect on Identity:
-    # E[θ] of Beta(3,2) = 3/5 = 0.6.
-    @assert isapprox(expect(state.posterior[], Identity()), 3.0 / 5.0; atol=TOL)
-    ok("user-responded yes folds through observe-response: E[θ] = 3/5 (FP-bounded)")
+    p_after = predict(state, ctx)
+    @assert p_after > p_before + 1e-6
+    ok("Fix 2: the 'yes' conditioned the cell-for-X — P(approve|X) rose above 0.5 ($(round(p_after,digits=4)))")
 
-    drain!(state.signal_queue)
-
-    # tool-completed: logged but no signal, no belief change.
-    completed = Dict{String, Any}(
-        "event_type"     => "tool-completed",
-        "event_id"       => "evt_c1",
-        "in_response_to" => "evt_p1",
-        "outcome"        => Dict("success" => true, "duration_ms" => 12),
-    )
-    handle_sensor_event(state, completed)
-    @assert isempty(snapshot(state.signal_queue))
-    @assert isapprox(expect(state.posterior[], Identity()), 3.0 / 5.0; atol=TOL)
-    ok("tool-completed: log-only, no signal emitted, posterior unchanged")
-
-    # Verify log accumulated all events in order — including the "decision"
-    # records emit_signal! writes alongside each effector signal (for the
-    # dollars-saved surface; replay ignores them).
-    records = Server.ObservationLog.read_log(path)
-    @assert [r.event["event_type"] for r in records] ==
-            ["tool-proposed", "decision", "user-responded", "decision", "tool-completed"]
-    @assert records[2].event["action"] == "ask"
-    @assert records[4].event["action"] == "proceed"
-    ok("handle_sensor_event flow appends sensor + decision log entries in order")
-
+    # A DIFFERENT context is unaffected (per-context learning, the whole point).
+    other = predict(state, feats(tool = "grep", rep = "rep-3plus"))
+    @assert isapprox(other, 0.5; atol = 0.2)  # pooled structures move it slightly, not to p_after
+    ok("per-context: an unrelated context is far less affected than the observed one")
     rm(path)
 end
 
-# ── 4b. handle_sensor_event: turn-cost is log-only ─────────────────────
-#
-# Move 1 (Pass 2): the OpenClaw-plugin body emits per-turn token/USD
-# cost via its llm_output hook. The daemon logs it (for the dollars-
-# saved surface and the cost-denominated utility, both Move 2) but does
-# NOT condition the posterior and emits NO signal — exactly like
-# tool-completed.
+# ── 4b. Fix 2: an orphan user-responded (no remembered context) is not learned ──
 
 let path = tempname() * ".jsonl"
-    state = fresh_state(; tmp_log=path)
-    before = expect(state.posterior[], Identity())
+    state = fresh_state(; tmp_log = path)
+    p0 = predict(state, feats())
+    handle_sensor_event(state, Dict{String, Any}(
+        "event_type" => "user-responded", "event_id" => "evt_orphan",
+        "in_response_to" => "never-proposed", "response" => "no"))
+    @assert isapprox(predict(state, feats()), p0; atol = TOL)
+    ok("Fix 2: a response with no remembered context does not corrupt belief")
+    rm(path)
+end
 
-    turn_cost = Dict{String, Any}(
-        "event_type"   => "turn-cost",
-        "event_id"     => "evt_tc1",
-        "session_id"   => "test",
-        "usd"          => 0.0123,
-        "total_tokens" => 1500,
-        "model"        => "claude-opus-4-8",
-    )
-    ack = handle_sensor_event(state, turn_cost)
+# ── 4c. turn-cost: stashed as the cost estimate; no signal; belief untouched ──
+
+let path = tempname() * ".jsonl"
+    state = fresh_state(; tmp_log = path)
+    w_before = weights(state.posterior[])
+
+    ack = handle_sensor_event(state, Dict{String, Any}(
+        "event_type" => "turn-cost", "event_id" => "evt_tc1", "session_id" => "test",
+        "usd" => 0.0123, "total_tokens" => 1500, "model" => "claude-opus-4-8"))
     @assert ack["ack"] == true && ack["event_id"] == "evt_tc1"
     @assert isempty(snapshot(state.signal_queue))
-    @assert isapprox(expect(state.posterior[], Identity()), before; atol=TOL)
-    ok("turn-cost: log-only, no signal emitted, posterior unchanged")
-
-    records = Server.ObservationLog.read_log(path)
-    @assert length(records) == 1
-    @assert records[1].event["event_type"] == "turn-cost"
-    @assert records[1].event["usd"] == 0.0123
-    @assert records[1].event["total_tokens"] == 1500
-    ok("turn-cost: logged with cost fields intact for the Move-2 dollars-saved surface")
-
+    @assert state.last_cost[] == 0.0123
+    # credence-lint: allow — precedent:test-oracle — structure-posterior equality oracle (turn-cost must not learn)
+    @assert weights(state.posterior[]) == w_before
+    ok("turn-cost: stashed as last_cost, no signal, structure posterior untouched")
     rm(path)
 end
 
 # ── 5. End-to-end: HTTP /sensor + SSE /signals ─────────────────────────
-#
-# Spin up a real HTTP server on an ephemeral port, open an SSE
-# subscriber, POST a sensor event, and verify the SSE stream produces
-# the expected `data:` line carrying the effector signal.
 
 function pick_port()
-    # Bind ephemeral, read assigned port, close. Race-y but adequate
-    # for a single test run on a developer machine.
     sock = listen(0)
     _, port = getsockname(sock)
     close(sock)
@@ -288,15 +268,13 @@ end
 
 let path = tempname() * ".jsonl"
     port = pick_port()
-    server, state = start_daemon(; port=port, log_path=path, bdsl_dir=BDSL_DIR)
+    server, state = start_daemon(; port = port, log_path = path, bdsl_dir = BDSL_DIR)
     try
-        # SSE consumer in a background task. Reads up to the first
-        # `data:` line and stops.
         sse_url = "http://127.0.0.1:$port/signals"
         sse_received = Channel{String}(1)
         sse_task = @async begin
             try
-                HTTP.open("GET", sse_url; readtimeout=10) do http
+                HTTP.open("GET", sse_url; readtimeout = 10) do http
                     while !eof(http)
                         line = readline(http)
                         if startswith(line, "data: ")
@@ -306,30 +284,23 @@ let path = tempname() * ".jsonl"
                     end
                 end
             catch e
-                # Likely closed mid-read once we hit `break`; tolerate.
             end
         end
-
-        # Give the SSE handler a moment to register before posting.
         sleep(0.2)
 
-        # POST a tool-proposed event.
         proposed = Dict{String, Any}(
-            "event_type"    => "tool-proposed",
-            "event_id"      => "evt_http_1",
-            "proposed_call" => Dict("tool_name" => "bash",
-                                    "input"     => Dict("command" => "ls")),
+            "event_type" => "tool-proposed", "event_id" => "evt_http_1",
+            "features" => feats(),
+            "proposed_call" => Dict("tool_name" => "bash", "input" => Dict("command" => "ls")),
         )
         resp = HTTP.post("http://127.0.0.1:$port/sensor",
                          ["Content-Type" => "application/json"],
-                         JSON3.write(proposed); readtimeout=10)
+                         JSON3.write(proposed); readtimeout = 10)
         @assert resp.status == 200
         ack = JSON3.read(String(resp.body), Dict{String, Any})
-        @assert ack["ack"] == true
-        @assert ack["event_id"] == "evt_http_1"
+        @assert ack["ack"] == true && ack["event_id"] == "evt_http_1"
         ok("HTTP POST /sensor returns 200 with {ack=true, event_id}")
 
-        # Wait for the SSE consumer to receive its `data:` line.
         sse_data = take!(sse_received)
         sig = JSON3.read(sse_data, Dict{String, Any})
         @assert sig["signal_type"] == "effector"
@@ -338,40 +309,45 @@ let path = tempname() * ".jsonl"
         ok("HTTP GET /signals SSE delivers the effector signal as a `data:` line")
     finally
         stop_daemon(server, state)
-        rm(path; force=true)
+        rm(path; force = true)
     end
 end
 
-# ── 6. Daemon restart reconstructs posterior from log ─────────────────
+# ── 6. Daemon restart reconstructs the posterior from the log ──────────
+#
+# Build belief through tool-proposed + user-responded PAIRS (so the context-join
+# lands each update in the right cell), then restart and assert the structure
+# posterior (and a probe predictive) match within 1e-12 — replay correctness.
 
 let path = tempname() * ".jsonl"
-    # Session A: post a sequence of user-responded events through the
-    # in-process handle_sensor_event, building up the posterior.
-    state_a = fresh_state(; tmp_log=path)
-    for (eid, response) in (("u1", "yes"), ("u2", "yes"), ("u3", "no"),
-                            ("u4", "yes"))
+    state_a = fresh_state(; tmp_log = path)
+    seq = [("p1", feats(tool="bash", rep="rep-0"), "yes"),
+           ("p2", feats(tool="bash", rep="rep-3plus"), "no"),
+           ("p3", feats(tool="bash", rep="rep-3plus"), "no"),
+           ("p4", feats(tool="read", rep="rep-0"), "yes")]
+    for (pid, f, resp) in seq
         handle_sensor_event(state_a, Dict{String, Any}(
-            "event_type"     => "user-responded",
-            "event_id"       => eid,
-            "in_response_to" => "p?",
-            "response"       => response,
-        ))
+            "event_type" => "tool-proposed", "event_id" => pid, "features" => f,
+            "proposed_call" => Dict("tool_name" => f["tool-name"], "input" => Dict())))
+        handle_sensor_event(state_a, Dict{String, Any}(
+            "event_type" => "user-responded", "event_id" => "r_$pid",
+            "in_response_to" => pid, "response" => resp))
     end
-    mean_a = expect(state_a.posterior[], Identity())
+    w_a = weights(state_a.posterior[])
+    probe = feats(tool="bash", rep="rep-3plus")
+    pred_a = predict(state_a, probe)
 
-    # Session B: fresh state, same log path. init_state replays.
-    state_b = fresh_state(; tmp_log=path)
-    mean_b = expect(state_b.posterior[], Identity())
+    state_b = fresh_state(; tmp_log = path)   # replay
+    w_b = weights(state_b.posterior[])
+    pred_b = predict(state_b, probe)
 
-    @assert isapprox(mean_a, mean_b; atol=TOL)
-    ok("daemon restart: replay reconstructs posterior; E[θ] matches in-process within 1e-12")
-
-    # Second moment too (routes through Gauss-Jacobi quadrature).
-    sq_a = expect(state_a.posterior[], θ -> θ^2)
-    sq_b = expect(state_b.posterior[], θ -> θ^2)
-    @assert isapprox(sq_a, sq_b; atol=TOL)
-    ok("daemon restart: E[θ²] matches in-process within 1e-12")
-
+    @assert length(w_a) == length(w_b) && all(isapprox.(w_a, w_b; atol = TOL))
+    ok("daemon restart: replay reconstructs the structure posterior within 1e-12")
+    @assert isapprox(pred_a, pred_b; atol = TOL)
+    ok("daemon restart: a probe predictive P(approve|X) matches in-process within 1e-12")
+    # And the repeated 'no' loop pushed the probe context below 0.5 (sanity).
+    @assert pred_a < 0.5
+    ok("restart sanity: the repeated bash/rep-3plus denials drove P(approve|X) < 0.5")
     rm(path)
 end
 

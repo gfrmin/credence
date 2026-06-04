@@ -1,0 +1,310 @@
+# Role: brain
+"""
+    feature_brain.jl — the credence-pi feature-conditioned brain (Pass 2, Move 3).
+
+Structure-BMA over Bayesian-network edges (feature → approval). Replaces the
+Pass-1 global `Beta(2,2)` with `P(approve | X)`, X = the declared features, so the
+governor can block a *repeated* wasteful call while still approving a *novel* one —
+impossible for one global Beta.
+
+ROUTE B (docs/credence-pi-pass-2/move-3-design.md). This is typed Julia
+brain-side code that DECLARES the structure family + readout Functionals and CALLS
+the Tier-1 axiom ops — the constitution's "applications declare data and call
+primitives" pattern. It reimplements NO axiom-constrained op: every belief change
+goes through `condition`; every decision through the typed stdlib `optimise`/`voi`.
+The `.bdsl` files keep the DECLARED DATA (feature spaces in features.bdsl, the
+capability manifest, the utility constants in utility.bdsl).
+
+Two representations, kept separate (Invariant 3):
+  * `top`         — the persistent belief: a `MixturePrevision` over the 2ⁿ edge
+                    structures, each a `ProductPrevision` of `TaggedBeta` cells.
+                    Learning conditions THIS (`observe`).
+  * `belief_at_X` — a transient per-decision view: a mixture of each structure's
+                    cell-for-X carrying the same structure weights. Decisions read
+                    THIS (`decide`). Equivalence lemma (design doc §"decision side"):
+                    conditioning the view reweights structures identically to
+                    conditioning `top`, so `voi`/`value` on the view are exact.
+
+No raw probability arithmetic lives here — the `credence-lint` brain/ rule
+enforces it. EU is closed-form via typed `LinearCombination` over `Identity`; the
+action argmax is the single canonical `optimise`.
+"""
+module FeatureBrain
+
+using Main.Credence: BetaPrevision, TaggedBetaPrevision, ProductPrevision, MixturePrevision,
+    Prevision, Kernel, Interval, Finite, BetaBernoulli, Flat, FiringByTag, Identity,
+    LinearCombination, TestFunction, mean, FeatureDecl, condition, expect
+import Main.Credence.Ontology: optimise, value, voi, net_voi, with_components
+
+export StructureBMA, build_model, build_model_from_env, build_prior, wire_brain!,
+       context_from_features, firing_tags, belief_at_context, observe, decide
+
+# ── The model: feature spec + structure enumeration + tag bookkeeping ──
+#
+# A `structure` is a subset of feature indices — the parents of the approval leaf
+# A (edges INTO A; feature-feature edges describe P(X) and cancel, design doc
+# §"The model"). Each structure has one cell per element of the cross-product of
+# its parents' value-sets; every cell carries a GLOBALLY-UNIQUE integer tag so a
+# single per-context `FiringByTag` kernel routes correctly through the whole nested
+# object (within each structure exactly one cell's tag fires).
+
+struct StructureBMA
+    feature_names::Vector{String}
+    feature_values::Vector{Vector{String}}     # per feature, its value-set as strings
+    structures::Vector{Vector{Int}}            # the 2ⁿ parent-index subsets
+    cell_tag::Vector{Dict{Tuple, Int}}         # per structure: cell-key (parent values) -> tag
+    n_features::Int
+    alpha0::Float64
+    beta0::Float64
+    p_edge::Float64
+end
+
+# The cell key for context X under a structure = the tuple of X's values at the
+# structure's parents, in parent order. Empty parents ⇒ `()` (the global cell).
+cell_key(parents::Vector{Int}, X::AbstractVector) = Tuple(X[f] for f in parents)
+
+# Enumerate the cell-context keys (tuples of parent values) for a structure, in a
+# deterministic order (matches `cell_key`'s parent ordering).
+function _cell_contexts(parents::Vector{Int}, feature_values::Vector{Vector{String}})
+    isempty(parents) && return Tuple[()]
+    keys = Tuple[()]
+    for f in parents
+        keys = Tuple[(k..., v) for k in keys for v in feature_values[f]]
+    end
+    keys
+end
+
+"""
+    build_model(feature_names, feature_values; alpha0, beta0, p_edge) -> StructureBMA
+
+Enumerate all 2ⁿ edge structures, allocate a globally-unique tag per cell. Pure
+construction of the declared structure family; no beliefs yet.
+"""
+function build_model(feature_names::Vector{String}, feature_values::Vector{Vector{String}};
+                     alpha0::Float64 = 2.0, beta0::Float64 = 2.0, p_edge::Float64 = 0.5)
+    n = length(feature_names)
+    length(feature_values) == n || error("build_model: names/values length mismatch")
+    structures = Vector{Int}[]
+    for mask in 0:(2^n - 1)
+        push!(structures, [i for i in 1:n if (mask >> (i - 1)) & 1 == 1])
+    end
+    cell_tag = Dict{Tuple, Int}[]
+    tag = 0
+    for parents in structures
+        d = Dict{Tuple, Int}()
+        for cell in _cell_contexts(parents, feature_values)
+            tag += 1
+            d[cell] = tag
+        end
+        push!(cell_tag, d)
+    end
+    StructureBMA(feature_names, feature_values, structures, cell_tag, n, alpha0, beta0, p_edge)
+end
+
+"""
+    build_model_from_env(env; ...) -> StructureBMA
+
+Read the declared feature spaces from `env[:features]` (a `Vector{FeatureDecl}`
+populated by features.bdsl). The features are declared DATA; this turns them into
+the typed structure family.
+"""
+function build_model_from_env(env; alpha0::Float64 = 2.0, beta0::Float64 = 2.0,
+                              p_edge::Float64 = 0.5)
+    decls = get(env, Symbol("features"), nothing)
+    decls isa AbstractVector || error("feature brain: env[:features] must be a list of FeatureDecl")
+    names = String[]
+    vals = Vector{String}[]
+    for d in decls
+        d isa FeatureDecl || error("feature brain: expected FeatureDecl, got $(typeof(d))")
+        d.space isa Finite ||
+            error("feature brain: feature '$(d.name)' must have a Finite space, got $(typeof(d.space))")
+        push!(names, string(d.name))
+        push!(vals, String[string(v) for v in d.space.values])
+    end
+    build_model(names, vals; alpha0 = alpha0, beta0 = beta0, p_edge = p_edge)
+end
+
+"""
+    build_prior(model) -> MixturePrevision
+
+The structure-BMA prior: a mixture over structures (weights = independent
+edge-inclusion at `p_edge`; uniform when `p_edge = 0.5`), each a product of
+`Beta(alpha0, beta0)` cells. This is the `make-prior` for the daemon.
+"""
+function build_prior(model::StructureBMA)
+    comps = Prevision[]
+    for (s, parents) in enumerate(model.structures)
+        factors = TaggedBetaPrevision[]
+        for cell in _cell_contexts(parents, model.feature_values)
+            push!(factors, TaggedBetaPrevision(model.cell_tag[s][cell],
+                                               BetaPrevision(model.alpha0, model.beta0)))
+        end
+        push!(comps, ProductPrevision(factors))
+    end
+    n = model.n_features
+    logw = Float64[length(parents) * log(model.p_edge) +
+                   (n - length(parents)) * log(1.0 - model.p_edge)
+                   for parents in model.structures]
+    MixturePrevision(comps, logw)
+end
+
+# ── Context plumbing ──
+
+"""
+    context_from_features(model, features) -> Vector{String}
+
+Map a body-sent feature dict (string→bucket-string) to X, indexed by the model's
+feature order. Validates each value is a declared bucket (a body/brain contract
+violation fails loud rather than `KeyError`-ing deep in routing).
+"""
+function context_from_features(model::StructureBMA, features)
+    fd = Dict{String, String}(string(k) => string(v) for (k, v) in features)
+    X = String[]
+    for (i, name) in enumerate(model.feature_names)
+        haskey(fd, name) || error("feature brain: event missing declared feature '$name'")
+        v = fd[name]
+        v in model.feature_values[i] ||
+            error("feature brain: feature '$name' value '$v' is not a declared bucket " *
+                  "($(model.feature_values[i])) — body/brain vocabulary drift")
+        push!(X, v)
+    end
+    X
+end
+
+# F(X): one matching cell-tag per structure (globally unique ⇒ a single Set routes
+# the whole nested object).
+firing_tags(model::StructureBMA, X::AbstractVector) =
+    Set{Int}(model.cell_tag[s][cell_key(parents, X)] for (s, parents) in enumerate(model.structures))
+
+# Measure-aware Bernoulli log-density (mirrors kernel.bdsl + the oracle test): takes
+# the cell MEASURE and returns the cell's marginal log-predictive.
+_approve_logdensity(m, o) = (a = mean(m.beta); o == 1 ? log(a) : log(1.0 - a))
+
+# Per-context LEARNING kernel: BetaBernoulli on the cells in F(X), Flat (no-op)
+# elsewhere. `condition(top, this, obs)` updates each structure's cell-for-X and
+# reweights structures by the firing cell's predictive = the chain-rule marginal
+# likelihood (Code-1; verified by test_product_bma_routing.jl).
+_learn_kernel(fires::Set{Int}) =
+    Kernel(Interval(0.0, 1.0), Finite([0, 1]), theta -> theta, _approve_logdensity;
+           likelihood_family = FiringByTag(fires, BetaBernoulli(), Flat()))
+
+# DECISION kernel: a plain BetaBernoulli (every component of `belief_at_X` IS the
+# relevant cell, so all fire). Used only inside `voi`.
+_decision_kernel() =
+    Kernel(Interval(0.0, 1.0), Finite([0, 1]), theta -> theta, _approve_logdensity;
+           likelihood_family = BetaBernoulli())
+
+"""
+    observe(model, top, X, obs) -> MixturePrevision
+
+Bayesian update of the persistent belief on one `(context, response)`: a single
+`condition` through the canalised path. `obs` is 1 (approve) or 0 (deny).
+"""
+observe(model::StructureBMA, top::MixturePrevision, X::AbstractVector, obs) =
+    condition(top, _learn_kernel(firing_tags(model, X)), obs)
+
+"""
+    belief_at_context(model, top, X) -> MixturePrevision
+
+The transient per-decision view: each structure's cell-for-X, carrying the
+structure posterior weights verbatim. Pure construction — selects sub-beliefs and
+copies weights; no arithmetic on probabilities.
+"""
+function belief_at_context(model::StructureBMA, top::MixturePrevision, X::AbstractVector)
+    cells = Prevision[]
+    for (s, parents) in enumerate(model.structures)
+        tag = model.cell_tag[s][cell_key(parents, X)]
+        comp = top.components[s]
+        idx = findfirst(f -> f isa TaggedBetaPrevision && f.tag == tag, comp.factors)
+        idx === nothing && error("feature brain: cell tag $tag not found in structure $s")
+        push!(cells, comp.factors[idx])
+    end
+    # Carry the structure posterior verbatim onto the per-context cells (the
+    # weight-carry lives in the `with_components` stdlib op, not here — so the
+    # brain reads no private `log_weights`).
+    with_components(top, cells)
+end
+
+# ── Decision: per-context EU-max with the linear-cost utility ──
+#
+# With θ = P(approve|X), per-call cost c (dollars), false-block aversion λ
+# (unitless: how many wrongly-blocked wanted-calls equal one allowed wasteful
+# call), and interruption cost q (dollars), measured against a proceed baseline:
+#     EU(proceed) = 0
+#     EU(block)   = c·[(1−θ) − λ·θ] = c·[1 − (1+λ)θ]   (LinearCombination over Identity)
+#     EU(ask)     = voi − q                              (constant Functional)
+# Block wins iff θ < 1/(1+λ): the threshold is λ-set and INDEPENDENT of the cost
+# magnitude c; c only scales the stakes (and so the ask trade-off against voi/q).
+# λ=1 ⇒ neutral threshold 0.5. All three actions compare through the ONE canonical
+# `optimise` — no host-side argmax (Invariant 1).
+
+const _ID = Identity()
+_lin(coeff::Float64, off::Float64) = LinearCombination(Tuple{Float64, TestFunction}[(coeff, _ID)], off)
+_const(off::Float64) = LinearCombination(Tuple{Float64, TestFunction}[], off)
+
+"""
+    decide(model, top, X, cost; aversion, interrupt_cost) -> Symbol
+
+Return `:proceed`, `:block`, or `:ask`. `cost` is the per-call USD estimate;
+`aversion` is λ (false-block aversion, unitless); `interrupt_cost` is q (dollars).
+"""
+function decide(model::StructureBMA, top::MixturePrevision, X::AbstractVector, cost::Float64;
+                aversion::Float64, interrupt_cost::Float64)
+    bx = belief_at_context(model, top, X)
+    block_fn = _lin(-cost * (1.0 + aversion), cost)   # c·[1 − (1+λ)θ]
+    fpa_pb = Dict{Symbol, LinearCombination}(:proceed => _const(0.0), :block => block_fn)
+    # EU(ask) = voi − q, computed through the canonical `net_voi` stdlib op (the
+    # cost subtraction lives in stdlib, not as host arithmetic here) and entered
+    # into `optimise` as a constant Functional so all three actions compare
+    # through the ONE argmax.
+    eu_ask = net_voi(bx, _decision_kernel(), [:proceed, :block], fpa_pb, [0, 1], interrupt_cost)
+    fpa = Dict{Symbol, LinearCombination}(:proceed => _const(0.0),
+                                          :block => block_fn,
+                                          :ask => _const(eu_ask))
+    optimise(bx, [:proceed, :block, :ask], fpa)
+end
+
+# Pass-1 followup logic, kept (yes→proceed, no→block); deterministic in Move 3.
+function followup_after_response(event)
+    resp = string(get(event, "response", ""))
+    resp == "yes" ? :proceed : resp == "no" ? :block : :nothing
+end
+
+# ── Wiring: inject the brain closures into the BDSL env ──
+#
+# The daemon's call-sites are unchanged in SHAPE — it still does
+# `env[:make-prior]()`, `env[:decide-action](...)`, `env[:observe-response](...)`,
+# `env[:followup-after-response](event)` — but those symbols now resolve to Julia
+# brain functions. Utility constants are declared DATA read from the env
+# (utility.bdsl); defaults keep the brain runnable without that file.
+
+function wire_brain!(env)
+    p_edge   = Float64(get(env, Symbol("edge-inclusion-prior"), 0.5))
+    λ        = Float64(get(env, Symbol("false-block-aversion"), 1.0))
+    q        = Float64(get(env, Symbol("interrupt-cost"), 0.02))
+    fallback = Float64(get(env, Symbol("fallback-call-cost"), 0.5))
+    a0       = Float64(get(env, Symbol("cell-prior-alpha"), 2.0))
+    b0       = Float64(get(env, Symbol("cell-prior-beta"), 2.0))
+
+    model = build_model_from_env(env; alpha0 = a0, beta0 = b0, p_edge = p_edge)
+
+    env[Symbol("make-prior")] = () -> build_prior(model)
+
+    env[Symbol("decide-action")] = (top, features, cost) -> begin
+        X = context_from_features(model, features)
+        c = cost === nothing ? fallback : Float64(cost)
+        c = c <= 0.0 ? fallback : c
+        decide(model, top, X, c; aversion = λ, interrupt_cost = q)
+    end
+
+    env[Symbol("observe-response")] = (top, features, obs) -> begin
+        X = context_from_features(model, features)
+        observe(model, top, X, obs)
+    end
+
+    env[Symbol("followup-after-response")] = followup_after_response
+
+    model
+end
+
+end # module FeatureBrain

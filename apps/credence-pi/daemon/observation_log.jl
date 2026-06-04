@@ -27,7 +27,7 @@ module ObservationLog
 using Dates: now, UTC, format
 using JSON3
 
-export append_event!, read_log, replay_user_responses, LogRecord
+export append_event!, read_log, replay_user_responses, replay_contexts, LogRecord
 export SCHEMA_VERSION
 
 const SCHEMA_VERSION = "credence-pi/v1"
@@ -159,6 +159,41 @@ function replay_user_responses(path::AbstractString)::Vector{Int}
         end
     end
     obs
+end
+
+"""
+    replay_contexts(path::AbstractString) -> Vector{Tuple{Any, Int}}
+
+Pass-2 replay: reconstruct the sequence of `(features, obs)` pairs to fold through
+the feature-conditioned `observe-response`. A feature-conditioned update needs
+*which cell* — i.e. the features of the `tool-proposed` that this `user-responded`
+answers (joined by `in_response_to == tool-proposed.event_id`).
+
+Single pass: remember each `tool-proposed`'s `features` by `event_id`, and when a
+`user-responded` (yes/no) arrives, emit `(features, obs)`. A response whose
+originating context is missing from the log (malformed / truncated) is skipped —
+the daemon cannot place it in a cell, and a guessed context would corrupt belief.
+This mirrors the live context-join in `handle_sensor_event`.
+"""
+function replay_contexts(path::AbstractString)::Vector{Tuple{Any, Int}}
+    contexts = Dict{String, Any}()
+    out = Tuple{Any, Int}[]
+    for record in read_log(path)
+        event_type = get(record.event, "event_type", "")
+        if event_type == "tool-proposed"
+            event_id = string(get(record.event, "event_id", ""))
+            features = get(record.event, "features", nothing)
+            features === nothing || (contexts[event_id] = features)
+        elseif event_type == "user-responded"
+            response = get(record.event, "response", "")
+            (response == "yes" || response == "no") || continue
+            irt = string(get(record.event, "in_response_to", ""))
+            features = get(contexts, irt, nothing)
+            features === nothing && continue
+            push!(out, (features, response == "yes" ? 1 : 0))
+        end
+    end
+    out
 end
 
 end # module ObservationLog
