@@ -143,7 +143,7 @@ function decide_blind(rows, π, Rprime; τ = 0.0, credit = :soft)
 end
 
 function run(mode; seeds = 0:19, λ = 1.0, credit = :soft)   # mode = :greedy | :horizon | :hblind
-    scores = Float64[]; accs = Float64[]; probes = Int[]
+    scores = Float64[]; accs = Float64[]; probes = Int[]; rewards = Float64[]; costs = Float64[]
     for seed in seeds
         rng = MersenneTwister(seed); questions = get_questions(; seed)
         rt = generate_response_table(TOOLS, questions, rng)
@@ -167,8 +167,10 @@ function run(mode; seeds = 0:19, λ = 1.0, credit = :soft)   # mode = :greedy | 
             end
         end
         push!(scores, reward - cost); push!(accs, correct / N); push!(probes, pq)
+        push!(rewards, reward); push!(costs, cost)
     end
-    (score = avg(scores), acc = avg(accs), probes = avg(probes))
+    (score = avg(scores), acc = avg(accs), probes = avg(probes),
+     gross = avg(rewards), tcost = avg(costs))
 end
 
 g = run(:greedy)
@@ -178,7 +180,7 @@ println("  reference: bayesian_inferred (myopic VOI) 110.4\n")
 println("  cost-AWARE-submit horizon-VOI, probe-intensity sweep (λ=0 = cost-aware no-probe):")
 for λ in [0.0, 0.25, 0.5, 1.0]
     h = run(:horizon; λ = λ)
-    println("    λ=$λ  score=$(round(h.score,digits=1))  acc=$(round(100h.acc,digits=1))%  probe-Q/seed=$(round(h.probes,digits=1))  Δvs-greedy=$(round(h.score-g.score,digits=1))")
+    println("    λ=$λ  score=$(round(h.score,digits=1))  gross-reward=$(round(h.gross,digits=1))  tool-cost/Q=$(round(h.tcost/50,digits=2))  acc=$(round(100h.acc,digits=1))%  probe-Q/seed=$(round(h.probes,digits=1))  Δvs-greedy=$(round(h.score-g.score,digits=1))")
 end
 println("\n  THE CREDIT-RULE TEST (the upstream axis, expert loop 3) — cost-blind submit + probing:")
 for credit in [:soft, :hard, :post]
