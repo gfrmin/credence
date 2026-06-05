@@ -161,7 +161,7 @@ decoupled horizon-optimum **211.8** (`paper1-horizon-gate.jl`); depth-1 deployab
 |---|---:|---:|---:|---:|---:|---:|
 | claude-haiku-4-5 (reused) | +445.5 | 481.2 | 97.5 | 0.0 | 0.71 | 0.0032 |
 | greedy_inferred | +149.6 | 230.8 | 64.1 | 0.0 | 1.62 | 0 |
-| horizon-VOI (inferred) | +134.2 | — | 63.6 | 0.0 | 1.77 | 0 |
+| horizon-VOI (inferred) | +134.2 | 227.0 | 63.6 | 0.0 | 1.86 | 0 |
 | **bayesian_inferred** (myopic VOI) | **+110.4** | 176.5 | 56.2 | 2.0 | 1.32 | 0 |
 | llama3.1 (reused) | +79.3 | 151.5 | 45.9 | 22.9 | 1.44 | 0 |
 | random | +55.4 | 131.8 | 50.9 | 0.0 | 1.53 | 0 |
