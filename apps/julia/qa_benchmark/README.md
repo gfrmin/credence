@@ -330,7 +330,33 @@ julia apps/julia/qa_benchmark/host.jl --seeds 2
 
 # Ablation (Bayesian variants only)
 julia apps/julia/qa_benchmark/host.jl --seeds 20 --ablation
+
+# Inferred-category credit rule (issue #111). Default is :post
+# (posterior-weighted). Use :soft to reproduce the paper's committed B2c numbers.
+julia apps/julia/qa_benchmark/host.jl --seeds 20 --credit soft
 ```
+
+### Inferred-category credit rule (`--credit`, issue #111)
+
+Under *inferred* categories the classifier gives a soft posterior `π` over a
+question's category, and after a tool answers, its per-category reliability
+`θ_{t,c}` must be credited across the uncertain categories. Two rules
+(`apps/julia/qa_benchmark/category_update.jl`):
+
+| `--credit` | rule | credit weight |
+|-----------|------|---------------|
+| `post` (default) | posterior-weighted (deployed) | `ρ_c ∝ π_c · ℓ_{t,c}(outcome)` — the exact one-step category posterior |
+| `soft` | soft-credit (B2c) | `π_c` — the classifier prior; the outcome likelihood is ignored |
+
+`post` credits the category where the tool is *reliable*, not the misclassified
+one; it strictly dominates `soft`. Both route every belief change through
+`condition` (the category posterior `ρ` is itself a `condition` on the
+categorical prior — no host-side Bayes). **Both are mean-field projections of
+the intractable exact joint** (the latent category is shared across tools and
+the decision, so the exact posterior is a mixture over ~`K^#questions` global
+assignments); `post` is the better tractable projection, not the exact update —
+see the `category_update.jl` file docstring. **Paper 1's committed numbers use
+`soft`**; reproduce them with `--credit soft`.
 
 ---
 

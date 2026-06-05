@@ -81,15 +81,20 @@ function run_bayesian_seed(tools::Vector{SimulatedTool},
                            use_voi::Bool=true, learn::Bool=true,
                            allow_abstain::Bool=true, greedy::Bool=false,
                            category_posteriors::Union{Nothing,Dict{String,Vector{Float64}}}=nothing,
+                           credit::Symbol=:post,
                            init_reliability::Union{Nothing,AbstractMatrix}=nothing)
     n_tools = length(tools)
     n_cats = length(CATEGORIES)
+    credit in (:post, :soft) ||
+        error("run_bayesian_seed: credit must be :post or :soft, got :$credit")
 
     # When `category_posteriors` is supplied (id → soft posterior over
     # CATEGORIES), the agent runs under *inferred* categories (Paper 1 fair
     # conditions): decisions marginalise reliability over the posterior and
-    # learning is the full-posterior-weighted update (B2c). Otherwise it
-    # uses the given category (one-hot) — the v1 path, bit-for-bit.
+    # learning is the posterior-weighted update (`credit=:post`, the deployed
+    # default; issue #111) or the soft-credit B2c update (`credit=:soft`, the
+    # paper's committed numbers). Otherwise it uses the given category
+    # (one-hot) — the v1 path, bit-for-bit, unaffected by `credit`.
     inferred = category_posteriors !== nothing
 
     # init_reliability seeds the per-(tool,category) reliability beliefs. With
@@ -234,9 +239,12 @@ function run_bayesian_seed(tools::Vector{SimulatedTool},
         # Reliability learning (skip if learn=false)
         if learn
             if inferred
-                # Full-posterior-weighted update across all categories (B2c).
+                # Posterior-weighted (`:post`, issue #111) or soft-credit
+                # (`:soft`, B2c) update across all categories. Both route every
+                # belief change through `condition` (no host-side Bayes).
+                credit_update = credit === :soft ? update_reliability : post_update
                 for (t, resp) in tool_responses
-                    rel_betas[t, :] = update_reliability(
+                    rel_betas[t, :] = credit_update(
                         rel_betas[t, :], π, resp == q.correct_index ? 1 : 0)
                 end
             else
@@ -410,6 +418,7 @@ function parse_args()
     llm_only = false
     ablation = false
     models = String[]
+    credit = :post   # inferred-category credit rule (issue #111); :soft repro's the paper
     for (i, arg) in enumerate(ARGS)
         if arg == "--include-llm"
             include_llm = true
@@ -426,10 +435,16 @@ function parse_args()
             push!(models, split(arg, "=")[2])
         elseif arg == "--ablation"
             ablation = true
+        elseif arg == "--credit" && i < length(ARGS)
+            credit = Symbol(ARGS[i + 1])
+        elseif startswith(arg, "--credit=")
+            credit = Symbol(split(arg, "=")[2])
         end
     end
+    credit in (:post, :soft) ||
+        error("--credit must be 'post' (default) or 'soft' (paper repro), got '$credit'")
     if isempty(models); models = ["llama3.1"]; end
-    (; n_seeds, include_llm, llm_only, ablation, models)
+    (; n_seeds, include_llm, llm_only, ablation, models, credit)
 end
 
 # --- Main ---
@@ -453,6 +468,10 @@ function main()
     cat_post = isfile(joinpath(FIXTURE_DIR, "question_embeddings.json")) ?
         category_posteriors_from_fixture() : nothing
     cat_post === nothing && println(stderr, "  (no embedding fixture — skipping bayesian_inferred)")
+    cat_post !== nothing && println(stderr,
+        "  inferred-category credit rule: :$(args.credit)" *
+        (args.credit === :soft ? " (B2c — reproduces the paper's committed numbers)" :
+                                 " (posterior-weighted, issue #111 default; --credit soft for paper repro)"))
     for seed in 0:args.n_seeds-1
         rng = MersenneTwister(seed)
         questions = get_questions(; seed)
@@ -475,13 +494,13 @@ function main()
             # Pareto. The LLM agents (raw question text, no category) are reused
             # from the saved DB — see docs/paper1 B4.
             push!(agents, ("bayesian_inferred",
-                () -> run_bayesian_seed(tools, questions, response_table; category_posteriors=cat_post)))
+                () -> run_bayesian_seed(tools, questions, response_table; category_posteriors=cat_post, credit=args.credit)))
             push!(agents, ("greedy_inferred",
-                () -> run_bayesian_seed(tools, questions, response_table; greedy=true, category_posteriors=cat_post)))
+                () -> run_bayesian_seed(tools, questions, response_table; greedy=true, category_posteriors=cat_post, credit=args.credit)))
             push!(agents, ("no_voi_inferred",
-                () -> run_bayesian_seed(tools, questions, response_table; use_voi=false, category_posteriors=cat_post)))
+                () -> run_bayesian_seed(tools, questions, response_table; use_voi=false, category_posteriors=cat_post, credit=args.credit)))
             push!(agents, ("no_learning_inferred",
-                () -> run_bayesian_seed(tools, questions, response_table; learn=false, category_posteriors=cat_post)))
+                () -> run_bayesian_seed(tools, questions, response_table; learn=false, category_posteriors=cat_post, credit=args.credit)))
         end
         for (name, runner) in agents
             result = runner()
