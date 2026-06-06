@@ -17,6 +17,16 @@ const ev = (
 test("tool-name buckets known tools verbatim and unknowns to other", () => {
   const t = new FeatureTracker();
   assert.equal(t.extractAndRecord(ev("bash"), ctx(), 1000)["tool-name"], "bash");
+  // OpenClaw's primary shell tool is `exec` (distinct from `bash`); it must
+  // bucket to its own first-class category, not collapse into `other`. A
+  // failure here is the "dead category" trap: features.bdsl declares `exec`
+  // but the body never produces it. (See bdsl/features.bdsl tool-name-space.)
+  assert.equal(t.extractAndRecord(ev("exec"), ctx(), 1000)["tool-name"], "exec");
+  assert.equal(t.extractAndRecord(ev("Exec"), ctx(), 1000)["tool-name"], "exec");
+  // `process` and `apply_patch` are OpenClaw's other native agent tools — also
+  // first-class categories, not "other".
+  assert.equal(t.extractAndRecord(ev("process"), ctx(), 1000)["tool-name"], "process");
+  assert.equal(t.extractAndRecord(ev("apply_patch"), ctx(), 1000)["tool-name"], "apply_patch");
   assert.equal(t.extractAndRecord(ev("WeirdTool"), ctx(), 1000)["tool-name"], "other");
 });
 

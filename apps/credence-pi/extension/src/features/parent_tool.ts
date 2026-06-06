@@ -1,5 +1,6 @@
 // parent_tool.ts — classify the most recent prior tool_call into the
-// brain's `parent-tool-name-space`: read | write | edit | bash | grep |
+// brain's `parent-tool-name-space`: read | write | edit | bash | exec |
+// process | apply_patch | grep |
 // find | ls | other | none. "none" when the session has no preceding
 // tool_call (i.e., the proposed call is the first). The current
 // (proposed) call is NOT yet in session.messages — it's only present in
@@ -9,7 +10,7 @@ import type { ToolCallEvent, Session } from "../types.js";
 import { KNOWN_TOOLS } from "./tool_name.js";
 
 export const POSSIBLE_OUTPUTS = [
-  "read", "write", "edit", "bash", "grep", "find", "ls", "other", "none",
+  "read", "write", "edit", "bash", "exec", "process", "apply_patch", "grep", "find", "ls", "other", "none",
 ] as const;
 
 export function extractParentToolCallName(

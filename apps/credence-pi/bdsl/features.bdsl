@@ -13,7 +13,7 @@
 ; ============================================================
 
 (define tool-name-space
-  (space :finite read write edit bash grep find ls other))
+  (space :finite read write edit bash exec process apply_patch grep find ls other))
 
 (define wd-relative-space
   (space :finite project-root subdirectory outside-project no-path))
@@ -25,7 +25,7 @@
   (space :finite lt-30s lt-2m lt-10m gt-10m))
 
 (define parent-tool-name-space
-  (space :finite read write edit bash grep find ls other none))
+  (space :finite read write edit bash exec process apply_patch grep find ls other none))
 
 (define features
   (list
