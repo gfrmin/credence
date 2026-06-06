@@ -103,6 +103,11 @@ test("extractToolName: known lowercased; unknown → other", () => {
   assert.equal(extractToolName({ toolName: "Bash", input: null }, s), "bash");
   assert.equal(extractToolName({ toolName: "READ", input: null }, s), "read");
   assert.equal(extractToolName({ toolName: "ls",   input: null }, s), "ls");
+  // `exec` is OpenClaw's primary shell tool — a first-class category, not "other".
+  assert.equal(extractToolName({ toolName: "exec", input: null }, s), "exec");
+  assert.equal(extractToolName({ toolName: "Exec", input: null }, s), "exec");
+  assert.equal(extractToolName({ toolName: "process", input: null }, s), "process");
+  assert.equal(extractToolName({ toolName: "apply_patch", input: null }, s), "apply_patch");
   assert.equal(extractToolName({ toolName: "ContextCompactor", input: null }, s),
                "other");
   assert.equal(extractToolName({ toolName: "",     input: null }, s), "other");

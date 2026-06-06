@@ -339,7 +339,7 @@ The brain's declared sensory vocabulary. Each feature is a Finite space; the bod
 ; ============================================================
 
 (define tool-name-space
-  (space :finite read write edit bash grep find ls other))
+  (space :finite read write edit bash exec process apply_patch grep find ls other))
 
 (define wd-relative-space
   (space :finite project-root subdirectory outside-project no-path))
@@ -351,7 +351,7 @@ The brain's declared sensory vocabulary. Each feature is a Finite space; the bod
   (space :finite lt-30s lt-2m lt-10m gt-10m))
 
 (define parent-tool-name-space
-  (space :finite read write edit bash grep find ls other none))
+  (space :finite read write edit bash exec process apply_patch grep find ls other none))
 
 (define features
   (list
@@ -667,7 +667,7 @@ Each extractor is a small pure function. Bucketing logic lives here:
 ```typescript
 // apps/credence-pi/extension/src/features/repetition.ts
 
-const KNOWN_TOOLS = new Set(["read", "write", "edit", "bash", "grep", "find", "ls"]);
+const KNOWN_TOOLS = new Set(["read", "write", "edit", "bash", "exec", "process", "apply_patch", "grep", "find", "ls"]);
 
 export function extractRecentRepetitionCount(
   event: ToolCallEvent,
