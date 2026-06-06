@@ -1,4 +1,4 @@
-name: Publish credence-proxy image
+name: Publish images (credence-proxy + credence-pi daemon)
 
 on:
   push:
@@ -196,3 +196,114 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+  # ── credence-pi daemon (the Bayesian governance brain) ──────────────
+  # Same shape as the credence-proxy jobs above, for
+  # apps/credence-pi/daemon/Dockerfile -> ghcr.io/<owner>/credence-pi-daemon.
+  # Separate GHA cache scope so the two images don't evict each other.
+  daemon-smoke-build:
+    name: Build daemon amd64 + smoke test
+    runs-on: ubuntu-latest
+    needs: unit-tests
+    # No packages: write — build + smoke only; never pushes.
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build daemon amd64 for smoke test
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./apps/credence-pi/daemon/Dockerfile
+          platforms: linux/amd64
+          load: true
+          tags: credence-pi-daemon:smoke
+          cache-from: type=gha,scope=credence-pi-daemon
+          cache-to: type=gha,mode=max,scope=credence-pi-daemon
+
+      - name: Smoke-test daemon reaches /ready and accepts exec
+        run: |
+          set -e
+          docker run -d --rm --name credence-pi-daemon-smoke \
+            -p 8787:8787 credence-pi-daemon:smoke
+          # Poll /ready up to 3 min (precompiled image answers well before).
+          for i in $(seq 1 36); do
+            if curl -fsS --max-time 5 http://localhost:8787/ready; then
+              echo "/ready OK after ${i}0s"
+              # Assert the baked vocabulary accepts `exec` (the fix). The
+              # pre-fix image returns 500 here ("not a declared bucket").
+              code=$(curl -s -o /dev/null -w '%{http_code}' \
+                -X POST http://localhost:8787/sensor \
+                -H 'Content-Type: application/json' \
+                -d '{"event_type":"tool-proposed","event_id":"ci-smoke-exec","features":{"tool-name":"exec","working-directory-relative":"project-root","parent-tool-call-name":"none","recent-repetition-count":"rep-0","time-since-last-user-message":"lt-30s"},"proposed_call":{"tool_name":"exec","input":{"command":"ls"}}}')
+              echo "POST /sensor exec -> HTTP $code"
+              if [ "$code" != "200" ]; then
+                echo "=== exec NOT accepted (vocab fix missing from image) ==="
+                docker logs credence-pi-daemon-smoke
+                docker stop credence-pi-daemon-smoke
+                exit 1
+              fi
+              docker stop credence-pi-daemon-smoke
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "=== DAEMON SMOKE FAILED — never reached /ready ==="
+          docker logs credence-pi-daemon-smoke
+          docker stop credence-pi-daemon-smoke
+          exit 1
+
+  publish-daemon:
+    name: Publish daemon multi-arch to GHCR
+    runs-on: ubuntu-latest
+    needs: daemon-smoke-build
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/master' || startsWith(github.ref, 'refs/tags/v'))
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract daemon image metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ github.repository_owner }}/credence-pi-daemon
+          tags: |
+            type=ref,event=branch
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=sha,format=short
+            type=raw,value=latest,enable=${{ github.ref == format('refs/heads/{0}', 'master') }}
+
+      - name: Build and push daemon multi-arch
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./apps/credence-pi/daemon/Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=credence-pi-daemon
+          cache-to: type=gha,mode=max,scope=credence-pi-daemon
