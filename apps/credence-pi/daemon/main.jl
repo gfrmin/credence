@@ -16,6 +16,8 @@ Configuration via environment (all optional):
     CREDENCE_PI_PORT       bind port          (default 8787)
     CREDENCE_PI_BDSL_DIR   BDSL program dir   (default ../bdsl next to this file)
     CREDENCE_PI_LOG        observation log    (default ~/.credence-pi/observations.jsonl)
+    CREDENCE_PI_WARM_BRAIN serialized warm prior (default ../brain/warm_brain.jls if
+                           present; set to "" to force a cold start)
 """
 
 push!(LOAD_PATH, abspath(joinpath(@__DIR__, "..", "..", "..", "src")))
@@ -28,11 +30,14 @@ const HOST     = get(ENV, "CREDENCE_PI_HOST", "127.0.0.1")
 const PORT     = parse(Int, get(ENV, "CREDENCE_PI_PORT", "8787"))
 const BDSL_DIR = get(ENV, "CREDENCE_PI_BDSL_DIR", normpath(joinpath(@__DIR__, "..", "bdsl")))
 const LOG_PATH = get(ENV, "CREDENCE_PI_LOG", joinpath(homedir(), ".credence-pi", "observations.jsonl"))
+const _DEFAULT_WARM = normpath(joinpath(@__DIR__, "..", "brain", "warm_brain.jls"))
+const WARM_BRAIN = get(ENV, "CREDENCE_PI_WARM_BRAIN", isfile(_DEFAULT_WARM) ? _DEFAULT_WARM : "")
 
 mkpath(dirname(LOG_PATH))
 
-server, _state = start_daemon(; port = PORT, host = HOST, log_path = LOG_PATH, bdsl_dir = BDSL_DIR)
-@info "credence-pi daemon listening" host = HOST port = PORT bdsl_dir = BDSL_DIR log = LOG_PATH
+server, _state = start_daemon(; port = PORT, host = HOST, log_path = LOG_PATH,
+                             bdsl_dir = BDSL_DIR, warm_brain_path = WARM_BRAIN)
+@info "credence-pi daemon listening" host = HOST port = PORT bdsl_dir = BDSL_DIR log = LOG_PATH warm_brain = WARM_BRAIN
 
 # Block until the listener closes. SIGINT (Ctrl-C) surfaces as an
 # InterruptException; SIGTERM (docker stop) lets Julia exit. The

@@ -113,6 +113,11 @@ export interface GovernorOpts {
   approvalTimeoutMs: number;
   priceTable: PriceTable;
   redactToolInputs: boolean;
+  /** Observe-only: the brain still decides and the daemon still logs the
+   *  decision, but the body NEVER enforces (always proceeds). Lets operators
+   *  measure what governance WOULD do on real usage without affecting runs —
+   *  the basis for counterfactual telemetry. Default false (enforcing). */
+  shadowMode: boolean;
   log: Logger;
 }
 
@@ -134,8 +139,8 @@ export function createGovernor(
   client: DaemonClient,
   opts: GovernorOpts,
 ): Governor {
-  const { hookTimeoutMs, approvalTimeoutMs, priceTable, redactToolInputs, log } =
-    opts;
+  const { hookTimeoutMs, approvalTimeoutMs, priceTable, redactToolInputs,
+    shadowMode, log } = opts;
   const tracker = new FeatureTracker();
 
   // event_id -> resolver for the awaited effector signal. The single SSE
@@ -158,6 +163,7 @@ export function createGovernor(
     ctx: ToolContext,
   ): Promise<BeforeToolCallResult | undefined> {
     const eventId = newEventId();
+    const t0 = Date.now();
     const signalPromise = new Promise<SignalEnvelope | undefined>((resolve) => {
       const timer = setTimeout(() => {
         awaiters.delete(eventId);
@@ -207,6 +213,32 @@ export function createGovernor(
     }
 
     const sig = await signalPromise;
+
+    // Governance round-trip overhead (sensor POST + signal wait). Recorded for
+    // the honest *time* accounting (governance adds latency). Fire-and-forget;
+    // the daemon logs unknown event_types before warning, so it lands in the
+    // observation log without affecting the decision.
+    const latencyMs = Date.now() - t0;
+    void client.postSensor({
+      event_type: "governance-latency",
+      event_id: newEventId(),
+      in_response_to: eventId,
+      timestamp: new Date().toISOString(),
+      latency_ms: latencyMs,
+    });
+
+    // Observe-only: the brain decided and the daemon logged it; the body does
+    // not enforce. This is what lets operators measure counterfactual
+    // governance on real usage without changing any run.
+    if (shadowMode) {
+      if (sig && (sig.effector === "block" || sig.effector === "ask")) {
+        log(
+          `credence-pi[shadow]: would ${sig.effector} \`${event.toolName}\` — proceeding (shadow mode)`,
+        );
+      }
+      return undefined;
+    }
+
     return mapSignal(sig, eventId, client, approvalTimeoutMs);
   }
 
@@ -284,6 +316,7 @@ const plugin: PluginEntry = {
         : DEFAULT_APPROVAL_TIMEOUT_MS;
     const silent = cfg.silent === true;
     const redactToolInputs = cfg.redactToolInputs === true;
+    const shadowMode = cfg.shadowMode === true;
     const priceTable = buildPriceTable(cfg.pricing);
 
     const log: Logger = (m, e) => {
@@ -302,8 +335,10 @@ const plugin: PluginEntry = {
       approvalTimeoutMs,
       priceTable,
       redactToolInputs,
+      shadowMode,
       log,
     });
+    if (shadowMode) log("credence-pi: SHADOW MODE — observing only, never enforcing");
 
     api.on("before_tool_call", gov.beforeToolCall, {
       priority: 100,

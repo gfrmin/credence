@@ -11,7 +11,7 @@ const flush = () => new Promise((r) => setTimeout(r, 5));
 
 type Posted = Record<string, unknown>;
 
-function harness(postOk = true) {
+function harness(postOk = true, shadowMode = false) {
   const posted: Posted[] = [];
   let onSignal: ((s: SignalEnvelope) => void) | undefined;
   let closed = false;
@@ -35,6 +35,7 @@ function harness(postOk = true) {
     approvalTimeoutMs: 5_000,
     priceTable: buildPriceTable(undefined),
     redactToolInputs: false,
+    shadowMode,
     log: () => {},
   });
   const find = (t: string) => posted.find((e) => e.event_type === t);
@@ -130,6 +131,7 @@ test("redactToolInputs: tool input omitted from the sensor event", async () => {
     approvalTimeoutMs: 5_000,
     priceTable: buildPriceTable(undefined),
     redactToolInputs: true,
+    shadowMode: false,
     log: () => {},
   });
   await gov.beforeToolCall(ev("bash", { params: { command: "secret-token-123" } }), ctx);
@@ -139,6 +141,20 @@ test("redactToolInputs: tool input omitted from the sensor event", async () => {
   assert.equal(tp?.proposed_call.input, null);
   assert.equal(tp?.proposed_call.tool_name, "bash");
   gov.cleanup();
+});
+
+test("shadowMode: block signal → proceeds (undefined), but still sensed + latency logged", async () => {
+  const h = harness(true, true); // postOk, shadowMode
+  const p = h.gov.beforeToolCall(ev(), ctx);
+  await flush();
+  h.signal("block", h.lastProposedId());
+  // Brain said block, but shadow mode never enforces → tool proceeds.
+  assert.equal(await p, undefined);
+  // Governance still ran: the proposal was sensed (daemon logs the decision)…
+  assert.ok(h.find("tool-proposed"), "tool-proposed must still be posted in shadow mode");
+  // …and the round-trip latency was recorded.
+  assert.ok(h.find("governance-latency"), "governance-latency must be posted");
+  h.gov.cleanup();
 });
 
 test("after_tool_call: posts tool-completed correlated by toolCallId", async () => {

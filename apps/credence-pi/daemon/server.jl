@@ -30,6 +30,7 @@ using Dates: now, UTC
 using HTTP
 using JSON3
 using Random: randstring
+using Serialization: deserialize
 
 include(joinpath(@__DIR__, "observation_log.jl"))
 using .ObservationLog: append_event!, replay_user_responses, replay_contexts
@@ -158,15 +159,42 @@ function load_env(bdsl_dir::AbstractString)::Eval.Env
 end
 
 """
-    init_state(; bdsl_dir, log_path) -> DaemonState
+    load_starting_posterior(env, warm_brain_path) -> Measure
+
+The starting belief BEFORE the local log is replayed. If `warm_brain_path` names
+a readable serialized posterior (a warm brain trained on corpus replay — see
+apps/credence-pi/eval/train_warm_brain.jl), deserialize it so governance works
+from install instead of cold `Beta(2,2)`. The warm brain is a PRIOR: the local
+log then conditions it via `observe-response`, so each deployment adapts. Any
+load failure (missing file, schema/version drift) falls back LOUDLY to the cold
+prior — a stale warm brain must never silently mis-govern.
+"""
+function load_starting_posterior(env, warm_brain_path)
+    cold() = env[Symbol("make-prior")]()
+    (warm_brain_path === nothing || isempty(warm_brain_path)) && return cold()
+    isfile(warm_brain_path) || (@warn "warm brain not found; cold start" path=warm_brain_path; return cold())
+    try
+        p = deserialize(warm_brain_path)
+        @info "loaded warm brain" path=warm_brain_path type=typeof(p)
+        p
+    catch e
+        @warn "warm brain failed to load; cold start" path=warm_brain_path error=e
+        cold()
+    end
+end
+
+"""
+    init_state(; bdsl_dir, log_path, warm_brain_path=nothing) -> DaemonState
 
 Build a fresh daemon state. Calls `load_env`, builds an empty signal
-queue, and reconstructs the posterior by replaying every
-`user-responded` event in `log_path` through `observe-response`.
+queue, loads the starting posterior (warm brain if configured, else cold prior),
+and reconstructs on top of it by replaying every `user-responded` event in
+`log_path` through `observe-response`.
 """
-function init_state(; bdsl_dir::AbstractString, log_path::AbstractString)::DaemonState
+function init_state(; bdsl_dir::AbstractString, log_path::AbstractString,
+                    warm_brain_path=nothing)::DaemonState
     env = load_env(bdsl_dir)
-    posterior = env[Symbol("make-prior")]()
+    posterior = load_starting_posterior(env, warm_brain_path)
     obs_fn = env[Symbol("observe-response")]
     # Pass 2: replay each user-responded REJOINED to its tool-proposed features
     # (by in_response_to), so the feature-conditioned update lands in the right
@@ -467,8 +495,9 @@ down.
 function start_daemon(; port::Int,
                        log_path::AbstractString,
                        bdsl_dir::AbstractString,
-                       host::AbstractString="127.0.0.1")
-    state = init_state(; bdsl_dir, log_path)
+                       host::AbstractString="127.0.0.1",
+                       warm_brain_path=nothing)
+    state = init_state(; bdsl_dir, log_path, warm_brain_path)
     sse_handler = _signals_sse_handler(state)
 
     function dispatch(stream::HTTP.Stream)

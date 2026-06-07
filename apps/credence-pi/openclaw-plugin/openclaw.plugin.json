@@ -30,6 +30,11 @@
         "description": "Omit tool-call inputs from sensor events sent to the daemon (they can carry secrets/commands). Governance still works; the ask-dialog preview becomes generic.",
         "default": false
       },
+      "shadowMode": {
+        "type": "boolean",
+        "description": "Observe-only: the brain still decides and the daemon logs the decision, but the body never enforces (always proceeds). Use to measure what governance WOULD do on real usage without affecting runs.",
+        "default": false
+      },
       "silent": {
         "type": "boolean",
         "description": "Suppress info/warn logging.",
