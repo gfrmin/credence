@@ -93,16 +93,27 @@ function load_sessions(path)
     sessions
 end
 
-# Objective waste label (calibration ground truth, never fed to a decision):
-# an exact repeat of a previous (tool_name, command) within the same session is
-# a loop — the wasteful call governance should catch.
+# Objective waste label (calibration ground truth, never fed to a decision): an
+# exact repeat of a previous (tool, command) within the same session is a loop.
+# A call counts ONLY when its command is genuinely distinguishable (present and
+# ≠ the tool name) — some corpora collapse a tool's args into command==toolname
+# (e.g. ClawsBench `read`), and treating those repeats as loops would label
+# every legitimate sequential read a loop. We only claim a loop when we can
+# actually see the args repeat.
+distinguishable(tool, cmd) = !isempty(cmd) && cmd != tool
 function mark_loops!(events::Vector{Dict{String,Any}})
     seen = Set{Tuple{String,String}}()
     for e in events
-        cmd = get(get(e, "meta", Dict()), "command", nothing)
-        key = (String(get(e, "tool_name", "")), cmd === nothing ? "" : String(cmd))
-        e["is_loop"] = key in seen
-        push!(seen, key)
+        tool = String(get(e, "tool_name", ""))
+        cmdv = get(get(e, "meta", Dict()), "command", nothing)
+        cmd = cmdv === nothing ? "" : String(cmdv)
+        if distinguishable(tool, cmd)
+            key = (tool, cmd)
+            e["is_loop"] = key in seen
+            push!(seen, key)
+        else
+            e["is_loop"] = false
+        end
     end
 end
 

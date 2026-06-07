@@ -16,6 +16,7 @@ import { createInterface } from "node:readline";
 import { basename } from "node:path";
 import { adaptNative } from "./adapters/native_openclaw.js";
 import { adaptClawsbench, type ClawsbenchRecord } from "./adapters/clawsbench.js";
+import { adaptAtbench, type AtbenchRecord } from "./adapters/atbench.js";
 import type { NormalizedEvent } from "./types.js";
 
 interface Args {
@@ -108,16 +109,37 @@ async function runClawsbench(args: Args): Promise<void> {
   );
 }
 
+// atbench: input is a single JSON array of {trajectory, labels, reason}.
+function runAtbench(args: Args): void {
+  const all: NormalizedEvent[] = [];
+  let safe = 0,
+    unsafe = 0;
+  for (const file of args.inputs) {
+    const records = JSON.parse(readFileSync(file, "utf8")) as AtbenchRecord[];
+    records.forEach((rec, i) => {
+      if (rec.labels?.is_safe === true) safe += 1;
+      else if (rec.labels?.is_safe === false) unsafe += 1;
+      all.push(...adaptAtbench(rec, `atbench-${i}`));
+    });
+  }
+  emit(args.out, all.map((e) => JSON.stringify(e)));
+  process.stderr.write(
+    `extract(atbench): ${all.length} tool calls from ${safe + unsafe} trajectories ` +
+      `(${safe} safe, ${unsafe} unsafe)\n`,
+  );
+}
+
 async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2));
   if (args.inputs.length === 0) {
     process.stderr.write(
-      "usage: extract.ts --format native|clawsbench [--harness H] [--limit N] [--out f] <input.jsonl ...>\n",
+      "usage: extract.ts --format native|clawsbench|atbench [--harness H] [--limit N] [--out f] <input ...>\n",
     );
     process.exit(2);
   }
   if (args.format === "native") runNative(args);
   else if (args.format === "clawsbench") await runClawsbench(args);
+  else if (args.format === "atbench") runAtbench(args);
   else throw new Error(`unknown format '${args.format}'`);
 }
 

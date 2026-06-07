@@ -31,7 +31,7 @@ curl -sL -o train.jsonl \
 |-------|-------|
 | `--train-frac` | 0.7 |
 | `--seed` | 0 |
-| `--call-cost` | 0.01 (labelled cost assumption; corpus has no per-call tokens) |
+| `--call-cost` | 0.50 (the daemon's default fallback; labelled assumption — corpus has no per-call tokens. NB: c ≤ ~$0.2 spuriously blanket-blocks via the θ=0.5 tie — see FINDINGS "never block on no evidence") |
 | sessions (with ≥1 tool call) | 3,384 (train 2,369 / test 1,015) |
 | train observations | 28,008 |
 | test calls | 11,306 |
@@ -42,9 +42,17 @@ curl -sL -o train.jsonl \
   brain conditions on the 3 available features (tool-name, parent, repetition);
   `features_available` is logged per event.
 - **Waste label = training signal.** The objective loop label (exact repeated
-  `(tool, command)` in a session) is both the training feedback proxy and the
-  calibration target — a self-consistent loop-detection eval. The *independent*
-  check is the outcome correlation against the results CSV's `passed`/`is_safety`.
+  `(tool, command)` in a session, counted only where the command is genuinely
+  distinguishable — present and ≠ the tool name) is both the training feedback
+  proxy and the calibration target. The independent checks are the outcome
+  correlation (`passed`/`is_safety`) and the ATBench-Claw cross-corpus run.
+- **Read-arg collapse (load-bearing).** ClawsBench stores every `read` as
+  `command="read"` (path stripped), so legitimate sequential reads of *different*
+  files are indistinguishable from re-reading one file. Counting those as loops
+  inflated an earlier result to "0.894 precision"; excluding collapsed-arg repeats
+  drops real loops to 0.7% and the brain's apparent skill to zero. **Corrected
+  result is NEGATIVE — see FINDINGS.md.** ClawsBench can faithfully measure only
+  `exec` waste.
 - **Prevented-spend is a labelled estimate**, not measured dollars (no per-call
   tokens). The primary results are the call-count, precision/recall, and outcome
   correlation — not the dollar figure.
