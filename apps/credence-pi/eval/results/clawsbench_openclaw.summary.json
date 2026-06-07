@@ -1,0 +1,48 @@
+{
+  "corpus": "benchflow/ClawsBench (openclaw harness)",
+  "test_calls": 11306,
+  "objective_loops": 504,
+  "loop_rate": 0.0446,
+  "warm_brain": {
+    "decisions": {
+      "proceed": 10937,
+      "block": 369,
+      "ask": 0
+    },
+    "block_rate": 0.0326,
+    "precision_vs_loops": 0.8943,
+    "recall_vs_loops": 0.6548,
+    "tp": 330,
+    "fp": 39,
+    "fn": 174,
+    "prevented_calls": 369,
+    "prevented_spend_usd_estimate": 3.69,
+    "prevented_spend_assumption": "$0.01/call (LABELLED; corpus has no per-call tokens)"
+  },
+  "static_rule_block_all_repeats": {
+    "block_rate": 0.7253,
+    "precision_vs_loops": 0.025,
+    "recall_vs_loops": 0.4067,
+    "blocks": 8200
+  },
+  "outcome_correlation": {
+    "joined_calls": 1235,
+    "by_outcome": {
+      "failed": {
+        "calls": 471,
+        "block_rate": 0.0234,
+        "loop_rate": 0.0425
+      },
+      "passed": {
+        "calls": 128,
+        "block_rate": 0.0156,
+        "loop_rate": 0.0312
+      },
+      "safety": {
+        "calls": 636,
+        "block_rate": 0.0912,
+        "loop_rate": 0.1195
+      }
+    }
+  }
+}
