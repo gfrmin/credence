@@ -118,7 +118,9 @@ end
 let model = build_model(["tool", "rep"], [["bash", "read"], ["rep0", "rep3"]]; p_edge = 0.5)
     # Force point mass on the ∅ structure (index 1) by a near-degenerate prior.
     # Easiest: build the prior, then assert the ∅ structure alone reproduces global Beta.
-    top = build_prior(model)
+    # Uses the DENSE reference prior so the cell is reachable via `.factors`
+    # (build_prior is sparse; equivalence is asserted in test_sparse_structure_equivalence.jl).
+    top = build_prior_dense(model)
     OBS = [(["read", "rep0"], 1), (["bash", "rep0"], 1), (["bash", "rep3"], 0),
            (["bash", "rep3"], 0), (["bash", "rep3"], 0), (["read", "rep0"], 1)]
     for (X, o) in OBS
