@@ -73,6 +73,45 @@ test("recent-identical-call-count: argument key order doesn't matter", () => {
   assert.equal(f["recent-identical-call-count"], "ident-1");
 });
 
+test("recent-identical-call-count: long commands sharing a prefix do NOT collide", () => {
+  // Two heredocs writing DIFFERENT scripts but identical in their first ~600
+  // chars. A truncated fingerprint would mis-count them as a repeat; the full
+  // content hash must keep them distinct (ident-0).
+  const t = new FeatureTracker();
+  const c = ctx({ runId: "collide" });
+  const head = "cat << 'EOF' > f.py\n" + "x = 1  # padding ".repeat(40);
+  t.extractAndRecord(ev("exec", { params: { command: head + "\nprint('A')" } }), c, 1);
+  const f = t.extractAndRecord(ev("exec", { params: { command: head + "\nprint('B')" } }), c, 2);
+  assert.equal(f["recent-identical-call-count"], "ident-0");
+});
+
+test("recent-identical-call-count: counted session-wide, not just last 5 calls", () => {
+  const t = new FeatureTracker();
+  const c = ctx({ runId: "wide" });
+  t.extractAndRecord(ev("exec", { params: { command: "make" } }), c, 1);
+  // 8 distinct calls in between (would fall outside a 5-call window)
+  for (let i = 0; i < 8; i++) {
+    t.extractAndRecord(ev("exec", { params: { command: `step-${i}` } }), c, 2 + i);
+  }
+  const f = t.extractAndRecord(ev("exec", { params: { command: "make" } }), c, 100);
+  assert.equal(f["recent-identical-call-count"], "ident-1"); // the distant repeat is seen
+});
+
+test("recent-identical-call-count: non-informative args are never a loop", () => {
+  const t = new FeatureTracker();
+  const c = ctx({ runId: "noninfo" });
+  // A lone field echoing the tool name (corpus collapse) carries no evidence.
+  t.extractAndRecord(ev("exec", { params: { command: "exec" } }), c, 1);
+  const a = t.extractAndRecord(ev("exec", { params: { command: "exec" } }), c, 2);
+  assert.equal(a["recent-identical-call-count"], "ident-0");
+  // Empty args likewise.
+  const t2 = new FeatureTracker();
+  const c2 = ctx({ runId: "empty" });
+  t2.extractAndRecord(ev("read", { params: {} }), c2, 1);
+  const b = t2.extractAndRecord(ev("read", { params: {} }), c2, 2);
+  assert.equal(b["recent-identical-call-count"], "ident-0");
+});
+
 test("repetition is per-run-isolated", () => {
   const t = new FeatureTracker();
   t.extractAndRecord(ev("bash"), ctx({ runId: "a" }), 1);
