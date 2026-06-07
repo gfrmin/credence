@@ -31,13 +31,14 @@ action argmax is the single canonical `optimise`.
 """
 module FeatureBrain
 
-using Main.Credence: BetaPrevision, TaggedBetaPrevision, ProductPrevision, MixturePrevision,
+using Main.Credence: BetaPrevision, TaggedBetaPrevision, SparseStructurePrevision,
+    ProductPrevision, MixturePrevision,
     Prevision, Kernel, Interval, Finite, BetaBernoulli, Flat, FiringByTag, Identity,
-    LinearCombination, TestFunction, mean, FeatureDecl, condition, expect
+    LinearCombination, TestFunction, mean, FeatureDecl, condition, expect, cell_at
 import Main.Credence.Ontology: optimise, value, voi, net_voi, with_components
 
-export StructureBMA, build_model, build_model_from_env, build_prior, wire_brain!,
-       context_from_features, firing_tags, belief_at_context, observe, decide
+export StructureBMA, build_model, build_model_from_env, build_prior, build_prior_dense,
+       wire_brain!, context_from_features, firing_tags, belief_at_context, observe, decide
 
 # ── The model: feature spec + structure enumeration + tag bookkeeping ──
 #
@@ -53,6 +54,8 @@ struct StructureBMA
     feature_values::Vector{Vector{String}}     # per feature, its value-set as strings
     structures::Vector{Vector{Int}}            # the 2ⁿ parent-index subsets
     cell_tag::Vector{Dict{Tuple, Int}}         # per structure: cell-key (parent values) -> tag
+    tag_lo::Vector{Int}                        # per structure: lowest cell tag (contiguous)
+    tag_hi::Vector{Int}                        # per structure: highest cell tag
     n_features::Int
     alpha0::Float64
     beta0::Float64
@@ -89,16 +92,22 @@ function build_model(feature_names::Vector{String}, feature_values::Vector{Vecto
         push!(structures, [i for i in 1:n if (mask >> (i - 1)) & 1 == 1])
     end
     cell_tag = Dict{Tuple, Int}[]
+    tag_lo = Int[]
+    tag_hi = Int[]
     tag = 0
     for parents in structures
         d = Dict{Tuple, Int}()
+        lo = tag + 1                  # tags are contiguous per structure
         for cell in _cell_contexts(parents, feature_values)
             tag += 1
             d[cell] = tag
         end
         push!(cell_tag, d)
+        push!(tag_lo, lo)
+        push!(tag_hi, tag)
     end
-    StructureBMA(feature_names, feature_values, structures, cell_tag, n, alpha0, beta0, p_edge)
+    StructureBMA(feature_names, feature_values, structures, cell_tag, tag_lo, tag_hi,
+                 n, alpha0, beta0, p_edge)
 end
 
 """
@@ -124,14 +133,39 @@ function build_model_from_env(env; alpha0::Float64 = 2.0, beta0::Float64 = 2.0,
     build_model(names, vals; alpha0 = alpha0, beta0 = beta0, p_edge = p_edge)
 end
 
+# Structure-inclusion log-weights (independent edge-inclusion at p_edge; uniform
+# when p_edge = 0.5). Shared by the sparse and dense priors.
+_structure_logweights(model::StructureBMA) =
+    Float64[length(parents) * log(model.p_edge) +
+            (model.n_features - length(parents)) * log(1.0 - model.p_edge)
+            for parents in model.structures]
+
 """
     build_prior(model) -> MixturePrevision
 
-The structure-BMA prior: a mixture over structures (weights = independent
-edge-inclusion at `p_edge`; uniform when `p_edge = 0.5`), each a product of
-`Beta(alpha0, beta0)` cells. This is the `make-prior` for the daemon.
+The structure-BMA prior: a mixture over structures, each a SPARSE product of
+`Beta(alpha0, beta0)` cells (`SparseStructurePrevision` — only observed cells are
+materialised). Bit-identical to `build_prior_dense` but O(structures) to build and
+to condition, so the brain scales to many features. This is the daemon `make-prior`.
 """
 function build_prior(model::StructureBMA)
+    comps = Prevision[SparseStructurePrevision(model.alpha0, model.beta0,
+                                               model.tag_lo[s], model.tag_hi[s],
+                                               Dict{Int, BetaPrevision}())
+                      for s in eachindex(model.structures)]
+    MixturePrevision(comps, _structure_logweights(model))
+end
+
+"""
+    build_prior_dense(model) -> MixturePrevision
+
+The DENSE reference prior: each structure a full `ProductPrevision` of
+`TaggedBetaPrevision` cells. Materialises the entire cross-product (exponential),
+so it is used only as the exactness reference for `build_prior`
+(see test/test_sparse_structure_equivalence.jl) and by tests that inspect cell
+internals via `.factors`.
+"""
+function build_prior_dense(model::StructureBMA)
     comps = Prevision[]
     for (s, parents) in enumerate(model.structures)
         factors = TaggedBetaPrevision[]
@@ -141,11 +175,7 @@ function build_prior(model::StructureBMA)
         end
         push!(comps, ProductPrevision(factors))
     end
-    n = model.n_features
-    logw = Float64[length(parents) * log(model.p_edge) +
-                   (n - length(parents)) * log(1.0 - model.p_edge)
-                   for parents in model.structures]
-    MixturePrevision(comps, logw)
+    MixturePrevision(comps, _structure_logweights(model))
 end
 
 # ── Context plumbing ──
@@ -203,6 +233,16 @@ Bayesian update of the persistent belief on one `(context, response)`: a single
 observe(model::StructureBMA, top::MixturePrevision, X::AbstractVector, obs) =
     condition(top, _learn_kernel(firing_tags(model, X)), obs)
 
+# Select a structure component's cell-for-X by tag. Two representations:
+# sparse (O(1) dict-backed cell_at) and dense (linear scan of factors). Both
+# return the same TaggedBetaPrevision, so the decision sees identical beliefs.
+_cell_for(comp::SparseStructurePrevision, tag::Int) = cell_at(comp, tag)
+function _cell_for(comp::ProductPrevision, tag::Int)
+    idx = findfirst(f -> f isa TaggedBetaPrevision && f.tag == tag, comp.factors)
+    idx === nothing && error("feature brain: cell tag $tag not found")
+    comp.factors[idx]
+end
+
 """
     belief_at_context(model, top, X) -> MixturePrevision
 
@@ -214,10 +254,7 @@ function belief_at_context(model::StructureBMA, top::MixturePrevision, X::Abstra
     cells = Prevision[]
     for (s, parents) in enumerate(model.structures)
         tag = model.cell_tag[s][cell_key(parents, X)]
-        comp = top.components[s]
-        idx = findfirst(f -> f isa TaggedBetaPrevision && f.tag == tag, comp.factors)
-        idx === nothing && error("feature brain: cell tag $tag not found in structure $s")
-        push!(cells, comp.factors[idx])
+        push!(cells, _cell_for(top.components[s], tag))
     end
     # Carry the structure posterior verbatim onto the per-context cells (the
     # weight-carry lives in the `with_components` stdlib op, not here — so the

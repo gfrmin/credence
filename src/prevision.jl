@@ -30,7 +30,7 @@ module Previsions
 
 export Prevision, TestFunction, Indicator, apply, expect
 export Identity, Projection, NestedProjection, Tabular, LinearCombination, OpaqueClosure
-export BetaPrevision, TaggedBetaPrevision, GaussianPrevision, GammaPrevision, CategoricalPrevision, DirichletPrevision, NormalGammaPrevision, ProductPrevision, MixturePrevision
+export BetaPrevision, TaggedBetaPrevision, SparseStructurePrevision, GaussianPrevision, GammaPrevision, CategoricalPrevision, DirichletPrevision, NormalGammaPrevision, ProductPrevision, MixturePrevision
 export ExchangeablePrevision, decompose
 export ParticlePrevision, QuadraturePrevision
 export ConditionalPrevision
@@ -240,6 +240,29 @@ nothing on access; a future cleanup pass can replace with BetaPrevision
 struct TaggedBetaPrevision <: Prevision
     tag::Int
     beta::BetaPrevision
+end
+
+"""
+    SparseStructurePrevision(alpha0, beta0, tag_lo, tag_hi, observed) <: Prevision
+
+A SPARSE, exact representation of one structure-BMA component — a product of
+tagged Beta cells where the vast majority sit at the shared `Beta(alpha0,beta0)`
+prior and only the OBSERVED cells are stored (`observed::Dict{tag => BetaPrevision}`).
+Tags are contiguous per structure, so this component owns `[tag_lo, tag_hi]`.
+
+This is an execution-layer optimisation, not a new semantic object: it is
+bit-identical to a dense `ProductPrevision` of `TaggedBetaPrevision` cells. Its
+`condition` / `_predictive_ll` (defined in `sparse_structure.jl`) delegate to the
+dense `TaggedBetaPrevision` methods on the single firing cell, so the arithmetic
+is the same; non-firing cells are implicit (Flat is a no-op). See
+`test/test_sparse_structure_equivalence.jl` for the dense≡sparse contract.
+"""
+struct SparseStructurePrevision <: Prevision
+    alpha0::Float64
+    beta0::Float64
+    tag_lo::Int
+    tag_hi::Int
+    observed::Dict{Int, BetaPrevision}
 end
 
 """

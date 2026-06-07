@@ -22,7 +22,7 @@ using LinearAlgebra: SymTridiagonal, eigen
 import ..Previsions: Prevision
 import ..Previsions: TestFunction, Identity, Projection, NestedProjection,
                      Tabular, LinearCombination, OpaqueClosure, expect
-import ..Previsions: BetaPrevision, TaggedBetaPrevision, GaussianPrevision, GammaPrevision, CategoricalPrevision, DirichletPrevision, NormalGammaPrevision, ProductPrevision, MixturePrevision
+import ..Previsions: BetaPrevision, TaggedBetaPrevision, SparseStructurePrevision, GaussianPrevision, GammaPrevision, CategoricalPrevision, DirichletPrevision, NormalGammaPrevision, ProductPrevision, MixturePrevision
 import ..Previsions: ExchangeablePrevision, decompose
 import ..Previsions: ParticlePrevision, QuadraturePrevision
 import ..Previsions: ConditionalPrevision
@@ -40,6 +40,7 @@ export Event, TagSet, FeatureEquals, FeatureInterval, Conjunction, Disjunction, 
 export indicator_kernel, feature_value, BOOLEAN_SPACE
 export Functional, Identity, Projection, NestedProjection, Tabular, LinearCombination, OpaqueClosure
 export factor, replace_factor
+export SparseStructurePrevision, cell_at
 export condition, expect, push_measure, density, log_predictive, log_marginal, wrap_in_measure
 export ConjugatePrevision, maybe_conjugate, update
 export draw
@@ -1553,6 +1554,11 @@ function log_marginal(m::DirichletMeasure, counts::Vector{Int})
     end
     score
 end
+
+# ================================================================
+# Sparse structure-BMA cell store (exact execution-layer backend)
+# ================================================================
+include("sparse_structure.jl")
 
 # ================================================================
 # Stdlib (extracted to stdlib.jl)
