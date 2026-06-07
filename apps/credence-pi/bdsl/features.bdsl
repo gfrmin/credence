@@ -21,6 +21,13 @@
 (define rep-count-space
   (space :finite rep-0 rep-1 rep-2 rep-3plus))
 
+; Argument-level repetition: how many recent calls were the SAME (tool, args).
+; This is the loop signal — a re-run of the *same* call — which tool-level
+; repetition (rep-count) cannot isolate. Added after the offline eval showed the
+; tool/parent/rep feature set cannot catch real waste; see eval/results/FINDINGS.md.
+(define ident-count-space
+  (space :finite ident-0 ident-1 ident-2 ident-3plus))
+
 (define time-since-user-space
   (space :finite lt-30s lt-2m lt-10m gt-10m))
 
@@ -33,4 +40,5 @@
     (feature working-directory-relative   wd-relative-space)
     (feature parent-tool-call-name        parent-tool-name-space)
     (feature recent-repetition-count      rep-count-space)
+    (feature recent-identical-call-count  ident-count-space)
     (feature time-since-last-user-message time-since-user-space)))

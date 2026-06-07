@@ -8,6 +8,7 @@ import { extractToolName }                  from "./tool_name.js";
 import { extractWorkingDirectoryRelative }  from "./working_directory.js";
 import { extractParentToolCallName }        from "./parent_tool.js";
 import { extractRecentRepetitionCount }     from "./repetition.js";
+import { extractRecentIdenticalCallCount }  from "./identical_call.js";
 import { extractTimeSinceLastUserMessage }  from "./time_since_user.js";
 
 export type Extractor = (event: ToolCallEvent, session: Session) => string;
@@ -17,6 +18,7 @@ export const extractors: Record<string, Extractor> = {
   "working-directory-relative":   extractWorkingDirectoryRelative,
   "parent-tool-call-name":        extractParentToolCallName,
   "recent-repetition-count":      extractRecentRepetitionCount,
+  "recent-identical-call-count":  extractRecentIdenticalCallCount,
   "time-since-last-user-message": extractTimeSinceLastUserMessage,
 };
 

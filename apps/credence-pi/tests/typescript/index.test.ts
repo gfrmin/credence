@@ -426,6 +426,7 @@ test("tool_call posts a tool-proposed event with kebab-case feature dict", async
     const features = proposed.payload["features"] as Record<string, string>;
     assert.deepEqual(Object.keys(features).sort(), [
       "parent-tool-call-name",
+      "recent-identical-call-count",
       "recent-repetition-count",
       "time-since-last-user-message",
       "tool-name",

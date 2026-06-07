@@ -33,13 +33,15 @@ using .Savings: savings_report, format_report
 
 const BDSL_DIR = joinpath(@__DIR__, "..", "bdsl")
 
-feats(; tool, wd="project-root", parent="none", rep, since="lt-30s") =
+feats(; tool, wd="project-root", parent="none", rep, ident="ident-0", since="lt-30s") =
     Dict{String, Any}("tool-name" => tool, "working-directory-relative" => wd,
                       "parent-tool-call-name" => parent, "recent-repetition-count" => rep,
+                      "recent-identical-call-count" => ident,
                       "time-since-last-user-message" => since)
 
-# The two contexts: a wasteful loop, and a legitimate novel call.
-const LOOP  = feats(tool = "bash", parent = "bash", rep = "rep-3plus")
+# The two contexts: a wasteful loop (the SAME call repeated → ident-3plus), and a
+# legitimate novel call (first time → ident-0).
+const LOOP  = feats(tool = "bash", parent = "bash", rep = "rep-3plus", ident = "ident-3plus")
 const NOVEL = feats(tool = "read", parent = "edit", rep = "rep-0", since = "lt-2m")
 
 # Post one event through the real daemon dispatcher; return the emitted effector.
