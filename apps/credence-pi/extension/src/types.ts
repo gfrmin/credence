@@ -15,6 +15,9 @@ export type MessageRole = "user" | "assistant" | "tool_call" | "tool_result";
 export interface Message {
   role: MessageRole;
   toolName?: string;
+  // The tool call's arguments (on tool_call messages), used to count repeats of
+  // the SAME call — the argument-level loop signal. Absent on non-tool messages.
+  input?: unknown;
   // ISO-8601 timestamp; absent on synthetic / pre-existing messages.
   timestamp?: string;
 }

@@ -45,6 +45,34 @@ test("parent-tool-call-name and recent-repetition-count come from per-run histor
   assert.equal(f["recent-repetition-count"], "rep-3plus");
 });
 
+test("recent-identical-call-count: same args loop vs same-tool different args", () => {
+  const t = new FeatureTracker();
+  const c = ctx({ runId: "ident" });
+  // The SAME exec command repeated → a loop: ident climbs with rep.
+  const loop = (n: number) =>
+    t.extractAndRecord(ev("exec", { params: { command: "ls" } }), c, n);
+  assert.equal(loop(1)["recent-identical-call-count"], "ident-0");
+  assert.equal(loop(2)["recent-identical-call-count"], "ident-1");
+  assert.equal(loop(3)["recent-identical-call-count"], "ident-2");
+  assert.equal(loop(4)["recent-identical-call-count"], "ident-3plus");
+
+  // Same TOOL, DIFFERENT args → not a loop: rep climbs but ident stays low.
+  const t2 = new FeatureTracker();
+  const c2 = ctx({ runId: "distinct" });
+  t2.extractAndRecord(ev("exec", { params: { command: "ls a" } }), c2, 1);
+  const f = t2.extractAndRecord(ev("exec", { params: { command: "ls b" } }), c2, 2);
+  assert.equal(f["recent-repetition-count"], "rep-1"); // same tool
+  assert.equal(f["recent-identical-call-count"], "ident-0"); // different args
+});
+
+test("recent-identical-call-count: argument key order doesn't matter", () => {
+  const t = new FeatureTracker();
+  const c = ctx({ runId: "order" });
+  t.extractAndRecord(ev("exec", { params: { a: 1, b: 2 } }), c, 1);
+  const f = t.extractAndRecord(ev("exec", { params: { b: 2, a: 1 } }), c, 2);
+  assert.equal(f["recent-identical-call-count"], "ident-1");
+});
+
 test("repetition is per-run-isolated", () => {
   const t = new FeatureTracker();
   t.extractAndRecord(ev("bash"), ctx({ runId: "a" }), 1);

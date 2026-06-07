@@ -32,6 +32,10 @@ const REPETITION_WINDOW = 5;
 
 interface Entry {
   tool: string;
+  /** Stable fingerprint of the tool's arguments — lets us count repeats of the
+   *  SAME call (a loop), distinct from repeats of the same tool with different
+   *  args (legitimate). This is the signal tool-name repetition alone misses. */
+  argFp: string;
   ts: number;
 }
 
@@ -44,6 +48,39 @@ function bucketTool(name: string | undefined): string {
   if (!name) return "other";
   const t = name.toLowerCase();
   return KNOWN_TOOLS.has(t) ? t : "other";
+}
+
+// Stable fingerprint of a tool's params: JSON with keys sorted at every level,
+// so {a:1,b:2} and {b:2,a:1} match. Truncated — we only need equality, not the
+// content. Unhashable shapes fall back to a constant (treated as "same").
+function fingerprintArgs(params: unknown): string {
+  const norm = (v: unknown): unknown => {
+    if (Array.isArray(v)) return v.map(norm);
+    if (v && typeof v === "object") {
+      const out: Record<string, unknown> = {};
+      for (const k of Object.keys(v as Record<string, unknown>).sort()) {
+        out[k] = norm((v as Record<string, unknown>)[k]);
+      }
+      return out;
+    }
+    return v;
+  };
+  try {
+    return JSON.stringify(norm(params)).slice(0, 512);
+  } catch {
+    return "∅";
+  }
+}
+
+// rep-style 0/1/2/3plus bucketing shared by tool- and argument-repetition.
+function countBucket(n: number, prefix: string): string {
+  return n === 0
+    ? `${prefix}-0`
+    : n === 1
+      ? `${prefix}-1`
+      : n === 2
+        ? `${prefix}-2`
+        : `${prefix}-3plus`;
 }
 
 function runKey(ctx: ToolContext): string {
@@ -116,10 +153,16 @@ export class FeatureTracker {
     const parent =
       st.history.length > 0 ? st.history[st.history.length - 1].tool : "none";
 
+    const argFp = fingerprintArgs(event.params);
     const recent = st.history.slice(-REPETITION_WINDOW);
     const reps = recent.filter((e) => e.tool === tool).length;
-    const repBucket =
-      reps === 0 ? "rep-0" : reps === 1 ? "rep-1" : reps === 2 ? "rep-2" : "rep-3plus";
+    // Argument-level repetition: how many recent calls were the SAME (tool,args)
+    // — i.e. this exact call repeated. This is the loop signal; the eval showed
+    // tool-level repetition alone cannot isolate it (a cell mixes a re-run of one
+    // command with distinct commands of the same tool).
+    const identical = recent.filter(
+      (e) => e.tool === tool && e.argFp === argFp,
+    ).length;
 
     const elapsed =
       st.lastUserTs === undefined ? undefined : now - st.lastUserTs;
@@ -128,12 +171,13 @@ export class FeatureTracker {
       "tool-name": tool,
       "working-directory-relative": workingDirRelative(ctx, event),
       "parent-tool-call-name": parent,
-      "recent-repetition-count": repBucket,
+      "recent-repetition-count": countBucket(reps, "rep"),
+      "recent-identical-call-count": countBucket(identical, "ident"),
       "time-since-last-user-message": timeSinceUserBucket(elapsed),
     };
 
     // Record current call.
-    st.history.push({ tool, ts: now });
+    st.history.push({ tool, argFp, ts: now });
     if (st.history.length > HISTORY_CAP) st.history.shift();
     this.runs.set(k, st);
 

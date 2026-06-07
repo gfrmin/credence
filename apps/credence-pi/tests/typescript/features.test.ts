@@ -33,6 +33,9 @@ import { extractParentToolCallName,
 import { extractRecentRepetitionCount,
          POSSIBLE_OUTPUTS as repOutputs }
   from "../../extension/src/features/repetition.js";
+import { extractRecentIdenticalCallCount,
+         POSSIBLE_OUTPUTS as identOutputs }
+  from "../../extension/src/features/identical_call.js";
 import { extractTimeSinceLastUserMessage,
          POSSIBLE_OUTPUTS as timeOutputs }
   from "../../extension/src/features/time_since_user.js";
@@ -81,6 +84,7 @@ test("every extractor's POSSIBLE_OUTPUTS is a subset of its space's members", ()
     ["working-directory-relative",   wdOutputs],
     ["parent-tool-call-name",        parentOutputs],
     ["recent-repetition-count",      repOutputs],
+    ["recent-identical-call-count",  identOutputs],
     ["time-since-last-user-message", timeOutputs],
   ];
   for (const [featureName, outputs] of cases) {
@@ -197,7 +201,7 @@ test("extractTimeSinceLastUserMessage: 30s / 2m / 10m / >10m / no-user", () => {
 
 // ── 3. Dispatch + extractFeatures ──────────────────────────────────
 
-test("extractors registry has the five kebab-case keys matching features.bdsl", () => {
+test("extractors registry has the kebab-case keys matching features.bdsl", () => {
   const decls = readFeatures(FEATURES_PATH);
   const declared = new Set(decls.map(d => d.name));
   const registered = new Set(Object.keys(extractors));
@@ -215,6 +219,7 @@ test("extractFeatures returns a kebab-keyed dict with one value per feature", ()
   );
   assert.deepEqual(Object.keys(features).sort(), [
     "parent-tool-call-name",
+    "recent-identical-call-count",
     "recent-repetition-count",
     "time-since-last-user-message",
     "tool-name",

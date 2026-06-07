@@ -35,13 +35,14 @@ test("parseCapabilities: capabilities.bdsl yields three effectors in order", () 
   assert.deepEqual(decls, expected);
 });
 
-test("parseFeatures: features.bdsl yields five features in order", () => {
+test("parseFeatures: features.bdsl yields the features in order", () => {
   const decls = readFeatures(FEATURES_PATH);
   const expected: FeatureDecl[] = [
     { name: "tool-name",                    spaceName: "tool-name-space" },
     { name: "working-directory-relative",   spaceName: "wd-relative-space" },
     { name: "parent-tool-call-name",        spaceName: "parent-tool-name-space" },
     { name: "recent-repetition-count",      spaceName: "rep-count-space" },
+    { name: "recent-identical-call-count",  spaceName: "ident-count-space" },
     { name: "time-since-last-user-message", spaceName: "time-since-user-space" },
   ];
   assert.deepEqual(decls, expected);
@@ -58,6 +59,7 @@ test("verifyEffectors / verifyFeatures: happy path with all impls registered", (
     "working-directory-relative":   () => {},
     "parent-tool-call-name":        () => {},
     "recent-repetition-count":      () => {},
+    "recent-identical-call-count":  () => {},
     "time-since-last-user-message": () => {},
   };
   verifyEffectors(readCapabilities(CAPABILITIES_PATH), effectorRegistry);

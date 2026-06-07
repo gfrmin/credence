@@ -42,12 +42,14 @@ function ok(name)
     println("PASSED: ", name)
 end
 
-# A complete feature dict over the five declared features.
-feats(; tool="bash", wd="project-root", parent="none", rep="rep-0", since="lt-30s") =
+# A complete feature dict over the declared features.
+feats(; tool="bash", wd="project-root", parent="none", rep="rep-0",
+        ident="ident-0", since="lt-30s") =
     Dict{String, Any}("tool-name" => tool,
                       "working-directory-relative" => wd,
                       "parent-tool-call-name" => parent,
                       "recent-repetition-count" => rep,
+                      "recent-identical-call-count" => ident,
                       "time-since-last-user-message" => since)
 
 # Predictive P(approve|X) off a posterior, via the brain's per-context view.

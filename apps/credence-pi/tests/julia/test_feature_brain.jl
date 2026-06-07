@@ -135,28 +135,30 @@ let model = build_model(["tool", "rep"], [["bash", "read"], ["rep0", "rep3"]]; p
     check("∅-structure predictive context-independent = 0.5", isapprox(bx_a, 0.5; atol=1e-12))
 end
 
-# ── 6. The real 5-feature model builds (32 structures, 8448 all-edges cells). ──
+# ── 6. The real 6-feature model builds (64 structures, 33792 all-edges cells). ──
 let
     names = ["tool-name", "working-directory-relative", "parent-tool-call-name",
-             "recent-repetition-count", "time-since-last-user-message"]
+             "recent-repetition-count", "recent-identical-call-count",
+             "time-since-last-user-message"]
     vals = [["read","write","edit","bash","exec","process","apply_patch","grep","find","ls","other"],
             ["project-root","subdirectory","outside-project","no-path"],
             ["read","write","edit","bash","exec","process","apply_patch","grep","find","ls","other","none"],
             ["rep-0","rep-1","rep-2","rep-3plus"],
+            ["ident-0","ident-1","ident-2","ident-3plus"],
             ["lt-30s","lt-2m","lt-10m","gt-10m"]]
     model = build_model(names, vals; p_edge = 0.5)
-    check("5-feature model has 32 structures", length(model.structures) == 32,
+    check("6-feature model has 64 structures", length(model.structures) == 64,
           "got $(length(model.structures))")
-    # all-edges structure (the last, mask=11111) has 11·4·12·4·4 = 8448 cells.
-    check("all-edges structure has 8448 cells",
-          length(model.cell_tag[end]) == 11*4*12*4*4, "got $(length(model.cell_tag[end]))")
+    # all-edges structure (the last, mask=111111) has 11·4·12·4·4·4 = 33792 cells.
+    check("all-edges structure has 33792 cells",
+          length(model.cell_tag[end]) == 11*4*12*4*4*4, "got $(length(model.cell_tag[end]))")
     top = build_prior(model)
-    check("5-feature prior builds and normalises",
+    check("6-feature prior builds and normalises",
           # credence-lint: allow — precedent:test-oracle — structure-prior normalisation check
           isapprox(sum(weights(top)), 1.0; atol=1e-12), "got $(sum(weights(top)))")
     # cold-start predictive is 0.5 at an arbitrary context.
-    X = ["bash","project-root","edit","rep-3plus","lt-30s"]
-    check("5-feature cold-start predictive = 0.5",
+    X = ["bash","project-root","edit","rep-3plus","ident-3plus","lt-30s"]
+    check("6-feature cold-start predictive = 0.5",
           isapprox(expect(belief_at_context(model, top, X), Identity()), 0.5; atol=1e-12))
 end
 

@@ -241,7 +241,7 @@ jobs:
               code=$(curl -s -o /dev/null -w '%{http_code}' \
                 -X POST http://localhost:8787/sensor \
                 -H 'Content-Type: application/json' \
-                -d '{"event_type":"tool-proposed","event_id":"ci-smoke-exec","features":{"tool-name":"exec","working-directory-relative":"project-root","parent-tool-call-name":"none","recent-repetition-count":"rep-0","time-since-last-user-message":"lt-30s"},"proposed_call":{"tool_name":"exec","input":{"command":"ls"}}}')
+                -d '{"event_type":"tool-proposed","event_id":"ci-smoke-exec","features":{"tool-name":"exec","working-directory-relative":"project-root","parent-tool-call-name":"none","recent-repetition-count":"rep-0","recent-identical-call-count":"ident-0","time-since-last-user-message":"lt-30s"},"proposed_call":{"tool_name":"exec","input":{"command":"ls"}}}')
               echo "POST /sensor exec -> HTTP $code"
               if [ "$code" != "200" ]; then
                 echo "=== exec NOT accepted (vocab fix missing from image) ==="
