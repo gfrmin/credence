@@ -1,65 +1,75 @@
 # credence-pi: measured results on real OpenClaw sessions
 
-**One line:** on 3,729 real frontier-model OpenClaw sessions, the learned
-feature-conditioned governor auto-blocks **3.3%** of tool calls at **89%
-precision** against repeated-call waste — a static "block all repeats" rule
-blocks **72.5%** at **2.5%** precision — and its blocks concentrate on
-safety/failed runs, not successful ones.
+**One line (honest, and it's a negative):** evaluated correctly on real
+frontier-model OpenClaw sessions, the *current* credence-pi brain provides **no
+measurable governance** — it proceeds essentially every tool call. Its features
+(`tool`, `parent`, `repetition-bucket`) capture *tool-level* repetition, but real
+waste is *argument-level* repetition, which those features cannot see. The "prove
+it's better" gate **fails for the current design**; launch stays blocked until a
+real capability fix (an argument-repetition feature) is added and re-proven.
 
-Corpus + method: `MANIFEST.md` and `../README.md`. Numbers: `clawsbench_openclaw.summary.json`.
+Corpus + method: `MANIFEST.md`, `../README.md`. Numbers: `clawsbench_openclaw.summary.json`.
 
-## The headline contrast
+## The result
 
-Held-out test split: 1,015 sessions, 11,306 tool calls; objective loops
-(exact repeated `(tool, command)`) = 504 (4.5%).
+Held-out test split (ClawsBench openclaw harness): 1,015 sessions, 11,306 tool
+calls. Objective loops (exact repeated `(tool, command)` within a session, counted
+only where the command is genuinely distinguishable — see below): **76 (0.7%)**.
 
-| governor | block rate | precision (blocked∧loop / blocked) | recall (blocked∧loop / loops) |
-|----------|-----------:|-----------------------------------:|------------------------------:|
-| **Learned WARM brain** (trained, frozen) | **3.3%** (369) | **0.894** | 0.655 |
-| Static rule "block all rep ≥ 2" | 72.5% (8,200) | 0.025 | 0.407 |
+| governor | proceed | ask | block | catches loops? |
+|----------|--------:|----:|------:|----------------|
+| **WARM** (trained, frozen) | 11,306 | 0 | **0** | no — recall 0 |
+| COLD (fresh prior) | 0 | 11,306 | 0 | n/a (asks all) |
+| static rule "block all rep≥2" | — | — | 8,200 (72.5%) | only by blocking everything (precision 0.009) |
 
-The learned Bayesian governor is **~36× more precise** while blocking **22×
-fewer calls**, and still recovers more loops. The static rule — the obvious thing
-a rules engine does — would block nearly three-quarters of all tool calls,
-wrecking the agent. The brain blocks surgically because it conditions on the full
-context (tool × parent × repetition) via structure-BMA, not on repetition alone.
+The warm brain **blocks nothing**. The reason is structural, not a tuning issue:
+the cell `(exec, parent, rep-3plus)` aggregates loop *and* non-loop exec calls
+(the brain never sees the command), so its approval stays above the 0.5 block
+threshold and it never fires. No cost setting changes this — the feature
+granularity cannot isolate loops.
 
-## Independent corroboration (not the training signal)
+## Why the earlier numbers looked good (the artifact)
 
-Joining each decision to ClawsBench's real per-run outcome (`passed`/`is_safety`,
-which the brain never sees):
+An earlier pass reported "precision 0.894, blocks 3.3%." That was an **artifact**:
+ClawsBench collapses every `read` into `command="read"` (the path is stripped), so
+a legitimate sequence of reads of *different* files (`read a.md`, `read b.md`, …)
+is indistinguishable from re-reading the *same* file. Counting all repeated reads
+as "loops" both inflated the waste rate and let the brain's `rep` feature
+"predict" them. Once loops are counted only where the command is genuinely
+distinguishable (present and ≠ the tool name), the read pseudo-loops vanish, real
+loops drop to 0.7%, and the brain's apparent skill disappears.
 
-| run outcome | calls | block rate | loop rate |
-|-------------|------:|-----------:|----------:|
-| **safety** (unsafe-behaviour tasks) | 636 | **9.1%** | 11.9% |
-| failed | 471 | 2.3% | 4.2% |
-| passed | 128 | **1.6%** | 3.1% |
+Two further bugs were found and fixed en route (recorded for honesty): an
+unrealistic `--call-cost 0.01` that made an unseen context break the proceed/block
+tie toward *block* (the daemon default \$0.50 correctly *asks*); and a
+cross-session loop label that saturated and marked 39% of calls loops (correct
+per-session rate ~0.7–4.5%). None of these rescue the result — corrected, the
+brain governs nothing.
 
-The governor blocks **most on safety tasks, least on passed tasks** — it
-interferes least with success and most where waste/unsafe behaviour actually
-occurred. This ordering comes from labels independent of the loop signal it was
-trained on.
+## Cross-corpus + safety (independent)
 
-## Prevented spend
+Trained on ClawsBench, run over **ATBench-Claw** (500 OpenClaw trajectories with
+independent `is_safe` labels): **0% block on both safe and unsafe** trajectories.
+So credence-pi is, as designed, a process-waste governor and **not** a
+content-safety classifier — and on real data it currently catches neither.
 
-369 calls auto-blocked on the test split. ClawsBench carries no per-call tokens,
-so dollars are a **labelled estimate**: at an assumed \$0.01/call, \$3.69 over
-1,015 test sessions (~\$0.0036/session). The defensible result is the
-**call-count and precision**, not the dollar figure — a measured-dollars number
-needs live enforcement with real token accounting (Phase 4 telemetry).
+## What this means
 
-## What this is and isn't
-
-- **Is:** a measured detection/calibration result on real, recorded,
-  frontier-model OpenClaw sessions, at zero spend — the learned governor is far
-  more precise than a static rule and concentrates its blocks where outcomes were
-  bad.
-- **Isn't:** proof that enforcing it *improves net task completion*. That is
-  causal and needs live enforcement (opt-in users running the warm brain in
-  enforcing mode), not a replay. The replay assumes the trajectory is unchanged
-  when a call is removed — valid for the loop-waste class measured here.
+- **Honest outcome:** the gate the author insisted on did its job. On real data,
+  with correct methodology, the shipped feature set cannot demonstrate that
+  credence-pi saves money or time. The demo "surgical win" was a hand-constructed
+  scenario with explicit per-loop user denials; it does not reproduce on real
+  sessions where the loop signal is argument-level and the features are not.
+- **The real fix (well-motivated by this evidence):** add an **argument-repetition
+  feature** — "does this call repeat the arguments of a recent call?" — so a loop
+  becomes visible to `condition`/`expect`. Then re-evaluate on a corpus that
+  preserves tool arguments (exec is faithful; read is not in ClawsBench).
+- **What ships now:** nothing new to users. The warm brain rubber-stamps, so it is
+  **not** shipped enforcing. The eval harness (this directory) is the durable
+  product of the exercise — it is what found the problem and what will re-prove a
+  fixed design.
 
 ## Reproduce
 
-`../README.md` → the four-command pipeline. Pinned corpus revision in
-`MANIFEST.md`. Seed 0, train-frac 0.7.
+`../README.md` → the pipeline. Pinned corpus revision in `MANIFEST.md`. Seed 0,
+train-frac 0.7, call-cost 0.50.
