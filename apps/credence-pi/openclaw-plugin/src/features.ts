@@ -27,8 +27,12 @@ const KNOWN_TOOLS = new Set([
   "ls",
 ]);
 
-const HISTORY_CAP = 50;
+const HISTORY_CAP = 200;
 const REPETITION_WINDOW = 5;
+// Argument-repetition (loop) is counted session-wide, not just over the last few
+// calls: re-running an identical call is wasteful whether the duplicate was 2 or
+// 40 steps ago. (rep, the tool-level count, stays tight at REPETITION_WINDOW.)
+const IDENTICAL_WINDOW = HISTORY_CAP;
 
 interface Entry {
   tool: string;
@@ -36,6 +40,10 @@ interface Entry {
    *  SAME call (a loop), distinct from repeats of the same tool with different
    *  args (legitimate). This is the signal tool-name repetition alone misses. */
   argFp: string;
+  /** Whether the args carry genuine distinguishing information. A call with no
+   *  args, or whose only arg echoes the tool name, gives no evidence of a loop
+   *  (we can't tell two such calls apart), so it is never counted as a repeat. */
+  informative: boolean;
   ts: number;
 }
 
@@ -50,9 +58,25 @@ function bucketTool(name: string | undefined): string {
   return KNOWN_TOOLS.has(t) ? t : "other";
 }
 
-// Stable fingerprint of a tool's params: JSON with keys sorted at every level,
-// so {a:1,b:2} and {b:2,a:1} match. Truncated — we only need equality, not the
-// content. Unhashable shapes fall back to a constant (treated as "same").
+// Two cheap, stable string hashes (djb2 + sdbm) combined into one token. Used to
+// fingerprint args by content WITHOUT truncation — a prefix-truncated fingerprint
+// collides on long inputs that share a head (e.g. two heredocs writing different
+// scripts), which would mis-count distinct calls as repeats. Hashing the full
+// normalised JSON discriminates them; the 2×32-bit space makes collision
+// negligible at our scale.
+function _hash2(s: string): string {
+  let d = 5381, m = 0;
+  for (let i = 0; i < s.length; i++) {
+    const c = s.charCodeAt(i);
+    d = ((d * 33) ^ c) >>> 0;
+    m = (c + (m << 6) + (m << 16) - m) >>> 0;
+  }
+  return d.toString(36) + ":" + m.toString(36);
+}
+
+// Stable fingerprint of a tool's params: JSON with keys sorted at every level
+// (so {a:1,b:2} and {b:2,a:1} match), hashed over the FULL content. Unhashable
+// shapes fall back to a constant (treated as "same").
 function fingerprintArgs(params: unknown): string {
   const norm = (v: unknown): unknown => {
     if (Array.isArray(v)) return v.map(norm);
@@ -66,10 +90,27 @@ function fingerprintArgs(params: unknown): string {
     return v;
   };
   try {
-    return JSON.stringify(norm(params)).slice(0, 512);
+    return _hash2(JSON.stringify(norm(params)));
   } catch {
     return "∅";
   }
+}
+
+// Do the args carry distinguishing information? No, if there are none, or the
+// only field's value just echoes the tool name (e.g. {command:"read"} — some
+// transcripts collapse a tool's args to its name). Two such calls are
+// indistinguishable, so neither is evidence of a loop.
+function argsInformative(params: unknown, tool: string): boolean {
+  if (!params || typeof params !== "object") return false;
+  const entries = Object.entries(params as Record<string, unknown>).filter(
+    ([, v]) => v != null && v !== "",
+  );
+  if (entries.length === 0) return false;
+  if (entries.length === 1) {
+    const v = entries[0][1];
+    if (typeof v === "string" && v.trim().toLowerCase() === tool) return false;
+  }
+  return true;
 }
 
 // rep-style 0/1/2/3plus bucketing shared by tool- and argument-repetition.
@@ -154,15 +195,19 @@ export class FeatureTracker {
       st.history.length > 0 ? st.history[st.history.length - 1].tool : "none";
 
     const argFp = fingerprintArgs(event.params);
-    const recent = st.history.slice(-REPETITION_WINDOW);
-    const reps = recent.filter((e) => e.tool === tool).length;
-    // Argument-level repetition: how many recent calls were the SAME (tool,args)
-    // — i.e. this exact call repeated. This is the loop signal; the eval showed
-    // tool-level repetition alone cannot isolate it (a cell mixes a re-run of one
-    // command with distinct commands of the same tool).
-    const identical = recent.filter(
-      (e) => e.tool === tool && e.argFp === argFp,
-    ).length;
+    const informative = argsInformative(event.params, tool);
+    const reps = st.history.slice(-REPETITION_WINDOW).filter((e) => e.tool === tool).length;
+    // Argument-level repetition: how many calls (session-wide, capped at
+    // IDENTICAL_WINDOW) were the SAME (tool, args) — i.e. this exact call
+    // repeated. The loop signal tool-level repetition cannot isolate. Counted
+    // only for informative args (a call with no distinguishing args is no
+    // evidence of a loop), and over a wide window because a re-run is wasteful
+    // however far back the original was.
+    const identical = informative
+      ? st.history
+          .slice(-IDENTICAL_WINDOW)
+          .filter((e) => e.tool === tool && e.informative && e.argFp === argFp).length
+      : 0;
 
     const elapsed =
       st.lastUserTs === undefined ? undefined : now - st.lastUserTs;
@@ -177,7 +222,7 @@ export class FeatureTracker {
     };
 
     // Record current call.
-    st.history.push({ tool, argFp, ts: now });
+    st.history.push({ tool, argFp, informative, ts: now });
     if (st.history.length > HISTORY_CAP) st.history.shift();
     this.runs.set(k, st);
 

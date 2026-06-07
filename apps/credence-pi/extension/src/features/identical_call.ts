@@ -1,8 +1,14 @@
-// identical_call.ts — bucket how many of the recent tool_calls were the SAME
-// (tool, arguments) as this one. This is the argument-level loop signal:
-// re-running the *same* call, distinct from calling the same tool with different
-// arguments. Tool-level repetition (repetition.ts) cannot tell these apart; the
-// offline eval (eval/results/FINDINGS.md) showed that gap makes loops invisible.
+// identical_call.ts — bucket how many of this run's prior tool_calls were the
+// SAME (tool, arguments) as this one: the argument-level loop signal (re-running
+// the *same* call), distinct from calling the same tool with different args.
+// Tool-level repetition (repetition.ts) cannot tell these apart; the offline
+// eval (eval/results/FINDINGS.md) showed that gap makes loops invisible.
+//
+// Mirrors the openclaw-plugin FeatureTracker exactly: counted SESSION-WIDE (a
+// re-run is wasteful however far back the original was), only for INFORMATIVE
+// args (no args, or a lone field echoing the tool name, is no evidence of a
+// loop), with a COLLISION-FREE content hash (a truncated fingerprint would
+// mis-count long inputs that share a head, e.g. two heredocs).
 //
 // Output space: ident-0 | ident-1 | ident-2 | ident-3plus.
 
@@ -16,15 +22,21 @@ export const POSSIBLE_OUTPUTS = [
   "ident-3plus",
 ] as const;
 
-const RECENT_MESSAGE_WINDOW = 20;
-const RECENT_TOOL_CALL_WINDOW = 5;
-
 const bucket = (name: string): string =>
   KNOWN_TOOLS.has(name.toLowerCase()) ? name.toLowerCase() : "other";
 
-// Stable fingerprint of arguments: JSON with keys sorted at every level, so key
-// order doesn't matter. Mirrors the openclaw-plugin body. Equality is all we
-// need; unhashable shapes collapse to a constant.
+// Two cheap stable hashes (djb2 + sdbm) combined — fingerprint by full content,
+// never truncated, so distinct long inputs sharing a prefix don't collide.
+function hash2(s: string): string {
+  let d = 5381, m = 0;
+  for (let i = 0; i < s.length; i++) {
+    const c = s.charCodeAt(i);
+    d = ((d * 33) ^ c) >>> 0;
+    m = (c + (m << 6) + (m << 16) - m) >>> 0;
+  }
+  return d.toString(36) + ":" + m.toString(36);
+}
+
 function fingerprint(input: unknown): string {
   const norm = (v: unknown): unknown => {
     if (Array.isArray(v)) return v.map(norm);
@@ -38,10 +50,26 @@ function fingerprint(input: unknown): string {
     return v;
   };
   try {
-    return JSON.stringify(norm(input)).slice(0, 512);
+    return hash2(JSON.stringify(norm(input)));
   } catch {
     return "∅";
   }
+}
+
+// Do the args carry distinguishing information? No, if there are none or the
+// only field's value just echoes the tool name (some transcripts collapse a
+// tool's args to its name). Two such calls are indistinguishable.
+function informative(input: unknown, tool: string): boolean {
+  if (!input || typeof input !== "object") return false;
+  const entries = Object.entries(input as Record<string, unknown>).filter(
+    ([, v]) => v != null && v !== "",
+  );
+  if (entries.length === 0) return false;
+  if (entries.length === 1) {
+    const v = entries[0][1];
+    if (typeof v === "string" && v.trim().toLowerCase() === tool) return false;
+  }
+  return true;
 }
 
 export function extractRecentIdenticalCallCount(
@@ -49,13 +77,14 @@ export function extractRecentIdenticalCallCount(
   session: Session,
 ): string {
   const tool = bucket(event.toolName);
+  if (!informative(event.input, tool)) return "ident-0";
   const fp = fingerprint(event.input);
-  const recentToolCalls = session.messages
-    .slice(-RECENT_MESSAGE_WINDOW)
-    .filter((m) => m.role === "tool_call")
-    .slice(-RECENT_TOOL_CALL_WINDOW);
-  const matches = recentToolCalls.filter(
-    (m) => bucket(m.toolName ?? "") === tool && fingerprint(m.input) === fp,
+  const matches = session.messages.filter(
+    (m) =>
+      m.role === "tool_call" &&
+      bucket(m.toolName ?? "") === tool &&
+      informative(m.input, tool) &&
+      fingerprint(m.input) === fp,
   ).length;
   if (matches === 0) return "ident-0";
   if (matches === 1) return "ident-1";
