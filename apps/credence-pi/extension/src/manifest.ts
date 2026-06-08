@@ -119,7 +119,17 @@ export function parseCapabilities(src: string): EffectorDecl[] {
 }
 
 export function parseFeatures(src: string): FeatureDecl[] {
-  return collect(read(tokenize(src)), "feature", parseFeatureForm);
+  const exprs = read(tokenize(src));
+  // Scope to the `(define features (list ...))` form — the features THIS body emits and
+  // must have extractors for. A separate `(define safety-features ...)` declares the harm
+  // posterior's vocabulary, emitted only by the OpenClaw plugin body; it is intentionally
+  // NOT validated against this body's extractors. (The Julia daemon likewise reads
+  // `:features` and `:safety-features` as separate lists.)
+  let featuresForm: SExpr[] | undefined;
+  for (const e of exprs) {
+    if (Array.isArray(e) && e[0] === "define" && e[1] === "features") { featuresForm = e; break; }
+  }
+  return collect(featuresForm ? [featuresForm] : exprs, "feature", parseFeatureForm);
 }
 
 export function readCapabilities(path: string): EffectorDecl[] {
