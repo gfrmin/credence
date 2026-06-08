@@ -48,7 +48,17 @@
 ;   P(approve|X) < 1/(1+λ) + H·P(unsafe|X)/((1+λ)·c)
 ; — the waste cutoff SLIDES with P(unsafe), the coupling no fixed rule can express.
 ; Calibrate against the safety-eval Pareto curve (eval/results/SAFETY_INGREDIENTS.md).
-; harm-cost = 0 (default) ⇒ harm governance OFF: the brain runs the waste-only decision
-; exactly as before. Activation also requires safety-features + a loaded harm posterior,
-; so this default keeps the shipped daemon's behaviour unchanged until those are present.
-(define harm-cost 0.0)
+; harm-cost = 0 ⇒ harm governance OFF (waste-only). It is ON here, but SAFE because the
+; default harm-response is :ask (below): harm-driven stops are confirmations, not refusals.
+; Harm governance is inert anyway until the body emits safety-features AND the harm
+; posterior loads, so a plugin that predates safety-feature emission is unaffected.
+(define harm-cost 1.0)
+
+; Harm response (research stage): how a harm-DRIVEN stop is realised.
+;   :ask   — CONFIRM with the user (nothing silently blocked). The benchmark-seeded harm
+;            belief over-estimates harm for legitimate actions, so confirmation (not
+;            refusal) is the safe default, and each yes/no is the calibration signal we
+;            learn from. Recommended for the research stage.
+;   :block — ENFORCE (refuse). Only once the harm belief is calibrated on real usage.
+; Waste-driven blocks are unaffected by this (waste detection is proven precision/recall 1.0).
+(define harm-response "ask")

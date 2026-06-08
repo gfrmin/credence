@@ -387,6 +387,7 @@ function wire_brain!(env)
     b0       = Float64(get(env, Symbol("cell-prior-beta"), 2.0))
 
     H        = Float64(get(env, Symbol("harm-cost"), 0.0))
+    hresp    = Symbol(get(env, Symbol("harm-response"), "ask"))  # :ask (confirm) | :block (enforce)
 
     model = build_model_from_env(env; alpha0 = a0, beta0 = b0, p_edge = p_edge)
 
@@ -429,8 +430,19 @@ function wire_brain!(env)
         if harm_model !== nothing && harm_top !== nothing && _has_features(harm_model, features)
             Xw = context_from_features(model, features)
             Xh = context_from_features(harm_model, features)
-            decide_multi(model, top, harm_model, harm_top, Xw, Xh, c;
-                         aversion = λ, interrupt_cost = q, harm_cost = H)
+            d = decide_multi(model, top, harm_model, harm_top, Xw, Xh, c;
+                             aversion = λ, interrupt_cost = q, harm_cost = H)
+            # Research-stage effector policy (harm-response = :ask): a harm-DRIVEN stop is a
+            # CONFIRMATION, not a refusal — the harm belief is benchmark-seeded, not yet
+            # user-calibrated, so asking has value and the response is the calibration
+            # signal we learn from. Waste-driven blocks are unchanged (waste is proven).
+            # Like shadowMode, this is an effector policy, not a change to the EU reasoning:
+            # the harm term decided "do not proceed"; :ask realises that as "confirm".
+            if d === :block && hresp === :ask
+                d_waste = decide(model, top, Xw, c; aversion = λ, interrupt_cost = q)
+                d = d_waste === :block ? :block : :ask   # harm was the driver ⇒ confirm
+            end
+            d
         else
             X = context_from_features(model, features)
             decide(model, top, X, c; aversion = λ, interrupt_cost = q)

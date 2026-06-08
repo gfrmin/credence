@@ -25,13 +25,14 @@ end
 # Build the daemon env exactly as the daemon does (stdlib + the three .bdsl), then set the
 # harm-cost dial and wire the brain. harm-cost>0 + safety-features + the shipped harm_brain.jls
 # (auto-found next to feature_brain.jl) ⇒ multi-outcome governance.
-function build_env(harm_cost)
+function build_env(harm_cost; harm_response="ask")
     env = Eval.default_env(); env[:__toplevel__] = true
     for expr in Parse.parse_all(read(joinpath("src", "stdlib.bdsl"), String)); Eval.eval_dsl(expr, env); end
     for f in ("capabilities.bdsl", "features.bdsl", "utility.bdsl")
         for expr in Parse.parse_all(read(joinpath(BDSL, f), String)); Eval.eval_dsl(expr, env); end
     end
     env[Symbol("harm-cost")] = harm_cost
+    env[Symbol("harm-response")] = harm_response
     wire_brain!(env)
     env
 end
@@ -61,24 +62,35 @@ let env = build_env(0.0)
     check("harm OFF: tainted send is NOT blocked by harm (waste-only)", d !== :block, "got $d")
 end
 
-# ── harm ON: the shipped harm posterior blocks the tainted external-send. ──
-let env = build_env(1.0)
+# ── harm ON, ASK mode (the research-stage default): a harm-driven stop is a CONFIRMATION. ──
+let env = build_env(1.0; harm_response="ask")
     decide = env[Symbol("decide-action")]; observe = env[Symbol("observe-response")]
     prior = env[Symbol("make-prior")]()
     d_send = decide(prior, TAINTED_SEND, 0.5)
-    check("harm ON: tainted external-send BLOCKED (injected-data exfil)", d_send === :block, "got $d_send")
+    check("harm ON/ask: tainted external-send → ASK (confirm, not silent block)", d_send === :ask, "got $d_send")
 
     # A clean read the user has repeatedly approved ⇒ high P(approve), P(unsafe)≈0.01 ⇒ proceed.
     top = prior
     for _ in 1:8; top = observe(top, CLEAN_READ, 1); end
     d_read = decide(top, CLEAN_READ, 0.5)
-    check("harm ON: clean, learned-wanted read still PROCEEDS (no over-block)", d_read === :proceed, "got $d_read")
+    check("harm ON/ask: clean, learned-wanted read still PROCEEDS (no over-block)", d_read === :proceed, "got $d_read")
 
-    # Same learned-wanted belief, but now tainted ⇒ harm flips it to block (the coupling).
+    # Even a learned-wanted call, once tainted, is escalated to ASK (the harm couples in).
     top2 = prior
-    for _ in 1:8; top2 = observe(top2, TAINTED_SEND, 1); end   # user kept approving this context
+    for _ in 1:8; top2 = observe(top2, TAINTED_SEND, 1); end
     d_flip = decide(top2, TAINTED_SEND, 0.5)
-    check("harm ON: even a learned-wanted tainted send is BLOCKED (harm couples in)", d_flip === :block, "got $d_flip")
+    check("harm ON/ask: learned-wanted tainted send → ASK (harm couples in)", d_flip === :ask, "got $d_flip")
+end
+
+# ── harm ON, BLOCK mode (enforce; for once the belief is calibrated on real usage). ──
+let env = build_env(1.0; harm_response="block")
+    decide = env[Symbol("decide-action")]; prior = env[Symbol("make-prior")]()
+    d_send = decide(prior, TAINTED_SEND, 0.5)
+    check("harm ON/block: tainted external-send BLOCKED (enforce mode)", d_send === :block, "got $d_send")
+    # Waste-driven block is unaffected by harm-response (a non-tainted repeated loop still blocks
+    # under the waste term); here we just confirm a clean read is not harm-blocked.
+    d_read = decide(prior, CLEAN_READ, 0.5)
+    check("harm ON/block: clean read not harm-blocked at cold start", d_read !== :block, "got $d_read")
 end
 
 println("="^64); println("ALL CHECKS PASSED — harm governance"); println("="^64)
