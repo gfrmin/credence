@@ -34,11 +34,15 @@ module FeatureBrain
 using Main.Credence: BetaPrevision, TaggedBetaPrevision, SparseStructurePrevision,
     ProductPrevision, MixturePrevision,
     Prevision, Kernel, Interval, Finite, BetaBernoulli, Flat, FiringByTag, Identity,
-    LinearCombination, TestFunction, mean, FeatureDecl, condition, expect, cell_at
-import Main.Credence.Ontology: optimise, value, voi, net_voi, with_components
+    Projection, LinearCombination, TestFunction, mean, FeatureDecl, condition, expect,
+    cell_at, wrap_in_measure
+import Main.Credence.Ontology: optimise, value, voi, net_voi, with_components,
+    ProductMeasure, Measure
+using Serialization: deserialize
 
-export StructureBMA, build_model, build_model_from_env, build_prior, build_prior_dense,
-       wire_brain!, context_from_features, firing_tags, belief_at_context, observe, decide
+export StructureBMA, build_model, build_model_from_env, build_model_from_decls,
+       build_prior, build_prior_dense, wire_brain!, context_from_features, firing_tags,
+       belief_at_context, observe, decide, decide_multi
 
 # ── The model: feature spec + structure enumeration + tag bookkeeping ──
 #
@@ -121,6 +125,18 @@ function build_model_from_env(env; alpha0::Float64 = 2.0, beta0::Float64 = 2.0,
                               p_edge::Float64 = 0.5)
     decls = get(env, Symbol("features"), nothing)
     decls isa AbstractVector || error("feature brain: env[:features] must be a list of FeatureDecl")
+    build_model_from_decls(decls; alpha0 = alpha0, beta0 = beta0, p_edge = p_edge)
+end
+
+"""
+    build_model_from_decls(decls; ...) -> StructureBMA
+
+Build a model from a `Vector{FeatureDecl}` (declared DATA). Shared by the waste model
+(`env[:features]`) and the harm model (`env[:safety-features]`).
+"""
+function build_model_from_decls(decls; alpha0::Float64 = 2.0, beta0::Float64 = 2.0,
+                                p_edge::Float64 = 0.5)
+    decls isa AbstractVector || error("feature brain: expected a list of FeatureDecl")
     names = String[]
     vals = Vector{String}[]
     for d in decls
@@ -131,6 +147,14 @@ function build_model_from_env(env; alpha0::Float64 = 2.0, beta0::Float64 = 2.0,
         push!(vals, String[string(v) for v in d.space.values])
     end
     build_model(names, vals; alpha0 = alpha0, beta0 = beta0, p_edge = p_edge)
+end
+
+# Are all of a model's declared features present in a body-sent feature dict? (Used to
+# decide whether the harm posterior can be consulted for this event; if the body has not
+# yet been upgraded to emit safety features, harm governance stays off — backward-compat.)
+function _has_features(model::StructureBMA, features)
+    fd = Dict{String, String}(string(k) => string(v) for (k, v) in features)
+    all(haskey(fd, n) for n in model.feature_names)
 end
 
 # Structure-inclusion log-weights (independent edge-inclusion at p_edge; uniform
@@ -301,6 +325,45 @@ function decide(model::StructureBMA, top::MixturePrevision, X::AbstractVector, c
     optimise(bx, [:proceed, :block, :ask], fpa)
 end
 
+# ── Multi-outcome decision: one EU integrating waste AND harm in one currency ──
+#
+# Two posteriors at decision time: θ_a = P(approve|Xw) (waste brain, live-learned) and
+# θ_u = P(unsafe|Xh) (harm brain, warm-frozen). The user's per-action EU, proceed = 0
+# baseline (harm_cost H=0 OR the single-outcome path recovers `decide` exactly):
+#     EU(proceed) = 0
+#     EU(block)   = c·[1 − (1+λ)θ_a] + H·θ_u        (block avoids BOTH waste and harm)
+#     EU(ask)     = voi − q                          (VOI of the user resolving approve)
+# expressed as a LinearCombination over Projections of the JOINT belief (the constitution-
+# clean "one expect over the joint"; ProductMeasure + Projection are existing Tier-1 ops),
+# maximised by the ONE canonical `optimise`. Block beats proceed iff
+#     θ_a < 1/(1+λ) + H·θ_u/((1+λ)c) — the waste cutoff SLIDES with the harm belief, the
+# coupling no OR-of-thresholds can express (see eval/multi_outcome.jl + REGEX_IMPOSSIBLE.md).
+"""
+    decide_multi(waste_model, top_waste, harm_model, harm_top, Xw, Xh, cost;
+                 aversion, interrupt_cost, harm_cost) -> Symbol
+
+Multi-outcome EU decision over the joint of the approve-belief and the unsafe-belief, via
+the single canonical `optimise`. `harm_cost = 0` reduces it to the single-outcome `decide`.
+"""
+function decide_multi(waste_model::StructureBMA, top_waste::MixturePrevision,
+                      harm_model::StructureBMA, harm_top::MixturePrevision,
+                      Xw::AbstractVector, Xh::AbstractVector, cost::Float64;
+                      aversion::Float64, interrupt_cost::Float64, harm_cost::Float64)
+    bxa = belief_at_context(waste_model, top_waste, Xw)   # P(approve|Xw)
+    bxu = belief_at_context(harm_model, harm_top, Xh)     # P(unsafe|Xh)
+    joint = ProductMeasure(Measure[wrap_in_measure(bxa), wrap_in_measure(bxu)])
+    # EU(block) = c·[1−(1+λ)θ_a] + H·θ_u over the joint (Projection(1)=θ_a, Projection(2)=θ_u)
+    block_fn = LinearCombination(Tuple{Float64, TestFunction}[
+        (-cost * (1.0 + aversion), Projection(1)), (harm_cost, Projection(2))], cost)
+    # EU(ask): VOI of the user resolving the approve question (single-posterior, as `decide`),
+    # entered as a constant so all three actions compare through one optimise.
+    eu_ask = net_voi(bxa, _decision_kernel(), [:proceed, :block],
+                     Dict(:proceed => _const(0.0), :block => _lin(-cost * (1.0 + aversion), cost)),
+                     [0, 1], interrupt_cost)
+    fpa = Dict(:proceed => _const(0.0), :block => block_fn, :ask => _const(eu_ask))
+    optimise(joint, [:proceed, :block, :ask], fpa)
+end
+
 # Pass-1 followup logic, kept (yes→proceed, no→block); deterministic in Move 3.
 function followup_after_response(event)
     resp = string(get(event, "response", ""))
@@ -323,15 +386,53 @@ function wire_brain!(env)
     a0       = Float64(get(env, Symbol("cell-prior-alpha"), 2.0))
     b0       = Float64(get(env, Symbol("cell-prior-beta"), 2.0))
 
+    H        = Float64(get(env, Symbol("harm-cost"), 0.0))
+
     model = build_model_from_env(env; alpha0 = a0, beta0 = b0, p_edge = p_edge)
+
+    # Optional harm posterior (multi-outcome governance). ACTIVE only when the operator
+    # declared `safety-features`, shipped a trained harm posterior (`harm-brain-path`),
+    # AND set `harm-cost > 0`. Any missing piece (or a load failure) leaves decide-action
+    # as exactly the single-outcome waste path — backward-compatible, fail-loud-then-off.
+    harm_model = nothing
+    harm_top = nothing
+    sfeat = get(env, Symbol("safety-features"), nothing)
+    hpath = get(env, Symbol("harm-brain-path"), nothing)
+    if H > 0.0 && sfeat isa AbstractVector && hpath !== nothing && !isempty(string(hpath))
+        if isfile(string(hpath))
+            try
+                harm_model = build_model_from_decls(sfeat; alpha0 = a0, beta0 = b0, p_edge = p_edge)
+                loaded = deserialize(string(hpath))
+                loaded isa MixturePrevision ||
+                    error("harm posterior is $(typeof(loaded)), expected MixturePrevision")
+                harm_top = loaded
+                @info "credence-pi: harm posterior loaded; multi-outcome governance ON" path=string(hpath)
+            catch e
+                @warn "credence-pi: harm posterior failed to load; harm governance OFF" error=e
+                harm_model = nothing
+                harm_top = nothing
+            end
+        else
+            @warn "credence-pi: harm-brain-path set but file missing; harm governance OFF" path=string(hpath)
+        end
+    end
 
     env[Symbol("make-prior")] = () -> build_prior(model)
 
     env[Symbol("decide-action")] = (top, features, cost) -> begin
-        X = context_from_features(model, features)
         c = cost === nothing ? fallback : Float64(cost)
         c = c <= 0.0 ? fallback : c
-        decide(model, top, X, c; aversion = λ, interrupt_cost = q)
+        # Multi-outcome only when harm is active AND the body sent the safety features for
+        # this event; otherwise the single-outcome waste decision (unchanged).
+        if harm_model !== nothing && harm_top !== nothing && _has_features(harm_model, features)
+            Xw = context_from_features(model, features)
+            Xh = context_from_features(harm_model, features)
+            decide_multi(model, top, harm_model, harm_top, Xw, Xh, c;
+                         aversion = λ, interrupt_cost = q, harm_cost = H)
+        else
+            X = context_from_features(model, features)
+            decide(model, top, X, c; aversion = λ, interrupt_cost = q)
+        end
     end
 
     env[Symbol("observe-response")] = (top, features, obs) -> begin

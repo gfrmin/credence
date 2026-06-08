@@ -164,6 +164,38 @@ let
           isapprox(expect(belief_at_context(model, top, X), Identity()), 0.5; atol=1e-12))
 end
 
+# ── 7. Multi-outcome decide: H=0 reduces to single-outcome; harm couples in. ──
+# Two posteriors (waste P(approve|Xw), harm P(unsafe|Xh)); EU(block)=c[1−(1+λ)θ_a]+H·θ_u.
+# Verifies the backward-compat reduction (H=0 ≡ `decide`) and the coupling no OR of
+# thresholds can express (harm flips a clearly-wanted call to block). See multi_outcome.jl.
+let
+    wm = build_model(["ctx"], [["c"]]); hm = build_model(["ctx"], [["c"]])
+    function mk(model, a, d)
+        t = build_prior(model)
+        for _ in 1:a; t = observe(model, t, ["c"], 1); end
+        for _ in 1:d; t = observe(model, t, ["c"], 0); end
+        t
+    end
+    X = ["c"]; c, λ, q = 0.5, 1.0, 0.02
+    wt_hi = mk(wm, 16, 2)   # θ_a ≈ 0.82 (clearly wanted)
+    ht_lo = mk(hm, 0, 8)    # θ_u ≈ 0.17 (safe)
+    ht_hi = mk(hm, 8, 2)    # θ_u ≈ 0.71 (harmful)
+
+    # H=0 ⇒ decide_multi is EXACTLY the single-outcome decide, for any harm belief.
+    for ht in (ht_lo, ht_hi)
+        dm0 = decide_multi(wm, wt_hi, hm, ht, X, X, c; aversion=λ, interrupt_cost=q, harm_cost=0.0)
+        ds  = decide(wm, wt_hi, X, c; aversion=λ, interrupt_cost=q)
+        check("decide_multi(H=0) ≡ single-outcome decide", dm0 === ds, "multi=$dm0 single=$ds")
+    end
+
+    # H>0: a clearly-wanted call proceeds when safe, BLOCKS when harmful — the coupling.
+    d_safe = decide_multi(wm, wt_hi, hm, ht_lo, X, X, c; aversion=λ, interrupt_cost=q, harm_cost=1.0)
+    d_harm = decide_multi(wm, wt_hi, hm, ht_hi, X, X, c; aversion=λ, interrupt_cost=q, harm_cost=1.0)
+    check("multi-outcome: clearly-wanted + safe → proceed", d_safe === :proceed, "got $d_safe")
+    check("multi-outcome: clearly-wanted + harmful → block (harm couples in)", d_harm === :block, "got $d_harm")
+    check("harm flips the SAME wanted call (proceed→block)", d_safe !== d_harm)
+end
+
 println("="^64)
 println("ALL CHECKS PASSED — feature brain (Route B)")
 println("="^64)
