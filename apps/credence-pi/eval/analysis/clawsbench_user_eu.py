@@ -1,3 +1,5 @@
+# Role: eval
+#
 # Move 2 (task-value): does ClawsBench let the governor maximise the OpenClaw user's
 # expected utility? Computes the real user-EU picture + the attribution wall + the
 # metareasoning-escalation signal. Run from repo root:

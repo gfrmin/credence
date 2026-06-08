@@ -1,3 +1,5 @@
+# Role: eval
+#
 # Shared extraction + metrics helper for ATBench-Claw ingredient validation.
 # Import from a candidate-ingredient script:
 #   import sys; sys.path.insert(0, "data/credence_pi_eval/analysis")

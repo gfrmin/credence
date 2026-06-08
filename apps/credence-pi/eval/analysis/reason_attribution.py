@@ -1,3 +1,5 @@
+# Role: eval
+#
 # Reason-localized attribution + non-circular cross-check of taint vs human judgment.
 #
 # Q1: can we localize the harmful call from the human-written `reason` text (independent
