@@ -38,11 +38,11 @@ using Main.Credence: BetaPrevision, TaggedBetaPrevision, SparseStructurePrevisio
     cell_at, wrap_in_measure
 import Main.Credence.Ontology: optimise, value, voi, net_voi, with_components,
     ProductMeasure, Measure
-using Serialization: deserialize
+using JSON3
 
 export StructureBMA, build_model, build_model_from_env, build_model_from_decls,
        build_prior, build_prior_dense, wire_brain!, context_from_features, firing_tags,
-       belief_at_context, observe, decide, decide_multi
+       belief_at_context, observe, decide, decide_multi, reconstruct_harm_posterior
 
 # ── The model: feature spec + structure enumeration + tag bookkeeping ──
 #
@@ -364,6 +364,30 @@ function decide_multi(waste_model::StructureBMA, top_waste::MixturePrevision,
     optimise(joint, [:proceed, :block, :ask], fpa)
 end
 
+# ── harm posterior persistence: version-stable per-context COUNTS ──
+#
+# Bayesian updating is order-independent, so the final posterior depends only on the per-
+# context counts (n1 = harm-labelled, n0 = safe-labelled). We ship those as JSON and
+# reconstruct by replaying `observe` — robust across Julia versions (unlike Serialization).
+# The JSON shape: { "contexts": [ { "ctx": ["external-send","tainted-external-target","yes","no"],
+#                                   "n1": 12, "n0": 1 }, ... ], ...metadata... }.
+"""
+    reconstruct_harm_posterior(harm_model, counts_path) -> MixturePrevision
+
+Rebuild the frozen harm posterior from shipped per-context counts by replaying `observe`.
+"""
+function reconstruct_harm_posterior(harm_model::StructureBMA, counts_path::AbstractString)
+    data = JSON3.read(read(counts_path, String))
+    entries = data.contexts
+    top = build_prior(harm_model)
+    for e in entries
+        ctx = String[String(v) for v in e.ctx]
+        for _ in 1:Int(e.n1); top = observe(harm_model, top, ctx, 1); end
+        for _ in 1:Int(e.n0); top = observe(harm_model, top, ctx, 0); end
+    end
+    top
+end
+
 # Pass-1 followup logic, kept (yes→proceed, no→block); deterministic in Move 3.
 function followup_after_response(event)
     resp = string(get(event, "response", ""))
@@ -399,17 +423,16 @@ function wire_brain!(env)
     harm_top = nothing
     sfeat = get(env, Symbol("safety-features"), nothing)
     # Default to the harm posterior shipped next to this brain file; an operator may
-    # override with a `harm-brain-path` define. The blob is INERT until harm-cost > 0.
-    hpath = get(env, Symbol("harm-brain-path"), joinpath(@__DIR__, "harm_brain.jls"))
+    # override with a `harm-brain-path` define. INERT until harm-cost > 0. The artifact is
+    # version-stable per-context COUNTS (JSON), reconstructed via `observe` — NOT a Julia
+    # Serialization blob, which is fragile across Julia versions (CI/image pin 1.11).
+    hpath = get(env, Symbol("harm-brain-path"), joinpath(@__DIR__, "harm_brain.counts.json"))
     if H > 0.0 && sfeat isa AbstractVector && hpath !== nothing && !isempty(string(hpath))
         if isfile(string(hpath))
             try
                 harm_model = build_model_from_decls(sfeat; alpha0 = a0, beta0 = b0, p_edge = p_edge)
-                loaded = deserialize(string(hpath))
-                loaded isa MixturePrevision ||
-                    error("harm posterior is $(typeof(loaded)), expected MixturePrevision")
-                harm_top = loaded
-                @info "credence-pi: harm posterior loaded; multi-outcome governance ON" path=string(hpath)
+                harm_top = reconstruct_harm_posterior(harm_model, string(hpath))
+                @info "credence-pi: harm posterior reconstructed; multi-outcome governance ON" path=string(hpath)
             catch e
                 @warn "credence-pi: harm posterior failed to load; harm governance OFF" error=e
                 harm_model = nothing
