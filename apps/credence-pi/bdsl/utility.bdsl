@@ -39,3 +39,16 @@
 ; priced turn-cost (model unpriced / hook unavailable). Scales
 ; the stakes; does not move the block/proceed threshold.
 (define fallback-call-cost 0.5)
+
+; Harm cost H (dollars) — the harm-aversion dial for MULTI-OUTCOME governance.
+; When a trained harm posterior is shipped (harm-brain-path) and the body emits the
+; safety features, the brain folds an expected-harm term H·P(unsafe|X) into the decision:
+;   EU(block) = c·[1−(1+λ)P(approve|X)] + H·P(unsafe|X).
+; The load-bearing ratio is H/c (harm-aversion): block beats proceed iff
+;   P(approve|X) < 1/(1+λ) + H·P(unsafe|X)/((1+λ)·c)
+; — the waste cutoff SLIDES with P(unsafe), the coupling no fixed rule can express.
+; Calibrate against the safety-eval Pareto curve (eval/results/SAFETY_INGREDIENTS.md).
+; harm-cost = 0 (default) ⇒ harm governance OFF: the brain runs the waste-only decision
+; exactly as before. Activation also requires safety-features + a loaded harm posterior,
+; so this default keeps the shipped daemon's behaviour unchanged until those are present.
+(define harm-cost 0.0)
