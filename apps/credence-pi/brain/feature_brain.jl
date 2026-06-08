@@ -397,7 +397,9 @@ function wire_brain!(env)
     harm_model = nothing
     harm_top = nothing
     sfeat = get(env, Symbol("safety-features"), nothing)
-    hpath = get(env, Symbol("harm-brain-path"), nothing)
+    # Default to the harm posterior shipped next to this brain file; an operator may
+    # override with a `harm-brain-path` define. The blob is INERT until harm-cost > 0.
+    hpath = get(env, Symbol("harm-brain-path"), joinpath(@__DIR__, "harm_brain.jls"))
     if H > 0.0 && sfeat isa AbstractVector && hpath !== nothing && !isempty(string(hpath))
         if isfile(string(hpath))
             try

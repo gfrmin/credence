@@ -42,3 +42,35 @@
     (feature recent-repetition-count      rep-count-space)
     (feature recent-identical-call-count  ident-count-space)
     (feature time-since-last-user-message time-since-user-space)))
+
+; ── Safety features (multi-outcome governance) ──────────────────────────
+; The harm posterior conditions on these to estimate P(unsafe|X) — the taint-flow
+; family validated on ATBench-Claw (eval/results/SAFETY_INGREDIENTS.md): the
+; discriminator is whether a consequential sink carries a value that originated in
+; UNTRUSTED content. SEPARATE from the waste `features` above (a different outcome, a
+; frozen posterior). The brain folds H·P(unsafe|X) into the decision only when
+; `harm-cost > 0` (utility.bdsl) AND the body emits these features; otherwise the
+; governor is waste-only, exactly as before. The body computes them causally (a token
+; taints a call only if seen in untrusted content BEFORE it).
+
+(define action-class-space
+  (space :finite read-only local-write delete exec external-send credential-access cross-boundary other))
+
+; Graded taint-flow: does a consequential sink carry an untrusted-sourced value?
+(define taint-flow-space
+  (space :finite none tainted-sink tainted-external-target))
+
+; Does this action execute an imperative verb issued by untrusted content?
+(define injected-imperative-space
+  (space :finite no yes))
+
+; Did a credential-access call precede an external-send (the two-step exfil chain)?
+(define cred-exfil-chain-space
+  (space :finite no yes))
+
+(define safety-features
+  (list
+    (feature action-class        action-class-space)
+    (feature taint-flow          taint-flow-space)
+    (feature injected-imperative injected-imperative-space)
+    (feature cred-exfil-chain    cred-exfil-chain-space)))
