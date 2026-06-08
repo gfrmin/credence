@@ -30,6 +30,7 @@ import {
   type Logger,
 } from "./daemon-client.js";
 import { FeatureTracker } from "./features.js";
+import { SafetyTracker } from "./safety.js";
 import { buildPriceTable, computeTurnCost, type PriceTable } from "./cost.js";
 import type {
   PluginEntry,
@@ -142,6 +143,11 @@ export function createGovernor(
   const { hookTimeoutMs, approvalTimeoutMs, priceTable, redactToolInputs,
     shadowMode, log } = opts;
   const tracker = new FeatureTracker();
+  // Safety (multi-outcome): accumulates taint from tool results and emits the taint-flow
+  // features the harm posterior conditions on. The daemon ignores them unless harm
+  // governance is enabled (harm-cost>0 + the shipped harm posterior), so emitting them is
+  // safe with any daemon version.
+  const safety = new SafetyTracker();
 
   // event_id -> resolver for the awaited effector signal. The single SSE
   // consumer dispatches signals here by in_response_to. Unmatched signals
@@ -177,6 +183,9 @@ export function createGovernor(
     });
 
     const features = tracker.extractAndRecord(event, ctx);
+    // Add the safety (taint-flow) features against the session's causal taint state. The
+    // brain reads only its declared subsets, so this is additive and backward-compatible.
+    Object.assign(features, safety.extractSafety(event.toolName, event.params, ctx));
     const post = await client.postSensor({
       event_type: "tool-proposed",
       event_id: eventId,
@@ -244,8 +253,12 @@ export function createGovernor(
 
   async function afterToolCall(
     event: AfterToolCallEvent,
-    _ctx: ToolContext,
+    ctx: ToolContext,
   ): Promise<void> {
+    // Taint SOURCE: the tool result is content from the outside world. Accumulate its
+    // distinctive tokens + imperative verbs so a later sink carrying them is flagged
+    // (causal — only results seen BEFORE a call can taint it).
+    safety.observeResult(event.result, ctx);
     // Correlate by the stable toolCallId (tools run in parallel).
     await client.postSensor({
       event_type: "tool-completed",
