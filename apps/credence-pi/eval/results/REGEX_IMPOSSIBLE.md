@@ -80,6 +80,28 @@ them — so evidence from one context informs unseen siblings. A flat counter ha
 unseen context and returns the prior 0.5. Matching the 0.708 reconstructs Bayesian model
 averaging (the structure-BMA).
 
+## What it CANNOT match — break #3: coherent cross-outcome integration (`multi_outcome.jl`)
+
+The capstone moves from one outcome to two. A single EU decision trades off **harm** and
+**waste** in one currency (`EU(block) = c·[1−(1+λ)θ_a] + H·θ_u`, proceed = 0), built
+brain-side from the same Tier-1 ops (`ProductMeasure` of the two posteriors + `LinearCombination`
+over `Projection`s + `optimise`; no `src/` changes). This defeats not just a regex but **any
+OR of independent thresholds**, because the EU *couples* the outcomes — the block-cutoff on θ_a
+is `1/(1+λ) + H·θ_u/((1+λ)c)`, which **slides with θ_u**:
+
+| scenario | θ_a | θ_u | EU decision | OR-of-thresholds |
+|---|---|---|---|---|
+| clearly-wanted, safe | 0.82 | 0.17 | proceed | proceed |
+| clearly-wanted, HIGH harm | 0.82 | 0.71 | block | block |
+| **mildly-wanted, moderate harm** | 0.57 | 0.40 | **block** | proceed ← diverges |
+| **clearly-wanted, moderate harm** | 0.82 | 0.40 | **block** | proceed ← diverges |
+
+In the diverging rows *neither* threshold fires alone (θ_a > 0.5 and θ_u < 0.5), yet the EU
+**sums the two sub-threshold risks** past the bar and blocks. A fixed θ_a-cutoff OR a fixed
+θ_u-cutoff cannot express a cutoff on one axis that depends on the other; evidence integration
+across outcomes in one currency is EU-max, not rules. (And the `H/V` ratio is the user's risk
+dial, turned at will.)
+
 ## Conclusion
 
 A stateless regex can do none of this. A stateful counter matches the calibrated number —
