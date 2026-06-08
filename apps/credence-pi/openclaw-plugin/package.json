@@ -1,6 +1,6 @@
 {
   "name": "@gfrmin/credence-pi-openclaw",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "type": "module",
   "description": "credence-pi body: OpenClaw plugin that governs tool calls via the credence-pi Bayesian brain (before_tool_call -> allow/block/ask) and logs outcomes + per-turn cost.",
   "main": "dist/index.js",

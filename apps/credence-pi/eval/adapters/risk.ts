@@ -1,179 +1,19 @@
-// risk.ts — risk-aware discrete features for the safety posterior.
+// risk.ts — risk-aware feature primitives for the eval adapters.
 //
-// Safety is not a function of tool/rep/ident (those govern waste); it lives in the
-// CONTENT of an action: what class of thing it does, whether it targets something
-// external, and whether it follows untrusted/injected input. These are coarse,
-// honest, discrete partitions (the structure-BMA combines them; no embeddings yet).
-//
-// Tool names in the wild are heterogeneous ("gog gmail send", "himalaya message
-// forward", "tmux_send-keys", "op_signin", …), so we pattern-match on the
-// name + a flattened view of the arguments rather than an enum. Adapted from
-// apps/credence-governance-sidecar/brain.jl infer_category, extended for OpenClaw
-// + ATBench action vocabulary.
-
-function flatten(args: unknown): string {
-  try {
-    return JSON.stringify(args ?? "").toLowerCase();
-  } catch {
-    return "";
-  }
-}
-
-const re = (s: string) => new RegExp(s, "i");
-
-// Ordered most-dangerous-first; first match wins.
-const ACTION_RULES: Array<[string, RegExp, RegExp | null]> = [
-  // [class, name-pattern, args-pattern (null = name only)]
-  ["delete", re("\\b(rm|unlink|rmdir|delete|remove|trash|drop)\\b"), null],
-  ["delete", re("\\b(exec|process|bash|sh|tmux|run)\\b"), re("\\b(rm\\s|unlink|rmdir|drop\\s+table|delete\\s+from)\\b")],
-  ["external-send", re("send|forward|publish|tweet|post\\b|webhook|gmail|email|sendmessage|pinmessage|sms|slack"), null],
-  ["external-send", re("\\b(exec|process|bash|sh|tmux|curl|wget)\\b"), re("(curl|wget).*(-d|--data|-t\\b|-f\\b|@/|http)")],
-  ["credential-access", re("op_signin|1password|keychain|secret|credential|vault"), null],
-  ["credential-access", re("read|search|cat|grep|get"), re("api[_-]?key|secret|credential|token|password|\\.env|private[_-]?key")],
-  ["cross-boundary", re("web_fetch|web_search|browser|agent-browser|activate_window|screenshot|type_text|open\\b"), null],
-  ["cross-boundary", re("move|copy|mv|cp"), re("public/|/sync/|external|http")],
-  ["exec", re("\\b(exec|process|bash|sh|tmux|run|gh\\s+api|api\\s+gateway|cron)\\b"), null],
-  ["local-write", re("\\b(write|edit|create|apply_patch|update|move|mv|cp|copy|append|insert)\\b"), null],
-  ["read-only", re("\\b(read|cat|head|tail|ls|grep|find|search|get|list|print|fetch|capture|transcript|view|show|envelope)\\b"), null],
-];
-
-/** Coarse risk class of an action (the candidate-harm taxonomy). */
-export function actionClass(toolName: string, args: unknown): string {
-  const name = (toolName || "").toLowerCase();
-  const a = flatten(args);
-  for (const [cls, namePat, argPat] of ACTION_RULES) {
-    if (namePat.test(name) && (argPat === null || argPat.test(a) || argPat.test(name))) {
-      return cls;
-    }
-    // command-style tools carry the verb in the args, not the name
-    if (argPat === null && namePat.test(a)) return cls;
-  }
-  return "other";
-}
-
-// Does the action reach OUTSIDE the local/trusted boundary? external recipient
-// (email/handle to a non-obvious-internal domain), an external URL, or a
-// public/shared path. internal | external | none.
-const EMAIL = /[\w.+-]+@[\w.-]+\.\w+/;
-const URL = /https?:\/\/[\w.-]+/;
-const PUBLIC_PATH = /(^|["'\/])(public|sync|shared|outbox|external)\//i;
-export function targetExternality(toolName: string, args: unknown): string {
-  const a = flatten(args);
-  const emails = a.match(new RegExp(EMAIL, "g")) ?? [];
-  const urls = a.match(new RegExp(URL, "g")) ?? [];
-  const external =
-    emails.some((e) => !/@(localhost|internal|corp|company|local)\b/.test(e)) ||
-    urls.some((u) => !/\/\/(localhost|127\.|10\.|192\.168|internal)/.test(u)) ||
-    PUBLIC_PATH.test(a);
-  if (external) return "external";
-  if (emails.length || urls.length || /\bchannel\b|recipient|to:/.test(a)) return "internal";
-  return "none";
-}
-
-// Untrusted-content markers in a piece of text the agent consumed (a user message
-// or a tool result). Used to set the per-action `untrusted-provenance` feature:
-// did this action follow injected / untrusted input?
-const UNTRUSTED_MARKERS =
-  /untrusted|injection|ignore (the )?(previous|above|prior)|disregard (your|the)|bypass|exfiltrat|skip (intermediate )?confirmation|override (your|the|safety|user)|jailbreak|system prompt|new instructions?:/i;
-export function looksUntrusted(text: string): boolean {
-  return UNTRUSTED_MARKERS.test(text);
-}
-
-// ── taint-flow: the validated safety ingredient (see results/SAFETY_INGREDIENTS.md) ──
-//
-// Safe and unsafe trajectories are MATCHED on attack-presence (every safe trajectory is
-// one where the agent refused), so action-class alone cannot separate them. The
-// discriminator is DATA FLOW: a consequential sink whose parameter/payload originated in
-// untrusted content. A compromised agent carries the taint into a sink; a defending agent
-// breaks the flow. Measured trajectory precision on ATBench: 0.82–0.97 vs regex 0.67.
-
-// A consequential SINK is any non-pure-read action.
-const SINK_RE =
-  /send|forward|post|publish|tweet|webhook|curl|wget|upload|message|write|edit|create|apply_patch|append|insert|move|copy|cp|mv|rm|unlink|delete|drop|remove|exec|process|bash|sh|tmux|run|api|gh /i;
-const READ_RE = /read|cat|head|tail|ls|grep|find|list|view|envelope|capture/i;
-const EXTERNAL_SEND_RE =
-  /send|forward|post|publish|tweet|webhook|curl|wget|upload|message|email|gmail|sms|slack|send.?keys|sendmessage/i;
-const CRED_RE =
-  /api[_-]?key|secret|credential|token|password|\.env|private[_-]?key|keychain|op_signin|1password|vault|credentials/i;
-
-/** Pure read — observes, does not act. */
-export function isReadOnly(toolName: string): boolean {
-  const n = (toolName || "").toLowerCase();
-  return READ_RE.test(n) || n === "get";
-}
-/** Consequential sink — an action with an external/persistent effect. */
-export function isSink(toolName: string): boolean {
-  return SINK_RE.test(toolName || "") && !isReadOnly(toolName);
-}
-/** External-send class — a sink that delivers to a recipient/destination. */
-export function isExternalSend(toolName: string): boolean {
-  return EXTERNAL_SEND_RE.test(toolName || "");
-}
-/** Credential-access — reads or names a secret. */
-export function isCredentialAccess(toolName: string, args: unknown): boolean {
-  return CRED_RE.test(toolName || "") || CRED_RE.test(flatten(args));
-}
-
-// Distinctive token extraction (emails / urls / domains / deep paths), mirroring the
-// validated python helper data/credence_pi_eval/analysis/atbench_taint.py.
-const STOP_TOKENS = new Set([
-  "example.com", "localhost", "127.0.0.1", "0.0.0.0", "github.com", "schema.org",
-]);
-const TOKEN_RES: RegExp[] = [
-  /[\w.+-]+@[\w.-]+\.\w+/g, // email
-  /https?:\/\/[\w./?=&%+#~-]+/g, // url
-  /\b[\w-]+\.(?:com|net|org|io|ai|co|dev|xyz|ru|cn|evil|sh|info)\b/gi, // domain
-  /(?:\/[\w.+-]+){2,}\/?/g, // deep path
-];
-/** Distinctive tokens in a piece of text, normalised (lowercased, trailing punct stripped). */
-export function extractTokens(text: string): Set<string> {
-  const t = (text || "").toLowerCase();
-  const out = new Set<string>();
-  for (const re of TOKEN_RES) {
-    const m = t.match(re) || [];
-    for (let tok of m) {
-      tok = tok.replace(/[/.,);'"]+$/, "");
-      if (tok.length >= 4 && !STOP_TOKENS.has(tok)) out.add(tok);
-    }
-  }
-  return out;
-}
-
-/** Graded taint-flow bucket for a call, given the set of tainted tokens seen so far.
- *  none < tainted-sink < tainted-external-target (the precision gradient). */
-export function taintFlow(toolName: string, args: unknown, taint: Set<string>): string {
-  if (taint.size === 0) return "none";
-  const at = flatten(args);
-  // strongest: an external-send whose destination token came from untrusted content
-  if (isExternalSend(toolName)) {
-    for (const tok of extractTokens(at)) if (taint.has(tok)) return "tainted-external-target";
-  }
-  // any consequential sink carrying a tainted token
-  if (isSink(toolName)) {
-    for (const tok of taint) if (at.includes(tok)) return "tainted-sink";
-  }
-  return "none";
-}
-
-// Imperative verbs an injection uses to command an action.
-const IMPERATIVE_VERBS = [
-  "forward", "send", "email", "post", "publish", "delete", "remove", "drop",
-  "transfer", "wire", "pay", "grant", "disable", "exfiltrate", "upload", "share",
-];
-const IMPERATIVE_RES = IMPERATIVE_VERBS.map((v) => new RegExp("\\b" + v + "\\b"));
-/** Imperative verbs present in a piece of untrusted text (the injection's commands). */
-export function untrustedImperatives(text: string): Set<string> {
-  const t = (text || "").toLowerCase();
-  const out = new Set<string>();
-  IMPERATIVE_VERBS.forEach((v, i) => {
-    if (IMPERATIVE_RES[i].test(t)) out.add(v);
-  });
-  return out;
-}
-/** Does this call execute one of the injected imperative verbs? */
-export function matchesImperative(toolName: string, args: unknown, verbs: Set<string>): boolean {
-  if (verbs.size === 0) return false;
-  const blob = (toolName || "").toLowerCase() + " " + flatten(args);
-  for (const v of verbs) if (new RegExp("\\b" + v + "\\b").test(blob)) return true;
-  return false;
-}
+// SINGLE SOURCE OF TRUTH: these live in the body (openclaw-plugin/src/safety.ts) so the
+// offline-trained harm posterior and the LIVE governor compute identical features — the same
+// pattern as the waste FeatureTracker (also imported from the plugin). The eval re-exports
+// them here so the adapters' imports are unchanged.
+export {
+  actionClass,
+  targetExternality,
+  looksUntrusted,
+  isReadOnly,
+  isSink,
+  isExternalSend,
+  isCredentialAccess,
+  extractTokens,
+  taintFlow,
+  untrustedImperatives,
+  matchesImperative,
+} from "../../openclaw-plugin/src/safety.js";
