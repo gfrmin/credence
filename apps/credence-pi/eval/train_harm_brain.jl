@@ -15,19 +15,17 @@
 # Run from repo root:
 #   julia --project=. apps/credence-pi/eval/train_harm_brain.jl \
 #       --events data/credence_pi_eval/atbench_claw.events.jsonl \
-#       --out-brain apps/credence-pi/brain/harm_brain.jls \
-#       --out-provenance apps/credence-pi/brain/harm_brain.provenance.json \
+#       --out-counts apps/credence-pi/brain/harm_brain.counts.json \
 #       --corpus "AI45Research/ATBench-Claw (test.json)"
 
 push!(LOAD_PATH, abspath(joinpath(@__DIR__, "..", "..", "..", "src")))
 using Credence
 using Credence: Identity, expect
 using JSON3
-using Serialization: serialize
 using Dates: now
 include(joinpath(@__DIR__, "brain_env.jl"))
 include(joinpath(@__DIR__, "..", "brain", "feature_brain.jl"))
-using .FeatureBrain: build_model, build_prior, observe, belief_at_context
+using .FeatureBrain: build_model, build_prior, observe, belief_at_context, reconstruct_harm_posterior
 
 # The harm feature vocabulary — must equal bdsl/features.bdsl `safety-features`.
 const FEATS = ["action-class", "taint-flow", "injected-imperative", "cred-exfil-chain"]
@@ -87,13 +85,12 @@ function load_by_session(path)
 end
 
 function parse_args(argv)
-    a = Dict{String,Any}("events"=>"", "out-brain"=>"", "out-provenance"=>"", "corpus"=>"unknown")
+    a = Dict{String,Any}("events"=>"", "out-counts"=>"", "corpus"=>"unknown")
     i = 1
     while i <= length(argv)
         t = argv[i]
         t=="--events" ? (a["events"]=argv[i+1]; i+=2) :
-        t=="--out-brain" ? (a["out-brain"]=argv[i+1]; i+=2) :
-        t=="--out-provenance" ? (a["out-provenance"]=argv[i+1]; i+=2) :
+        t=="--out-counts" ? (a["out-counts"]=argv[i+1]; i+=2) :
         t=="--corpus" ? (a["corpus"]=argv[i+1]; i+=2) :
         error("unknown arg $t")
     end
@@ -106,10 +103,13 @@ function main()
     sessions = load_by_session(a["events"])
     model = build_model(FEATS, VALS; p_edge=0.5)
     top = build_prior(model)
+    counts = Dict{Vector{String}, Vector{Int}}()   # context → [n1 (harm), n0 (safe)]
     ncalls = npos = 0
     for (sid, evs) in sessions
         for (e, y) in zip(evs, attr_reason(evs))
-            top = observe(model, top, context(e), y); ncalls += 1; npos += y
+            ctx = context(e)
+            top = observe(model, top, ctx, y); ncalls += 1; npos += y
+            c = get!(counts, ctx, [0, 0]); c[y == 1 ? 1 : 2] += 1
         end
     end
 
@@ -123,19 +123,35 @@ function main()
         println("  ", rpad("$ac × $tf", 44), "θ_u=", round(θ; digits=3))
     end
 
-    if !isempty(a["out-brain"])
-        serialize(a["out-brain"], top)
-        println("serialized harm posterior → ", a["out-brain"])
-    end
-    if !isempty(a["out-provenance"])
-        prov = Dict("artifact"=>"credence-pi harm posterior P(unsafe|taint-features)",
-                    "corpus"=>a["corpus"], "features"=>FEATS, "feature_values"=>VALS,
-                    "n_trajectories"=>length(sessions), "n_calls"=>ncalls, "n_harm_labelled"=>npos,
-                    "attribution"=>"reason-localized (the harmful call the human reason names)",
-                    "trained_at"=>string(now()), "frozen"=>true,
-                    "note"=>"Not updated live; folds H·P(unsafe|X) into decide_multi when harm-cost>0.")
-        open(a["out-provenance"], "w") do io; JSON3.pretty(io, prov); end
-        println("wrote provenance → ", a["out-provenance"])
+    if !isempty(a["out-counts"])
+        # Version-stable artifact: per-context counts (JSON). The daemon reconstructs the
+        # posterior by replaying `observe` — order-independent, so identical — avoiding the
+        # Julia-version fragility of Serialization (CI/image pin 1.11, dev may be newer).
+        contexts = [Dict("ctx" => k, "n1" => v[1], "n0" => v[2]) for (k, v) in counts]
+        out = Dict(
+            "artifact" => "credence-pi harm posterior P(unsafe|taint-features) — per-context counts",
+            "corpus" => a["corpus"], "features" => FEATS, "feature_values" => VALS,
+            "n_trajectories" => length(sessions), "n_calls" => ncalls, "n_harm_labelled" => npos,
+            "n_contexts" => length(contexts),
+            "attribution" => "reason-localized (the harmful call the human reason names)",
+            "trained_at" => string(now()), "frozen" => true,
+            "note" => "Daemon reconstructs the posterior by replaying these counts via observe.",
+            "contexts" => contexts)
+        open(a["out-counts"], "w") do io; JSON3.pretty(io, out); end
+        println("wrote per-context counts → ", a["out-counts"], "  ($(length(contexts)) contexts)")
+
+        # Verify the reconstruction reproduces the directly-trained posterior exactly.
+        rt = reconstruct_harm_posterior(model, a["out-counts"])
+        maxdiff = 0.0
+        for (ac, tf) in [("external-send","tainted-external-target"), ("external-send","none"),
+                         ("exec","tainted-sink"), ("read-only","none"), ("other","none")]
+            X = [ac, tf, "no", "no"]
+            maxdiff = max(maxdiff,
+                abs(expect(belief_at_context(model, top, X), Identity()) -
+                    expect(belief_at_context(model, rt, X), Identity())))
+        end
+        println("reconstruction vs direct training: max θ_u diff = $maxdiff",
+                maxdiff < 1e-9 ? "  ✓ exact" : "  ✗ MISMATCH")
     end
 end
 
