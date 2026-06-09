@@ -4,6 +4,25 @@ A Bayesian decision-making DSL (Julia) and the tools built on it: an AI gateway 
 
 Everything reduces to three axioms: beliefs are probability measures, rational action maximises expected utility, learning is conditioning on evidence. Three types (Space, Measure, Kernel), axiom-constrained functions, and nothing else.
 
+## Govern your OpenClaw's tool calls with credence-pi
+
+[credence-pi](apps/credence-pi/) is an [OpenClaw](https://github.com/openclaw/openclaw) plugin plus a local daemon that learns your agent's behaviour from your approvals and governs its tool calls — ask / proceed / block, decided by expected utility. Measured on real OpenClaw sessions:
+
+- exact-repeat wasted calls blocked at **precision 1.0 / recall 1.0** on held-out sessions (0.7% of all calls, nothing else touched);
+- an injected exfiltration surfaced as a confirmation at **0.94 precision**, interrupting 1.2% of safe sessions;
+- local-first: an append-only observation log on your machine, and no raw data leaves it.
+
+```bash
+# the brain
+docker run -p 8787:8787 -v ~/.credence-pi:/root/.credence-pi ghcr.io/gfrmin/credence-pi-daemon
+
+# the body
+openclaw plugins install @gfrmin/credence-pi-openclaw
+openclaw plugins enable credence-pi
+```
+
+The label, plainly: research-stage. Waste-blocking is enforced (the proven part). Safety governance ships in **confirm mode** — nothing of yours is blocked silently, and each answer calibrates the belief. It lives at the tool boundary, so it is blind to harmful *output*, and the harm it can see there tops out at about three in ten of unsafe trajectories on the benchmark. Background: [the announcement](https://www.gfrm.in/posts/openclaw-cheaper-and-harder-to-fool/), [the architecture and the discipline that kept it honest](https://www.gfrm.in/posts/credence-pi-pass-1/), and [what the brain learned, and why a regex can't](https://www.gfrm.in/posts/credence-pi-pass-2/).
+
 ## Use credence-proxy for smarter LLM routing
 
 [credence-proxy](apps/python/credence_router/) is a drop-in OpenAI-compatible gateway that learns which model works best for each type of query:

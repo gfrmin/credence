@@ -18,6 +18,40 @@ The binding specification is [`SPEC.md`](./SPEC.md). Read it before making
 changes; the body-brain split, the wire schema, and the lint pragma policy are
 not negotiable.
 
+## Install
+
+```bash
+# the brain
+docker run -p 8787:8787 -v ~/.credence-pi:/root/.credence-pi ghcr.io/gfrmin/credence-pi-daemon
+
+# the body
+openclaw plugins install @gfrmin/credence-pi-openclaw
+openclaw plugins enable credence-pi
+```
+
+## What it does, measured
+
+On real OpenClaw sessions (held-out, posterior frozen before the test arm —
+see [`eval/results/`](./eval/results/)):
+
+- exact-repeat wasted calls blocked at **precision 1.0 / recall 1.0**
+  (0.7% of all calls);
+- an injected exfiltration surfaced as a confirmation at **0.94 precision**,
+  interrupting 1.2% of safe sessions.
+
+The label: research-stage. Waste-blocking is enforced; safety governance ships
+in **confirm mode** (harm-driven stops are questions, never silent blocks, and
+each answer calibrates the belief). The governor lives at the tool boundary,
+so it is structurally blind to harmful *output*, and the harm it can see there
+tops out at about three in ten of unsafe trajectories on the benchmark. If you
+try it, [an issue](https://github.com/gfrmin/credence/issues) saying whether
+the confirmations land on real threats or merely annoy you is exactly the
+telemetry this stage needs.
+
+The long-form story: [the announcement](https://www.gfrm.in/posts/openclaw-cheaper-and-harder-to-fool/),
+[the architecture](https://www.gfrm.in/posts/credence-pi-pass-1/), and
+[what the brain learned](https://www.gfrm.in/posts/credence-pi-pass-2/).
+
 ## Layout
 
     bdsl/            — declared data: capabilities, features, utility constants
