@@ -48,9 +48,9 @@ try it, [an issue](https://github.com/gfrmin/credence/issues) saying whether
 the confirmations land on real threats or merely annoy you is exactly the
 telemetry this stage needs.
 
-The long-form story: [the announcement](https://www.gfrm.in/posts/openclaw-cheaper-and-harder-to-fool/),
-[the architecture](https://www.gfrm.in/posts/credence-pi-pass-1/), and
-[what the brain learned](https://www.gfrm.in/posts/credence-pi-pass-2/).
+The long-form story: [the announcement](https://gfrm.in/posts/openclaw-cheaper-and-harder-to-fool/),
+[the architecture](https://gfrm.in/posts/credence-pi-pass-1/), and
+[what the brain learned](https://gfrm.in/posts/credence-pi-pass-2/).
 
 ## Layout
 

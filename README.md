@@ -21,7 +21,7 @@ openclaw plugins install @gfrmin/credence-pi-openclaw
 openclaw plugins enable credence-pi
 ```
 
-The label, plainly: research-stage. Waste-blocking is enforced (the proven part). Safety governance ships in **confirm mode** — nothing of yours is blocked silently, and each answer calibrates the belief. It lives at the tool boundary, so it is blind to harmful *output*, and the harm it can see there tops out at about three in ten of unsafe trajectories on the benchmark. Background: [the announcement](https://www.gfrm.in/posts/openclaw-cheaper-and-harder-to-fool/), [the architecture and the discipline that kept it honest](https://www.gfrm.in/posts/credence-pi-pass-1/), and [what the brain learned, and why a regex can't](https://www.gfrm.in/posts/credence-pi-pass-2/).
+The label, plainly: research-stage. Waste-blocking is enforced (the proven part). Safety governance ships in **confirm mode** — nothing of yours is blocked silently, and each answer calibrates the belief. It lives at the tool boundary, so it is blind to harmful *output*, and the harm it can see there tops out at about three in ten of unsafe trajectories on the benchmark. Background: [the announcement](https://gfrm.in/posts/openclaw-cheaper-and-harder-to-fool/), [the architecture and the discipline that kept it honest](https://gfrm.in/posts/credence-pi-pass-1/), and [what the brain learned, and why a regex can't](https://gfrm.in/posts/credence-pi-pass-2/).
 
 ## Use credence-proxy for smarter LLM routing
 
