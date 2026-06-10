@@ -1,5 +1,10 @@
 # credence-pi
 
+**Make your OpenClaw cheaper and harder to fool.** credence-pi learns your agent
+from the calls you approve, then blocks the tool calls it wastes (re-running work
+it already did) and asks you before the ones that smell of prompt injection. Two
+commands to install; everything runs locally, and no raw data leaves your machine.
+
 In-loop Bayesian governance for agentic coding/agent tools. The **brain** is
 a Julia daemon that loads BDSL programs and holds a posterior over
 `P(approve | context)`; the **body** hooks an agent's tool-call boundary and
@@ -29,6 +34,18 @@ openclaw plugins install @gfrmin/credence-pi-openclaw
 openclaw plugins enable credence-pi
 ```
 
+## See it work (no agent, no data needed)
+
+```bash
+julia --project=. apps/credence-pi/demo/governance_demo.jl
+```
+
+Runs the real Pass-2 brain on a synthetic session: an agent stuck re-proposing
+the same call, interleaved with one legitimate novel call. credence-pi learns to
+auto-block the loop while still allowing the novel call at the same moment, by
+expected-utility maximisation rather than a hard-coded rule, then prints a spend
+report. Needs a local Julia; no Docker, no OpenClaw, no real data.
+
 ## What it does, measured
 
 On real OpenClaw sessions (held-out, posterior frozen before the test arm —
@@ -38,6 +55,13 @@ see [`eval/results/`](./eval/results/)):
   (0.7% of all calls);
 - an injected exfiltration surfaced as a confirmation at **0.94 precision**,
   interrupting 1.2% of safe sessions.
+
+**Certain, not yet measured.** Blocking a re-run of an identical call cannot, by
+construction, cost you anything: that call already produced its result, so the
+governor hands back the tokens, the dollars, and the wait it would have taken.
+The direction is certain; the size of the saving on real usage is not, because it
+depends on how often your agent actually loops, which only your sessions reveal.
+Turning that into a measured number is the main thing early users provide.
 
 The label: research-stage. Waste-blocking is enforced; safety governance ships
 in **confirm mode** (harm-driven stops are questions, never silent blocks, and
@@ -51,6 +75,19 @@ telemetry this stage needs.
 The long-form story: [the announcement](https://gfrm.in/posts/openclaw-cheaper-and-harder-to-fool/),
 [the architecture](https://gfrm.in/posts/credence-pi-pass-1/), and
 [what the brain learned](https://gfrm.in/posts/credence-pi-pass-2/).
+
+## What's next
+
+- **Live-enforcement telemetry.** Shadow mode plus opt-in users, to turn the
+  certain-but-unmeasured saving into a measured one and to test the safety
+  confirmations against real threats rather than a benchmark. This is the gate
+  the honest claims above are waiting on.
+- **Raising the safety ceiling.** A tool-boundary governor can see at most about
+  three in ten of unsafe trajectories; reaching higher means reading signals
+  beyond the tool call. A named frontier, not a silent gap.
+- **More bodies, one brain.** The wire schema is fixed, so a new agent
+  integration is body-only work; the brain and its posterior are untouched. Pass
+  1's body targeted pi; Pass 2 added the OpenClaw plugin, on the same brain.
 
 ## Layout
 
