@@ -76,6 +76,24 @@ The long-form story: [the announcement](https://gfrm.in/posts/openclaw-cheaper-a
 [the architecture](https://gfrm.in/posts/credence-pi-pass-1/), and
 [what the brain learned](https://gfrm.in/posts/credence-pi-pass-2/).
 
+## Why not just a rule?
+
+The waste result above is hash-set-easy, and the eval says so out loud. But the
+governor's full ask / allow / block map is not. At one byte-identical input it can
+ask or proceed depending on the **variance** of its belief, not its mean (Beta(4,4)
+asks while the wider Beta(4,2) proceeds, so no threshold on variance or count can
+sort it); a context it has never seen inherits an informed answer by model
+averaging rather than a default; and harm and waste are integrated in one currency,
+so the block cutoff on one slides with the other. Each break re-derives the
+Tier-1 ops (`condition` + `voi` + `optimise`). It is reproducible and red-teamed:
+
+```bash
+julia --project=. apps/credence-pi/eval/regex_impossible.jl
+```
+
+The full argument, with the numbers, is
+[What a Regex Can't Do](https://gfrm.in/posts/credence-pi-pass-2/).
+
 ## What's next
 
 - **Live-enforcement telemetry.** Shadow mode plus opt-in users, to turn the
