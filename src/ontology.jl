@@ -28,7 +28,7 @@ import ..Previsions: ParticlePrevision, QuadraturePrevision
 import ..Previsions: ConditionalPrevision
 import ..Previsions: condition
 import ..Previsions: ConjugatePrevision, maybe_conjugate, update, _dispatch_path
-import ..Previsions: CenteredPower, CenteredSquare
+import ..Previsions: CenteredPower, CenteredSquare, GeometricTail
 import ..Previsions: Indicator, apply
 
 export Space, Finite, Interval, ProductSpace, Simplex, Euclidean, PositiveReals, support
@@ -46,7 +46,7 @@ export ConjugatePrevision, maybe_conjugate, update
 export draw
 export weights, mean, variance, log_density_at, prune, truncate, logsumexp
 export FrozenVectorView
-export WeightsDomainError, probability, marginal, CenteredPower, CenteredSquare
+export WeightsDomainError, probability, marginal, CenteredPower, CenteredSquare, GeometricTail
 
 # ================================================================
 # FrozenVectorView{T}
@@ -637,6 +637,16 @@ end
 # ── Dispatch: closed-form cases on leaf measures ──
 expect(m::BetaMeasure, ::Identity)     = m.alpha / (m.alpha + m.beta)
 expect(m::TaggedBetaMeasure, ::Identity) = expect(m.beta, Identity())
+
+# Closed-form geometric-tail mean E_Beta[ρ/(1−ρ)] = α/(β−1) (β>1): the exact
+# posterior-predictive expected number of remaining steps under geometric
+# continuation (GeometricTail). Reaches the fast path with no quadrature; β>1
+# holds for any Beta built from the Beta(≥1,≥1) priors a continuation belief uses.
+function expect(m::BetaMeasure, ::GeometricTail)
+    m.beta > 1.0 || error("GeometricTail diverges for β ≤ 1 (got β=$(m.beta)); the continuation posterior must have β > 1")
+    m.alpha / (m.beta - 1.0)
+end
+expect(m::TaggedBetaMeasure, ::GeometricTail) = expect(m.beta, GeometricTail())
 expect(m::GammaMeasure, ::Identity)    = m.alpha / m.beta
 expect(m::GaussianMeasure, ::Identity) = m.mu
 
@@ -702,6 +712,15 @@ expect(m::MixtureMeasure, o::OpaqueClosure; kwargs...) = expect(m, o.f; kwargs..
 # Closed-form Identity on scalar Prevision types.
 expect(p::BetaPrevision, ::Identity) = p.alpha / (p.alpha + p.beta)
 expect(p::TaggedBetaPrevision, ::Identity) = expect(p.beta, Identity())
+
+# Exact geometric-tail mean on Prevision leaves (mirrors the BetaMeasure form):
+# E_Beta[ρ/(1−ρ)] = α/(β−1). This is the closed form the brain's continuation
+# belief reaches (MixturePrevision → TaggedBetaPrevision forwarder → here),
+# bypassing the generic quadrature `expect(::BetaPrevision, ::TestFunction)`.
+function expect(p::BetaPrevision, ::GeometricTail)
+    p.beta > 1.0 || error("GeometricTail diverges for β ≤ 1 (got β=$(p.beta)); the continuation posterior must have β > 1")
+    p.alpha / (p.beta - 1.0)
+end
 expect(p::GaussianPrevision, ::Identity) = p.mu
 expect(p::GammaPrevision, ::Identity) = p.alpha / p.beta
 expect(p::DirichletPrevision, ::Identity) = p.alpha ./ sum(p.alpha)

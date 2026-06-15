@@ -44,7 +44,7 @@ export Event, TagSet, FeatureEquals, FeatureInterval, Conjunction, Disjunction, 
 export indicator_kernel, feature_value, BOOLEAN_SPACE
 export Functional, Identity, Projection, NestedProjection, Tabular, LinearCombination, OpaqueClosure
 export Prevision, TestFunction, Indicator, apply
-export CenteredPower, CenteredSquare
+export CenteredPower, CenteredSquare, GeometricTail
 export BetaPrevision, TaggedBetaPrevision, GaussianPrevision, GammaPrevision
 export CategoricalPrevision, DirichletPrevision, NormalGammaPrevision
 export ProductPrevision, MixturePrevision, ExchangeablePrevision, decompose
