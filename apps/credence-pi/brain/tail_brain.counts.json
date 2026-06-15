@@ -1,0 +1,1586 @@
+{
+    "stop_events": 38958,
+    "continue_events": 356,
+    "trained_at": "2026-06-15T17:05:25.460",
+    "n_calls": 39314,
+    "n_contexts": 118,
+    "note": "m = E[ρ/(1−ρ)] = expect(belief, GeometricTail()) is the expected remaining identical repeats a block prevents (the multi-turn look-ahead). FROZEN corpus prior: the daemon supplies m from this; live continuation-learning is future work. Reconstructed by replaying these counts via observe (order-independent ⇒ identical).",
+    "expected_repeats_summary": {
+        "median": 0.009533291083095578,
+        "max": 1.7142857050424072,
+        "min": 0.0006786563102884658,
+        "mean": 0.06682911259419473
+    },
+    "top_tail_contexts": [
+        {
+            "m": 1.714,
+            "ctx": [
+                "exec",
+                "no-path",
+                "write",
+                "rep-3plus",
+                "ident-3plus",
+                "gt-10m"
+            ]
+        },
+        {
+            "m": 1.714,
+            "ctx": [
+                "exec",
+                "no-path",
+                "exec",
+                "rep-3plus",
+                "ident-3plus",
+                "gt-10m"
+            ]
+        },
+        {
+            "m": 0.381,
+            "ctx": [
+                "exec",
+                "no-path",
+                "write",
+                "rep-3plus",
+                "ident-2",
+                "gt-10m"
+            ]
+        },
+        {
+            "m": 0.381,
+            "ctx": [
+                "exec",
+                "no-path",
+                "write",
+                "rep-2",
+                "ident-2",
+                "gt-10m"
+            ]
+        },
+        {
+            "m": 0.381,
+            "ctx": [
+                "exec",
+                "no-path",
+                "edit",
+                "rep-2",
+                "ident-2",
+                "gt-10m"
+            ]
+        },
+        {
+            "m": 0.381,
+            "ctx": [
+                "exec",
+                "no-path",
+                "edit",
+                "rep-3plus",
+                "ident-2",
+                "gt-10m"
+            ]
+        },
+        {
+            "m": 0.381,
+            "ctx": [
+                "exec",
+                "no-path",
+                "exec",
+                "rep-3plus",
+                "ident-2",
+                "gt-10m"
+            ]
+        },
+        {
+            "m": 0.105,
+            "ctx": [
+                "edit",
+                "no-path",
+                "edit",
+                "rep-2",
+                "ident-0",
+                "gt-10m"
+            ]
+        }
+    ],
+    "corpus": "benchflow/ClawsBench@e7c45cc9 (openclaw)",
+    "contexts": [
+        {
+            "n1": 0,
+            "ctx": [
+                "other",
+                "no-path",
+                "other",
+                "rep-2",
+                "ident-2",
+                "gt-10m"
+            ],
+            "n0": 26
+        },
+        {
+            "n1": 0,
+            "ctx": [
+                "read",
+                "no-path",
+                "exec",
+                "rep-2",
+                "ident-0",
+                "gt-10m"
+            ],
+            "n0": 18
+        },
+        {
+            "n1": 0,
+            "ctx": [
+                "other",
+                "no-path",
+                "other",
+                "rep-1",
+                "ident-2",
+                "gt-10m"
+            ],
+            "n0": 4
+        },
+        {
+            "n1": 0,
+            "ctx": [
+                "write",
+                "no-path",
+                "exec",
+                "rep-2",
+                "ident-0",
+                "gt-10m"
+            ],
+            "n0": 9
+        },
+        {
+            "n1": 1,
+            "ctx": [
+                "exec",
+                "no-path",
+                "write",
+                "rep-2",
+                "ident-1",
+                "gt-10m"
+            ],
+            "n0": 2
+        },
+        {
+            "n1": 10,
+            "ctx": [
+                "exec",
+                "no-path",
+                "exec",
+                "rep-1",
+                "ident-0",
+                "gt-10m"
+            ],
+            "n0": 2064
+        },
+        {
+            "n1": 0,
+            "ctx": [
+                "write",
+                "no-path",
+                "read",
+                "rep-0",
+                "ident-0",
+                "gt-10m"
+            ],
+            "n0": 6
+        },
+        {
+            "n1": 1,
+            "ctx": [
+                "exec",
+                "no-path",
+                "edit",
+                "rep-3plus",
+                "ident-1",
+                "gt-10m"
+            ],
+            "n0": 1
+        },
+        {
+            "n1": 0,
+            "ctx": [
+                "edit",
+                "no-path",
+                "read",
+                "rep-0",
+                "ident-0",
+                "gt-10m"
+            ],
+            "n0": 2
+        },
+        {
+            "n1": 0,
+            "ctx": [
+                "other",
+                "no-path",
+                "other",
+                "rep-2",
+                "ident-1",
+                "gt-10m"
+            ],
+            "n0": 34
+        },
+        {
+            "n1": 0,
+            "ctx": [
+                "other",
+                "no-path",
+                "exec",
+                "rep-2",
+                "ident-3plus",
+                "gt-10m"
+            ],
+            "n0": 2
+        },
+        {
+            "n1": 0,
+            "ctx": [
+                "process",
+                "no-path",
+                "read",
+                "rep-2",
+                "ident-0",
+                "gt-10m"
+            ],
+            "n0": 1
+        },
+        {
+            "n1": 0,
+            "ctx": [
+                "edit",
+                "no-path",
+                "exec",
+                "rep-0",
+                "ident-0",
+                "gt-10m"
+            ],
+            "n0": 6
+        },
+        {
+            "n1": 0,
+            "ctx": [
+                "process",
+                "no-path",
+                "process",
+                "rep-2",
+                "ident-0",
+                "gt-10m"
+            ],
+            "n0": 8
+        },
+        {
+            "n1": 0,
+            "ctx": [
+                "read",
+                "no-path",
+                "exec",
+                "rep-1",
+                "ident-0",
+                "gt-10m"
+            ],
+            "n0": 132
+        },
+        {
+            "n1": 0,
+            "ctx": [
+                "other",
+                "no-path",
+                "read",
+                "rep-2",
+                "ident-1",
+                "gt-10m"
+            ],
+            "n0": 1
+        },
+        {
+            "n1": 0,
+            "ctx": [
+                "other",
+                "no-path",
+                "other",
+                "rep-3plus",
+                "ident-0",
+                "gt-10m"
+            ],
+            "n0": 63
+        },
+        {
+            "n1": 0,
+            "ctx": [
+                "write",
+                "no-path",
+                "exec",
+                "rep-0",
+                "ident-0",
+                "gt-10m"
+            ],
+            "n0": 85
+        },
+        {
+            "n1": 0,
+            "ctx": [
+                "edit",
+                "no-path",
+                "edit",
+                "rep-1",
+                "ident-0",
+                "gt-10m"
+            ],
+            "n0": 1
+        },
+        {
+            "n1": 0,
+            "ctx": [
+                "exec",
+                "no-path",
+                "read",
+                "rep-3plus",
+                "ident-1",
+                "gt-10m"
+            ],
+            "n0": 3
+        },
+        {
+            "n1": 0,
+            "ctx": [
+                "process",
+                "no-path",
+                "process",
+                "rep-3plus",
+                "ident-0",
+                "gt-10m"
+            ],
+            "n0": 7
+        },
+        {
+            "n1": 0,
+            "ctx": [
+                "process",
+                "no-path",
+                "exec",
+                "rep-0",
+                "ident-0",
+                "gt-10m"
+            ],
+            "n0": 85
+        },
+        {
+            "n1": 0,
+            "ctx": [
+                "process",
+                "no-path",
+                "other",
+                "rep-0",
+                "ident-0",
+                "gt-10m"
+            ],
+            "n0": 2
+        },
+        {
+            "n1": 0,
+            "ctx": [
+                "other",
+                "no-path",
+                "other",
+                "rep-1",
+                "ident-0",
+                "gt-10m"
+            ],
+            "n0": 197
+        },
+        {
+            "n1": 0,
+            "ctx": [
+                "other",
+                "no-path",
+                "other",
+                "rep-2",
+                "ident-3plus",
+                "gt-10m"
+            ],
+            "n0": 5
+        },
+        {
+            "n1": 0,
+            "ctx": [
+                "other",
+                "no-path",
+                "read",
+                "rep-2",
+                "ident-2",
+                "gt-10m"
+            ],
+            "n0": 1
+        },
+        {
+            "n1": 0,
+            "ctx": [
+                "other",
+                "no-path",
+                "other",
+                "rep-3plus",
+                "ident-1",
+                "gt-10m"
+            ],
+            "n0": 27
+        },
+        {
+            "n1": 0,
+            "ctx": [
+                "other",
+                "no-path",
+                "read",
+                "rep-2",
+                "ident-0",
+                "gt-10m"
+            ],
+            "n0": 2
+        },
+        {
+            "n1": 0,
+            "ctx": [
+                "exec",
+                "no-path",
+                "process",
+                "rep-2",
+                "ident-0",
+                "gt-10m"
+            ],
+            "n0": 28
+        },
+        {
+            "n1": 1,
+            "ctx": [
+                "exec",
+                "no-path",
+                "write",
+                "rep-1",
+                "ident-0",
+                "gt-10m"
+            ],
+            "n0": 2
+        },
+        {
+            "n1": 0,
+            "ctx": [
+                "other",
+                "no-path",
+                "exec",
+                "rep-1",
+                "ident-0",
+                "gt-10m"
+            ],
+            "n0": 88
+        },
+        {
+            "n1": 2,
+            "ctx": [
+                "exec",
+                "no-path",
+                "write",
+                "rep-3plus",
+                "ident-1",
+                "gt-10m"
+            ],
+            "n0": 3
+        },
+        {
+            "n1": 0,
+            "ctx": [
+                "exec",
+                "no-path",
+                "edit",
+                "rep-3plus",
+                "ident-2",
+                "gt-10m"
+            ],
+            "n0": 2
+        },
+        {
+            "n1": 0,
+            "ctx": [
+                "other",
+                "no-path",
+                "process",
+                "rep-1",
+                "ident-1",
+                "gt-10m"
+            ],
+            "n0": 1
+        },
+        {
+            "n1": 0,
+            "ctx": [
+                "other",
+                "no-path",
+                "read",
+                "rep-3plus",
+                "ident-0",
+                "gt-10m"
+            ],
+            "n0": 2
+        },
+        {
+            "n1": 0,
+            "ctx": [
+                "exec",
+                "no-path",
+                "edit",
+                "rep-1",
+                "ident-1",
+                "gt-10m"
+            ],
+            "n0": 1
+        },
+        {
+            "n1": 0,
+            "ctx": [
+                "other",
+                "no-path",
+                "exec",
+                "rep-0",
+                "ident-3plus",
+                "gt-10m"
+            ],
+            "n0": 2
+        },
+        {
+            "n1": 0,
+            "ctx": [
+                "exec",
+                "no-path",
+                "write",
+                "rep-2",
+                "ident-2",
+                "gt-10m"
+            ],
+            "n0": 1
+        },
+        {
+            "n1": 0,
+            "ctx": [
+                "other",
+                "no-path",
+                "read",
+                "rep-3plus",
+                "ident-3plus",
+                "gt-10m"
+            ],
+            "n0": 1
+        },
+        {
+            "n1": 0,
+            "ctx": [
+                "other",
+                "no-path",
+                "read",
+                "rep-1",
+                "ident-1",
+                "gt-10m"
+            ],
+            "n0": 8
+        },
+        {
+            "n1": 1,
+            "ctx": [
+                "exec",
+                "no-path",
+                "read",
+                "rep-2",
+                "ident-0",
+                "gt-10m"
+            ],
+            "n0": 93
+        },
+        {
+            "n1": 22,
+            "ctx": [
+                "exec",
+                "no-path",
+                "exec",
+                "rep-2",
+                "ident-0",
+                "gt-10m"
+            ],
+            "n0": 2468
+        },
+        {
+            "n1": 0,
+            "ctx": [
+                "other",
+                "no-path",
+                "exec",
+                "rep-2",
+                "ident-1",
+                "gt-10m"
+            ],
+            "n0": 10
+        },
+        {
+            "n1": 0,
+            "ctx": [
+                "exec",
+                "no-path",
+                "other",
+                "rep-2",
+                "ident-1",
+                "gt-10m"
+            ],
+            "n0": 1
+        },
+        {
+            "n1": 0,
+            "ctx": [
+                "other",
+                "no-path",
+                "exec",
+                "rep-3plus",
+                "ident-1",
+                "gt-10m"
+            ],
+            "n0": 3
+        },
+        {
+            "n1": 0,
+            "ctx": [
+                "other",
+                "no-path",
+                "read",
+                "rep-0",
+                "ident-1",
+                "gt-10m"
+            ],
+            "n0": 1
+        },
+        {
+            "n1": 0,
+            "ctx": [
+                "exec",
+                "no-path",
+                "other",
+                "rep-3plus",
+                "ident-1",
+                "gt-10m"
+            ],
+            "n0": 6
+        },
+        {
+            "n1": 0,
+            "ctx": [
+                "other",
+                "no-path",
+                "write",
+                "rep-0",
+                "ident-0",
+                "gt-10m"
+            ],
+            "n0": 1
+        },
+        {
+            "n1": 0,
+            "ctx": [
+                "read",
+                "no-path",
+                "read",
+                "rep-2",
+                "ident-0",
+                "gt-10m"
+            ],
+            "n0": 91
+        },
+        {
+            "n1": 0,
+            "ctx": [
+                "other",
+                "no-path",
+                "process",
+                "rep-0",
+                "ident-0",
+                "gt-10m"
+            ],
+            "n0": 4
+        },
+        {
+            "n1": 0,
+            "ctx": [
+                "other",
+                "no-path",
+                "other",
+                "rep-2",
+                "ident-0",
+                "gt-10m"
+            ],
+            "n0": 73
+        },
+        {
+            "n1": 1,
+            "ctx": [
+                "exec",
+                "no-path",
+                "read",
+                "rep-0",
+                "ident-0",
+                "gt-10m"
+            ],
+            "n0": 1274
+        },
+        {
+            "n1": 1,
+            "ctx": [
+                "exec",
+                "no-path",
+                "edit",
+                "rep-2",
+                "ident-1",
+                "gt-10m"
+            ],
+            "n0": 2
+        },
+        {
+            "n1": 0,
+            "ctx": [
+                "exec",
+                "no-path",
+                "edit",
+                "rep-2",
+                "ident-0",
+                "gt-10m"
+            ],
+            "n0": 2
+        },
+        {
+            "n1": 222,
+            "ctx": [
+                "exec",
+                "no-path",
+                "exec",
+                "rep-3plus",
+                "ident-0",
+                "gt-10m"
+            ],
+            "n0": 24149
+        },
+        {
+            "n1": 0,
+            "ctx": [
+                "exec",
+                "no-path",
+                "other",
+                "rep-1",
+                "ident-1",
+                "gt-10m"
+            ],
+            "n0": 2
+        },
+        {
+            "n1": 5,
+            "ctx": [
+                "exec",
+                "no-path",
+                "exec",
+                "rep-3plus",
+                "ident-2",
+                "gt-10m"
+            ],
+            "n0": 16
+        },
+        {
+            "n1": 0,
+            "ctx": [
+                "other",
+                "no-path",
+                "other",
+                "rep-1",
+                "ident-1",
+                "gt-10m"
+            ],
+            "n0": 141
+        },
+        {
+            "n1": 0,
+            "ctx": [
+                "other",
+                "no-path",
+                "exec",
+                "rep-3plus",
+                "ident-0",
+                "gt-10m"
+            ],
+            "n0": 9
+        },
+        {
+            "n1": 21,
+            "ctx": [
+                "exec",
+                "no-path",
+                "exec",
+                "rep-3plus",
+                "ident-1",
+                "gt-10m"
+            ],
+            "n0": 263
+        },
+        {
+            "n1": 0,
+            "ctx": [
+                "process",
+                "no-path",
+                "exec",
+                "rep-1",
+                "ident-0",
+                "gt-10m"
+            ],
+            "n0": 16
+        },
+        {
+            "n1": 0,
+            "ctx": [
+                "read",
+                "no-path",
+                "exec",
+                "rep-0",
+                "ident-0",
+                "gt-10m"
+            ],
+            "n0": 694
+        },
+        {
+            "n1": 0,
+            "ctx": [
+                "write",
+                "no-path",
+                "exec",
+                "rep-1",
+                "ident-0",
+                "gt-10m"
+            ],
+            "n0": 19
+        },
+        {
+            "n1": 0,
+            "ctx": [
+                "other",
+                "no-path",
+                "read",
+                "rep-1",
+                "ident-2",
+                "gt-10m"
+            ],
+            "n0": 1
+        },
+        {
+            "n1": 0,
+            "ctx": [
+                "other",
+                "no-path",
+                "exec",
+                "rep-0",
+                "ident-0",
+                "gt-10m"
+            ],
+            "n0": 424
+        },
+        {
+            "n1": 0,
+            "ctx": [
+                "read",
+                "no-path",
+                "exec",
+                "rep-3plus",
+                "ident-0",
+                "gt-10m"
+            ],
+            "n0": 2
+        },
+        {
+            "n1": 4,
+            "ctx": [
+                "exec",
+                "no-path",
+                "read",
+                "rep-3plus",
+                "ident-0",
+                "gt-10m"
+            ],
+            "n0": 237
+        },
+        {
+            "n1": 0,
+            "ctx": [
+                "exec",
+                "no-path",
+                "process",
+                "rep-0",
+                "ident-0",
+                "gt-10m"
+            ],
+            "n0": 1
+        },
+        {
+            "n1": 5,
+            "ctx": [
+                "exec",
+                "no-path",
+                "read",
+                "rep-1",
+                "ident-0",
+                "gt-10m"
+            ],
+            "n0": 481
+        },
+        {
+            "n1": 0,
+            "ctx": [
+                "read",
+                "no-path",
+                "read",
+                "rep-1",
+                "ident-0",
+                "gt-10m"
+            ],
+            "n0": 491
+        },
+        {
+            "n1": 0,
+            "ctx": [
+                "edit",
+                "no-path",
+                "edit",
+                "rep-2",
+                "ident-0",
+                "gt-10m"
+            ],
+            "n0": 3
+        },
+        {
+            "n1": 0,
+            "ctx": [
+                "other",
+                "no-path",
+                "exec",
+                "rep-3plus",
+                "ident-3plus",
+                "gt-10m"
+            ],
+            "n0": 3
+        },
+        {
+            "n1": 0,
+            "ctx": [
+                "read",
+                "no-path",
+                "none",
+                "rep-0",
+                "ident-0",
+                "gt-10m"
+            ],
+            "n0": 1280
+        },
+        {
+            "n1": 0,
+            "ctx": [
+                "other",
+                "no-path",
+                "other",
+                "rep-3plus",
+                "ident-3plus",
+                "gt-10m"
+            ],
+            "n0": 245
+        },
+        {
+            "n1": 9,
+            "ctx": [
+                "exec",
+                "no-path",
+                "write",
+                "rep-3plus",
+                "ident-0",
+                "gt-10m"
+            ],
+            "n0": 59
+        },
+        {
+            "n1": 0,
+            "ctx": [
+                "write",
+                "no-path",
+                "write",
+                "rep-3plus",
+                "ident-0",
+                "gt-10m"
+            ],
+            "n0": 1
+        },
+        {
+            "n1": 0,
+            "ctx": [
+                "other",
+                "no-path",
+                "exec",
+                "rep-0",
+                "ident-2",
+                "gt-10m"
+            ],
+            "n0": 1
+        },
+        {
+            "n1": 0,
+            "ctx": [
+                "write",
+                "no-path",
+                "write",
+                "rep-1",
+                "ident-0",
+                "gt-10m"
+            ],
+            "n0": 5
+        },
+        {
+            "n1": 1,
+            "ctx": [
+                "exec",
+                "no-path",
+                "other",
+                "rep-2",
+                "ident-0",
+                "gt-10m"
+            ],
+            "n0": 74
+        },
+        {
+            "n1": 0,
+            "ctx": [
+                "other",
+                "no-path",
+                "other",
+                "rep-3plus",
+                "ident-2",
+                "gt-10m"
+            ],
+            "n0": 18
+        },
+        {
+            "n1": 0,
+            "ctx": [
+                "process",
+                "no-path",
+                "process",
+                "rep-1",
+                "ident-0",
+                "gt-10m"
+            ],
+            "n0": 17
+        },
+        {
+            "n1": 1,
+            "ctx": [
+                "exec",
+                "no-path",
+                "write",
+                "rep-3plus",
+                "ident-2",
+                "gt-10m"
+            ],
+            "n0": 0
+        },
+        {
+            "n1": 0,
+            "ctx": [
+                "exec",
+                "no-path",
+                "other",
+                "rep-1",
+                "ident-0",
+                "gt-10m"
+            ],
+            "n0": 169
+        },
+        {
+            "n1": 1,
+            "ctx": [
+                "exec",
+                "no-path",
+                "process",
+                "rep-3plus",
+                "ident-0",
+                "gt-10m"
+            ],
+            "n0": 66
+        },
+        {
+            "n1": 0,
+            "ctx": [
+                "other",
+                "no-path",
+                "exec",
+                "rep-0",
+                "ident-1",
+                "gt-10m"
+            ],
+            "n0": 16
+        },
+        {
+            "n1": 0,
+            "ctx": [
+                "exec",
+                "no-path",
+                "edit",
+                "rep-3plus",
+                "ident-0",
+                "gt-10m"
+            ],
+            "n0": 2
+        },
+        {
+            "n1": 0,
+            "ctx": [
+                "process",
+                "no-path",
+                "exec",
+                "rep-3plus",
+                "ident-0",
+                "gt-10m"
+            ],
+            "n0": 7
+        },
+        {
+            "n1": 0,
+            "ctx": [
+                "exec",
+                "no-path",
+                "edit",
+                "rep-2",
+                "ident-2",
+                "gt-10m"
+            ],
+            "n0": 1
+        },
+        {
+            "n1": 0,
+            "ctx": [
+                "other",
+                "no-path",
+                "exec",
+                "rep-2",
+                "ident-0",
+                "gt-10m"
+            ],
+            "n0": 28
+        },
+        {
+            "n1": 0,
+            "ctx": [
+                "other",
+                "no-path",
+                "none",
+                "rep-0",
+                "ident-0",
+                "gt-10m"
+            ],
+            "n0": 676
+        },
+        {
+            "n1": 0,
+            "ctx": [
+                "other",
+                "no-path",
+                "read",
+                "rep-2",
+                "ident-3plus",
+                "gt-10m"
+            ],
+            "n0": 2
+        },
+        {
+            "n1": 0,
+            "ctx": [
+                "write",
+                "no-path",
+                "write",
+                "rep-2",
+                "ident-0",
+                "gt-10m"
+            ],
+            "n0": 1
+        },
+        {
+            "n1": 31,
+            "ctx": [
+                "exec",
+                "no-path",
+                "none",
+                "rep-0",
+                "ident-0",
+                "gt-10m"
+            ],
+            "n0": 1397
+        },
+        {
+            "n1": 1,
+            "ctx": [
+                "exec",
+                "no-path",
+                "edit",
+                "rep-1",
+                "ident-0",
+                "gt-10m"
+            ],
+            "n0": 0
+        },
+        {
+            "n1": 0,
+            "ctx": [
+                "exec",
+                "no-path",
+                "other",
+                "rep-3plus",
+                "ident-0",
+                "gt-10m"
+            ],
+            "n0": 169
+        },
+        {
+            "n1": 0,
+            "ctx": [
+                "edit",
+                "no-path",
+                "exec",
+                "rep-1",
+                "ident-0",
+                "gt-10m"
+            ],
+            "n0": 5
+        },
+        {
+            "n1": 0,
+            "ctx": [
+                "edit",
+                "no-path",
+                "write",
+                "rep-0",
+                "ident-0",
+                "gt-10m"
+            ],
+            "n0": 1
+        },
+        {
+            "n1": 10,
+            "ctx": [
+                "exec",
+                "no-path",
+                "exec",
+                "rep-3plus",
+                "ident-3plus",
+                "gt-10m"
+            ],
+            "n0": 5
+        },
+        {
+            "n1": 0,
+            "ctx": [
+                "other",
+                "no-path",
+                "read",
+                "rep-3plus",
+                "ident-1",
+                "gt-10m"
+            ],
+            "n0": 1
+        },
+        {
+            "n1": 0,
+            "ctx": [
+                "read",
+                "no-path",
+                "other",
+                "rep-3plus",
+                "ident-0",
+                "gt-10m"
+            ],
+            "n0": 1
+        },
+        {
+            "n1": 0,
+            "ctx": [
+                "other",
+                "no-path",
+                "exec",
+                "rep-3plus",
+                "ident-2",
+                "gt-10m"
+            ],
+            "n0": 5
+        },
+        {
+            "n1": 0,
+            "ctx": [
+                "other",
+                "no-path",
+                "exec",
+                "rep-1",
+                "ident-1",
+                "gt-10m"
+            ],
+            "n0": 30
+        },
+        {
+            "n1": 0,
+            "ctx": [
+                "exec",
+                "no-path",
+                "exec",
+                "rep-2",
+                "ident-1",
+                "gt-10m"
+            ],
+            "n0": 4
+        },
+        {
+            "n1": 0,
+            "ctx": [
+                "read",
+                "no-path",
+                "read",
+                "rep-3plus",
+                "ident-0",
+                "gt-10m"
+            ],
+            "n0": 42
+        },
+        {
+            "n1": 0,
+            "ctx": [
+                "read",
+                "no-path",
+                "process",
+                "rep-0",
+                "ident-0",
+                "gt-10m"
+            ],
+            "n0": 2
+        },
+        {
+            "n1": 0,
+            "ctx": [
+                "other",
+                "no-path",
+                "read",
+                "rep-1",
+                "ident-0",
+                "gt-10m"
+            ],
+            "n0": 16
+        },
+        {
+            "n1": 3,
+            "ctx": [
+                "exec",
+                "no-path",
+                "other",
+                "rep-0",
+                "ident-0",
+                "gt-10m"
+            ],
+            "n0": 386
+        },
+        {
+            "n1": 0,
+            "ctx": [
+                "other",
+                "no-path",
+                "exec",
+                "rep-1",
+                "ident-2",
+                "gt-10m"
+            ],
+            "n0": 7
+        },
+        {
+            "n1": 0,
+            "ctx": [
+                "exec",
+                "no-path",
+                "process",
+                "rep-1",
+                "ident-0",
+                "gt-10m"
+            ],
+            "n0": 14
+        },
+        {
+            "n1": 0,
+            "ctx": [
+                "exec",
+                "no-path",
+                "write",
+                "rep-3plus",
+                "ident-3plus",
+                "gt-10m"
+            ],
+            "n0": 1
+        },
+        {
+            "n1": 0,
+            "ctx": [
+                "other",
+                "no-path",
+                "other",
+                "rep-1",
+                "ident-3plus",
+                "gt-10m"
+            ],
+            "n0": 2
+        },
+        {
+            "n1": 0,
+            "ctx": [
+                "read",
+                "no-path",
+                "other",
+                "rep-0",
+                "ident-0",
+                "gt-10m"
+            ],
+            "n0": 173
+        },
+        {
+            "n1": 0,
+            "ctx": [
+                "other",
+                "no-path",
+                "read",
+                "rep-0",
+                "ident-0",
+                "gt-10m"
+            ],
+            "n0": 63
+        },
+        {
+            "n1": 0,
+            "ctx": [
+                "process",
+                "no-path",
+                "exec",
+                "rep-2",
+                "ident-0",
+                "gt-10m"
+            ],
+            "n0": 20
+        },
+        {
+            "n1": 0,
+            "ctx": [
+                "other",
+                "no-path",
+                "process",
+                "rep-1",
+                "ident-0",
+                "gt-10m"
+            ],
+            "n0": 1
+        },
+        {
+            "n1": 2,
+            "ctx": [
+                "exec",
+                "no-path",
+                "write",
+                "rep-2",
+                "ident-0",
+                "gt-10m"
+            ],
+            "n0": 11
+        },
+        {
+            "n1": 0,
+            "ctx": [
+                "read",
+                "no-path",
+                "other",
+                "rep-1",
+                "ident-0",
+                "gt-10m"
+            ],
+            "n0": 17
+        },
+        {
+            "n1": 0,
+            "ctx": [
+                "read",
+                "no-path",
+                "other",
+                "rep-2",
+                "ident-0",
+                "gt-10m"
+            ],
+            "n0": 3
+        }
+    ],
+    "feature_values": [
+        [
+            "read",
+            "write",
+            "edit",
+            "bash",
+            "exec",
+            "process",
+            "apply_patch",
+            "grep",
+            "find",
+            "ls",
+            "other"
+        ],
+        [
+            "project-root",
+            "subdirectory",
+            "outside-project",
+            "no-path"
+        ],
+        [
+            "read",
+            "write",
+            "edit",
+            "bash",
+            "exec",
+            "process",
+            "apply_patch",
+            "grep",
+            "find",
+            "ls",
+            "other",
+            "none"
+        ],
+        [
+            "rep-0",
+            "rep-1",
+            "rep-2",
+            "rep-3plus"
+        ],
+        [
+            "ident-0",
+            "ident-1",
+            "ident-2",
+            "ident-3plus"
+        ],
+        [
+            "lt-30s",
+            "lt-2m",
+            "lt-10m",
+            "gt-10m"
+        ]
+    ],
+    "features": [
+        "tool-name",
+        "working-directory-relative",
+        "parent-tool-call-name",
+        "recent-repetition-count",
+        "recent-identical-call-count",
+        "time-since-last-user-message"
+    ],
+    "frozen": true,
+    "artifact": "credence-pi tail (continuation) posterior P(continue|features) — per-context counts"
+}

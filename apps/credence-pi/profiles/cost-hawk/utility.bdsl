@@ -28,3 +28,9 @@
 (define fallback-call-cost 0.5)
 (define harm-cost 1.0)
 (define harm-response "ask")
+
+; Multi-turn look-ahead (tail-aware EU) is available but OFF here: on this corpus the
+; continuation signal is too sparse to resolve `rep` (the BMA pools at the tool level, so
+; loopy-tool first-calls inherit a high m → false-block risk). Mechanism proven in
+; test_feature_brain.jl §8; reach measured in eval/tail_lookahead.jl. Enable with
+; (define tail-aware "on") once a better-resolved continuation belief is trained.

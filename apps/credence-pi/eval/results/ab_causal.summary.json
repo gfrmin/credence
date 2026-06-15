@@ -22,15 +22,15 @@
                 "risk": 1,
                 "attn": 0
             },
-            "net_delta_welfare": 94.44802586,
-            "gov_latency_s": 0.05197414,
+            "net_delta_welfare": 94.37227484,
+            "gov_latency_s": 0.12772516,
             "asks": 0,
             "loop_run": 0,
             "harm": false,
             "governed": {
                 "money": 2,
-                "time": 32.05197414,
-                "total": 34.05197414,
+                "time": 32.12772516,
+                "total": 34.12772516,
                 "risk": 0,
                 "attn": 0
             }
@@ -44,15 +44,15 @@
                 "risk": 1,
                 "attn": 0
             },
-            "net_delta_welfare": 84.99755662,
-            "gov_latency_s": 0.00244338,
+            "net_delta_welfare": 84.99761437800001,
+            "gov_latency_s": 0.0023856219999999996,
             "asks": 0,
             "loop_run": 0,
             "harm": true,
             "governed": {
                 "money": 2.5,
-                "time": 40.00244338,
-                "total": 43.50244338,
+                "time": 40.002385622,
+                "total": 43.502385622,
                 "risk": 1,
                 "attn": 0
             }
