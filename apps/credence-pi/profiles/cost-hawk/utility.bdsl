@@ -1,0 +1,30 @@
+; ============================================================
+; PROFILE: cost-hawk — money precious, attention cheap.
+;
+; A human (or autonomous batch agent) who wants wasted spend
+; stamped out and is happy to be interrupted to do it. Same
+; SHARED brain as every other profile; only these preference
+; dials differ (the Savage factorisation: one belief, many
+; utilities). This file is the LIVE surface of the `cost-hawk`
+; archetype the offline witness scores (eval/welfare.jl).
+;
+; A profile = a utility.bdsl. The daemon reads these constants
+; at wire time (CREDENCE_PI_BDSL_DIR); no code changes to swap
+; profiles. Identical in shape to bdsl/utility.bdsl — only
+; false-block-aversion and interrupt-cost move.
+; ============================================================
+
+(define edge-inclusion-prior 0.5)
+(define cell-prior-alpha 2.0)
+(define cell-prior-beta 2.0)
+
+; LOW false-block aversion → block readily (threshold 1/(1+λ)=0.8):
+; a wrongly-blocked wanted call is cheap relative to letting waste run.
+(define false-block-aversion 0.25)
+
+; LOW interruption cost → ask freely to resolve uncertainty and save spend.
+(define interrupt-cost 0.05)
+
+(define fallback-call-cost 0.5)
+(define harm-cost 1.0)
+(define harm-response "ask")

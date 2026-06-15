@@ -1,0 +1,230 @@
+{
+    "train_events": 28008,
+    "finding": "Adaptivity is uncertain-regime behaviour: profiles diverge where the belief is unsure (cold-start/novel) and converge as it learns to bimodal certainty. Dominance over baselines holds throughout. Offline axes: money+attention (ClawsBench has no per-call tokens/duration); time/risk → live report / ATBench.",
+    "divergence_curve": [
+        {
+            "divergent": 91,
+            "divergence_rate": 0.008048823633468954,
+            "flow_guard_block": 0,
+            "train_frac": 0.02,
+            "train_n": 560,
+            "cost_hawk_block": 91
+        },
+        {
+            "divergent": 37,
+            "divergence_rate": 0.003272598620201663,
+            "flow_guard_block": 67,
+            "train_frac": 0.05,
+            "train_n": 1400,
+            "cost_hawk_block": 104
+        },
+        {
+            "divergent": 1,
+            "divergence_rate": 8.84486113568017e-5,
+            "flow_guard_block": 76,
+            "train_frac": 0.1,
+            "train_n": 2801,
+            "cost_hawk_block": 77
+        },
+        {
+            "divergent": 1,
+            "divergence_rate": 8.84486113568017e-5,
+            "flow_guard_block": 76,
+            "train_frac": 0.25,
+            "train_n": 7002,
+            "cost_hawk_block": 77
+        },
+        {
+            "divergent": 0,
+            "divergence_rate": 0,
+            "flow_guard_block": 76,
+            "train_frac": 0.5,
+            "train_n": 14004,
+            "cost_hawk_block": 76
+        },
+        {
+            "divergent": 0,
+            "divergence_rate": 0,
+            "flow_guard_block": 76,
+            "train_frac": 1,
+            "train_n": 28008,
+            "cost_hawk_block": 76
+        }
+    ],
+    "sessions": 3384,
+    "objective_loops": 76,
+    "uncertain_checkpoint": {
+        "examples": [
+            {
+                "features": {
+                    "recent-identical-call-count": "ident-1",
+                    "parent-tool-call-name": "exec",
+                    "working-directory-relative": "no-path",
+                    "tool-name": "exec",
+                    "time-since-last-user-message": "gt-10m",
+                    "recent-repetition-count": "rep-3plus"
+                },
+                "is_loop": true,
+                "cost-hawk": "block",
+                "flow-guard": "proceed"
+            },
+            {
+                "features": {
+                    "recent-identical-call-count": "ident-1",
+                    "parent-tool-call-name": "exec",
+                    "working-directory-relative": "no-path",
+                    "tool-name": "exec",
+                    "time-since-last-user-message": "gt-10m",
+                    "recent-repetition-count": "rep-3plus"
+                },
+                "is_loop": true,
+                "cost-hawk": "block",
+                "flow-guard": "proceed"
+            },
+            {
+                "features": {
+                    "recent-identical-call-count": "ident-3plus",
+                    "parent-tool-call-name": "other",
+                    "working-directory-relative": "no-path",
+                    "tool-name": "other",
+                    "time-since-last-user-message": "gt-10m",
+                    "recent-repetition-count": "rep-3plus"
+                },
+                "is_loop": false,
+                "cost-hawk": "block",
+                "flow-guard": "proceed"
+            },
+            {
+                "features": {
+                    "recent-identical-call-count": "ident-1",
+                    "parent-tool-call-name": "exec",
+                    "working-directory-relative": "no-path",
+                    "tool-name": "exec",
+                    "time-since-last-user-message": "gt-10m",
+                    "recent-repetition-count": "rep-3plus"
+                },
+                "is_loop": true,
+                "cost-hawk": "block",
+                "flow-guard": "proceed"
+            },
+            {
+                "features": {
+                    "recent-identical-call-count": "ident-3plus",
+                    "parent-tool-call-name": "other",
+                    "working-directory-relative": "no-path",
+                    "tool-name": "other",
+                    "time-since-last-user-message": "gt-10m",
+                    "recent-repetition-count": "rep-3plus"
+                },
+                "is_loop": false,
+                "cost-hawk": "block",
+                "flow-guard": "proceed"
+            },
+            {
+                "features": {
+                    "recent-identical-call-count": "ident-3plus",
+                    "parent-tool-call-name": "exec",
+                    "working-directory-relative": "no-path",
+                    "tool-name": "other",
+                    "time-since-last-user-message": "gt-10m",
+                    "recent-repetition-count": "rep-0"
+                },
+                "is_loop": false,
+                "cost-hawk": "block",
+                "flow-guard": "proceed"
+            },
+            {
+                "features": {
+                    "recent-identical-call-count": "ident-3plus",
+                    "parent-tool-call-name": "other",
+                    "working-directory-relative": "no-path",
+                    "tool-name": "other",
+                    "time-since-last-user-message": "gt-10m",
+                    "recent-repetition-count": "rep-1"
+                },
+                "is_loop": false,
+                "cost-hawk": "block",
+                "flow-guard": "proceed"
+            },
+            {
+                "features": {
+                    "recent-identical-call-count": "ident-1",
+                    "parent-tool-call-name": "exec",
+                    "working-directory-relative": "no-path",
+                    "tool-name": "exec",
+                    "time-since-last-user-message": "gt-10m",
+                    "recent-repetition-count": "rep-3plus"
+                },
+                "is_loop": true,
+                "cost-hawk": "block",
+                "flow-guard": "proceed"
+            }
+        ],
+        "train_frac": 0.02
+    },
+    "held_out_calls": 11306,
+    "profiles": {
+        "cost-hawk": {
+            "c": 1,
+            "lambda": 0.25,
+            "q": 0.05
+        },
+        "flow-guard": {
+            "c": 1,
+            "lambda": 4,
+            "q": 1
+        }
+    },
+    "full_training": {
+        "p_approve_histogram": {
+            "labels": [
+                "[0,.05)",
+                "[.05,.2)",
+                "[.2,.5)",
+                "[.5,.8)",
+                "[.8,.95)",
+                "[.95,1]"
+            ],
+            "edges": [
+                0,
+                0.05,
+                0.2,
+                0.5,
+                0.8,
+                0.95,
+                1.0001
+            ],
+            "counts": [
+                67,
+                9,
+                0,
+                0,
+                1,
+                11229
+            ]
+        },
+        "dominance": {
+            "cost-hawk": {
+                "scores": {
+                    "no-governance": -76,
+                    "naive-block-repeats": -2032.25,
+                    "eu-max:flow-guard": 0,
+                    "always-ask": -565.3000000000336,
+                    "eu-max:cost-hawk": 0
+                },
+                "best_policy": "eu-max:flow-guard"
+            },
+            "flow-guard": {
+                "scores": {
+                    "no-governance": -76,
+                    "naive-block-repeats": -32501,
+                    "eu-max:flow-guard": 0,
+                    "always-ask": -11306,
+                    "eu-max:cost-hawk": 0
+                },
+                "best_policy": "eu-max:flow-guard"
+            }
+        },
+        "contested_band_calls": 0
+    }
+}

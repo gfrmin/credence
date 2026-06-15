@@ -1,0 +1,33 @@
+; ============================================================
+; PROFILE: flow-guard — attention precious, money less so.
+;
+; A human in deep interactive flow who must NOT be interrupted
+; and would rather eat the occasional wasted call than be
+; pestered or have a wanted call wrongly blocked. Same SHARED
+; brain as every other profile; only these preference dials
+; differ (one belief, many utilities). This file is the LIVE
+; surface of the `flow-guard` archetype the offline witness
+; scores (eval/welfare.jl).
+;
+; A profile = a utility.bdsl. The daemon reads these constants
+; at wire time (CREDENCE_PI_BDSL_DIR). Identical in shape to
+; bdsl/utility.bdsl — only false-block-aversion and
+; interrupt-cost move (the opposite corner from cost-hawk).
+; ============================================================
+
+(define edge-inclusion-prior 0.5)
+(define cell-prior-alpha 2.0)
+(define cell-prior-beta 2.0)
+
+; HIGH false-block aversion → block only when very sure
+; (threshold 1/(1+λ)=0.2): a wrongly-blocked wanted call is
+; very costly, so tolerate uncertain waste rather than risk it.
+(define false-block-aversion 4.0)
+
+; HIGH interruption cost → asking is expensive; only interrupt
+; when one yes/no is worth a great deal. Protects flow.
+(define interrupt-cost 1.0)
+
+(define fallback-call-cost 0.5)
+(define harm-cost 1.0)
+(define harm-response "ask")
