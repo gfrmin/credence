@@ -36,7 +36,7 @@ export ParticlePrevision, QuadraturePrevision
 export ConditionalPrevision
 export ConjugatePrevision, maybe_conjugate, update, _dispatch_path
 export push_component!, replace_component!
-export CenteredPower, CenteredSquare
+export CenteredPower, CenteredSquare, GeometricTail
 # At Move 2, `Ontology`'s `Functional` hierarchy is aliased onto these
 # types (`const Functional = TestFunction` plus `import ..Previsions:
 # Identity, …`), so both modules export the same bindings (they resolve
@@ -198,6 +198,25 @@ end
 apply(cp::CenteredPower{n}, x) where n = (x - cp.μ)^n
 
 const CenteredSquare = CenteredPower{2}
+
+"""
+    GeometricTail() <: TestFunction
+
+The geometric-continuation tail test function on a continuation-probability
+space [0, 1]: `apply(GeometricTail(), ρ) = ρ / (1 − ρ)`.
+
+Semantics. If a process continues for one more step with probability ρ
+(i.i.d. given context), the number of *additional* steps before it stops is
+Geometric, with mean `Σ_{t≥1} ρ^t = ρ/(1−ρ)`. Integrated against a posterior
+on ρ, `expect(belief, GeometricTail())` is therefore the posterior-predictive
+expected number of remaining steps — the infinite-horizon look-ahead in
+closed form. For a Beta(α, β) posterior the integral is the exact `α/(β−1)`
+(β>1); see the closed-form `expect(::BetaPrevision, ::GeometricTail)` in
+ontology.jl, which reaches the fast path without quadrature.
+"""
+struct GeometricTail <: TestFunction end
+
+apply(::GeometricTail, ρ) = ρ / (1.0 - ρ)
 
 # ── Concrete Prevision subtypes (Move 3) ──────────────────────────────────
 
