@@ -42,7 +42,8 @@ using JSON3
 
 export StructureBMA, build_model, build_model_from_env, build_model_from_decls,
        build_prior, build_prior_dense, wire_brain!, context_from_features, firing_tags,
-       belief_at_context, observe, decide, decide_multi, reconstruct_harm_posterior
+       belief_at_context, observe, decide, decide_multi,
+       reconstruct_posterior, reconstruct_harm_posterior
 
 # ── The model: feature spec + structure enumeration + tag bookkeeping ──
 #
@@ -372,21 +373,29 @@ end
 # The JSON shape: { "contexts": [ { "ctx": ["external-send","tainted-external-target","yes","no"],
 #                                   "n1": 12, "n0": 1 }, ... ], ...metadata... }.
 """
-    reconstruct_harm_posterior(harm_model, counts_path) -> MixturePrevision
+    reconstruct_posterior(model, counts_path) -> MixturePrevision
 
-Rebuild the frozen harm posterior from shipped per-context counts by replaying `observe`.
+Rebuild a frozen posterior from shipped per-context counts by replaying `observe`.
+Bayesian updating is order-independent, so the posterior depends only on each
+context's (n1, n0) counts — making this artifact version-stable (JSON), unlike a
+`Serialization` blob (fragile across Julia versions; CI/image pin 1.11). Generic
+over the StructureBMA: the harm posterior (P(unsafe|safety-features)) and the warm
+WASTE posterior (P(approve|waste-features)) both reconstruct through this one path.
 """
-function reconstruct_harm_posterior(harm_model::StructureBMA, counts_path::AbstractString)
+function reconstruct_posterior(model::StructureBMA, counts_path::AbstractString)
     data = JSON3.read(read(counts_path, String))
     entries = data.contexts
-    top = build_prior(harm_model)
+    top = build_prior(model)
     for e in entries
         ctx = String[String(v) for v in e.ctx]
-        for _ in 1:Int(e.n1); top = observe(harm_model, top, ctx, 1); end
-        for _ in 1:Int(e.n0); top = observe(harm_model, top, ctx, 0); end
+        for _ in 1:Int(e.n1); top = observe(model, top, ctx, 1); end
+        for _ in 1:Int(e.n0); top = observe(model, top, ctx, 0); end
     end
     top
 end
+
+# Back-compat alias: the harm posterior was the first consumer of this path.
+const reconstruct_harm_posterior = reconstruct_posterior
 
 # Pass-1 followup logic, kept (yes→proceed, no→block); deterministic in Move 3.
 function followup_after_response(event)
@@ -431,7 +440,7 @@ function wire_brain!(env)
         if isfile(string(hpath))
             try
                 harm_model = build_model_from_decls(sfeat; alpha0 = a0, beta0 = b0, p_edge = p_edge)
-                harm_top = reconstruct_harm_posterior(harm_model, string(hpath))
+                harm_top = reconstruct_posterior(harm_model, string(hpath))
                 @info "credence-pi: harm posterior reconstructed; multi-outcome governance ON" path=string(hpath)
             catch e
                 @warn "credence-pi: harm posterior failed to load; harm governance OFF" error=e
