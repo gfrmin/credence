@@ -126,6 +126,55 @@ context, qwen2.5:7b CPU-spills past the 8 GB VRAM (a turn exceeded 280 s).
 Capping `num_ctx` (~8192) runs it fully on GPU — a deferred local tuning step.
 Tokens are free locally; a small paid-model run gives the real-$ headline.
 
+---
+
+## Result 5 — Multi-turn look-ahead: the tail-aware EU (the myopia fix, and where "loops" rejoins)
+
+Limitation #1 — per-call EU is myopic about the loop *tail* — is now addressed in the
+mechanism, fully within the Bayesian paradigm (no arbitrary constants), and doing so
+**unifies the proven loop-detection result with the decision**.
+
+**The belief.** A second posterior over the SAME feature model — the *continuation*
+probability ρ = P(another identical call follows | context) — trained on real loop
+continue/stop events (`eval/train_tail_brain.jl`: 118 contexts, 356 continue-events),
+shipped as version-stable counts-JSON and reconstructed **bit-exactly** through the same
+`reconstruct_posterior` path the warm and harm posteriors use.
+
+**The look-ahead, in closed form (not an approximation).** Expected future loop turns under
+per-step rate ρ is the geometric sum Σₜ₌₁ ρᵗ = ρ/(1−ρ) — the infinite-horizon look-ahead —
+and its posterior expectation is *exact*: m = E_{ρ∼Beta(α,β)}[ρ/(1−ρ)] = α/(β−1). This is a
+new declared `GeometricTail` test function in `src/` whose closed form sits beside
+`Identity`'s; m is a genuine `expect(continuation_belief, GeometricTail())`, integrated over
+the posterior — not hand arithmetic, not a point plug-in. The waste-save coefficient becomes
+**c·(1+m)** (this call + m expected more), so block ⟺ θ < (1+m)/((1+m)+λ): the myopic
+1/(1+λ) at m=0, sliding toward 1 as the detected tail grows. The `ask` VOI inherits the
+(1+m)× factor, so an attention-precious profile asks about a loop it would myopically wave
+through. Proven on a (θ,λ,m) grid + two headline demonstrations in `test_feature_brain.jl §8`;
+m=0 is **bit-identical** to the prior myopic EU. Mechanism is Tier-2 (the outcome model), not
+the EU-max mechanism — Invariant 1 intact (still one `optimise` over `expect` of a declared
+Functional).
+
+**This is where "we solved loops" rejoins the decision.** Detection (the waste posterior θ —
+precision 1.0 / recall 1.0, `FINDINGS.md`) and look-ahead (the continuation posterior m) are
+two beliefs over the *same* feature model. The tail-aware EU values stopping a detected loop
+by its whole expected tail: detection supplies *what* to stop; the look-ahead supplies *how
+much it's worth*.
+
+**Honest finding — the deepest result here.** On ClawsBench the look-ahead changes **0 of 118
+trained-context decisions** (`eval/tail_lookahead.jl`), for a principled reason: the contexts
+with a long learned tail (deep loops) are *exactly* the ones the waste brain is already
+confident are waste (low θ), so the two terms agree. **On real frontier-model loops, "is this
+waste?" and "will this persist?" are the same question** — which is *why* the waste brain
+alone already governs them so well. The look-ahead's distinct value is the
+*uncertain-persistent* regime (moderate θ, high m) — proven to bite in §8, but under-populated
+on ClawsBench. And the sparse continuation signal + the `rep`/`ident` features capping at
+`3plus` make the belief **pool at the tool level** (a first-occurrence `exec` call inherits
+`exec`'s loopiness → m≈1.5, a false-block risk). So tail-aware governance ships **proven but
+OFF by default** (`tail-aware "on"` opts in): the mechanism is done; what it needs to *help*
+is a better-resolved continuation belief — more continue/stop data, or a finer repetition
+feature (the structure-BMA then auto-sophisticates over the finer partition). The saturation
+precondition, made concrete.
+
 ## What this de-risks — and the honest limits
 
 **De-risked:** governing tool-calls by EU-max **causally net-raises a human's
@@ -136,12 +185,13 @@ EU-max is optimal.
 
 **Honest limitations (the Phase-2 map):**
 
-1. **Per-call EU is myopic about the loop tail.** The decision values resolving
-   *one* call, not the multi-turn loop it would prevent; an attention-precious
-   profile can decline to ask for one call's worth of info while the loop's full
-   cost is many calls. Here both profiles caught the *confident* loop, but on an
-   *uncertain* loop a high-q profile would under-govern. Fix: sequential /
-   tail-aware EU (the metareasoning direction).
+1. **Per-call EU myopia — now FIXED in the mechanism (Result 5), data-gated empirically.**
+   The tail-aware EU (`GeometricTail`, m = `expect(continuation posterior, ·)` = α/(β−1))
+   values blocking by the whole expected loop tail and the `ask` VOI by (1+m)×, proven in
+   `test_feature_brain.jl §8`; m=0 recovers the myopic form bit-for-bit. Its empirical reach
+   on ClawsBench is 0 trained-context changes (detection already subsumes it — Result 5), and
+   the sparse continuation signal over-pools at rep-0, so it ships proven but OFF by default.
+   The remaining work is a better-resolved continuation belief, not the mechanism.
 2. **Harm-blocking is coupled to false-block aversion.** A very high λ raises the
    block bar above the harm threshold for a call that looks wanted; the
    `harm-response: ask` net only fires when the decision is already "block". Fix:
@@ -166,4 +216,9 @@ julia --project=. apps/credence-pi/eval/profile_adaptivity.jl \
     --out apps/credence-pi/eval/results/profile_adaptivity.summary.json
 julia --project=. apps/credence-pi/eval/ab_runner.jl \
     --out apps/credence-pi/eval/results/ab_causal.summary.json
+# Multi-turn look-ahead (Result 5): train the continuation belief, then measure its reach.
+julia --project=. apps/credence-pi/eval/train_tail_brain.jl \
+    --events data/credence_pi_eval/clawsbench_openclaw.events.jsonl \
+    --out-counts apps/credence-pi/brain/tail_brain.counts.json --corpus "ClawsBench"
+julia --project=. apps/credence-pi/eval/tail_lookahead.jl
 ```

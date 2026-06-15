@@ -196,6 +196,89 @@ let
     check("harm flips the SAME wanted call (proceed→block)", d_safe !== d_harm)
 end
 
+# ── 8. Tail-aware EU (multi-turn look-ahead): expected_repeats m scales the waste tail. ──
+# m = E[further identical repeats a block prevents] — supplied live by the tail brain as
+# expect(continuation_belief, GeometricTail()). EU(block) = c·(1+m)·(1−θ) − cλθ, so block ⟺
+# θ < (1+m)/((1+m)+λ); m=0 recovers the myopic 1/(1+λ). Asking inherits the (1+m)× VOI.
+# Oracles below recompute EU(block) independently of the brain's arithmetic (test-oracle).
+let
+    wm = build_model(["ctx"], [["c"]]); X = ["c"]
+    function mk(a, d)             # θ = (2+a)/(4+a+d) via the Beta(2,2) cell prior
+        t = build_prior(wm)
+        for _ in 1:a; t = observe(wm, t, X, 1); end
+        for _ in 1:d; t = observe(wm, t, X, 0); end
+        t
+    end
+
+    # (a) m=0 is BIT-IDENTICAL to the default (no kwarg) — the safe reduction, over real
+    #     contexts and several profiles, with the full three-way decision (ask in play).
+    let model = build_model(["tool","rep"], [["bash","read"],["rep0","rep3"]]; p_edge=0.5)
+        top = build_prior(model)
+        for (Xc,o) in [(["read","rep0"],1),(["bash","rep3"],0),(["bash","rep3"],0)]
+            top = observe(model, top, Xc, o)
+        end
+        allsame = true
+        for Xc in (["bash","rep3"], ["read","rep0"]), λ in (0.25,1.0,4.0), q in (0.02,1.0)
+            d_def = decide(model, top, Xc, 1.0; aversion=λ, interrupt_cost=q)
+            d_m0  = decide(model, top, Xc, 1.0; aversion=λ, interrupt_cost=q, expected_repeats=0.0)
+            d_def === d_m0 || (allsame = false)
+        end
+        check("expected_repeats=0.0 ≡ default decide (bit-identical reduction)", allsame)
+    end
+
+    # (b) Threshold oracle (ask suppressed by a huge q): across θ, λ, m, decide blocks IFF
+    #     EU(block)=c·[(1+m)(1−θ)−λθ] > 0. m=0 column = the myopic 1/(1+λ). Tie-safe (skip |EU|≈0).
+    for (a,d) in [(4,2),(8,2),(2,8),(3,3),(16,2),(2,2),(10,1)]
+        wt = mk(a, d); θ = expect(belief_at_context(wm, wt, X), Identity())
+        for λ in (0.25, 1.0, 4.0), m in (0.0, 0.5, 2.0, 10.0)
+            tf = 1.0 + m
+            eu_block = tf*(1.0 - θ) - λ*θ        # EU(block)/c, proceed baseline 0
+            abs(eu_block) < 1e-9 && continue      # skip the knife-edge tie
+            dec = decide(wm, wt, X, 1.0; aversion=λ, interrupt_cost=1e6, expected_repeats=m)
+            # credence-lint: allow — precedent:test-oracle — block boundary vs independently-computed EU(block)
+            check("block ⟺ EU(block)>0 [θ=$(round(θ,digits=3)) λ=$λ m=$m]",
+                  (dec === :block) == (eu_block > 0.0),
+                  "dec=$dec θ=$θ eu_block=$(round(eu_block,digits=4))")
+        end
+    end
+
+    # (c) HEADLINE myopia fix: a call the myopic EU lets RUN, the look-ahead blocks.
+    #     θ=0.6 (a=4,d=2), λ=1 ⇒ myopic θ*=0.5 (0.6>0.5: no block); m=2 ⇒ θ*=0.75 (0.6<0.75: block).
+    let wt = mk(4, 2), θ = expect(belief_at_context(wm, wt, X), Identity())
+        check("θ=0.6 setup", isapprox(θ, 0.6; atol=1e-9), "got $θ")
+        d_my = decide(wm, wt, X, 1.0; aversion=1.0, interrupt_cost=0.05, expected_repeats=0.0)
+        d_la = decide(wm, wt, X, 1.0; aversion=1.0, interrupt_cost=0.05, expected_repeats=2.0)
+        check("myopic EU does NOT block θ=0.6 (waves the loop through)", d_my !== :block, "got $d_my")
+        check("tail-aware EU (m=2) BLOCKS the same call", d_la === :block, "got $d_la")
+    end
+
+    # (d) Attention-precious profile (q=1.0): myopic PROCEEDS on the loop; the look-ahead
+    #     makes it GOVERN — the limitation-#1 fix (EU/VOI inherit the (1+m)× tail).
+    let wt = mk(4, 2)
+        d_my = decide(wm, wt, X, 1.0; aversion=1.0, interrupt_cost=1.0, expected_repeats=0.0)
+        d_la = decide(wm, wt, X, 1.0; aversion=1.0, interrupt_cost=1.0, expected_repeats=3.0)
+        check("attention-precious + myopic → proceed (under-governs the loop)", d_my === :proceed, "got $d_my")
+        check("attention-precious + tail-aware → governs (≠proceed)", d_la !== :proceed, "got $d_la")
+    end
+
+    # (e) decide_multi: m=0 ≡ default; m>0 scales the waste tail (harm term untouched).
+    let hm = build_model(["ctx"], [["c"]])
+        function mkh(a, d)
+            t = build_prior(hm)
+            for _ in 1:a; t = observe(hm, t, X, 1); end
+            for _ in 1:d; t = observe(hm, t, X, 0); end
+            t
+        end
+        wt = mk(4, 2); ht = mkh(0, 8)   # θ_a=0.6, θ_u≈0.17 (safe)
+        dm_def = decide_multi(wm, wt, hm, ht, X, X, 1.0; aversion=1.0, interrupt_cost=0.05, harm_cost=1.0)
+        dm_m0  = decide_multi(wm, wt, hm, ht, X, X, 1.0; aversion=1.0, interrupt_cost=0.05, harm_cost=1.0, expected_repeats=0.0)
+        check("decide_multi expected_repeats=0.0 ≡ default", dm_def === dm_m0, "def=$dm_def m0=$dm_m0")
+        dm_tail = decide_multi(wm, wt, hm, ht, X, X, 1.0; aversion=1.0, interrupt_cost=0.05, harm_cost=1.0, expected_repeats=2.0)
+        check("decide_multi tail-aware blocks the waste tail (safe ctx, m=2)", dm_tail === :block, "got $dm_tail")
+    end
+    println("tail-aware EU: threshold oracle + myopia-fix demonstrations PASS")
+end
+
 println("="^64)
 println("ALL CHECKS PASSED — feature brain (Route B)")
 println("="^64)
