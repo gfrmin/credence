@@ -16,8 +16,9 @@ Configuration via environment (all optional):
     CREDENCE_PI_PORT       bind port          (default 8787)
     CREDENCE_PI_BDSL_DIR   BDSL program dir   (default ../bdsl next to this file)
     CREDENCE_PI_LOG        observation log    (default ~/.credence-pi/observations.jsonl)
-    CREDENCE_PI_WARM_BRAIN serialized warm prior (default ../brain/warm_brain.jls if
-                           present; set to "" to force a cold start)
+    CREDENCE_PI_WARM_BRAIN warm prior (default ../brain/warm_brain.counts.json if
+                           present, else the legacy ../brain/warm_brain.jls; set to
+                           "" to force a cold start). Counts-JSON is version-stable.
 """
 
 push!(LOAD_PATH, abspath(joinpath(@__DIR__, "..", "..", "..", "src")))
@@ -30,8 +31,11 @@ const HOST     = get(ENV, "CREDENCE_PI_HOST", "127.0.0.1")
 const PORT     = parse(Int, get(ENV, "CREDENCE_PI_PORT", "8787"))
 const BDSL_DIR = get(ENV, "CREDENCE_PI_BDSL_DIR", normpath(joinpath(@__DIR__, "..", "bdsl")))
 const LOG_PATH = get(ENV, "CREDENCE_PI_LOG", joinpath(homedir(), ".credence-pi", "observations.jsonl"))
-const _DEFAULT_WARM = normpath(joinpath(@__DIR__, "..", "brain", "warm_brain.jls"))
-const WARM_BRAIN = get(ENV, "CREDENCE_PI_WARM_BRAIN", isfile(_DEFAULT_WARM) ? _DEFAULT_WARM : "")
+# Prefer the version-stable counts-JSON warm brain; fall back to the legacy .jls.
+const _WARM_COUNTS = normpath(joinpath(@__DIR__, "..", "brain", "warm_brain.counts.json"))
+const _WARM_JLS    = normpath(joinpath(@__DIR__, "..", "brain", "warm_brain.jls"))
+const _DEFAULT_WARM = isfile(_WARM_COUNTS) ? _WARM_COUNTS : (isfile(_WARM_JLS) ? _WARM_JLS : "")
+const WARM_BRAIN = get(ENV, "CREDENCE_PI_WARM_BRAIN", _DEFAULT_WARM)
 
 mkpath(dirname(LOG_PATH))
 

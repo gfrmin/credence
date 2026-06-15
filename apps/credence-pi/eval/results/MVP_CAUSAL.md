@@ -109,6 +109,23 @@ already uses). It is a PRIOR — each user's own usage keeps updating it via
 
 ---
 
+## Result 4 — Live integration proof-of-life (real qwen, real daemon)
+
+The full stack was brought up on this machine (daemon with the counts-JSON warm
+brain → OpenClaw gateway → plugin → `ollama/qwen2.5:7b-instruct`):
+
+- **Daemon + warm brain + HTTP wire**: a confident-loop event POSTed to
+  `/sensor` is **blocked** at the realistic $0.50 stake (decision logged).
+- **Full live path**: a real qwen agent turn issued an `exec` tool call →
+  plugin → daemon → **proceed** decision → the tool ran → outcome + turn-cost
+  logged. End-to-end live governance of a real agent's tool calls is confirmed.
+
+The full *multi-turn* A/B (a looping task under shadow vs enforce, measured) is
+gated only on local inference speed, not integration: at the gateway's 32k
+context, qwen2.5:7b CPU-spills past the 8 GB VRAM (a turn exceeded 280 s).
+Capping `num_ctx` (~8192) runs it fully on GPU — a deferred local tuning step.
+Tokens are free locally; a small paid-model run gives the real-$ headline.
+
 ## What this de-risks — and the honest limits
 
 **De-risked:** governing tool-calls by EU-max **causally net-raises a human's
@@ -129,12 +146,13 @@ EU-max is optimal.
    block bar above the harm threshold for a call that looks wanted; the
    `harm-response: ask` net only fires when the decision is already "block". Fix:
    a harm floor independent of λ (safety calibration).
-3. **The causal harness is a scenario, not a live agent.** The loop length and
-   "a caught loop is abandoned" are stipulated; the daemon, its decisions, and
-   the latency are real. The real agent's *reaction* to a block is what the live
-   OpenClaw + ollama A/B measures — the immediate next step (the stack is present
-   and the run recipe is known; money in tokens free-locally, $ on a small paid
-   run).
+3. **The causal harness is a scenario, not a full live agent run.** The loop
+   length and "a caught loop is abandoned" are stipulated; the daemon, its
+   decisions, and the latency are real. The live stack is proven end-to-end
+   (Result 4) — a real qwen tool call is governed by the warm-brain daemon — but
+   the multi-turn shadow-vs-enforce A/B that measures the real agent's *reaction*
+   to a block is gated on capping `num_ctx` for full-GPU inference (deferred
+   local tuning). Money in tokens free-locally; $ on a small paid run.
 4. **Money is per-turn, not per-tool** (pi exposes no per-tool cost); time and
    harm here are labelled scenario parameters; offline money is a flat unit.
 
