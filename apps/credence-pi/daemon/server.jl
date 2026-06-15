@@ -45,7 +45,7 @@ using .Credence: Eval, Parse
 # injects make-prior / decide-action / observe-response / followup-after-response
 # into the BDSL env, so the call-sites below are unchanged in shape.
 include(joinpath(@__DIR__, "..", "brain", "feature_brain.jl"))
-using .FeatureBrain: wire_brain!
+using .FeatureBrain: wire_brain!, build_model_from_env, reconstruct_posterior
 
 export start_daemon, stop_daemon, DaemonState
 export SignalQueue, enqueue!, snapshot, drain!
@@ -161,12 +161,15 @@ end
 """
     load_starting_posterior(env, warm_brain_path) -> Measure
 
-The starting belief BEFORE the local log is replayed. If `warm_brain_path` names
-a readable serialized posterior (a warm brain trained on corpus replay — see
-apps/credence-pi/eval/train_warm_brain.jl), deserialize it so governance works
-from install instead of cold `Beta(2,2)`. The warm brain is a PRIOR: the local
-log then conditions it via `observe-response`, so each deployment adapts. Any
-load failure (missing file, schema/version drift) falls back LOUDLY to the cold
+The starting belief BEFORE the local log is replayed. If `warm_brain_path` names a
+readable warm brain (trained on corpus replay — see
+apps/credence-pi/eval/train_warm_brain.jl), load it so governance works from install
+instead of cold `Beta(2,2)`. PREFERRED format is version-stable per-context COUNTS
+(`*.json`), reconstructed by replaying `observe` (order-independent ⇒ identical to
+the trained posterior; robust across Julia versions). A legacy `Serialization` blob
+(`*.jls`) is still accepted but is Julia-version fragile. The warm brain is a PRIOR:
+the local log then conditions it via `observe-response`, so each deployment adapts.
+Any load failure (missing file, schema/version drift) falls back LOUDLY to the cold
 prior — a stale warm brain must never silently mis-govern.
 """
 function load_starting_posterior(env, warm_brain_path)
@@ -174,8 +177,14 @@ function load_starting_posterior(env, warm_brain_path)
     (warm_brain_path === nothing || isempty(warm_brain_path)) && return cold()
     isfile(warm_brain_path) || (@warn "warm brain not found; cold start" path=warm_brain_path; return cold())
     try
-        p = deserialize(warm_brain_path)
-        @info "loaded warm brain" path=warm_brain_path type=typeof(p)
+        if endswith(lowercase(String(warm_brain_path)), ".json")
+            model = build_model_from_env(env)
+            p = reconstruct_posterior(model, warm_brain_path)
+            @info "loaded warm brain (counts reconstruction)" path=warm_brain_path
+            return p
+        end
+        p = deserialize(warm_brain_path)   # legacy .jls blob (Julia-version fragile)
+        @info "loaded warm brain (deserialized)" path=warm_brain_path type=typeof(p)
         p
     catch e
         @warn "warm brain failed to load; cold start" path=warm_brain_path error=e
