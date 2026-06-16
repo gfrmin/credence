@@ -62,3 +62,15 @@
 ;   :block — ENFORCE (refuse). Only once the harm belief is calibrated on real usage.
 ; Waste-driven blocks are unaffected by this (waste detection is proven precision/recall 1.0).
 (define harm-response "ask")
+
+; ── Routing reward (model routing — see routing.bdsl) ───────────────────
+; correct-answer-value (dollars): the value of a CORRECT answer for THIS
+; profile. route() maximises correct-answer-value·P(correct|X) − cost_a
+; over the roster, so this is the per-profile dial (the routing analogue of
+; λ / q / H above). LOW ⇒ cost-sensitive: a correct answer is worth about
+; one model-call, so route the cheap model unless quality clearly pays.
+; HIGH ⇒ quality-sensitive: pay for the best-believed model. Default is
+; cost-hawk — credence-pi is a cost-saving governor — so the router prefers
+; the cheap model until the belief shows a pricier one is worth it. Inert
+; unless routing.bdsl declares a roster.
+(define correct-answer-value 0.02)

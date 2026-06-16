@@ -48,6 +48,18 @@ export interface BeforeToolCallResult {
   requireApproval?: RequireApprovalPayload;
 }
 
+// before_model_resolve: runs before model resolution with the prompt only (no session
+// messages). Returning a provider/model override switches the model for this turn — the
+// seam credence-pi uses to route by EU-max. Needs hooks.allowConversationAccess:true.
+export interface BeforeModelResolveEvent {
+  prompt?: string;
+}
+
+export interface BeforeModelResolveResult {
+  providerOverride?: string;
+  modelOverride?: string;
+}
+
 export interface AfterToolCallEvent {
   toolName: string;
   params: Record<string, unknown>;
@@ -136,6 +148,11 @@ export interface OpenClawPluginApi {
   on(
     hook: "llm_output",
     handler: HookHandler<LlmOutputEvent, void>,
+    opts?: HookOpts,
+  ): void;
+  on(
+    hook: "before_model_resolve",
+    handler: HookHandler<BeforeModelResolveEvent, BeforeModelResolveResult>,
     opts?: HookOpts,
   ): void;
   // Catch-all for hooks we register opportunistically (e.g. agent_end);

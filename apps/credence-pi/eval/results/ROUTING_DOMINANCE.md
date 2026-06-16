@@ -139,6 +139,39 @@ so across ≥ 2 profiles it is inadmissible. The only way to beat us is a
 more data. The clairvoyant cascade is the apparent exception, and it is not deployable:
 it requires knowing each rung's correctness before paying.
 
+## Wired live (the product surface)
+
+The mechanism above is now wired into OpenClaw's live model selection, not just the
+offline proof. With `routing: true` the credence-pi plugin registers a
+`before_model_resolve` hook that posts a `route-request` to the daemon; the daemon runs
+`RoutingBrain.route` — the *same* `optimise` over the per-model belief — and returns the
+EU-max model as OpenClaw's `modelOverride` / `providerOverride`. Fail-open throughout
+(daemon down / no roster ⇒ OpenClaw keeps its model). See
+`apps/credence-pi/openclaw-plugin/README.md` § "Model routing".
+
+What ships live, and what is deliberately deferred:
+
+- **Warm belief from measured data.** The K per-model posteriors are seeded from this
+  document's oracle grid (`brain/routing_brain.counts.json`, distilled by
+  `eval/train_routing_brain.jl`), so the router knows haiku 88 / sonnet 96 / opus 98 from
+  install — it does not start cold.
+- **The validated result is what's wired.** Live routing delivers the *proven* part:
+  per-profile cost-routing (`correct-answer-value` in `utility.bdsl` is the dial) and
+  Wald per-profile divergence (low value → cheap, high value → best-believed), through
+  the one canonical `optimise`.
+- **The belief is frozen in v1; online learning is deferred.** Closing the quality-regime
+  gap needs *online calibration data* — exactly what a deployed router accumulates. But
+  the honest online signal is unsolved: a session makes many model calls and the only
+  run-level outcome (`agent_end.success`) cannot attribute success to a *specific* call's
+  model. A naive credit rule conflates model quality with task difficulty and tool
+  reliability, which is the credit-assignment layer the paper flags as unsolved. So v1
+  routes on the frozen measured belief; the daemon retains the structure (a `route-outcome`
+  update is a one-function addition) for when a defensible signal is designed.
+- **Only `prompt-length` is conditioned on live.** It is the one feature honestly
+  extractable from a raw prompt (semantic category — the offline signal — would need a
+  classifier, an arbitrary unmeasured component). The structure-BMA collapses it to the
+  marginal if it doesn't predict accuracy, so it is honest and self-correcting.
+
 ## Honest caveats
 
 - **Synthetic oracle.** The IRT rates are a principled fixture (one formula, capability

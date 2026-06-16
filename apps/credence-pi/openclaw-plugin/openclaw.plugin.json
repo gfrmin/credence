@@ -32,7 +32,12 @@
       },
       "shadowMode": {
         "type": "boolean",
-        "description": "Observe-only: the brain still decides and the daemon logs the decision, but the body never enforces (always proceeds). Use to measure what governance WOULD do on real usage without affecting runs.",
+        "description": "Observe-only: the brain still decides and the daemon logs the decision, but the body never enforces (always proceeds / never overrides the model). Use to measure what governance and routing WOULD do on real usage without affecting runs.",
+        "default": false
+      },
+      "routing": {
+        "type": "boolean",
+        "description": "Enable EU-max model routing: register before_model_resolve and override the model per request via the daemon's route decision. Needs a daemon configured with a routing roster (bdsl/routing.bdsl, shipped by default). The before_model_resolve hook is active out of the box on current OpenClaw (like llm_output); the plugin registers it defensively so an older host that lacks it just runs without routing. Fails open (daemon down / no roster => OpenClaw keeps its configured model). Off by default.",
         "default": false
       },
       "silent": {

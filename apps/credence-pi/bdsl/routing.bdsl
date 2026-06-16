@@ -1,0 +1,52 @@
+; ============================================================
+; routing.bdsl — the model-routing manifest (declared DATA).
+;
+; credence-pi can override OpenClaw's model per request by EU-
+; maximisation: route() picks
+;     argmax_a [ correct-answer-value · P(correct|X) − cost_a ]
+; over the declared roster, through the ONE canonical `optimise`
+; (apps/credence-pi/brain/routing_brain.jl — the SAME mechanism the
+; governance brain runs, action set = the model roster). This file
+; declares the numbers a human chooses; the typed Julia brain builds
+; the belief and runs the argmax.
+;
+; Read by the daemon at wire time (wire_routing!). If this file is
+; absent or routing-models is undeclared, routing is INERT — the
+; daemon emits no route signal and the body leaves model choice to
+; OpenClaw (fully backward-compatible with a governance-only install).
+;
+; The reward (correct-answer-value) is the PER-PROFILE dial and lives
+; in utility.bdsl alongside the governance λ / q / H.
+; ============================================================
+
+; --- Routing feature vocabulary ---
+;
+; The brain conditions P(correct|X) on these. ONLY features honestly
+; extractable from a raw prompt belong here: before_model_resolve hands
+; the plugin the prompt and nothing else, so semantic category (the
+; signal the offline oracle measured) is NOT available live without a
+; classifier — which would be an arbitrary, unmeasured component. The
+; one honest live feature is prompt-length; the structure-BMA discovers
+; whether it predicts accuracy and collapses to the marginal if it does
+; not (so declaring it can never hurt correctness). The short/long
+; bucket boundary lives in the body extractor (routing-features.ts) —
+; the one train/live synchronisation point.
+(define prompt-length-space
+  (space :finite short long))
+
+(define routing-features
+  (list
+    (feature prompt-length prompt-length-space)))
+
+; --- Model roster: (name provider model-id per-call-cost-usd) ---
+;
+; The action space of route(): the models credence-pi may choose among.
+; `provider` / `model-id` are returned verbatim as OpenClaw's
+; providerOverride / modelOverride. Costs are the proxy's per-call USD
+; estimate (input + 0.5·output per 1k) — the same measured ladder the
+; dominance proof used, so the live router behaves like the proven one.
+(define routing-models
+  (list
+    (list "haiku"  "anthropic" "claude-haiku-4-5"  0.0035)
+    (list "sonnet" "anthropic" "claude-sonnet-4-6" 0.0105)
+    (list "opus"   "anthropic" "claude-opus-4-8"   0.0175)))

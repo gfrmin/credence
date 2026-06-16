@@ -36,9 +36,15 @@ module RoutingBrain
 using Main.Credence: MixturePrevision, Projection, LinearCombination, TestFunction,
     Identity, expect, wrap_in_measure
 import Main.Credence.Ontology: optimise, ProductMeasure, Measure
-using Main.FeatureBrain: StructureBMA, belief_at_context
+# `..FeatureBrain` (the sibling submodule), NOT `Main.FeatureBrain`: this resolves both
+# when the eval includes both brains at Main (siblings of Main) and when the daemon
+# includes both inside `module Server` (siblings of Server). FeatureBrain itself reaches
+# Credence via the always-Main `Main.Credence`, so only this sibling ref needs to be relative.
+using ..FeatureBrain: StructureBMA, belief_at_context, context_from_features,
+    build_model_from_decls, build_prior, observe
+using JSON3
 
-export route, route_eu, posterior_accuracy
+export route, route_eu, posterior_accuracy, wire_routing!
 
 # Per-action EU functional: reward·θ_a − cost_a, expressed over the joint belief's
 # a-th component (Projection(a) = θ_a). `reward` and `cost` are declared utility DATA;
@@ -109,5 +115,96 @@ used to make a routing decision — that is `route`'s job, through `optimise`.
 """
 posterior_accuracy(model::StructureBMA, top::MixturePrevision, X::AbstractVector) =
     Float64(expect(belief_at_context(model, top, X), Identity()))
+
+# ── Warm routing belief: per-model COUNTS, reconstructed via `observe` ──
+#
+# Mirrors FeatureBrain.reconstruct_harm_posterior, but yields K posteriors (one per
+# model) from one shared schema. Bayesian updating is order-independent, so the warm
+# belief depends only on each (model, context) pair's correct/incorrect counts; we ship
+# those as JSON and replay `observe` — version-stable (unlike Serialization). Any load
+# failure falls back LOUDLY to the cold prior (a stale warm belief must not mis-route).
+# JSON shape: { "per_model": [ { "contexts": [ {"ctx":["short"], "n1":44, "n0":6} ] }, … ] }
+# where n1 = correct, n0 = incorrect, ctx = the prompt-length bucket.
+function _reconstruct_routing_tops(model::StructureBMA, K::Int, warm_path)
+    cold() = MixturePrevision[build_prior(model) for _ in 1:K]
+    (warm_path === nothing || isempty(string(warm_path))) && return cold()
+    isfile(string(warm_path)) ||
+        (@warn "routing warm brain not found; cold start" path=string(warm_path); return cold())
+    try
+        data = JSON3.read(read(string(warm_path), String))
+        pm = data.per_model
+        length(pm) == K ||
+            error("routing warm brain has $(length(pm)) models but the roster has $K")
+        tops = MixturePrevision[]
+        for entry in pm
+            top = build_prior(model)
+            for c in entry.contexts
+                ctx = String[String(v) for v in c.ctx]
+                for _ in 1:Int(c.n1); top = observe(model, top, ctx, 1); end
+                for _ in 1:Int(c.n0); top = observe(model, top, ctx, 0); end
+            end
+            push!(tops, top)
+        end
+        @info "routing warm brain reconstructed" path=string(warm_path) models=K
+        tops
+    catch e
+        @warn "routing warm brain failed to load; cold start" path=string(warm_path) error=e
+        cold()
+    end
+end
+
+"""
+    wire_routing!(env; warm_path) -> NamedTuple | nothing
+
+Inject `env[:route-decide]` — the daemon's model-routing closure — from the declared
+routing manifest (routing.bdsl) and the per-profile reward (utility.bdsl). Mirrors
+`FeatureBrain.wire_brain!`: the `.bdsl` carries the DECLARED DATA (roster, costs,
+feature spaces, reward); this builds the typed belief and installs the closure, so the
+daemon call-site (`env[:route-decide](features)`) is unchanged in shape.
+
+INERT (returns `nothing`, installs no closure) unless `routing-models` is declared —
+so a governance-only install with no routing.bdsl is unaffected. The K per-model
+`StructureBMA` posteriors are warm-seeded from `warm_path` (measured per-model accuracy)
+and FROZEN: v1 ships the measured belief; online learning of a correctness signal is
+deferred (it needs credit assignment — see ROUTING_DOMINANCE.md). `route-decide` returns
+`Dict("model"=>id, "provider"=>provider, "name"=>name)` for the daemon's route signal.
+"""
+function wire_routing!(env;
+                       warm_path = get(env, Symbol("routing-brain-path"),
+                                       joinpath(@__DIR__, "routing_brain.counts.json")))
+    roster = get(env, Symbol("routing-models"), nothing)
+    # Inert unless a roster is declared (no routing.bdsl ⇒ governance-only, unchanged).
+    (roster isa AbstractVector && !isempty(roster)) || return nothing
+
+    names = String[]; providers = String[]; model_ids = String[]; costs = Float64[]
+    for m in roster
+        (m isa AbstractVector && length(m) == 4) ||
+            error("routing-models: each entry must be (name provider model-id cost), got $(m)")
+        push!(names, string(m[1])); push!(providers, string(m[2]))
+        push!(model_ids, string(m[3])); push!(costs, Float64(m[4]))
+    end
+    K = length(model_ids)
+
+    reward = Float64(get(env, Symbol("correct-answer-value"), 0.02))
+
+    rfeat = get(env, Symbol("routing-features"), nothing)
+    rfeat isa AbstractVector ||
+        error("routing: routing-models declared but routing-features missing (declare it in routing.bdsl)")
+    rmodel = build_model_from_decls(rfeat)
+    tops = _reconstruct_routing_tops(rmodel, K, warm_path)
+
+    # The daemon's routing call-site: a feature dict → the chosen model's wire fields.
+    # The argmax is the single canonical `optimise` inside `route` (Invariant 1); the
+    # only arithmetic is reward/cost coefficient construction from declared utility data.
+    env[Symbol("route-decide")] = (features) -> begin
+        X = context_from_features(rmodel, features)
+        a = route(rmodel, tops, X, costs, reward)
+        Dict{String, Any}("model" => model_ids[a], "provider" => providers[a],
+                          "name" => names[a])
+    end
+
+    (model = rmodel, tops = tops, names = names, providers = providers,
+     model_ids = model_ids, costs = costs, reward = reward)
+end
 
 end # module RoutingBrain

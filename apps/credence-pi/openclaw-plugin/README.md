@@ -59,6 +59,8 @@ interception point is an OpenClaw **plugin** `before_tool_call` hook. See
 | `hookTimeoutMs` | `3000` | max wait for the daemon decision before failing open |
 | `approvalTimeoutMs` | `120000` | how long OpenClaw waits for the user on an `ask` before denying |
 | `redactToolInputs` | `false` | omit tool-call inputs from sensor events (they can carry secrets); ask-preview becomes generic |
+| `shadowMode` | `false` | observe-only: brain decides + daemon logs, body never enforces or overrides the model |
+| `routing` | `false` | enable EU-max **model routing** via `before_model_resolve` (see below) |
 | `silent` | `false` | suppress info/warn logs |
 | `pricing` | — | per-model USD/Mtok overrides: `{ "<model>": { "input": n, "output": n, "cacheRead": n, "cacheWrite": n } }` |
 
@@ -70,6 +72,47 @@ The built-in price table is approximate; set `pricing` for an exact
 dollars-saved figure for your providers. Unknown/unpriced models log
 `usd: null` (token counts still recorded; the Move-2 surface applies a
 token×price fallback).
+
+## Model routing (opt-in)
+
+With `routing: true` the plugin also registers a `before_model_resolve`
+hook: for each turn it posts a `route-request` (carrying the prompt's
+length feature) to the daemon and applies the brain's chosen model as
+OpenClaw's `modelOverride` / `providerOverride`. The decision is the
+**same EU-max** the governor runs — `argmax_a [ value·P(correct|X) − cost_a ]`
+over the declared roster, through the one canonical `optimise` — so
+credence-pi picks the cheapest model whose expected accuracy justifies it
+under the active profile.
+
+| brain effector | OpenClaw result |
+|---|---|
+| `route` | `{ modelOverride, providerOverride }` from the chosen model |
+| (timeout / daemon down / no roster) | no override — OpenClaw keeps its configured model (fail open) |
+
+**To enable:**
+
+1. The daemon must have a routing roster. The shipped `bdsl/routing.bdsl`
+   declares one (haiku / sonnet / opus) plus `correct-answer-value` in
+   `utility.bdsl` (the per-profile dial: low ⇒ cost-sensitive, high ⇒
+   quality-sensitive). Absent ⇒ routing stays inert and the daemon is
+   governance-only.
+2. Set `routing: true` in the plugin config. The `before_model_resolve`
+   hook is active out of the box on current OpenClaw (like `llm_output`);
+   the plugin registers it defensively, so an older host that lacks it just
+   runs without routing.
+3. `shadowMode: true` logs the would-route per turn without changing the
+   model — use it to see routing decisions on real traffic first.
+
+**What the belief is.** The per-model accuracy belief is **warm-seeded from
+measured data** (`brain/routing_brain.counts.json`, distilled from the
+3-frontier-model oracle grid by `eval/train_routing_brain.jl`) so routing is
+calibrated from install. It is **frozen** in this version: the cost-routing
+behaviour is the proven result, but online learning of a live correctness
+signal is deferred — it needs credit assignment across a session's many
+model calls (see `eval/results/ROUTING_DOMINANCE.md`). Only `prompt-length`
+is conditioned on, because it is the one feature honestly extractable from a
+raw prompt; the structure-BMA collapses it to the marginal if it doesn't
+predict accuracy.
 
 ## Develop
 

@@ -55,6 +55,9 @@ function harness(postOk = true, shadowMode = false) {
     lastProposedId: () =>
       [...posted].reverse().find((e) => e.event_type === "tool-proposed")
         ?.event_id as string,
+    lastRouteId: () =>
+      [...posted].reverse().find((e) => e.event_type === "route-request")
+        ?.event_id as string,
   };
 }
 
@@ -178,6 +181,76 @@ test("llm_output: posts turn-cost with reconstructed USD", async () => {
   const t = h.find("turn-cost") as { usd: number; total_tokens: number } | undefined;
   assert.equal(t?.usd, 90);
   assert.equal(t?.total_tokens, 2_000_000);
+  h.gov.cleanup();
+});
+
+test("before_model_resolve: route signal → model + provider override; feature sensed", async () => {
+  const h = harness();
+  const p = h.gov.beforeModelResolve({ prompt: "a short question" }, ctx);
+  await flush();
+  assert.equal(h.gov.pendingCount(), 1);
+  h.signal("route", h.lastRouteId(), {
+    model: "claude-haiku-4-5",
+    provider: "anthropic",
+    name: "haiku",
+  });
+  const r = await p;
+  assert.equal(r?.modelOverride, "claude-haiku-4-5");
+  assert.equal(r?.providerOverride, "anthropic");
+  assert.equal(h.gov.pendingCount(), 0);
+  const rr = h.find("route-request") as { features: Record<string, string> } | undefined;
+  assert.equal(rr?.features["prompt-length"], "short");
+  h.gov.cleanup();
+});
+
+test("before_model_resolve: long prompt → prompt-length=long feature", async () => {
+  const h = harness();
+  const p = h.gov.beforeModelResolve({ prompt: "x".repeat(1001) }, ctx);
+  await flush();
+  h.signal("route", h.lastRouteId(), { model: "claude-opus-4-8", provider: "anthropic" });
+  await p;
+  const rr = h.find("route-request") as { features: Record<string, string> } | undefined;
+  assert.equal(rr?.features["prompt-length"], "long");
+  h.gov.cleanup();
+});
+
+test("before_model_resolve: timeout → undefined (OpenClaw default), no leak", async () => {
+  const h = harness();
+  const r = await h.gov.beforeModelResolve({ prompt: "x" }, ctx); // no signal; 50ms timeout
+  assert.equal(r, undefined);
+  assert.equal(h.gov.pendingCount(), 0);
+  h.gov.cleanup();
+});
+
+test("before_model_resolve: daemon down → undefined immediately, no leak", async () => {
+  const h = harness(false);
+  const r = await h.gov.beforeModelResolve({ prompt: "x" }, ctx);
+  assert.equal(r, undefined);
+  assert.equal(h.gov.pendingCount(), 0);
+  h.gov.cleanup();
+});
+
+test("before_model_resolve: shadow mode → undefined (keeps model) but route-request sensed", async () => {
+  const h = harness(true, true); // postOk, shadowMode
+  const p = h.gov.beforeModelResolve({ prompt: "x" }, ctx);
+  await flush();
+  h.signal("route", h.lastRouteId(), {
+    model: "claude-opus-4-8",
+    provider: "anthropic",
+    name: "opus",
+  });
+  assert.equal(await p, undefined); // brain routed, but shadow never overrides
+  assert.ok(h.find("route-request"), "route-request must still be posted in shadow mode");
+  h.gov.cleanup();
+});
+
+test("before_model_resolve: route signal with no model → undefined (fail open)", async () => {
+  const h = harness();
+  const p = h.gov.beforeModelResolve({ prompt: "x" }, ctx);
+  await flush();
+  h.signal("route", h.lastRouteId(), {}); // route effector but empty params
+  assert.equal(await p, undefined);
+  assert.equal(h.gov.pendingCount(), 0);
   h.gov.cleanup();
 });
 
