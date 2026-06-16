@@ -164,9 +164,11 @@ test("after_tool_call: posts tool-completed correlated by toolCallId", async () 
   const h = harness();
   await h.gov.afterToolCall({ toolName: "bash", toolCallId: "tc1", params: {}, durationMs: 12 }, ctx);
   const tc = h.find("tool-completed") as
-    | { in_response_to: string; outcome: { success: boolean; duration_ms: number } }
+    | { in_response_to: string; session_id: string; outcome: { success: boolean; duration_ms: number } }
     | undefined;
   assert.equal(tc?.in_response_to, "tc1");
+  // session_id lets the daemon credit this outcome to the turn's routed model (online routing).
+  assert.equal(tc?.session_id, "s1");
   assert.equal(tc?.outcome.success, true);
   assert.equal(tc?.outcome.duration_ms, 12);
   h.gov.cleanup();
