@@ -14,6 +14,8 @@ function maybe_conjugate(p::BetaPrevision, k::Kernel)
         return ConjugatePrevision(p, k.likelihood_family)
     elseif k.likelihood_family isa WeightedBernoulli
         return ConjugatePrevision(p, k.likelihood_family)
+    elseif k.likelihood_family isa SoftBernoulli
+        return ConjugatePrevision(p, k.likelihood_family)
     elseif k.likelihood_family isa Flat
         return ConjugatePrevision(p, k.likelihood_family)
     end
@@ -48,6 +50,26 @@ function update(cp::ConjugatePrevision{BetaPrevision, WeightedBernoulli}, obs)
         BetaPrevision(cp.prior.alpha + w * o, cp.prior.beta + w * (1.0 - o)),
         cp.likelihood,
     )
+end
+
+# Virtual-evidence update. `obs = (r, w)` are the likelihoods of an indirect
+# signal under the event being true / false: r = P(S | θ-event), w = P(S | ¬).
+# The exact posterior under L(θ) = r·θ + w·(1−θ) is a 2-component Beta mixture;
+# this is its mean-exact ADF collapse — π = r·θ̄/(r·θ̄ + w·(1−θ̄)) is the implied
+# posterior P(event | S), and Beta(α+π, β+(1−π)) reproduces the exact posterior
+# mean (α+π)/(α+β+1) (derivation in kernels.jl). Reduces to the unit-count
+# BetaBernoulli at (r,w) = (1,0) [hard 1] and (0,1) [hard 0]. The structure-
+# reweight predictive (r·E[θ] + w·(1−E[θ])) is the kernel's log_density.
+function update(cp::ConjugatePrevision{BetaPrevision, SoftBernoulli}, obs)
+    r, w = obs
+    r = Float64(r); w = Float64(w)
+    (r >= 0.0 && w >= 0.0) || error("SoftBernoulli update: likelihoods must be ≥ 0, got ($r, $w)")
+    α = cp.prior.alpha; β = cp.prior.beta
+    θ̄ = α / (α + β)
+    denom = r * θ̄ + w * (1.0 - θ̄)
+    denom > 0.0 || error("SoftBernoulli update: evidence has zero marginal likelihood (r=$r, w=$w)")
+    π = r * θ̄ / denom
+    ConjugatePrevision(BetaPrevision(α + π, β + (1.0 - π)), cp.likelihood)
 end
 
 # ── Pair: (GaussianPrevision, NormalNormal) ──

@@ -24,6 +24,20 @@ struct BetaBernoulli <: LeafFamily end
 # `BetaBernoulli` above is left untouched (it still errors on non-{0,1}).
 # Rationale + worked example: docs/paper1/move-2c-design.md.
 struct WeightedBernoulli <: LeafFamily end
+# Virtual / soft EVIDENCE on a latent Bernoulli. The observation is a pair
+# `(r, w)` of likelihoods `r = P(evidence | θ-event true)`,
+# `w = P(evidence | θ-event false)` — Pearl's λ-message, not an outcome. The
+# exact posterior under `L(θ) = r·θ + w·(1−θ)` is a 2-component Beta mixture;
+# the conjugate `update` here is its MEAN-EXACT ADF collapse:
+#   π = r·θ̄ / (r·θ̄ + w·(1−θ̄)),   α += π,  β += (1−π)    (θ̄ = α/(α+β))
+# which reproduces the exact posterior mean (α+π)/(α+β+1) — so any decision
+# reading E[θ] is exact; only the belief's variance is approximated. The
+# predictive marginal `r·E[θ] + w·(1−E[θ])` (the BMA structure-reweight term)
+# is supplied by the kernel's `log_density`. Reduces EXACTLY to BetaBernoulli
+# at `(r,w) = (1,0)` (a hard 1) and `(0,1)` (a hard 0). Distinct from
+# WeightedBernoulli, which tempers a KNOWN outcome by a weight; SoftBernoulli
+# carries the likelihood of an indirect signal and decodes per-cell.
+struct SoftBernoulli <: LeafFamily end
 struct Flat <: LeafFamily end
 struct PushOnly <: LikelihoodFamily end
 
