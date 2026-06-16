@@ -33,7 +33,7 @@ using Random: randstring
 using Serialization: deserialize
 
 include(joinpath(@__DIR__, "observation_log.jl"))
-using .ObservationLog: append_event!, replay_user_responses, replay_contexts
+using .ObservationLog: append_event!, replay_user_responses, replay_contexts, replay_route_outcomes
 
 # Pull the parent's Credence module — server.jl runs under the test/run
 # loader which has already done `using Credence`.
@@ -52,7 +52,7 @@ using .FeatureBrain: wire_brain!, build_model_from_env, reconstruct_posterior
 # via `..FeatureBrain` (the sibling submodule), so it resolves here under Server exactly
 # as it does at Main in the eval. INERT unless a roster is declared.
 include(joinpath(@__DIR__, "..", "brain", "routing_brain.jl"))
-using .RoutingBrain: wire_routing!
+using .RoutingBrain: wire_routing!, route_outcome!
 
 export start_daemon, stop_daemon, DaemonState
 export SignalQueue, enqueue!, snapshot, drain!
@@ -135,15 +135,23 @@ mutable struct DaemonState
     # conditions on the right cell. Both are transport bookkeeping, not reasoning.
     last_cost::Ref{Any}
     pending_contexts::Dict{String, Any}
+    # Model routing (Pass 2 / live learning). `routing` is the live `RoutingState` (per-model
+    # posteriors + the shared confound belief) or `nothing` for a governance-only install.
+    # `pending_routes` rejoins a tool-completed to its turn's routed model by session_id, so
+    # the per-turn correctness signal credits the right model (transport bookkeeping, not
+    # reasoning — like `pending_contexts`).
+    routing::Any
+    pending_routes::Dict{String, Any}
 end
 
 """
-    load_env(bdsl_dir) -> Eval.Env
+    load_env(bdsl_dir) -> (Eval.Env, Union{RoutingState, Nothing})
 
 Build a fresh BDSL environment with stdlib + the five Pass-1 programs
-loaded in dependency order.
+loaded in dependency order. Returns the env and the live `RoutingState`
+that `wire_routing!` built (or `nothing` for a governance-only install).
 """
-function load_env(bdsl_dir::AbstractString)::Eval.Env
+function load_env(bdsl_dir::AbstractString)
     env = Eval.default_env()
     env[:__toplevel__] = true
     stdlib_path = joinpath(@__DIR__, "..", "..", "..", "src", "stdlib.bdsl")
@@ -171,8 +179,8 @@ function load_env(bdsl_dir::AbstractString)::Eval.Env
         end
     end
     wire_brain!(env)
-    wire_routing!(env)   # installs env[:route-decide] iff a roster was declared; else no-op
-    env
+    routing = wire_routing!(env)   # RoutingState iff a roster was declared; else nothing
+    (env, routing)
 end
 
 """
@@ -215,11 +223,13 @@ end
 Build a fresh daemon state. Calls `load_env`, builds an empty signal
 queue, loads the starting posterior (warm brain if configured, else cold prior),
 and reconstructs on top of it by replaying every `user-responded` event in
-`log_path` through `observe-response`.
+`log_path` through `observe-response`. If routing is configured, it likewise replays
+every `route-outcome` event through `route_outcome!` on top of the warm `tops` —
+deterministic replay reproduces the live routing belief exactly.
 """
 function init_state(; bdsl_dir::AbstractString, log_path::AbstractString,
                     warm_brain_path=nothing)::DaemonState
-    env = load_env(bdsl_dir)
+    env, routing = load_env(bdsl_dir)
     posterior = load_starting_posterior(env, warm_brain_path)
     obs_fn = env[Symbol("observe-response")]
     # Pass 2: replay each user-responded REJOINED to its tool-proposed features
@@ -228,8 +238,15 @@ function init_state(; bdsl_dir::AbstractString, log_path::AbstractString,
     for (features, o) in replay_contexts(log_path)
         posterior = obs_fn(posterior, features, o)
     end
+    # Pass 2 routing: replay route-outcomes onto the warm tops (exact, deterministic).
+    if routing !== nothing
+        for (model_id, features, success, human) in replay_route_outcomes(log_path)
+            route_outcome!(routing, model_id, features, success; human = human)
+        end
+    end
     DaemonState(env, Ref{Any}(posterior), SignalQueue(), log_path, bdsl_dir,
-                Threads.Atomic{Bool}(false), Ref{Any}(nothing), Dict{String, Any}())
+                Threads.Atomic{Bool}(false), Ref{Any}(nothing), Dict{String, Any}(),
+                routing, Dict{String, Any}())
 end
 
 # ── Signal templating ──────────────────────────────────────────────────
@@ -428,7 +445,29 @@ function handle_sensor_event(state::DaemonState,
         end
 
     elseif event_type == "tool-completed"
-        # Pass 1: log only. Pass 2 will condition on outcome features.
+        # Pass 2: the per-turn correctness signal for ROUTING. Credit the routed model of
+        # this session's current turn with the exec outcome (did the proposed call execute
+        # cleanly?). The signal is NOISY — `route_outcome!` decodes it against the LEARNED
+        # tool-reliability confound, so a flaky tool is absorbed by ρ, not blamed on the
+        # model. This NEVER touches the governance posterior (a separate belief). A derived
+        # `route-outcome` event is logged so a restart replays this learning exactly.
+        if state.routing !== nothing
+            session_id = string(get(event_dict, "session_id", ""))
+            routed = get(state.pending_routes, session_id, nothing)
+            if routed !== nothing
+                model_id, features = routed
+                outcome = get(event_dict, "outcome", nothing)
+                success = outcome isa AbstractDict && get(outcome, "success", true) == true
+                route_outcome!(state.routing, model_id, features, success)
+                append_event!(state.log_path, Dict{String, Any}(
+                    "event_type" => "route-outcome",
+                    "event_id"   => string(get(event_dict, "event_id", "")),
+                    "model"      => model_id,
+                    "features"   => features,
+                    "success"    => success,
+                ))
+            end
+        end
 
     elseif event_type == "turn-cost"
         # Per-turn USD cost (OpenClaw-plugin llm_output hook). Logged for the
@@ -442,9 +481,9 @@ function handle_sensor_event(state::DaemonState,
         # Model routing (before_model_resolve). Read the request features and let the
         # brain's route-decide closure pick the EU-max model; emit a `route` signal the
         # body maps to providerOverride/modelOverride. This NEVER touches the governance
-        # posterior — routing is a separate (warm, frozen) belief. If routing is not
-        # configured (no roster declared ⇒ no route-decide), emit nothing: the body
-        # times out and fails open to OpenClaw's default model.
+        # posterior — routing is a SEPARATE belief (its own per-model posteriors). If
+        # routing is not configured (no roster declared ⇒ no route-decide), emit nothing:
+        # the body times out and fails open to OpenClaw's default model.
         route_decide = get(state.env, Symbol("route-decide"), nothing)
         if route_decide === nothing
             @warn "route-request received but routing is not configured; ignoring (body fails open)"
@@ -455,6 +494,13 @@ function handle_sensor_event(state::DaemonState,
                 error("route-request event $event_id missing required 'features'")
             choice = route_decide(features)
             emit_route_signal!(state, event_id, choice)
+            # Remember this turn's routed model so its tool-completed outcomes credit it
+            # (per-session; overwritten next turn). Transport bookkeeping, like pending_contexts.
+            if state.routing !== nothing
+                session_id = string(get(event_dict, "session_id", ""))
+                isempty(session_id) ||
+                    (state.pending_routes[session_id] = (choice["model"], features))
+            end
         end
 
     else

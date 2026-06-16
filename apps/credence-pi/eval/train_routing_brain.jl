@@ -15,8 +15,9 @@
 # short-prompt accuracy and treats long prompts as partly-unknown (the marginal structure
 # still lends them the overall signal; the length structure's long cell is at prior).
 #
-# v1 ships this belief FROZEN. Online learning of a live correctness signal is deferred —
-# it needs credit assignment across a session's many model calls (ROUTING_DOMINANCE.md).
+# This is the WARM SEED (a prior): the daemon then learns online from each routed turn's
+# per-turn outcome, confound-aware (brain/routing_brain.jl `route_outcome!`). Run-level /
+# multi-call credit assignment stays deferred (ROUTING_DOMINANCE.md).
 #
 # NON-CAUSAL (Role: eval): reads measured data, tallies counts, writes + verifies a
 # fixture. No belief drives a decision here. Run from repo root:
@@ -62,9 +63,9 @@ function main()
         "models" => models, "model_ids" => model_ids,
         "features" => FEATS, "feature_values" => VALS,
         "note" => "All items are short MCQ ⇒ short cell only; long cell stays at prior. " *
-                  "Daemon reconstructs K posteriors by replaying these counts via observe. " *
-                  "Frozen in v1 (no live correctness signal yet — needs credit assignment).",
-        "trained_at" => string(now()), "frozen" => true,
+                  "Daemon reconstructs K posteriors by replaying these counts via observe, " *
+                  "then learns online per routed turn (confound-aware; see routing_brain.jl).",
+        "trained_at" => string(now()), "warm_seed" => true,
         "per_model" => per_model)
     open(OUT, "w") do io; JSON3.pretty(io, out); end
     println("wrote per-model counts → $OUT")

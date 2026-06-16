@@ -33,18 +33,20 @@ independence across models is the ProductMeasure, exactly as the waste⊗harm jo
 """
 module RoutingBrain
 
-using Main.Credence: MixturePrevision, Projection, LinearCombination, TestFunction,
-    Identity, expect, wrap_in_measure
+using Main.Credence: MixturePrevision, BetaPrevision, Projection, LinearCombination,
+    TestFunction, Identity, Kernel, Interval, Finite, WeightedBernoulli, mean,
+    condition, expect, wrap_in_measure
 import Main.Credence.Ontology: optimise, ProductMeasure, Measure
 # `..FeatureBrain` (the sibling submodule), NOT `Main.FeatureBrain`: this resolves both
 # when the eval includes both brains at Main (siblings of Main) and when the daemon
 # includes both inside `module Server` (siblings of Server). FeatureBrain itself reaches
 # Credence via the always-Main `Main.Credence`, so only this sibling ref needs to be relative.
 using ..FeatureBrain: StructureBMA, belief_at_context, context_from_features,
-    build_model_from_decls, build_prior, observe
+    build_model_from_decls, build_prior, observe, observe_soft
 using JSON3
 
-export route, route_eu, posterior_accuracy, wire_routing!
+export route, route_eu, posterior_accuracy, wire_routing!,
+    RoutingState, EmissionBelief, route_outcome!, decode_correctness
 
 # Per-action EU functional: reward·θ_a − cost_a, expressed over the joint belief's
 # a-th component (Projection(a) = θ_a). `reward` and `cost` are declared utility DATA;
@@ -153,8 +155,144 @@ function _reconstruct_routing_tops(model::StructureBMA, K::Int, warm_path)
     end
 end
 
+# ── Online correctness learning: latent per-turn correctness + learned confounds ──
+#
+# The deferred online signal (ROUTING_DOMINANCE.md). We never observe model correctness
+# directly; we observe a per-turn signal — did the proposed call execute cleanly (e). e is
+# a NOISY emission of the latent C = "the model's turn was correct", confounded by TOOL
+# RELIABILITY: a correct call can still error on a flaky tool, a wrong call can still
+# execute. We model the confound explicitly and learn it, so a flaky tool is absorbed by
+# the reliability latent, NOT mis-attributed to the model.
+#
+#   θ_a(X) = P(C=1 | model a, context X)   — the routing belief (its own prior for C)
+#   ρ_X    = P(e=1 | C=1)                  — tool reliability (correct ⇒ clean exec)
+#   σ_X    = P(e=1 | C=0)                  — false-success (wrong ⇒ clean exec anyway)
+#
+# ρ_X, σ_X are SHARED across models at a context (the environment doesn't know which model
+# proposed the call) — the identification lever: the cross-model spread in observed e-rate,
+# against the (oracle-anchored) θ_a, pins ρ and σ. They are LATENT Beta beliefs
+# (weakly-informative directional prior E[ρ]>E[σ], refined by data — not fixed constants),
+# updated only through `condition`.
+#
+# Per turn (no human label): decode π = P(C=1 | e) with θ_a(X) as prior and the emission
+# means as likelihoods (emission uncertainty integrated via `expect`/`mean` — P(e|C) is
+# linear in ρ,σ, so the mean IS the integrated likelihood). Then ONE coupled coordinate
+# step (the EM the constitution treats as a computational strategy, invisible to the DSL):
+#   * routing belief: observe_soft(model, top_a, X, r, w)  — mean-exact soft-count
+#   * emissions (M-step): ρ_X ← (e, weight π),  σ_X ← (e, weight 1−π)   (WeightedBernoulli)
+# A human approve/reject, when present, makes C KNOWN — a clean hard `observe` on θ_a and a
+# unit-weight emission update — the gold anchor (no human-emission constant).
+
+# Default weakly-informative DIRECTIONAL emission prior: E[ρ0]=2/3 > E[σ0]=1/3. Only the
+# inequality is load-bearing (it breaks the EM label-symmetry); the magnitudes are weak
+# (pseudo-count 3) and washed out by data. Overridable via the declared `emission-prior`
+# (routing.bdsl) — auditable data, not a buried constant.
+const _DEFAULT_EMISSION_PRIOR = (2.0, 1.0, 1.0, 2.0)  # (ρα, ρβ, σα, σβ)
+
+mutable struct EmissionBelief
+    rho_cells::Dict{String, BetaPrevision}     # P(e=1|C=1) per context-key, lazily populated
+    sigma_cells::Dict{String, BetaPrevision}   # P(e=1|C=0) per context-key
+    rho0::BetaPrevision                        # directional prior, E[ρ0] > E[σ0]
+    sigma0::BetaPrevision
+end
+
+EmissionBelief(prior::NTuple{4, Float64} = _DEFAULT_EMISSION_PRIOR) =
+    EmissionBelief(Dict{String, BetaPrevision}(), Dict{String, BetaPrevision}(),
+                   BetaPrevision(prior[1], prior[2]), BetaPrevision(prior[3], prior[4]))
+
+# The live routing belief: per-model posteriors `tops` (MUTATED by route_outcome!) and the
+# shared emission belief. Captured by the `route-decide` closure, so routing reads the live
+# belief — un-frozen vs v1's closure-captured constant.
+mutable struct RoutingState
+    model::StructureBMA
+    tops::Vector{MixturePrevision}
+    emission::EmissionBelief
+    names::Vector{String}
+    providers::Vector{String}
+    model_ids::Vector{String}
+    costs::Vector{Float64}
+    reward::Float64
+end
+
+_ctx_key(X::AbstractVector) = join(string.(X), "|")
+
+# WeightedBernoulli kernel for the emission Beta updates (fractional pseudo-counts). The
+# conjugate update keys on likelihood_family; generate/log_density are not consulted.
+_emission_kernel() = Kernel(Interval(0.0, 1.0), Finite([0, 1]), theta -> theta,
+                            (h, o) -> 0.0; likelihood_family = WeightedBernoulli())
+
+# Emission likelihoods of the exec signal e under each correctness hypothesis:
+# r = P(e | C=1), w = P(e | C=0), from the emission belief means (`mean` = the integrated
+# likelihood, since P(e|C) is linear in ρ/σ).
+function _emission_likelihoods(em::EmissionBelief, key::AbstractString, e::Bool)
+    ρ̄ = mean(get(em.rho_cells,   key, em.rho0))
+    σ̄ = mean(get(em.sigma_cells, key, em.sigma0))
+    e ? (ρ̄, σ̄) : (1.0 - ρ̄, 1.0 - σ̄)
+end
+
 """
-    wire_routing!(env; warm_path) -> NamedTuple | nothing
+    decode_correctness(em, θ̄, key, e) -> (r, w, π)
+
+The signal→correctness likelihood: r = P(e|C=1), w = P(e|C=0) from the emission belief, and
+π = P(C=1 | e) = r·θ̄/(r·θ̄ + w·(1−θ̄)) with the routing belief θ̄ as the coherent prior. π is
+the soft correctness label; (r,w) is the virtual evidence the routing belief conditions on
+(SoftBernoulli). Pure readout — `mean` and Bayes, no mutation.
+"""
+function decode_correctness(em::EmissionBelief, θ̄::Float64, key::AbstractString, e::Bool)
+    r, w = _emission_likelihoods(em, key, e)
+    denom = r * θ̄ + w * (1.0 - θ̄)
+    π = denom > 0.0 ? r * θ̄ / denom : θ̄
+    (r, w, π)
+end
+
+# Update one reliability cell. `into_rho` selects ρ (the C=1 cell) vs σ (the C=0 cell); the
+# outcome is the exec signal e, credited `weight` pseudo-counts (WeightedBernoulli).
+function _update_emission!(em::EmissionBelief, key::AbstractString, into_rho::Bool,
+                           e::Bool, weight::Float64)
+    weight > 0.0 || return em
+    d  = into_rho ? em.rho_cells : em.sigma_cells
+    p0 = into_rho ? em.rho0 : em.sigma0
+    cur = get(d, key, p0)
+    d[key] = condition(cur, _emission_kernel(), (e ? 1 : 0, weight))
+    em
+end
+
+"""
+    route_outcome!(rt, model_id, features, success; human=nothing) -> RoutingState
+
+Learn from one routed turn's per-turn outcome. `features` is the route-request feature dict
+(converted to the context via `context_from_features`). `success` = the proposed call executed
+cleanly (the exec signal e). With no `human` label, decode the latent correctness from e
+(confound-aware) and take one coupled coordinate step: the routing belief conditions on the
+virtual evidence (mean-exact soft-count via `observe_soft`); the shared emission belief
+takes the EM M-step (ρ←(e,π), σ←(e,1−π) through `condition`). A `human` approve/reject makes
+C known: a hard `observe` on the routed model and a unit-weight emission update — the gold
+anchor. The single learning mechanism is `condition` throughout; the θ↔emission coupling is
+coordinate computation (a strategy), invisible to the DSL. Mutates `rt` in place.
+"""
+function route_outcome!(rt::RoutingState, model_id::AbstractString, features::AbstractDict,
+                        success::Bool; human::Union{Nothing, Bool} = nothing)
+    a = findfirst(==(String(model_id)), rt.model_ids)
+    a === nothing && error("route_outcome!: unknown model id $(model_id)")
+    X = context_from_features(rt.model, features)
+    key = _ctx_key(X)
+    e = success
+    if human !== nothing
+        C = human ? 1 : 0                                   # known correctness
+        rt.tops[a] = observe(rt.model, rt.tops[a], X, C)
+        _update_emission!(rt.emission, key, C == 1, e, 1.0)
+    else
+        θ̄ = posterior_accuracy(rt.model, rt.tops[a], X)     # E[θ_a|X] — the decode prior
+        r, w, π = decode_correctness(rt.emission, θ̄, key, e)
+        rt.tops[a] = observe_soft(rt.model, rt.tops[a], X, r, w)
+        _update_emission!(rt.emission, key, true,  e, π)        # ρ gets weight π
+        _update_emission!(rt.emission, key, false, e, 1.0 - π)  # σ gets weight 1−π
+    end
+    rt
+end
+
+"""
+    wire_routing!(env; warm_path) -> RoutingState | nothing
 
 Inject `env[:route-decide]` — the daemon's model-routing closure — from the declared
 routing manifest (routing.bdsl) and the per-profile reward (utility.bdsl). Mirrors
@@ -164,10 +302,13 @@ daemon call-site (`env[:route-decide](features)`) is unchanged in shape.
 
 INERT (returns `nothing`, installs no closure) unless `routing-models` is declared —
 so a governance-only install with no routing.bdsl is unaffected. The K per-model
-`StructureBMA` posteriors are warm-seeded from `warm_path` (measured per-model accuracy)
-and FROZEN: v1 ships the measured belief; online learning of a correctness signal is
-deferred (it needs credit assignment — see ROUTING_DOMINANCE.md). `route-decide` returns
-`Dict("model"=>id, "provider"=>provider, "name"=>name)` for the daemon's route signal.
+`StructureBMA` posteriors are warm-seeded from `warm_path` (measured per-model accuracy);
+they are held LIVE in the returned `RoutingState` and the `route-decide` closure reads them,
+so `route_outcome!` updates flow into subsequent routing decisions (the deferred online
+signal, now landed — per-turn decoded correctness with learned confounds; see
+ROUTING_DOMINANCE.md). `route-decide` returns `Dict("model"=>id, "provider"=>provider,
+"name"=>name)` for the daemon's route signal. The daemon stores the returned `RoutingState`
+and drives learning via `route_outcome!`.
 """
 function wire_routing!(env;
                        warm_path = get(env, Symbol("routing-brain-path"),
@@ -187,24 +328,33 @@ function wire_routing!(env;
 
     reward = Float64(get(env, Symbol("correct-answer-value"), 0.02))
 
+    # Emission prior: declared (`emission-prior`) auditable data, else the directional default.
+    ep = get(env, Symbol("emission-prior"), nothing)
+    emission_prior = (ep isa AbstractVector && length(ep) == 4) ?
+        (Float64(ep[1]), Float64(ep[2]), Float64(ep[3]), Float64(ep[4])) :
+        _DEFAULT_EMISSION_PRIOR
+
     rfeat = get(env, Symbol("routing-features"), nothing)
     rfeat isa AbstractVector ||
         error("routing: routing-models declared but routing-features missing (declare it in routing.bdsl)")
     rmodel = build_model_from_decls(rfeat)
     tops = _reconstruct_routing_tops(rmodel, K, warm_path)
 
+    rt = RoutingState(rmodel, tops, EmissionBelief(emission_prior), names, providers,
+                      model_ids, costs, reward)
+
     # The daemon's routing call-site: a feature dict → the chosen model's wire fields.
-    # The argmax is the single canonical `optimise` inside `route` (Invariant 1); the
-    # only arithmetic is reward/cost coefficient construction from declared utility data.
+    # Reads `rt.tops` LIVE (route_outcome! mutates them); the argmax is the single canonical
+    # `optimise` inside `route` (Invariant 1); the only arithmetic is reward/cost coefficient
+    # construction from declared utility data.
     env[Symbol("route-decide")] = (features) -> begin
-        X = context_from_features(rmodel, features)
-        a = route(rmodel, tops, X, costs, reward)
-        Dict{String, Any}("model" => model_ids[a], "provider" => providers[a],
-                          "name" => names[a])
+        X = context_from_features(rt.model, features)
+        a = route(rt.model, rt.tops, X, rt.costs, rt.reward)
+        Dict{String, Any}("model" => rt.model_ids[a], "provider" => rt.providers[a],
+                          "name" => rt.names[a])
     end
 
-    (model = rmodel, tops = tops, names = names, providers = providers,
-     model_ids = model_ids, costs = costs, reward = reward)
+    rt
 end
 
 end # module RoutingBrain

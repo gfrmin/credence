@@ -50,3 +50,18 @@
     (list "haiku"  "anthropic" "claude-haiku-4-5"  0.0035)
     (list "sonnet" "anthropic" "claude-sonnet-4-6" 0.0105)
     (list "opus"   "anthropic" "claude-opus-4-8"   0.0175)))
+
+; --- Emission prior: the confound model's starting belief (declared DATA) ---
+;
+; Online learning never sees model correctness directly — only whether the
+; proposed call executed cleanly (the exec signal), a NOISY emission of latent
+; correctness confounded by TOOL RELIABILITY. The brain learns two shared latents
+; per context: ρ = P(exec-clean | correct), σ = P(exec-clean | incorrect), so a
+; flaky tool is absorbed by ρ rather than mis-blamed on the model. These are the
+; (ρα ρβ σα σβ) of their Beta PRIORS — weakly-informative and DIRECTIONAL: the
+; only load-bearing fact is E[ρ]=2/3 > E[σ]=1/3 (correct calls execute more often
+; than incorrect ones), which breaks the EM label-symmetry. The magnitudes are a
+; pseudo-count of 3 and are washed out by data. Auditable here, not a buried
+; constant; the brain falls back to this same default if undeclared.
+(define emission-prior
+  (list 2.0 1.0 1.0 2.0))

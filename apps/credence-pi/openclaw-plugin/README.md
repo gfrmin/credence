@@ -106,13 +106,21 @@ under the active profile.
 **What the belief is.** The per-model accuracy belief is **warm-seeded from
 measured data** (`brain/routing_brain.counts.json`, distilled from the
 3-frontier-model oracle grid by `eval/train_routing_brain.jl`) so routing is
-calibrated from install. It is **frozen** in this version: the cost-routing
-behaviour is the proven result, but online learning of a live correctness
-signal is deferred — it needs credit assignment across a session's many
-model calls (see `eval/results/ROUTING_DOMINANCE.md`). Only `prompt-length`
-is conditioned on, because it is the one feature honestly extractable from a
-raw prompt; the structure-BMA collapses it to the marginal if it doesn't
-predict accuracy.
+calibrated from install, and it **learns online**: each routed turn's
+per-turn outcome — did the proposed call execute cleanly
+(`tool-completed.success`)? — updates the routed model's belief. That signal
+is noisy (a correct call can fail on a flaky tool), so the brain models the
+confound explicitly and learns it (per-context tool-reliability), and a flaky
+tool is absorbed by the reliability latent rather than blamed on the model;
+the belief conditions on the decoded soft correctness through the canonical
+`condition` (mean-exact, so routing's EU is exact). A human approve/reject is
+the gold anchor. Honest limits — per-turn proxy ≠ ground-truth correctness;
+the false-success rate is only weakly identified; run-level / multi-call
+credit assignment stays deferred — are in `eval/results/ROUTING_DOMINANCE.md`.
+The belief is durable (route-outcomes are logged and replayed on restart).
+Only `prompt-length` is conditioned on, because it is the one feature honestly
+extractable from a raw prompt; the structure-BMA collapses it to the marginal
+if it doesn't predict accuracy.
 
 ## Develop
 

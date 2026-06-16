@@ -33,7 +33,7 @@ module FeatureBrain
 
 using Main.Credence: BetaPrevision, TaggedBetaPrevision, SparseStructurePrevision,
     ProductPrevision, MixturePrevision,
-    Prevision, Kernel, Interval, Finite, BetaBernoulli, Flat, FiringByTag, Identity,
+    Prevision, Kernel, Interval, Finite, BetaBernoulli, SoftBernoulli, Flat, FiringByTag, Identity,
     Projection, LinearCombination, TestFunction, GeometricTail, mean, FeatureDecl, condition, expect,
     cell_at, wrap_in_measure
 import Main.Credence.Ontology: optimise, value, voi, net_voi, with_components,
@@ -42,7 +42,7 @@ using JSON3
 
 export StructureBMA, build_model, build_model_from_env, build_model_from_decls,
        build_prior, build_prior_dense, wire_brain!, context_from_features, firing_tags,
-       belief_at_context, observe, decide, decide_multi,
+       belief_at_context, observe, observe_soft, decide, decide_multi,
        reconstruct_posterior, reconstruct_harm_posterior
 
 # ── The model: feature spec + structure enumeration + tag bookkeeping ──
@@ -257,6 +257,35 @@ Bayesian update of the persistent belief on one `(context, response)`: a single
 """
 observe(model::StructureBMA, top::MixturePrevision, X::AbstractVector, obs) =
     condition(top, _learn_kernel(firing_tags(model, X)), obs)
+
+# Soft-evidence log-density: the firing cell's predictive marginal under virtual
+# evidence with likelihoods (r, w) = (P(S|label=1), P(S|label=0)) — the chain-rule
+# term the BMA reweights structures by. Generalises `_approve_logdensity`: the hard
+# label o=1 is (r,w)=(1,0) ⇒ log(mean), o=0 is (0,1) ⇒ log(1-mean).
+_soft_logdensity(m, obs) = (a = mean(m.beta); r = obs[1]; w = obs[2];
+                            log(max(r * a + w * (1.0 - a), 1e-300)))
+
+# Per-context SOFT-EVIDENCE learning kernel: SoftBernoulli on the cells in F(X),
+# Flat elsewhere. The cell update is the mean-exact ADF collapse (α += π, β += 1-π,
+# π = r·θ̄/(r·θ̄+w·(1-θ̄))); structures reweight by `_soft_logdensity`.
+_soft_learn_kernel(fires::Set{Int}) =
+    Kernel(Interval(0.0, 1.0), Finite([0, 1]), theta -> theta, _soft_logdensity;
+           likelihood_family = FiringByTag(fires, SoftBernoulli(), Flat()))
+
+"""
+    observe_soft(model, top, X, r, w) -> MixturePrevision
+
+Bayesian update on INDIRECT evidence about the (latent) label at context X: `r`
+and `w` are the likelihoods of the observed signal under label = 1 / label = 0
+(P(S|1), P(S|0)). A single `condition` through the canalised path with a
+`SoftBernoulli` kernel — the firing cell's mean-exact soft-count, the BMA
+structure-reweight by the signal's predictive marginal. Reduces EXACTLY to
+`observe(model, top, X, 1)` at (r,w)=(1,0) and `observe(…, 0)` at (0,1) — the
+hard label is the degenerate certain-signal corner.
+"""
+observe_soft(model::StructureBMA, top::MixturePrevision, X::AbstractVector,
+             r::Real, w::Real) =
+    condition(top, _soft_learn_kernel(firing_tags(model, X)), (Float64(r), Float64(w)))
 
 # Select a structure component's cell-for-X by tag. Two representations:
 # sparse (O(1) dict-backed cell_at) and dense (linear scan of factors). Both

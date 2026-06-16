@@ -159,14 +159,36 @@ What ships live, and what is deliberately deferred:
   per-profile cost-routing (`correct-answer-value` in `utility.bdsl` is the dial) and
   Wald per-profile divergence (low value → cheap, high value → best-believed), through
   the one canonical `optimise`.
-- **The belief is frozen in v1; online learning is deferred.** Closing the quality-regime
-  gap needs *online calibration data* — exactly what a deployed router accumulates. But
-  the honest online signal is unsolved: a session makes many model calls and the only
-  run-level outcome (`agent_end.success`) cannot attribute success to a *specific* call's
-  model. A naive credit rule conflates model quality with task difficulty and tool
-  reliability, which is the credit-assignment layer the paper flags as unsolved. So v1
-  routes on the frozen measured belief; the daemon retains the structure (a `route-outcome`
-  update is a one-function addition) for when a defensible signal is designed.
+- **The belief now learns online (per-turn, confound-aware).** Closing the quality-regime
+  gap needs *online calibration data* — exactly what a deployed router accumulates. The
+  credit-assignment wall is real but specific to *run-level* success (`agent_end.success`
+  cannot attribute a session outcome to one call's model, conflating model-quality with
+  task-difficulty and tool-reliability). We sidestep it by learning from the **per-turn**
+  signal, which *is* per-call attributable: did the routed model's proposed call execute
+  cleanly (`tool-completed.success`)? That signal is itself noisy — a correct call can fail
+  on a flaky tool — so we model the confound explicitly and learn it: shared per-context
+  latents `ρ = P(clean | correct)`, `σ = P(clean | incorrect)`, identified by the
+  cross-model spread against the oracle-anchored accuracy. The signal is decoded to a soft
+  correctness `π` (the routing belief is its own coherent prior), and the belief conditions
+  on the resulting **virtual evidence** (`SoftBernoulli`) — a mean-exact ADF collapse, so
+  the posterior *mean* (what routing's EU reads) is exact; only the variance is approximated.
+  Every update is `condition`; the decode is `expect`; no arbitrary constants (the emission
+  prior is declared, directional, and washed out by data). A human approve/reject, when
+  present, is the gold anchor (a hard label). Mechanism + tests:
+  `brain/routing_brain.jl` (`route_outcome!`), `test_routing.jl` §C/§D.
+- **What confound-partialling buys (the test that matters).** A pure tool-flakiness stream
+  — every call fails for every model, true accuracy unchanged — leaves the accuracy belief
+  essentially flat (drift < 0.005), because the failures are absorbed by the learned `ρ`,
+  not blamed on the models. The naive `fail ⇒ incorrect` credit rule craters the same
+  belief by ~0.5. That gap is the deferral's worry, addressed.
+- **Honest limits of the online layer.** `ρ` (the dominant confound for high-accuracy
+  models) identifies tightly; `σ` (false-success) only weakly — when models are mostly
+  correct, `C=0` is rare, so little data bears on it (its decode influence is proportionally
+  small). The per-turn proxy is *not* ground-truth correctness; identification leans on the
+  oracle anchor and drifts if the live task-mix departs from it. **Run-level** success and
+  multi-call credit assignment remain deferred. The exact-vs-ADF decode *fidelity* is itself
+  a metareasonable axis (EU-max over fidelity-vs-compute) — flagged, not yet built. The
+  belief is durable: `route-outcome` events are logged and replayed on restart (exact).
 - **Only `prompt-length` is conditioned on live.** It is the one feature honestly
   extractable from a raw prompt (semantic category — the offline signal — would need a
   classifier, an arbitrary unmeasured component). The structure-BMA collapses it to the

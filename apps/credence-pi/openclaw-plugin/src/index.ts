@@ -346,6 +346,9 @@ export function createGovernor(
       event_type: "tool-completed",
       event_id: newEventId(),
       in_response_to: event.toolCallId ?? "",
+      // session_id lets the daemon credit this outcome to the turn's routed model
+      // (online routing learning). The governance path correlates by toolCallId, not this.
+      session_id: ctx.sessionId ?? ctx.sessionKey ?? "",
       timestamp: new Date().toISOString(),
       outcome: {
         success: event.error == null,

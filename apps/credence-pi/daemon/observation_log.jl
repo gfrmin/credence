@@ -28,6 +28,7 @@ using Dates: now, UTC, format
 using JSON3
 
 export append_event!, read_log, replay_user_responses, replay_contexts, LogRecord
+export replay_route_outcomes
 export SCHEMA_VERSION
 
 const SCHEMA_VERSION = "credence-pi/v1"
@@ -192,6 +193,33 @@ function replay_contexts(path::AbstractString)::Vector{Tuple{Any, Int}}
             features === nothing && continue
             push!(out, (features, response == "yes" ? 1 : 0))
         end
+    end
+    out
+end
+
+"""
+    replay_route_outcomes(path) -> Vector{Tuple{String, Any, Bool, Union{Nothing, Bool}}}
+
+Pass-2 ROUTING replay: the sequence of `(model_id, features, success, human)` to fold
+through `RoutingBrain.route_outcome!` on top of the warm `tops`, reconstructing the live
+routing belief after a restart. Reads the derived `route-outcome` events the daemon appends
+when it credits a routed model from a tool-completed. Because `route_outcome!` is
+deterministic given the event order, replaying this sequence reproduces the live belief
+EXACTLY (no summary approximation) — the same durability the governance posterior gets from
+`replay_contexts`. A record missing `model`/`features`/`success` is skipped (cannot be
+placed). `human` is `nothing` unless a human approve/reject was recorded for the turn.
+"""
+function replay_route_outcomes(path::AbstractString)
+    out = Tuple{String, Any, Bool, Union{Nothing, Bool}}[]
+    for record in read_log(path)
+        get(record.event, "event_type", "") == "route-outcome" || continue
+        model = get(record.event, "model", nothing)
+        features = get(record.event, "features", nothing)
+        success = get(record.event, "success", nothing)
+        (model === nothing || features === nothing || success === nothing) && continue
+        h = get(record.event, "human", nothing)
+        human = h === nothing ? nothing : Bool(h)
+        push!(out, (String(model), features, Bool(success), human))
     end
     out
 end
