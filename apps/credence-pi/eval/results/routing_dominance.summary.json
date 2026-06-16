@@ -1,0 +1,140 @@
+{
+    "edge_marginals": {
+        "exp": [
+            0.006753674011172693,
+            0.7219194128965536,
+            0.14246383402447982
+        ],
+        "cheap": [
+            0.012845176761009009,
+            0.9861251340214747,
+            0.9999992781414421
+        ],
+        "mid": [
+            0.0037531317827761202,
+            0.9997917899282737,
+            0.9964828366053222
+        ]
+    },
+    "finding": "Rich (feature-conditioned) EU-max routing strictly beats every competitor on the cost-sensitive profile (including the clairvoyant FrugalGPT upper bound) and matches the accuracy-maximising Bayes rule on the quality-max profile; it beats the same EU-max on a category-only belief on cost-hawk (richness is the margin, dominance is belief-agnostic); the structure-BMA auto-discovers from noisy data that difficulty and length drive correctness while category is noise. Bayes-optimal given the belief, not oracle-optimal.",
+    "config": {
+        "features": [
+            "category",
+            "difficulty",
+            "length"
+        ],
+        "seeds": 12,
+        "reps": 80,
+        "models": [
+            "cheap",
+            "mid",
+            "exp"
+        ],
+        "train_frac": 0.6,
+        "costs": [
+            0.001,
+            0.005,
+            0.02
+        ],
+        "profiles": {
+            "cost-hawk": 0.01,
+            "quality-hawk": 1
+        }
+    },
+    "first_seed_welfare": {
+        "cost-hawk": {
+            "always-cheap": 0.4152826306425879,
+            "always-exp": -2.749468009530929,
+            "threshold-router": -1.856136697254811,
+            "eu-max:category-only": 0.43046900154592144,
+            "best-fixed-table": -2.749468009530929,
+            "oracle-cascade": -0.08906727107447178,
+            "argmax-accuracy": -2.749468009530929,
+            "eu-max:rich": 0.49250165994974254
+        },
+        "quality-hawk": {
+            "always-cheap": 66.87226306425927,
+            "always-exp": 231.93319904690676,
+            "threshold-router": 202.76333027451835,
+            "eu-max:category-only": 231.93319904690676,
+            "best-fixed-table": 231.93319904690676,
+            "oracle-cascade": 245.9310221416807,
+            "argmax-accuracy": 231.93319904690676,
+            "eu-max:rich": 231.93319904690676
+        }
+    },
+    "category_only_routing": {
+        "cost-hawk": {
+            "reasoning/easy/long": "mid",
+            "reasoning/easy/short": "mid",
+            "factual/hard/long": "mid",
+            "factual/easy/short": "mid",
+            "reasoning/hard/short": "mid",
+            "reasoning/hard/long": "mid",
+            "factual/easy/long": "mid",
+            "factual/hard/short": "mid"
+        },
+        "quality-hawk": {
+            "reasoning/easy/long": "exp",
+            "reasoning/easy/short": "exp",
+            "factual/hard/long": "exp",
+            "factual/easy/short": "exp",
+            "reasoning/hard/short": "exp",
+            "reasoning/hard/long": "exp",
+            "factual/easy/long": "exp",
+            "factual/hard/short": "exp"
+        }
+    },
+    "mean_regret_vs_rich": {
+        "always-cheap": {
+            "cost-hawk": 0.060692149629704206,
+            "quality-hawk": 164.70574293496153
+        },
+        "always-exp": {
+            "cost-hawk": 3.2243964956368827,
+            "quality-hawk": -0.4598224643201097
+        },
+        "threshold-router": {
+            "cost-hawk": 2.0177879665936764,
+            "quality-hawk": 47.072074631359584
+        },
+        "eu-max:category-only": {
+            "cost-hawk": 0.05570456469264767,
+            "quality-hawk": -0.4598224643201097
+        },
+        "best-fixed-table": {
+            "cost-hawk": 3.2243964956368827,
+            "quality-hawk": -0.4598224643201097
+        },
+        "oracle-cascade": {
+            "cost-hawk": 0.5705199585558529,
+            "quality-hawk": -14.483792355626905
+        },
+        "argmax-accuracy": {
+            "cost-hawk": 3.2243964956368827,
+            "quality-hawk": -0.4598224643201097
+        }
+    },
+    "rich_routing": {
+        "cost-hawk": {
+            "reasoning/easy/long": "mid",
+            "reasoning/easy/short": "cheap",
+            "factual/hard/long": "cheap",
+            "factual/easy/short": "cheap",
+            "reasoning/hard/short": "mid",
+            "reasoning/hard/long": "cheap",
+            "factual/easy/long": "mid",
+            "factual/hard/short": "mid"
+        },
+        "quality-hawk": {
+            "reasoning/easy/long": "exp",
+            "reasoning/easy/short": "exp",
+            "factual/hard/long": "exp",
+            "factual/easy/short": "exp",
+            "reasoning/hard/short": "exp",
+            "reasoning/hard/long": "exp",
+            "factual/easy/long": "exp",
+            "factual/hard/short": "exp"
+        }
+    }
+}
