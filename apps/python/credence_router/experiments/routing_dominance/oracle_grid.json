@@ -1,0 +1,1180 @@
+{
+  "raw": {
+    "claude-haiku-4-5|f01": {
+      "answer": "B",
+      "correct": true,
+      "raw": "B"
+    },
+    "claude-haiku-4-5|f02": {
+      "answer": "C",
+      "correct": true,
+      "raw": "C"
+    },
+    "claude-haiku-4-5|f03": {
+      "answer": "A",
+      "correct": true,
+      "raw": "A"
+    },
+    "claude-haiku-4-5|f04": {
+      "answer": "D",
+      "correct": true,
+      "raw": "D"
+    },
+    "claude-haiku-4-5|f05": {
+      "answer": "A",
+      "correct": false,
+      "raw": "A"
+    },
+    "claude-haiku-4-5|f06": {
+      "answer": "C",
+      "correct": true,
+      "raw": "C"
+    },
+    "claude-haiku-4-5|f07": {
+      "answer": "B",
+      "correct": true,
+      "raw": "B"
+    },
+    "claude-haiku-4-5|f08": {
+      "answer": "C",
+      "correct": true,
+      "raw": "C"
+    },
+    "claude-haiku-4-5|f09": {
+      "answer": "B",
+      "correct": true,
+      "raw": "B"
+    },
+    "claude-haiku-4-5|f10": {
+      "answer": "D",
+      "correct": true,
+      "raw": "D"
+    },
+    "claude-haiku-4-5|f11": {
+      "answer": "C",
+      "correct": true,
+      "raw": "C"
+    },
+    "claude-haiku-4-5|f12": {
+      "answer": "B",
+      "correct": true,
+      "raw": "B"
+    },
+    "claude-haiku-4-5|f13": {
+      "answer": "C",
+      "correct": true,
+      "raw": "C"
+    },
+    "claude-haiku-4-5|f14": {
+      "answer": "C",
+      "correct": true,
+      "raw": "C"
+    },
+    "claude-haiku-4-5|f15": {
+      "answer": "C",
+      "correct": true,
+      "raw": "C"
+    },
+    "claude-haiku-4-5|n01": {
+      "answer": "A",
+      "correct": false,
+      "raw": "A"
+    },
+    "claude-haiku-4-5|n02": {
+      "answer": "C",
+      "correct": true,
+      "raw": "C"
+    },
+    "claude-haiku-4-5|n03": {
+      "answer": "C",
+      "correct": true,
+      "raw": "C"
+    },
+    "claude-haiku-4-5|n04": {
+      "answer": "B",
+      "correct": true,
+      "raw": "B"
+    },
+    "claude-haiku-4-5|n05": {
+      "answer": "C",
+      "correct": true,
+      "raw": "C"
+    },
+    "claude-haiku-4-5|n06": {
+      "answer": "B",
+      "correct": true,
+      "raw": "B"
+    },
+    "claude-haiku-4-5|n07": {
+      "answer": "B",
+      "correct": true,
+      "raw": "B"
+    },
+    "claude-haiku-4-5|n08": {
+      "answer": "B",
+      "correct": true,
+      "raw": "B"
+    },
+    "claude-haiku-4-5|n09": {
+      "answer": "C",
+      "correct": true,
+      "raw": "C"
+    },
+    "claude-haiku-4-5|n10": {
+      "answer": "C",
+      "correct": true,
+      "raw": "C"
+    },
+    "claude-haiku-4-5|r01": {
+      "answer": "A",
+      "correct": true,
+      "raw": "A"
+    },
+    "claude-haiku-4-5|r02": {
+      "answer": "C",
+      "correct": true,
+      "raw": "C"
+    },
+    "claude-haiku-4-5|r03": {
+      "answer": "B",
+      "correct": true,
+      "raw": "B"
+    },
+    "claude-haiku-4-5|r04": {
+      "answer": "A",
+      "correct": true,
+      "raw": "A"
+    },
+    "claude-haiku-4-5|r05": {
+      "answer": "C",
+      "correct": true,
+      "raw": "C"
+    },
+    "claude-haiku-4-5|r06": {
+      "answer": "A",
+      "correct": false,
+      "raw": "A"
+    },
+    "claude-haiku-4-5|r07": {
+      "answer": "C",
+      "correct": true,
+      "raw": "C"
+    },
+    "claude-haiku-4-5|r08": {
+      "answer": "B",
+      "correct": true,
+      "raw": "B"
+    },
+    "claude-haiku-4-5|m01": {
+      "answer": "C",
+      "correct": true,
+      "raw": "C"
+    },
+    "claude-haiku-4-5|m02": {
+      "answer": "D",
+      "correct": true,
+      "raw": "D"
+    },
+    "claude-haiku-4-5|m03": {
+      "answer": "D",
+      "correct": true,
+      "raw": "D"
+    },
+    "claude-haiku-4-5|m04": {
+      "answer": "B",
+      "correct": true,
+      "raw": "B"
+    },
+    "claude-haiku-4-5|m05": {
+      "answer": "C",
+      "correct": true,
+      "raw": "C"
+    },
+    "claude-haiku-4-5|m06": {
+      "answer": "C",
+      "correct": true,
+      "raw": "C"
+    },
+    "claude-haiku-4-5|m07": {
+      "answer": "C",
+      "correct": true,
+      "raw": "C"
+    },
+    "claude-haiku-4-5|g01": {
+      "answer": "B",
+      "correct": true,
+      "raw": "B"
+    },
+    "claude-haiku-4-5|g02": {
+      "answer": "A",
+      "correct": false,
+      "raw": "A"
+    },
+    "claude-haiku-4-5|g03": {
+      "answer": "B",
+      "correct": true,
+      "raw": "B"
+    },
+    "claude-haiku-4-5|g04": {
+      "answer": "B",
+      "correct": true,
+      "raw": "B"
+    },
+    "claude-haiku-4-5|g05": {
+      "answer": "A",
+      "correct": false,
+      "raw": "A"
+    },
+    "claude-haiku-4-5|g06": {
+      "answer": "B",
+      "correct": true,
+      "raw": "B"
+    },
+    "claude-haiku-4-5|g07": {
+      "answer": "C",
+      "correct": false,
+      "raw": "C"
+    },
+    "claude-haiku-4-5|g08": {
+      "answer": "C",
+      "correct": true,
+      "raw": "C"
+    },
+    "claude-haiku-4-5|g09": {
+      "answer": "B",
+      "correct": true,
+      "raw": "B"
+    },
+    "claude-haiku-4-5|g10": {
+      "answer": "B",
+      "correct": true,
+      "raw": "B"
+    },
+    "claude-sonnet-4-6|f01": {
+      "answer": "B",
+      "correct": true,
+      "raw": "B"
+    },
+    "claude-sonnet-4-6|f02": {
+      "answer": "C",
+      "correct": true,
+      "raw": "C"
+    },
+    "claude-sonnet-4-6|f03": {
+      "answer": "B",
+      "correct": false,
+      "raw": "B"
+    },
+    "claude-sonnet-4-6|f04": {
+      "answer": "D",
+      "correct": true,
+      "raw": "D"
+    },
+    "claude-sonnet-4-6|f05": {
+      "answer": "B",
+      "correct": true,
+      "raw": "B"
+    },
+    "claude-sonnet-4-6|f06": {
+      "answer": "C",
+      "correct": true,
+      "raw": "C"
+    },
+    "claude-sonnet-4-6|f07": {
+      "answer": "B",
+      "correct": true,
+      "raw": "B"
+    },
+    "claude-sonnet-4-6|f08": {
+      "answer": "C",
+      "correct": true,
+      "raw": "C"
+    },
+    "claude-sonnet-4-6|f09": {
+      "answer": "B",
+      "correct": true,
+      "raw": "B"
+    },
+    "claude-sonnet-4-6|f10": {
+      "answer": "D",
+      "correct": true,
+      "raw": "D"
+    },
+    "claude-sonnet-4-6|f11": {
+      "answer": "C",
+      "correct": true,
+      "raw": "C"
+    },
+    "claude-sonnet-4-6|f12": {
+      "answer": "B",
+      "correct": true,
+      "raw": "B"
+    },
+    "claude-sonnet-4-6|f13": {
+      "answer": "C",
+      "correct": true,
+      "raw": "C"
+    },
+    "claude-sonnet-4-6|f14": {
+      "answer": "C",
+      "correct": true,
+      "raw": "C"
+    },
+    "claude-sonnet-4-6|f15": {
+      "answer": "C",
+      "correct": true,
+      "raw": "C"
+    },
+    "claude-sonnet-4-6|n01": {
+      "answer": null,
+      "correct": false,
+      "raw": "4230 \u00d7 0.17 = 719.1"
+    },
+    "claude-sonnet-4-6|n02": {
+      "answer": "C",
+      "correct": true,
+      "raw": "C"
+    },
+    "claude-sonnet-4-6|n03": {
+      "answer": "C",
+      "correct": true,
+      "raw": "C"
+    },
+    "claude-sonnet-4-6|n04": {
+      "answer": "B",
+      "correct": true,
+      "raw": "B"
+    },
+    "claude-sonnet-4-6|n05": {
+      "answer": "C",
+      "correct": true,
+      "raw": "C"
+    },
+    "claude-sonnet-4-6|n06": {
+      "answer": "B",
+      "correct": true,
+      "raw": "B"
+    },
+    "claude-sonnet-4-6|n07": {
+      "answer": "B",
+      "correct": true,
+      "raw": "B"
+    },
+    "claude-sonnet-4-6|n08": {
+      "answer": "B",
+      "correct": true,
+      "raw": "B"
+    },
+    "claude-sonnet-4-6|n09": {
+      "answer": "C",
+      "correct": true,
+      "raw": "C"
+    },
+    "claude-sonnet-4-6|n10": {
+      "answer": "C",
+      "correct": true,
+      "raw": "C"
+    },
+    "claude-sonnet-4-6|r01": {
+      "answer": "A",
+      "correct": true,
+      "raw": "A"
+    },
+    "claude-sonnet-4-6|r02": {
+      "answer": "C",
+      "correct": true,
+      "raw": "C"
+    },
+    "claude-sonnet-4-6|r03": {
+      "answer": "B",
+      "correct": true,
+      "raw": "B"
+    },
+    "claude-sonnet-4-6|r04": {
+      "answer": "A",
+      "correct": true,
+      "raw": "A"
+    },
+    "claude-sonnet-4-6|r05": {
+      "answer": "C",
+      "correct": true,
+      "raw": "C"
+    },
+    "claude-sonnet-4-6|r06": {
+      "answer": "B",
+      "correct": true,
+      "raw": "B"
+    },
+    "claude-sonnet-4-6|r07": {
+      "answer": "C",
+      "correct": true,
+      "raw": "C"
+    },
+    "claude-sonnet-4-6|r08": {
+      "answer": "B",
+      "correct": true,
+      "raw": "B"
+    },
+    "claude-sonnet-4-6|m01": {
+      "answer": "C",
+      "correct": true,
+      "raw": "C"
+    },
+    "claude-sonnet-4-6|m02": {
+      "answer": "D",
+      "correct": true,
+      "raw": "D"
+    },
+    "claude-sonnet-4-6|m03": {
+      "answer": "D",
+      "correct": true,
+      "raw": "D"
+    },
+    "claude-sonnet-4-6|m04": {
+      "answer": "B",
+      "correct": true,
+      "raw": "B"
+    },
+    "claude-sonnet-4-6|m05": {
+      "answer": "C",
+      "correct": true,
+      "raw": "C"
+    },
+    "claude-sonnet-4-6|m06": {
+      "answer": "C",
+      "correct": true,
+      "raw": "C"
+    },
+    "claude-sonnet-4-6|m07": {
+      "answer": "C",
+      "correct": true,
+      "raw": "C"
+    },
+    "claude-sonnet-4-6|g01": {
+      "answer": "B",
+      "correct": true,
+      "raw": "B"
+    },
+    "claude-sonnet-4-6|g02": {
+      "answer": "B",
+      "correct": true,
+      "raw": "B"
+    },
+    "claude-sonnet-4-6|g03": {
+      "answer": "B",
+      "correct": true,
+      "raw": "B"
+    },
+    "claude-sonnet-4-6|g04": {
+      "answer": "B",
+      "correct": true,
+      "raw": "B"
+    },
+    "claude-sonnet-4-6|g05": {
+      "answer": "B",
+      "correct": true,
+      "raw": "B"
+    },
+    "claude-sonnet-4-6|g06": {
+      "answer": "B",
+      "correct": true,
+      "raw": "B"
+    },
+    "claude-sonnet-4-6|g07": {
+      "answer": "D",
+      "correct": true,
+      "raw": "D"
+    },
+    "claude-sonnet-4-6|g08": {
+      "answer": "C",
+      "correct": true,
+      "raw": "C"
+    },
+    "claude-sonnet-4-6|g09": {
+      "answer": "B",
+      "correct": true,
+      "raw": "B"
+    },
+    "claude-sonnet-4-6|g10": {
+      "answer": "B",
+      "correct": true,
+      "raw": "B"
+    },
+    "claude-opus-4-8|f01": {
+      "answer": "B",
+      "correct": true,
+      "raw": "B"
+    },
+    "claude-opus-4-8|f02": {
+      "answer": "C",
+      "correct": true,
+      "raw": "C"
+    },
+    "claude-opus-4-8|f03": {
+      "answer": "A",
+      "correct": true,
+      "raw": "A"
+    },
+    "claude-opus-4-8|f04": {
+      "answer": "D",
+      "correct": true,
+      "raw": "D"
+    },
+    "claude-opus-4-8|f05": {
+      "answer": "B",
+      "correct": true,
+      "raw": "B"
+    },
+    "claude-opus-4-8|f06": {
+      "answer": "C",
+      "correct": true,
+      "raw": "C"
+    },
+    "claude-opus-4-8|f07": {
+      "answer": "B",
+      "correct": true,
+      "raw": "B"
+    },
+    "claude-opus-4-8|f08": {
+      "answer": "C",
+      "correct": true,
+      "raw": "C"
+    },
+    "claude-opus-4-8|f09": {
+      "answer": "B",
+      "correct": true,
+      "raw": "B"
+    },
+    "claude-opus-4-8|f10": {
+      "answer": "D",
+      "correct": true,
+      "raw": "D"
+    },
+    "claude-opus-4-8|f11": {
+      "answer": "C",
+      "correct": true,
+      "raw": "C"
+    },
+    "claude-opus-4-8|f12": {
+      "answer": "B",
+      "correct": true,
+      "raw": "B"
+    },
+    "claude-opus-4-8|f13": {
+      "answer": "C",
+      "correct": true,
+      "raw": "C"
+    },
+    "claude-opus-4-8|f14": {
+      "answer": "C",
+      "correct": true,
+      "raw": "C"
+    },
+    "claude-opus-4-8|f15": {
+      "answer": "C",
+      "correct": true,
+      "raw": "C"
+    },
+    "claude-opus-4-8|n01": {
+      "answer": "B",
+      "correct": true,
+      "raw": "B"
+    },
+    "claude-opus-4-8|n02": {
+      "answer": "C",
+      "correct": true,
+      "raw": "C"
+    },
+    "claude-opus-4-8|n03": {
+      "answer": "C",
+      "correct": true,
+      "raw": "C"
+    },
+    "claude-opus-4-8|n04": {
+      "answer": "B",
+      "correct": true,
+      "raw": "B"
+    },
+    "claude-opus-4-8|n05": {
+      "answer": "C",
+      "correct": true,
+      "raw": "C"
+    },
+    "claude-opus-4-8|n06": {
+      "answer": "B",
+      "correct": true,
+      "raw": "B"
+    },
+    "claude-opus-4-8|n07": {
+      "answer": "B",
+      "correct": true,
+      "raw": "B"
+    },
+    "claude-opus-4-8|n08": {
+      "answer": "B",
+      "correct": true,
+      "raw": "B"
+    },
+    "claude-opus-4-8|n09": {
+      "answer": "C",
+      "correct": true,
+      "raw": "C"
+    },
+    "claude-opus-4-8|n10": {
+      "answer": "C",
+      "correct": true,
+      "raw": "C"
+    },
+    "claude-opus-4-8|r01": {
+      "answer": "A",
+      "correct": true,
+      "raw": "A"
+    },
+    "claude-opus-4-8|r02": {
+      "answer": "C",
+      "correct": true,
+      "raw": "C"
+    },
+    "claude-opus-4-8|r03": {
+      "answer": "B",
+      "correct": true,
+      "raw": "B"
+    },
+    "claude-opus-4-8|r04": {
+      "answer": "A",
+      "correct": true,
+      "raw": "A"
+    },
+    "claude-opus-4-8|r05": {
+      "answer": "C",
+      "correct": true,
+      "raw": "C"
+    },
+    "claude-opus-4-8|r06": {
+      "answer": "B",
+      "correct": true,
+      "raw": "B"
+    },
+    "claude-opus-4-8|r07": {
+      "answer": "C",
+      "correct": true,
+      "raw": "C"
+    },
+    "claude-opus-4-8|r08": {
+      "answer": "B",
+      "correct": true,
+      "raw": "B"
+    },
+    "claude-opus-4-8|m01": {
+      "answer": "C",
+      "correct": true,
+      "raw": "C"
+    },
+    "claude-opus-4-8|m02": {
+      "answer": "D",
+      "correct": true,
+      "raw": "D"
+    },
+    "claude-opus-4-8|m03": {
+      "answer": "D",
+      "correct": true,
+      "raw": "D"
+    },
+    "claude-opus-4-8|m04": {
+      "answer": "B",
+      "correct": true,
+      "raw": "B"
+    },
+    "claude-opus-4-8|m05": {
+      "answer": "C",
+      "correct": true,
+      "raw": "C"
+    },
+    "claude-opus-4-8|m06": {
+      "answer": "C",
+      "correct": true,
+      "raw": "C"
+    },
+    "claude-opus-4-8|m07": {
+      "answer": "C",
+      "correct": true,
+      "raw": "C"
+    },
+    "claude-opus-4-8|g01": {
+      "answer": "B",
+      "correct": true,
+      "raw": "B"
+    },
+    "claude-opus-4-8|g02": {
+      "answer": "B",
+      "correct": true,
+      "raw": "B"
+    },
+    "claude-opus-4-8|g03": {
+      "answer": "B",
+      "correct": true,
+      "raw": "B"
+    },
+    "claude-opus-4-8|g04": {
+      "answer": "B",
+      "correct": true,
+      "raw": "B"
+    },
+    "claude-opus-4-8|g05": {
+      "answer": "B",
+      "correct": true,
+      "raw": "B"
+    },
+    "claude-opus-4-8|g06": {
+      "answer": "B",
+      "correct": true,
+      "raw": "B"
+    },
+    "claude-opus-4-8|g07": {
+      "answer": "C",
+      "correct": false,
+      "raw": "C"
+    },
+    "claude-opus-4-8|g08": {
+      "answer": "C",
+      "correct": true,
+      "raw": "C"
+    },
+    "claude-opus-4-8|g09": {
+      "answer": "B",
+      "correct": true,
+      "raw": "B"
+    },
+    "claude-opus-4-8|g10": {
+      "answer": "B",
+      "correct": true,
+      "raw": "B"
+    }
+  },
+  "models": [
+    "cheap",
+    "mid",
+    "exp"
+  ],
+  "model_ids": [
+    "claude-haiku-4-5",
+    "claude-sonnet-4-6",
+    "claude-opus-4-8"
+  ],
+  "costs": [
+    0.0035,
+    0.0105,
+    0.0175
+  ],
+  "categories": [
+    "factual",
+    "misconceptions",
+    "numerical",
+    "reasoning",
+    "recent_events"
+  ],
+  "questions": [
+    {
+      "id": "f01",
+      "category": "factual",
+      "difficulty": "medium"
+    },
+    {
+      "id": "f02",
+      "category": "factual",
+      "difficulty": "hard"
+    },
+    {
+      "id": "f03",
+      "category": "factual",
+      "difficulty": "medium"
+    },
+    {
+      "id": "f04",
+      "category": "factual",
+      "difficulty": "easy"
+    },
+    {
+      "id": "f05",
+      "category": "factual",
+      "difficulty": "medium"
+    },
+    {
+      "id": "f06",
+      "category": "factual",
+      "difficulty": "medium"
+    },
+    {
+      "id": "f07",
+      "category": "factual",
+      "difficulty": "easy"
+    },
+    {
+      "id": "f08",
+      "category": "factual",
+      "difficulty": "easy"
+    },
+    {
+      "id": "f09",
+      "category": "factual",
+      "difficulty": "easy"
+    },
+    {
+      "id": "f10",
+      "category": "factual",
+      "difficulty": "easy"
+    },
+    {
+      "id": "f11",
+      "category": "factual",
+      "difficulty": "easy"
+    },
+    {
+      "id": "f12",
+      "category": "factual",
+      "difficulty": "easy"
+    },
+    {
+      "id": "f13",
+      "category": "factual",
+      "difficulty": "medium"
+    },
+    {
+      "id": "f14",
+      "category": "factual",
+      "difficulty": "hard"
+    },
+    {
+      "id": "f15",
+      "category": "factual",
+      "difficulty": "easy"
+    },
+    {
+      "id": "n01",
+      "category": "numerical",
+      "difficulty": "easy"
+    },
+    {
+      "id": "n02",
+      "category": "numerical",
+      "difficulty": "medium"
+    },
+    {
+      "id": "n03",
+      "category": "numerical",
+      "difficulty": "easy"
+    },
+    {
+      "id": "n04",
+      "category": "numerical",
+      "difficulty": "medium"
+    },
+    {
+      "id": "n05",
+      "category": "numerical",
+      "difficulty": "easy"
+    },
+    {
+      "id": "n06",
+      "category": "numerical",
+      "difficulty": "medium"
+    },
+    {
+      "id": "n07",
+      "category": "numerical",
+      "difficulty": "easy"
+    },
+    {
+      "id": "n08",
+      "category": "numerical",
+      "difficulty": "hard"
+    },
+    {
+      "id": "n09",
+      "category": "numerical",
+      "difficulty": "medium"
+    },
+    {
+      "id": "n10",
+      "category": "numerical",
+      "difficulty": "medium"
+    },
+    {
+      "id": "r01",
+      "category": "recent_events",
+      "difficulty": "medium"
+    },
+    {
+      "id": "r02",
+      "category": "recent_events",
+      "difficulty": "easy"
+    },
+    {
+      "id": "r03",
+      "category": "recent_events",
+      "difficulty": "easy"
+    },
+    {
+      "id": "r04",
+      "category": "recent_events",
+      "difficulty": "hard"
+    },
+    {
+      "id": "r05",
+      "category": "recent_events",
+      "difficulty": "medium"
+    },
+    {
+      "id": "r06",
+      "category": "recent_events",
+      "difficulty": "hard"
+    },
+    {
+      "id": "r07",
+      "category": "recent_events",
+      "difficulty": "medium"
+    },
+    {
+      "id": "r08",
+      "category": "recent_events",
+      "difficulty": "medium"
+    },
+    {
+      "id": "m01",
+      "category": "misconceptions",
+      "difficulty": "medium"
+    },
+    {
+      "id": "m02",
+      "category": "misconceptions",
+      "difficulty": "medium"
+    },
+    {
+      "id": "m03",
+      "category": "misconceptions",
+      "difficulty": "medium"
+    },
+    {
+      "id": "m04",
+      "category": "misconceptions",
+      "difficulty": "hard"
+    },
+    {
+      "id": "m05",
+      "category": "misconceptions",
+      "difficulty": "hard"
+    },
+    {
+      "id": "m06",
+      "category": "misconceptions",
+      "difficulty": "easy"
+    },
+    {
+      "id": "m07",
+      "category": "misconceptions",
+      "difficulty": "medium"
+    },
+    {
+      "id": "g01",
+      "category": "reasoning",
+      "difficulty": "medium"
+    },
+    {
+      "id": "g02",
+      "category": "reasoning",
+      "difficulty": "medium"
+    },
+    {
+      "id": "g03",
+      "category": "reasoning",
+      "difficulty": "medium"
+    },
+    {
+      "id": "g04",
+      "category": "reasoning",
+      "difficulty": "easy"
+    },
+    {
+      "id": "g05",
+      "category": "reasoning",
+      "difficulty": "easy"
+    },
+    {
+      "id": "g06",
+      "category": "reasoning",
+      "difficulty": "hard"
+    },
+    {
+      "id": "g07",
+      "category": "reasoning",
+      "difficulty": "hard"
+    },
+    {
+      "id": "g08",
+      "category": "reasoning",
+      "difficulty": "hard"
+    },
+    {
+      "id": "g09",
+      "category": "reasoning",
+      "difficulty": "medium"
+    },
+    {
+      "id": "g10",
+      "category": "reasoning",
+      "difficulty": "hard"
+    }
+  ],
+  "grid": {
+    "0|f01": true,
+    "0|f02": true,
+    "0|f03": true,
+    "0|f04": true,
+    "0|f05": false,
+    "0|f06": true,
+    "0|f07": true,
+    "0|f08": true,
+    "0|f09": true,
+    "0|f10": true,
+    "0|f11": true,
+    "0|f12": true,
+    "0|f13": true,
+    "0|f14": true,
+    "0|f15": true,
+    "0|n01": false,
+    "0|n02": true,
+    "0|n03": true,
+    "0|n04": true,
+    "0|n05": true,
+    "0|n06": true,
+    "0|n07": true,
+    "0|n08": true,
+    "0|n09": true,
+    "0|n10": true,
+    "0|r01": true,
+    "0|r02": true,
+    "0|r03": true,
+    "0|r04": true,
+    "0|r05": true,
+    "0|r06": false,
+    "0|r07": true,
+    "0|r08": true,
+    "0|m01": true,
+    "0|m02": true,
+    "0|m03": true,
+    "0|m04": true,
+    "0|m05": true,
+    "0|m06": true,
+    "0|m07": true,
+    "0|g01": true,
+    "0|g02": false,
+    "0|g03": true,
+    "0|g04": true,
+    "0|g05": false,
+    "0|g06": true,
+    "0|g07": false,
+    "0|g08": true,
+    "0|g09": true,
+    "0|g10": true,
+    "1|f01": true,
+    "1|f02": true,
+    "1|f03": false,
+    "1|f04": true,
+    "1|f05": true,
+    "1|f06": true,
+    "1|f07": true,
+    "1|f08": true,
+    "1|f09": true,
+    "1|f10": true,
+    "1|f11": true,
+    "1|f12": true,
+    "1|f13": true,
+    "1|f14": true,
+    "1|f15": true,
+    "1|n01": false,
+    "1|n02": true,
+    "1|n03": true,
+    "1|n04": true,
+    "1|n05": true,
+    "1|n06": true,
+    "1|n07": true,
+    "1|n08": true,
+    "1|n09": true,
+    "1|n10": true,
+    "1|r01": true,
+    "1|r02": true,
+    "1|r03": true,
+    "1|r04": true,
+    "1|r05": true,
+    "1|r06": true,
+    "1|r07": true,
+    "1|r08": true,
+    "1|m01": true,
+    "1|m02": true,
+    "1|m03": true,
+    "1|m04": true,
+    "1|m05": true,
+    "1|m06": true,
+    "1|m07": true,
+    "1|g01": true,
+    "1|g02": true,
+    "1|g03": true,
+    "1|g04": true,
+    "1|g05": true,
+    "1|g06": true,
+    "1|g07": true,
+    "1|g08": true,
+    "1|g09": true,
+    "1|g10": true,
+    "2|f01": true,
+    "2|f02": true,
+    "2|f03": true,
+    "2|f04": true,
+    "2|f05": true,
+    "2|f06": true,
+    "2|f07": true,
+    "2|f08": true,
+    "2|f09": true,
+    "2|f10": true,
+    "2|f11": true,
+    "2|f12": true,
+    "2|f13": true,
+    "2|f14": true,
+    "2|f15": true,
+    "2|n01": true,
+    "2|n02": true,
+    "2|n03": true,
+    "2|n04": true,
+    "2|n05": true,
+    "2|n06": true,
+    "2|n07": true,
+    "2|n08": true,
+    "2|n09": true,
+    "2|n10": true,
+    "2|r01": true,
+    "2|r02": true,
+    "2|r03": true,
+    "2|r04": true,
+    "2|r05": true,
+    "2|r06": true,
+    "2|r07": true,
+    "2|r08": true,
+    "2|m01": true,
+    "2|m02": true,
+    "2|m03": true,
+    "2|m04": true,
+    "2|m05": true,
+    "2|m06": true,
+    "2|m07": true,
+    "2|g01": true,
+    "2|g02": true,
+    "2|g03": true,
+    "2|g04": true,
+    "2|g05": true,
+    "2|g06": true,
+    "2|g07": false,
+    "2|g08": true,
+    "2|g09": true,
+    "2|g10": true
+  }
+}

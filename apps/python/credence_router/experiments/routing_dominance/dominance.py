@@ -163,15 +163,36 @@ def _report(model_names, categories, profiles, regrets, tables, welfare_by_profi
             cells += f"{mean:>+10.4f}({winrate:.0%})"
         print(f"  {name:>22}{cells}")
 
-    # Headline: EU-max optimal on all profiles; each competitor suboptimal on ≥1.
-    print("\nVERDICT:")
+    # Verdict — honest per-profile beats/ties/loses (EU-max can LOSE: with a belief learned
+    # from finite data it is the per-profile argmax over the BELIEF, which equals the true
+    # optimum only when the belief is well-calibrated; on thin data it can misrank).
+    # Comparisons below are on already-computed welfare regrets, for the human-read verdict
+    # line only — non-causal display, the same inline pattern as the regret table above.
+    print("\nVERDICT  (per profile — does EU-max beat / tie / lose to the arm?):")
     for name in regrets:
-        dominated_on = [p for p in profiles if sum(regrets[name][p]) / len(regrets[name][p]) > 1e-9]
-        if dominated_on:
-            print(f"  EU-max strictly beats {name} on: {dominated_on}")
-        else:
-            print(f"  {name}: ties EU-max on all profiles (it IS a Bayes rule here — i.e. it IS us)")
-    print("  EU-max is optimal on EVERY profile by construction (per-profile argmax).")
+        beats = [p for p in profiles if sum(regrets[name][p]) / len(regrets[name][p]) > 1e-6]
+        loses = [p for p in profiles if sum(regrets[name][p]) / len(regrets[name][p]) < -1e-6]
+        ties = [p for p in profiles if -1e-6 <= sum(regrets[name][p]) / len(regrets[name][p]) <= 1e-6]
+        parts = []
+        if beats:
+            parts.append(f"beats on {beats}")
+        if ties:
+            parts.append(f"ties on {ties}")
+        if loses:
+            parts.append(f"LOSES on {loses}")
+        print(f"  {name:>22}: EU-max " + "; ".join(parts))
+
+    # Wald admissibility: no single FIXED router should beat EU-max on EVERY profile. The
+    # clairvoyant oracle-cascade is excluded — it is an unattainable upper bound, not a rule.
+    fixed = [n for n in regrets if n != "oracle-cascade"]
+    dominators = [n for n in fixed if all(sum(regrets[n][p]) / len(regrets[n][p]) < -1e-6 for p in profiles)]
+    if dominators:
+        print(f"\n  ⚠ a fixed router beats EU-max on ALL profiles: {dominators} — EU-max is DOMINATED here.")
+    else:
+        print("\n  No fixed router beats EU-max on all profiles ⇒ EU-max is UNDOMINATED across "
+              "profiles (admissible).")
+        print("  (Per-profile dominance is stronger and holds where the belief is well-calibrated; "
+              "with thin data EU-max can trail the per-profile winner — see ROUTING_DOMINANCE.md.)")
     print("=" * 72 + "\n")
 
 
@@ -198,17 +219,51 @@ def build_toy_oracle():
     return grid, questions, model_names, costs, categories, profiles
 
 
+def build_real_oracle(path="oracle_grid.json"):
+    """Load the real-model oracle grid produced by oracle.py.
+
+    Same shape as build_toy_oracle, so run() is byte-identical on real data — only the
+    grid (measured per-model MCQ correctness) and the real per-call costs differ. Profiles
+    are the dollar value of a correct answer: cost-hawk ≈ one expensive call; quality-hawk
+    far more. Keeps only questions every model answered (a complete grid row), so a partial
+    oracle run still yields a sound proof on its completed subset.
+    """
+    import json
+    import os
+    from types import SimpleNamespace
+
+    p = path if os.path.isabs(path) else os.path.join(os.path.dirname(__file__), path)
+    data = json.loads(open(p).read())
+    model_names, costs, categories = data["models"], data["costs"], data["categories"]
+    n = len(model_names)
+    grid = {}
+    for k, v in data["grid"].items():
+        mi, qid = k.split("|", 1)
+        grid[(int(mi), qid)] = bool(v)
+    questions = [
+        SimpleNamespace(id=q["id"], category=q["category"], difficulty=q["difficulty"])
+        for q in data["questions"]
+        if all((mi, q["id"]) in grid for mi in range(n))
+    ]
+    profiles = {"cost-hawk": 0.02, "quality-hawk": 1.0}
+    return grid, questions, model_names, costs, categories, profiles
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--toy", action="store_true", help="run the controlled synthetic proof (no spend)")
+    ap.add_argument("--real", action="store_true", help="run against the real-model oracle grid (oracle.py output)")
     ap.add_argument("--seeds", type=int, default=3)
     args = ap.parse_args()
 
     if args.toy:
-        grid, questions, model_names, costs, categories, profiles = build_toy_oracle()
-        run(grid, questions, model_names, costs, categories, profiles, seeds=list(range(args.seeds)))
+        oracle = build_toy_oracle()
+    elif args.real:
+        oracle = build_real_oracle()
     else:
-        raise SystemExit("real-oracle mode not wired yet — run with --toy (see oracle.py, pending)")
+        raise SystemExit("choose --toy (synthetic, no spend) or --real (oracle.py grid)")
+    grid, questions, model_names, costs, categories, profiles = oracle
+    run(grid, questions, model_names, costs, categories, profiles, seeds=list(range(args.seeds)))
 
 
 if __name__ == "__main__":

@@ -8,6 +8,13 @@ this, because for k ≥ 2 models the per-user-profile optimum genuinely differs 
 single table is the Bayes rule for at most one profile (Wald complete class). The
 richer the belief, the larger the win — and the belief gets richer *on its own*.
 
+> **Two regimes, stated honestly up front.** The synthetic pillars below show the
+> mechanism's *ceiling* — strict dominance when the belief is well-resolved or model gaps
+> are real. The **real-model validation** (its own section, 3 frontier models on a labelled
+> benchmark) shows what holds on reality at small scale: EU-max is *undominated* across
+> profiles (Wald-admissible) and *wins cost-sensitive routing*, but its strict
+> quality-profile advantage is data-bound at 50 questions. Read both.
+
 This is the offline, zero-spend pillar. It has two faces:
 
 - **Coarse pillar** (`apps/python/credence_router/experiments/routing_dominance/`) —
@@ -79,6 +86,48 @@ Category is driven toward 0; difficulty and length toward 1. (exp is so capable 
 accuracy barely varies, so its data only weakly favours any edge.) This is the
 "model rich enough to capture the important factors" — the brain finds the factors
 itself, the metareasoning-over-structure the constitution's BMA gives for free.
+
+## Real-model validation (the honest result)
+
+The synthetic pillars show the mechanism's *ceiling* (a resolved belief, designed gaps).
+To de-risk the claim on reality, `oracle.py` measured three real frontier models on the
+50-question labelled benchmark (`credence_agents`' bank; `correct_index` is ground truth),
+and `dominance.py --real` ran the same proof over the measured grid.
+
+Measured accuracy (150 live calls, cached):
+
+| model | overall | factual | numerical | reasoning | recent | misconceptions |
+|---|--:|--:|--:|--:|--:|--:|
+| haiku (cheap) | 88% | 14/15 | 9/10 | **7/10** | 7/8 | 7/7 |
+| sonnet (mid) | 96% | 14/15 | 9/10 | **10/10** | 8/8 | 7/7 |
+| opus (exp) | 98% | 15/15 | 10/10 | **9/10** | 8/8 | 7/7 |
+
+What real data shows (8 seeds):
+
+- **The premise is real.** Per-profile routing genuinely diverges (cost-hawk → cheap
+  everywhere; quality-hawk → per-category), and no single fixed router is best on both:
+  always-cheap wins cost-hawk, always-exp wins quality-hawk.
+- **EU-max is undominated (admissible).** No fixed router beats it on *both* profiles —
+  exactly Wald's admissibility. It adapts where every fixed rule is stuck.
+- **Cost-sensitive routing is validated.** EU-max ties the cost-optimal (always-cheap)
+  and beats every wasteful router (always-exp +0.22, threshold +0.07, argmax/best-fixed
+  +0.06). When models are close and cost differs 5×, "use the cheap one" is right — and
+  EU-max concludes that itself rather than overpaying.
+- **A real, non-obvious insight:** sonnet (mid) *beats* opus (the flagship) at reasoning
+  (100% vs 90%) — so quality-hawk EU-max routes reasoning to the *cheaper* sonnet. "Use
+  the biggest model" is not optimal; EU-max finds the inversion.
+- **Honest limit:** on the *quality* profile, EU-max **trails** always-exp (−2.05) and the
+  threshold router (−0.24). With ~6 questions/category, the belief cannot reliably
+  estimate 2-point accuracy gaps between 88/96/98% models, so it occasionally misroutes;
+  the uniformly-near-best flagship is hard to out-route from thin data. Strict per-profile
+  dominance needs **more calibration data or larger model-accuracy gaps** than this easy
+  benchmark provides — precisely what the synthetic pillar supplies, and what a deployed
+  router accumulates online. The clairvoyant cascade also leads here (foresight, not
+  calibration).
+
+So the real claim is **admissibility + validated cost-routing + a genuine routing insight**,
+not the synthetic ceiling of strict dominance everywhere. The mechanism is sound; its
+quality-regime advantage is data-bound at 50 questions.
 
 ## Why this is conclusive against *all* systems (not just these six)
 
