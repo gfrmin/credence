@@ -1,0 +1,61 @@
+{
+    "note": "All items are short MCQ ⇒ short cell only; long cell stays at prior. Daemon reconstructs K posteriors by replaying these counts via observe. Frozen in v1 (no live correctness signal yet — needs credit assignment).",
+    "feature_values": [
+        [
+            "short",
+            "long"
+        ]
+    ],
+    "features": [
+        "prompt-length"
+    ],
+    "source": "oracle_grid.json (real-model de-risk: 3 frontier models × 50 labelled MCQ)",
+    "models": [
+        "cheap",
+        "mid",
+        "exp"
+    ],
+    "trained_at": "2026-06-16T16:59:29.951",
+    "frozen": true,
+    "model_ids": [
+        "claude-haiku-4-5",
+        "claude-sonnet-4-6",
+        "claude-opus-4-8"
+    ],
+    "per_model": [
+        {
+            "contexts": [
+                {
+                    "n1": 44,
+                    "ctx": [
+                        "short"
+                    ],
+                    "n0": 6
+                }
+            ]
+        },
+        {
+            "contexts": [
+                {
+                    "n1": 48,
+                    "ctx": [
+                        "short"
+                    ],
+                    "n0": 2
+                }
+            ]
+        },
+        {
+            "contexts": [
+                {
+                    "n1": 49,
+                    "ctx": [
+                        "short"
+                    ],
+                    "n0": 1
+                }
+            ]
+        }
+    ],
+    "artifact": "credence-pi warm routing belief P(correct|prompt-length) — per-model counts"
+}

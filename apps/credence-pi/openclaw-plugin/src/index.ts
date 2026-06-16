@@ -31,6 +31,7 @@ import {
 } from "./daemon-client.js";
 import { FeatureTracker } from "./features.js";
 import { SafetyTracker } from "./safety.js";
+import { extractRoutingFeatures } from "./routing-features.js";
 import { buildPriceTable, computeTurnCost, type PriceTable } from "./cost.js";
 import type {
   PluginEntry,
@@ -38,6 +39,8 @@ import type {
   BeforeToolCallResult,
   AfterToolCallEvent,
   LlmOutputEvent,
+  BeforeModelResolveEvent,
+  BeforeModelResolveResult,
   ToolContext,
   RequireApprovalPayload,
 } from "./openclaw-types.js";
@@ -109,6 +112,31 @@ export function mapSignal(
   }
 }
 
+// Map a `route` effector signal to OpenClaw's model override. A missing/timed-out/
+// non-route signal ⇒ undefined ⇒ OpenClaw keeps its configured model (fail open, exactly
+// like the daemon being down). In shadow mode we log the would-route and still defer, so
+// operators can see routing decisions on real traffic without changing the model used.
+export function mapRouteSignal(
+  sig: SignalEnvelope | undefined,
+  shadowMode: boolean,
+  log: Logger,
+): BeforeModelResolveResult | undefined {
+  if (!sig || sig.effector !== "route") return undefined;
+  const p = sig.parameters ?? {};
+  const model = typeof p.model === "string" ? p.model : undefined;
+  const provider = typeof p.provider === "string" ? p.provider : undefined;
+  if (!model) return undefined;
+  if (shadowMode) {
+    log(
+      `credence-pi[shadow]: would route to ${provider ?? "?"}/${model} — keeping OpenClaw's model (shadow mode)`,
+    );
+    return undefined;
+  }
+  const result: BeforeModelResolveResult = { modelOverride: model };
+  if (provider) result.providerOverride = provider;
+  return result;
+}
+
 export interface GovernorOpts {
   hookTimeoutMs: number;
   approvalTimeoutMs: number;
@@ -127,10 +155,14 @@ export interface Governor {
     event: BeforeToolCallEvent,
     ctx: ToolContext,
   ) => Promise<BeforeToolCallResult | undefined>;
+  beforeModelResolve: (
+    event: BeforeModelResolveEvent,
+    ctx: ToolContext,
+  ) => Promise<BeforeModelResolveResult | undefined>;
   afterToolCall: (event: AfterToolCallEvent, ctx: ToolContext) => Promise<void>;
   llmOutput: (event: LlmOutputEvent, ctx: ToolContext) => Promise<void>;
   cleanup: () => void;
-  /** Test/inspection accessor: in-flight tool_call awaiters. */
+  /** Test/inspection accessor: in-flight sensor awaiters (tool-call + route). */
   pendingCount: () => number;
 }
 
@@ -164,13 +196,12 @@ export function createGovernor(
   let announcedUp = false;
   let down = false;
 
-  async function beforeToolCall(
-    event: BeforeToolCallEvent,
-    ctx: ToolContext,
-  ): Promise<BeforeToolCallResult | undefined> {
-    const eventId = newEventId();
-    const t0 = Date.now();
-    const signalPromise = new Promise<SignalEnvelope | undefined>((resolve) => {
+  // Register an awaiter for the correlated effector signal (dispatched by the single SSE
+  // consumer on `in_response_to == eventId`) and a fail-open timeout. Shared by
+  // beforeToolCall (tool-proposed → proceed/block/ask) and beforeModelResolve
+  // (route-request → route): same wire, same correlation, same timeout discipline.
+  function awaitSignal(eventId: string): Promise<SignalEnvelope | undefined> {
+    return new Promise<SignalEnvelope | undefined>((resolve) => {
       const timer = setTimeout(() => {
         awaiters.delete(eventId);
         resolve(undefined);
@@ -181,6 +212,15 @@ export function createGovernor(
         resolve(sig);
       });
     });
+  }
+
+  async function beforeToolCall(
+    event: BeforeToolCallEvent,
+    ctx: ToolContext,
+  ): Promise<BeforeToolCallResult | undefined> {
+    const eventId = newEventId();
+    const t0 = Date.now();
+    const signalPromise = awaitSignal(eventId);
 
     const features = tracker.extractAndRecord(event, ctx);
     // Add the safety (taint-flow) features against the session's causal taint state. The
@@ -251,6 +291,48 @@ export function createGovernor(
     return mapSignal(sig, eventId, client, approvalTimeoutMs);
   }
 
+  // before_model_resolve: route this turn to the EU-max model. Same wire as
+  // beforeToolCall — post a route-request, await the correlated `route` signal — but the
+  // signal carries {model, provider} the brain chose, mapped to OpenClaw's override.
+  // Fail open everywhere (daemon down / slow / routing unconfigured ⇒ undefined ⇒
+  // OpenClaw keeps its configured model). The brain decides; the body only translates.
+  async function beforeModelResolve(
+    event: BeforeModelResolveEvent,
+    ctx: ToolContext,
+  ): Promise<BeforeModelResolveResult | undefined> {
+    const eventId = newEventId();
+    const signalPromise = awaitSignal(eventId);
+
+    const features = extractRoutingFeatures(event);
+    const post = await client.postSensor({
+      event_type: "route-request",
+      event_id: eventId,
+      session_id: ctx.sessionId ?? ctx.sessionKey ?? "",
+      timestamp: new Date().toISOString(),
+      features,
+    });
+
+    if (!post.ok) {
+      awaiters.get(eventId)?.(undefined); // clean up timer + awaiter
+      if (!warnedDown) {
+        log("credence-pi: daemon unreachable; routing skipped (OpenClaw keeps its model)");
+        warnedDown = true;
+      }
+      down = true;
+      announcedUp = false;
+      return undefined; // fail open
+    }
+    if (down && !announcedUp) {
+      log("credence-pi: daemon reachable again; routing resumed");
+      announcedUp = true;
+      down = false;
+      warnedDown = false;
+    }
+
+    const sig = await signalPromise;
+    return mapRouteSignal(sig, shadowMode, log);
+  }
+
   async function afterToolCall(
     event: AfterToolCallEvent,
     ctx: ToolContext,
@@ -302,6 +384,7 @@ export function createGovernor(
 
   return {
     beforeToolCall,
+    beforeModelResolve,
     afterToolCall,
     llmOutput,
     cleanup,
@@ -330,6 +413,7 @@ const plugin: PluginEntry = {
     const silent = cfg.silent === true;
     const redactToolInputs = cfg.redactToolInputs === true;
     const shadowMode = cfg.shadowMode === true;
+    const routingEnabled = cfg.routing === true;
     const priceTable = buildPriceTable(cfg.pricing);
 
     const log: Logger = (m, e) => {
@@ -369,6 +453,25 @@ const plugin: PluginEntry = {
         "credence-pi: llm_output hook unavailable (set hooks.allowConversationAccess:true for the cost signal)",
         err,
       );
+    }
+
+    // Model routing (opt-in). Off by default: it overrides which model runs, needs
+    // hooks.allowConversationAccess:true, and a daemon configured with a routing roster
+    // (bdsl/routing.bdsl). When off we register no hook, so a governance-only install
+    // adds zero per-turn latency. Fails open: daemon down / no roster ⇒ OpenClaw's model.
+    if (routingEnabled) {
+      try {
+        api.on("before_model_resolve", gov.beforeModelResolve, {
+          priority: 100,
+          timeoutMs: hookTimeoutMs + 1_000,
+        });
+        log("credence-pi: model routing ENABLED (before_model_resolve)");
+      } catch (err) {
+        log(
+          "credence-pi: before_model_resolve hook unavailable on this host; routing disabled",
+          err,
+        );
+      }
     }
 
     // Close the SSE stream + drain awaiters on reset/delete/reload so a

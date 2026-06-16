@@ -47,9 +47,16 @@ using .Credence: Eval, Parse
 include(joinpath(@__DIR__, "..", "brain", "feature_brain.jl"))
 using .FeatureBrain: wire_brain!, build_model_from_env, reconstruct_posterior
 
+# Model routing (Pass 2 / live): wire_routing! installs env[:route-decide] from the
+# declared routing manifest (bdsl/routing.bdsl). routing_brain.jl reaches FeatureBrain
+# via `..FeatureBrain` (the sibling submodule), so it resolves here under Server exactly
+# as it does at Main in the eval. INERT unless a roster is declared.
+include(joinpath(@__DIR__, "..", "brain", "routing_brain.jl"))
+using .RoutingBrain: wire_routing!
+
 export start_daemon, stop_daemon, DaemonState
 export SignalQueue, enqueue!, snapshot, drain!
-export handle_sensor_event, action_to_signal, emit_signal!
+export handle_sensor_event, action_to_signal, emit_signal!, emit_route_signal!
 
 const SIGNAL_QUEUE_CAPACITY = 100
 
@@ -154,7 +161,17 @@ function load_env(bdsl_dir::AbstractString)::Eval.Env
             Eval.eval_dsl(expr, env)
         end
     end
+    # Optional routing manifest (model routing). Absent ⇒ routing stays inert and the
+    # daemon is governance-only (fully backward-compatible). Loaded BEFORE wire_routing!
+    # reads its declared roster + reward.
+    routing_path = joinpath(bdsl_dir, "routing.bdsl")
+    if isfile(routing_path)
+        for expr in Parse.parse_all(read(routing_path, String))
+            Eval.eval_dsl(expr, env)
+        end
+    end
     wire_brain!(env)
+    wire_routing!(env)   # installs env[:route-decide] iff a roster was declared; else no-op
     env
 end
 
@@ -307,6 +324,39 @@ function emit_signal!(state::DaemonState, in_response_to::AbstractString,
     signal
 end
 
+"""
+    emit_route_signal!(state, in_response_to, choice::AbstractDict) -> Dict
+
+Compose and enqueue a `route` effector signal carrying the chosen model. `choice` is
+the dict returned by the brain's `route-decide` closure (`model`, `provider`, `name`).
+Logs a derived `route-decision` event first (so the dollars-saved surface can account
+for routing; ignored by posterior replay, like `decision`). Templating only — the EU-max
+already happened brain-side in `route-decide`.
+"""
+function emit_route_signal!(state::DaemonState, in_response_to::AbstractString,
+                            choice::AbstractDict)::Dict{String, Any}
+    model    = string(get(choice, "model", ""))
+    provider = string(get(choice, "provider", ""))
+    name     = string(get(choice, "name", ""))
+    append_event!(state.log_path, Dict{String, Any}(
+        "event_type"     => "route-decision",
+        "in_response_to" => string(in_response_to),
+        "model"          => model,
+        "provider"       => provider,
+    ))
+    n = Threads.atomic_add!(_SIGNAL_ID_COUNTER, 1)
+    signal = Dict{String, Any}(
+        "signal_type"    => "effector",
+        "signal_id"      => string("sig_", randstring(6), "_", n),
+        "in_response_to" => string(in_response_to),
+        "effector"       => "route",
+        "parameters"     => Dict{String, Any}(
+            "model" => model, "provider" => provider, "name" => name),
+    )
+    enqueue!(state.signal_queue, signal)
+    signal
+end
+
 # ── handle_sensor_event ───────────────────────────────────────────────
 #
 # Order of operations is the load-bearing invariant of the daemon. Read
@@ -387,6 +437,25 @@ function handle_sensor_event(state::DaemonState,
         # brain does not CONDITION on it and emits no signal. `usd` may be null
         # (model unpriced) — the brain falls back to a configured per-call cost.
         state.last_cost[] = get(event_dict, "usd", nothing)
+
+    elseif event_type == "route-request"
+        # Model routing (before_model_resolve). Read the request features and let the
+        # brain's route-decide closure pick the EU-max model; emit a `route` signal the
+        # body maps to providerOverride/modelOverride. This NEVER touches the governance
+        # posterior — routing is a separate (warm, frozen) belief. If routing is not
+        # configured (no roster declared ⇒ no route-decide), emit nothing: the body
+        # times out and fails open to OpenClaw's default model.
+        route_decide = get(state.env, Symbol("route-decide"), nothing)
+        if route_decide === nothing
+            @warn "route-request received but routing is not configured; ignoring (body fails open)"
+        else
+            features = get(event_dict, "features", nothing)
+            event_id = string(get(event_dict, "event_id", ""))
+            features === nothing &&
+                error("route-request event $event_id missing required 'features'")
+            choice = route_decide(features)
+            emit_route_signal!(state, event_id, choice)
+        end
 
     else
         @warn "handle_sensor_event: unknown event_type" event_type
