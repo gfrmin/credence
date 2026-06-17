@@ -25,10 +25,15 @@ eval carve-out):
     the cross-profile robustness (minimax regret). Caveat: needs an observable success
     signal (here the test suite). See EXPERIMENT.md for the full honest accounting.
 
+Reps: a multi-rep matrix (`rep` field per row) is aggregated rep-aligned — the belief
+trains on every rep (R× the data, so a single-rep fluke is outvoted in the posterior) and
+each arm is scored on every rep-aligned "world", averaged over reps (so a fluke washes out
+of the realized read-out too). A single-rep matrix degrades to R=1 (identical to before).
+
 Run:
     julia --project=<repo-root> apps/credence-pi/eval/tb_dominance.jl \
-        apps/credence-pi/eval/live_ab/results/tb_matrix_full.jsonl \
-        [--seeds 20] [--train-frac 0.6] [--out .../tb_dominance.summary.json]
+        apps/credence-pi/eval/live_ab/results/tb_matrix_rep3.jsonl \
+        [--seeds 100] [--train-frac 0.6] [--out .../tb_dominance.summary.json]
 """
 
 push!(LOAD_PATH, abspath(joinpath(@__DIR__, "..", "..", "..", "src")))
@@ -66,25 +71,49 @@ struct TaskRow
     difficulty::String
     category::String
     length::String
-    resolved::Vector{Bool}     # per tier
-    cost::Vector{Float64}      # per tier (realized; lower bound on timeouts)
-    turns::Vector{Float64}     # per tier
+    resolved::Vector{Vector{Bool}}     # [tier][rep]
+    cost::Vector{Vector{Float64}}      # [tier][rep] (realized; lower bound on timeouts)
+    turns::Vector{Vector{Float64}}     # [tier][rep]
 end
+nreps(t::TaskRow) = minimum(length(r) for r in t.resolved)
+
+# One rep-aligned realization of a task: rep r of each tier paired as "world r". Tiers are
+# independent runs, so any pairing is an unbiased sample of the joint outcome (aligned is
+# the simplest). Belief trains on ALL reps (3× the data); every arm is scored on every
+# world and averaged → a single-rep fluke (a one-off timeout/flake) washes out of both the
+# posterior and the realized read-out. Same fields the single-task scoring path expects.
+struct World
+    id::String
+    difficulty::String
+    category::String
+    length::String
+    resolved::Vector{Bool}     # per tier, this world
+    cost::Vector{Float64}      # per tier, this world
+end
+worlds(t::TaskRow) = [World(t.id, t.difficulty, t.category, t.length,
+                            Bool[t.resolved[a][r] for a in eachindex(TIERS)],
+                            Float64[t.cost[a][r] for a in eachindex(TIERS)])
+                      for r in 1:nreps(t)]
 
 length_bucket(instr_len) = instr_len >= 500 ? "long" : "short"
 
-featuredict(t::TaskRow) = Dict("difficulty" => t.difficulty,
-                               "category" => t.category, "length" => t.length)
+# Generic over TaskRow/World (both carry the feature fields).
+featuredict(t) = Dict("difficulty" => t.difficulty,
+                      "category" => t.category, "length" => t.length)
 
-# ── Load the measured matrix → one TaskRow per task with all K tiers present ──
+# ── Load the measured matrix → one TaskRow per task, each tier carrying ALL its reps
+# (rep-aligned: rows are grouped by (task, tier) and ordered by the `rep` index so world r
+# pairs rep r across tiers). A single-rep matrix (no `rep` field) degrades to one rep. ──
 function load_matrix(path::String)
-    rows = Dict{String, Dict{String, Any}}()   # task -> tier -> row
+    rows = Dict{String, Dict{String, Vector{Tuple{Int, Any}}}}()   # task -> tier -> [(rep,row)]
     feats = Dict{String, NTuple{3, String}}()
     for ln in eachline(path)
         isempty(strip(ln)) && continue
         r = JSON3.read(ln)
         task = String(r.task); tier = String(r.tier)
-        get!(rows, task, Dict{String, Any}())[tier] = r
+        rep = Int(something(get(r, :rep, 1), 1))
+        push!(get!(get!(rows, task, Dict{String, Vector{Tuple{Int, Any}}}()),
+                   tier, Tuple{Int, Any}[]), (rep, r))
         feats[task] = (String(something(r.difficulty, "unknown")),
                        String(something(r.category, "unknown")),
                        length_bucket(get(r, :instr_len, 0)))
@@ -96,9 +125,13 @@ function load_matrix(path::String)
             push!(skipped, task); continue
         end
         d, c, l = feats[task]
-        resolved = Bool[byt[t].resolved for t in TIERS]
-        cost = Float64[something(byt[t].cost_usd, 0.0) for t in TIERS]
-        turns = Float64[Float64(something(byt[t].num_turns, 0)) for t in TIERS]
+        resolved = Vector{Bool}[]; cost = Vector{Float64}[]; turns = Vector{Float64}[]
+        for t in TIERS
+            reps = sort(byt[t]; by = first)   # by rep index → aligned across tiers
+            push!(resolved, Bool[x[2].resolved for x in reps])
+            push!(cost,     Float64[something(x[2].cost_usd, 0.0) for x in reps])
+            push!(turns,    Float64[Float64(something(x[2].num_turns, 0)) for x in reps])
+        end
         push!(tasks, TaskRow(task, d, c, l, resolved, cost, turns))
     end
     isempty(skipped) || @warn "tasks missing some tiers (skipped)" tasks=skipped
@@ -118,9 +151,9 @@ end
 # (condition under the hood) on the train tasks' real outcomes.
 function train_tops(model::StructureBMA, train::Vector{TaskRow})
     tops = [build_prior(model) for _ in TIERS]
-    for t in train, a in eachindex(TIERS)
+    for t in train, a in eachindex(TIERS), r in 1:nreps(t)   # every rep is a Bernoulli obs
         tops[a] = observe(model, tops[a], context_from_features(model, featuredict(t)),
-                          t.resolved[a] ? 1 : 0)
+                          t.resolved[a][r] ? 1 : 0)
     end
     tops
 end
@@ -145,23 +178,25 @@ function train_cost(train::Vector{TaskRow}, diffs::Vector{String})
         g = GammaPrevision(TURNS_A0, TURNS_B0)
         for t in train
             t.difficulty == d || continue
-            n = round(Int, t.turns[a])
-            n >= 0 && (g = condition(g, k, n))
+            for r in 1:nreps(t)
+                n = round(Int, t.turns[a][r])
+                n >= 0 && (g = condition(g, k, n))
+            end
         end
         turns_mean[(a, d)] = Float64(expect(g, Identity()))   # E[turns] = α/β
     end
-    # measured $/turn per tier (Σcost/Σturns over train; total, not per cell)
+    # measured $/turn per tier (Σcost/Σturns over all train reps; total, not per cell)
     rate = Float64[]
     for a in eachindex(TIERS)
-        sc = sum(t.cost[a] for t in train; init = 0.0)
-        st = sum(t.turns[a] for t in train; init = 0.0)
+        sc = sum(sum(t.cost[a]) for t in train; init = 0.0)
+        st = sum(sum(t.turns[a]) for t in train; init = 0.0)
         push!(rate, st > 0 ? sc / st : 0.0)
     end
     CostBelief(turns_mean, rate)
 end
 
-# E[cost|tier,X] vector for a task (context-dependent: turns belief × tier rate).
-costs_at(cb::CostBelief, t::TaskRow) =
+# E[cost|tier,X] vector for a task/world (context-dependent: turns belief × tier rate).
+costs_at(cb::CostBelief, t) =
     Float64[get(cb.turns_mean, (a, t.difficulty), 0.0) * cb.rate[a] for a in eachindex(TIERS)]
 
 # ── Arms → routed tier index per test task ───────────────────────────────────
@@ -173,7 +208,7 @@ eu_routed(model, tops, cb, test, reward) =
 
 # Deployable foils (baseline-comparison precedent): they see the SAME features and the
 # SAME train data; they differ only in the DECISION RULE. Built from train empirics.
-function empirical(train::Vector{TaskRow}, diffs, cats, lens)
+function empirical(train::Vector{World}, diffs, cats, lens)
     # per (tier, full-cell) accuracy and mean cost from train
     cells = [(d, c, l) for d in diffs for c in cats for l in lens]
     acc = Dict{Tuple{Int, NTuple{3, String}}, Float64}()
@@ -186,7 +221,7 @@ function empirical(train::Vector{TaskRow}, diffs, cats, lens)
     acc, cost, cells
 end
 
-cellof(t::TaskRow) = (t.difficulty, t.category, t.length)
+cellof(t) = (t.difficulty, t.category, t.length)
 
 # credence-lint: allow — precedent:baseline-comparison — most-accurate-per-cell foil (cost-blind; ties→cheaper tier)
 pick_argmax_acc(acc) = (t) -> argmin([(-acc[(a, cellof(t))], a) for a in eachindex(TIERS)])
@@ -208,13 +243,13 @@ table_routed(pick, test) = Int[pick(t) for t in test]
 
 # ── Welfare read-out: realized, non-causal. Score the routed tier on each test task's
 # MEASURED outcome: welfare = reward·resolved − cost. ──
-realized_welfare(routed::Vector{Int}, test::Vector{TaskRow}, reward) =
+realized_welfare(routed::Vector{Int}, test::Vector{World}, reward) =
     sum(reward * test[i].resolved[routed[i]] - test[i].cost[routed[i]]
         for i in eachindex(test); init = 0.0)
 
-realized_solves(routed::Vector{Int}, test::Vector{TaskRow}) =
+realized_solves(routed::Vector{Int}, test::Vector{World}) =
     sum(test[i].resolved[routed[i]] for i in eachindex(test); init = 0)
-realized_cost(routed::Vector{Int}, test::Vector{TaskRow}) =
+realized_cost(routed::Vector{Int}, test::Vector{World}) =
     sum(test[i].cost[routed[i]] for i in eachindex(test); init = 0.0)
 
 # credence-lint: allow — precedent:baseline-comparison — plain FrugalGPT cascade (DEPLOYABLE: cheapest-first, pay each rung run, stop at first OBSERVED success)
@@ -222,7 +257,7 @@ realized_cost(routed::Vector{Int}, test::Vector{TaskRow}) =
 # (including failed ones), stop at the first observed success (test-suite verifier). This
 # is escalation-eu MINUS the EU gate — the apples-to-apples peer that isolates the gate's
 # value. NOT an oracle: it pays for failed rungs and the full ladder on unsolvable tasks.
-function frugalgpt_cascade(test::Vector{TaskRow}, reward)
+function frugalgpt_cascade(test::Vector{World}, reward)
     w = 0.0; solves = 0; cost = 0.0
     for t in test
         paid = 0.0; done = false
@@ -242,7 +277,7 @@ end
 # it (pay only that tier), or abstain ($0, no solve) if no tier clears reward·1 − cost.
 # A per-task oracle weakly dominates ANY deployable policy on realized welfare by
 # construction — it is the upper bound escalation-eu is measured AGAINST, never beaten.
-function clairvoyant_oracle(test::Vector{TaskRow}, reward)
+function clairvoyant_oracle(test::Vector{World}, reward)
     w = 0.0; solves = 0; cost = 0.0
     for t in test
         best = 0.0; bi = 0                       # abstain baseline: welfare 0, no solve
@@ -268,7 +303,7 @@ end
 # happens to edge it on realized welfare via its conservatism). Scored on realized
 # outcomes (non-causal read-out, mirroring eu_routed); the live-brain version WOULD route
 # the 2-action {try,stop} gate through the canonical `optimise` (not yet wired).
-function escalation_eu(model, tops, cb, test::Vector{TaskRow}, reward)
+function escalation_eu(model, tops, cb, test::Vector{World}, reward)
     w = 0.0; solves = 0; cost = 0.0
     for t in test
         X = context_from_features(model, featuredict(t))
@@ -308,6 +343,8 @@ function main()
     args = parse_args(ARGS)
     tasks = load_matrix(args["path"])
     @assert length(tasks) >= 4 "need ≥4 fully-measured tasks, got $(length(tasks))"
+    R = nreps(tasks[1])
+    @assert all(nreps(t) == R for t in tasks) "ragged reps; all tasks must share rep count"
     fvals = feature_values(tasks)
     diffs, cats, lens = fvals
 
@@ -326,14 +363,19 @@ function main()
         ord = shuffle!(rng, collect(eachindex(ids)))
         ntr = max(2, round(Int, args["train-frac"] * length(ids)))
         trainset = Set(ids[ord[1:ntr]])
-        train = [t for t in tasks if t.id in trainset]
-        test  = [t for t in tasks if !(t.id in trainset)]
-        isempty(test) && continue
+        train = [t for t in tasks if t.id in trainset]          # TaskRows (all reps)
+        testtasks = [t for t in tasks if !(t.id in trainset)]
+        isempty(testtasks) && continue
+        # Flatten to rep-aligned worlds: belief trains on TaskRows (every rep); arms are
+        # scored on `test` worlds (R per task) and the accumulators divided by R below, so
+        # the reported numbers stay on the single-rep per-task scale (directly comparable).
+        train_w = World[]; for t in train; append!(train_w, worlds(t)); end
+        test = World[];     for t in testtasks; append!(test, worlds(t)); end
 
         model = build_model(FEATURES, fvals; alpha0 = ALPHA0, beta0 = BETA0, p_edge = PEDGE)
         tops = train_tops(model, train)
         cb = train_cost(train, diffs)
-        acc, cost, cells = empirical(train, diffs, cats, lens)
+        acc, cost, cells = empirical(train_w, diffs, cats, lens)
 
         picks = Dict(
             "always-haiku"         => fill(1, length(test)),
@@ -357,7 +399,8 @@ function main()
                     w = realized_welfare(r, test, reward)
                     s = realized_solves(r, test); c = realized_cost(r, test)
                 end
-                push!(welf[pname][a], w); push!(solv[pname][a], Float64(s)); push!(cst[pname][a], c)
+                # ÷R: world-sums → per-task means over the R reps (single-rep scale).
+                push!(welf[pname][a], w / R); push!(solv[pname][a], Float64(s) / R); push!(cst[pname][a], c / R)
             end
         end
     end
@@ -374,7 +417,9 @@ function report(args, tasks, welf, solv, cst, armnames)
     println("tasks (all tiers measured): ", length(tasks),
             "   tiers: ", join(TIERS, " < "), "   seeds: ", args["seeds"],
             "   train-frac: ", args["train-frac"])
-    nb = count(t -> any(t.resolved) && !all(t.resolved), tasks)
+    solverate(t, a) = _mean(Float64.(t.resolved[a]))
+    nb = count(t -> maximum(solverate(t, a) for a in eachindex(TIERS)) > 0 &&
+                    minimum(solverate(t, a) for a in eachindex(TIERS)) < 1, tasks)
     println("tasks with a capability SPREAD (some tier solves, some fails): ", nb)
     deployable = filter(!=("clairvoyant-oracle"), armnames)
     for (pname, reward) in PROFILES
