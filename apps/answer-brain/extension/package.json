@@ -1,0 +1,23 @@
+{
+  "name": "answer-brain-extension",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "answer-brain pi-mono body: retrieve/extract/answer tools + the VOI governor over the daemon (/decide) and the life-agent bridge.",
+  "scripts": {
+    "build": "tsc --noEmit",
+    "test": "node --import tsx --test tests/*.test.ts"
+  },
+  "dependencies": {
+    "@credence/brain-body": "file:../../../packages/brain-body",
+    "typebox": "1.1.38"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.5.0"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}
