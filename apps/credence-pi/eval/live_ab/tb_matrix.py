@@ -216,9 +216,11 @@ def parse_run(run_dir: Path, tier: str) -> list[dict]:
             lower = True
         else:
             cost, lower = None, False
+        rep_m = re.search(r"\.(\d+)-of-\d+\.", trial_name)
         rows.append(dict(
             task=task_id,
             tier=tier,
+            rep=int(rep_m.group(1)) if rep_m else 1,
             resolved=bool(res.get("is_resolved")),
             failure_mode=res.get("failure_mode"),
             difficulty=feats["difficulty"],
@@ -241,7 +243,7 @@ def parse_run(run_dir: Path, tier: str) -> list[dict]:
 
 
 def run_arm(tier: str, tasks: list[str], n_concurrent: int, key: str,
-            timeout_mult: float, label: str) -> Path:
+            timeout_mult: float, label: str, n_attempts: int = 1) -> Path:
     model = TIER_MODEL[tier]
     env = dict(os.environ)
     env["ANTHROPIC_API_KEY"] = key
@@ -266,6 +268,7 @@ def run_arm(tier: str, tasks: list[str], n_concurrent: int, key: str,
         "--output-path", RUNS_OUT,
         "--run-id", run_id,
         "--n-concurrent", str(n_concurrent),
+        "--n-attempts", str(n_attempts),
         "--global-timeout-multiplier", str(timeout_mult),
         "--no-cleanup",
     ]
@@ -300,6 +303,7 @@ def main() -> None:
     pr.add_argument("--tiers", default="haiku,sonnet,opus")
     pr.add_argument("--tasks", required=True, help="comma list of task ids")
     pr.add_argument("--label", default="run", help="run-id label (pilot/full/...)")
+    pr.add_argument("--reps", type=int, default=1, help="attempts per task (tb --n-attempts)")
     pr.add_argument("--n-concurrent", type=int, default=4)
     pr.add_argument("--timeout-mult", type=float, default=1.0)
     pr.add_argument("--out", default=str(RESULTS_DIR / "tb_matrix.jsonl"))
@@ -327,7 +331,7 @@ def main() -> None:
     all_rows: list[dict] = []
     for tier in tiers:
         run_dir = run_arm(tier, tasks, args.n_concurrent, key, args.timeout_mult,
-                          args.label)
+                          args.label, args.reps)
         rows = parse_run(run_dir, tier)
         all_rows.extend(rows)
         for r in rows:
