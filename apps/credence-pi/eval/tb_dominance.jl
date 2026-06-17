@@ -42,7 +42,7 @@ _mean(v) = isempty(v) ? 0.0 : sum(v) / length(v)
 include(joinpath(@__DIR__, "..", "brain", "feature_brain.jl"))
 using .FeatureBrain: StructureBMA, build_model, build_prior, observe, context_from_features
 include(joinpath(@__DIR__, "..", "brain", "routing_brain.jl"))
-using .RoutingBrain: route, posterior_accuracy
+using .RoutingBrain: route, escalation_next, posterior_accuracy
 
 const TIERS = ["haiku", "sonnet", "opus"]   # cheap → dear (per-token price order)
 
@@ -272,13 +272,15 @@ function escalation_eu(model, tops, cb, test::Vector{TaskRow}, reward)
     w = 0.0; solves = 0; cost = 0.0
     for t in test
         X = context_from_features(model, featuredict(t))
-        ec = costs_at(cb, t)
-        paid = 0.0; solved = false
-        for a in eachindex(TIERS)                       # cheapest → dearest
-            θ = posterior_accuracy(model, tops[a], X)    # E[P(resolved_a | X)]
-            reward * θ >= ec[a] || break                 # EU gate: stop escalating
+        ec = costs_at(cb, t)                              # context-dependent E[cost|tier,X]
+        paid = 0.0; solved = false; tried = Set{Int}()
+        while true
+            # THE decision is the brain's gate, via `optimise` — not reimplemented here.
+            a = escalation_next(model, tops, X, ec, reward, tried)
+            a == 0 && break                              # stop (no positive-EU rung left)
             paid += t.cost[a]                            # pay this rung (realized)
             if t.resolved[a]; solved = true; break; end  # observed solve → stop
+            push!(tried, a)                              # failed → consider the next rung
         end
         cost += paid; solves += solved ? 1 : 0
         w += (solved ? reward : 0.0) - paid

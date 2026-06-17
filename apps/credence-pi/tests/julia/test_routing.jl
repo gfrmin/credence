@@ -23,7 +23,8 @@ using Random: MersenneTwister
 include(joinpath(@__DIR__, "..", "..", "brain", "feature_brain.jl"))
 using .FeatureBrain: build_model, observe, observe_soft
 include(joinpath(@__DIR__, "..", "..", "brain", "routing_brain.jl"))
-using .RoutingBrain: wire_routing!, route, posterior_accuracy, route_outcome!, _ctx_key
+using .RoutingBrain: wire_routing!, route, escalation_next, posterior_accuracy,
+    route_outcome!, _ctx_key
 
 const BDSL_DIR = joinpath(@__DIR__, "..", "..", "bdsl")
 const TOL = 1e-12
@@ -113,6 +114,39 @@ let env = routing_env(reward = 1.0)
     choice = env[Symbol("route-decide")](Dict("prompt-length" => "short"))
     @assert choice["model"] == "claude-haiku-4-5"
     ok("cold fallback: uniform belief routes the cheapest model even at reward 1.0")
+end
+
+# ── A'. Observe-then-escalate: escalation_next, the gate via the one optimise ──
+# The deployable strategy that wins the dominance eval: try cheapest, escalate on
+# observed failure only when the EU justifies it. Same warm belief; the decision is
+# `optimise` over {try, stop}, fed context-dependent cost.
+
+# High reward: escalate cheapest→dearest as cheaper rungs are observed to fail, then stop.
+let env = routing_env(reward = 1.0)
+    rt = wire_routing!(env); X = ["short"]; costs = [0.01, 0.05, 0.20]  # ascending E[cost|tier]
+    @assert escalation_next(rt.model, rt.tops, X, costs, 1.0, Set{Int}()) == 1
+    @assert escalation_next(rt.model, rt.tops, X, costs, 1.0, Set([1])) == 2
+    @assert escalation_next(rt.model, rt.tops, X, costs, 1.0, Set([1, 2])) == 3
+    @assert escalation_next(rt.model, rt.tops, X, costs, 1.0, Set([1, 2, 3])) == 0
+    ok("escalation_next: high reward escalates cheapest-first 1→2→3→stop")
+end
+
+# The EU gate's value: a solve worth too little ⇒ STOP without spending (what the
+# gateless cascade can't do).
+let env = routing_env(reward = 1.0)
+    rt = wire_routing!(env)
+    @assert escalation_next(rt.model, rt.tops, ["short"], [0.01, 0.05, 0.20], 0.001, Set{Int}()) == 0
+    ok("escalation_next: tiny reward ⇒ gate STOPS (no rung worth trying)")
+end
+
+# Tightest invariant: the gate opens IFF reward·E[θ_a|X] ≥ cost_a — the boundary, exact,
+# through `optimise` (try the cheapest tier with cost just below vs just above its EU break).
+let env = routing_env(reward = 1.0)
+    rt = wire_routing!(env); X = ["short"]; reward = 1.0
+    θ1 = posterior_accuracy(rt.model, rt.tops[1], X)
+    @assert escalation_next(rt.model, rt.tops, X, [reward * θ1 - 1e-6, 9.9, 9.9], reward, Set{Int}()) == 1
+    @assert escalation_next(rt.model, rt.tops, X, [reward * θ1 + 1e-6, 9.9, 9.9], reward, Set{Int}()) == 0
+    ok("escalation_next gate ≡ reward·E[θ|X] ≥ cost (boundary exact, via optimise)")
 end
 
 # ── B. Daemon transport: route-request → route signal ───────────────────

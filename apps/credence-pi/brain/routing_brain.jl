@@ -45,7 +45,7 @@ using ..FeatureBrain: StructureBMA, belief_at_context, context_from_features,
     build_model_from_decls, build_prior, observe, observe_soft
 using JSON3
 
-export route, route_eu, posterior_accuracy, wire_routing!,
+export route, route_eu, escalation_next, posterior_accuracy, wire_routing!,
     RoutingState, EmissionBelief, route_outcome!, decode_correctness
 
 # Per-action EU functional: reward·θ_a − cost_a, expressed over the joint belief's
@@ -117,6 +117,42 @@ used to make a routing decision — that is `route`'s job, through `optimise`.
 """
 posterior_accuracy(model::StructureBMA, top::MixturePrevision, X::AbstractVector) =
     Float64(expect(belief_at_context(model, top, X), Identity()))
+
+# Stop action = the zero functional (EU 0: decline to spend). Peer of `_eu_functional`.
+const _STOP_FUNCTIONAL = LinearCombination(Tuple{Float64, TestFunction}[], 0.0)
+
+"""
+    escalation_next(model, tops, X, costs_X, reward, tried) -> Int
+
+Observe-then-escalate routing (the deployable strategy that wins the dominance eval when
+up-front prediction can't — features don't determine the capability boundary, but observing
+a failure does). Among tiers not yet `tried`, cheapest first (`costs_X` ascending), return
+the cheapest whose single-step EU to try is at least the EU of stopping — i.e. `optimise`
+prefers "try" to "stop" — else 0 (STOP). The host runs the returned tier, observes success
+via its verifier, and on failure calls again with that tier added to `tried`.
+
+The {try, stop} choice is the SINGLE canonical `optimise` (Invariant 1) over the tier's
+belief-at-context: try-functional = reward·E[θ_a|X] − cost (an `Identity` LinearCombination,
+the per-tier analogue of `route`'s Projection one), stop-functional = constant 0. Cost is
+context-dependent prepared utility data (`costs_X[a]` = E[cost|a,X]; see `route`). MYOPIC —
+one rung at a time, ignoring the option value of still-dearer rungs (conservative); the
+exact sequential value is a future refinement. This is the ONE escalation decision; the eval
+calls it rather than reimplementing the gate (no host-side decision mechanism).
+"""
+function escalation_next(model::StructureBMA, tops::AbstractVector, X::AbstractVector,
+                         costs_X::AbstractVector, reward::Real, tried)
+    r = Float64(reward)
+    for a in eachindex(tops)                       # costs_X ascending ⇒ cheapest-first
+        a in tried && continue
+        # Single-tier joint + Projection(1) — mirror `route`'s ProductMeasure path so
+        # `expect` resolves to Measure×LinearCombination (a bare MixtureMeasure×TestFunction
+        # is ambiguous against the LinearCombination method).
+        belief = ProductMeasure(Measure[wrap_in_measure(belief_at_context(model, tops[a], X))])
+        tryf = LinearCombination(Tuple{Float64, TestFunction}[(r, Projection(1))], -Float64(costs_X[a]))
+        return optimise(belief, [1, 2], Dict(1 => tryf, 2 => _STOP_FUNCTIONAL)) == 1 ? a : 0
+    end
+    0
+end
 
 # ── Warm routing belief: per-model COUNTS, reconstructed via `observe` ──
 #
