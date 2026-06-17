@@ -60,10 +60,11 @@ end
     decide_response(req) -> Dict
 
 The decision for one question, given the evidence so far: the terminal effector (report / hedge /
-ask_clarify / abstain), or — when the body supplies `era_split` and a class-valid discriminating
-probe is available below the report bar — a forward `gather(probe, target)` steer
-(`AnswerBrain.gather_decide`, move-4-design §2C). Pure: same inputs → same Dict. Throws on a
-malformed request (the HTTP layer turns that into a 400).
+ask_clarify / abstain), or — when the body supplies `era_split` (the candidates span eras) and
+`recency` is unapplied — a forward `gather(recency, target)` steer that re-weights by recency BEFORE
+any terminal report, ruling out a stale leader first (`AnswerBrain.gather_decide`, move-4-design
+§2C). Pure: same inputs → same Dict. Throws on a malformed request (the HTTP layer turns that into a
+400).
 
 Optional request fields (all absent ⇒ the Stage-2a terminal decision, unchanged):
   `era_split::Bool`           body-projected feature — candidates split across eras (recency discriminates)

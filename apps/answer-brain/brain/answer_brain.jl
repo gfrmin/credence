@@ -228,24 +228,30 @@ end
     gather_decide(state, k, u_bar; era_split=false, applied_probes=String[], cp=CANONICAL_CHANNEL)
         -> (effector, report_index, probe, target, eu)
 
-The Move-4 feature-policy (move-4-design §2C, §5 Q2). If the terminal decision is a confident
-`report`, take it — the leader cleared the EU bar (the bar already integrates `u_wrong` under Ū).
-Otherwise, if a **class-valid discriminating probe** is available-and-unapplied, emit
-`gather(probe, target)` to defer a below-bar answer; else the terminal decision (hedge / ask /
-abstain) stands. v0's only class-valid probe is `recency` on an `era_split` — the validated lever
-(`master-plan.md` §"probe library": stale leader 0.605 → ~0.09). `applied_probes` (body-held,
-resent each step) guarantees termination. corroborate / subject / dispersion-gating are the
-declared-but-deferred refinements (§5 Q2 named successor); their thresholds are the §5 Q5 params.
-`report_index`/`probe`/`target` are `nothing` where inapplicable (a report carries no probe; a
-gather carries no report index).
+The Move-4 feature-policy (move-4-design §2C, §5 Q2). A **cheap, class-valid re-weighting probe**
+is applied BEFORE the terminal report, not gated behind it: whenever `era_split` holds (the
+candidates span eras — the stale-vs-current precondition) and `recency` is unapplied, emit
+`gather(recency, leader)` so the body re-weights by recency and re-decides. A confident report must
+first rule out the staleness `era_split` signals — a count-led STALE value can sit ABOVE the EU
+bar, and reporting it without the recency check is a confident-wrong (`gather.py` applies recency
+pre-decision for exactly this reason; the daemon ports that). `applied_probes` (body-held, resent)
+makes recency fire at most once, so the loop terminates; afterwards the terminal decision (report /
+hedge / ask / abstain) stands. v0's only class-valid probe is `recency` on `era_split` (the
+validated lever — `master-plan.md` §"probe library": stale leader 0.605 → ~0.09). The EXPENSIVE
+gather — `corroborate` (fetch new documents), EU-gated on a below-bar leader — plus `subject` and
+dispersion-gating are the declared-but-deferred refinements (§5 Q2 named successor; their thresholds
+are the §5 Q5 params). `report_index`/`probe`/`target` are `nothing` where inapplicable (a report
+carries no probe; a gather carries no report index).
 """
 function gather_decide(state::CategoricalMeasure, k::Int, u_bar::AbstractDict;
                        era_split::Bool = false,
                        applied_probes::AbstractVector{<:AbstractString} = String[],
                        cp::ChannelParams = CANONICAL_CHANNEL)
     action, report_index, eu = decide_full(state, k, u_bar; cp = cp)
-    action == "report" && return (action, report_index, nothing, nothing, eu)
     if era_split && !("recency" in applied_probes)
+        # Rule out staleness before any terminal report (even a confident one): the recency
+        # re-weight is cheap and class-valid here, so it precedes the decision rather than being
+        # gated by it — a count-led stale leader above the bar must be recency-checked first.
         return ("gather", nothing, "recency", provisional_leader(state, k, u_bar; cp = cp), eu)
     end
     (action, report_index, nothing, nothing, eu)

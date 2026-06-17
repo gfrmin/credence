@@ -115,12 +115,19 @@ is run and its result stated, not assumed.
 - The **`gather` branch**: `decide_full` (or a wrapping `decide`) gains the feature-policy. `/decide`'s
   request grows (additively) to carry the body-projected features the daemon cannot see — `era-split`,
   `owner-scoped` (the body holds the covariate/profile info); the daemon computes the posterior-derived
-  features itself — `dispersion`, `leader-band` (from the `weights` it builds). When the features signal
-  a class-valid discriminating covariate-probe **and** the leader is not above the report bar, return
-  `effector="gather"` with `(probe, target)`; else the terminal decision as today. The policy
-  *approximates* VOI for cheap re-weighting probes (it prices no kernel — §5 Q2): it defers a below-bar
-  answer when a covariate the policy deems class-valid is available (recency for era-split contact
-  facts; **not** subject, which mis-fires there).
+  features itself — `dispersion`, `leader-band` (from the `weights` it builds). v0's class-valid probe
+  is **`recency` on `era-split`**, and because it is a *cheap re-weight* it is applied BEFORE the
+  terminal report, not gated behind it: whenever `era-split` holds and `recency` is unapplied the daemon
+  returns `gather(recency, target)`; the body re-weights and re-decides; `applied_probes` (resent) makes
+  it fire at most once → termination. A confident report must first rule out the staleness `era-split`
+  signals — a count-led STALE value can sit ABOVE the bar, so reporting it un-checked is a
+  confident-wrong (`gather.py` applies recency pre-decision; the daemon ports that). The **below-bar
+  EU-gate belongs to the EXPENSIVE gather** — `corroborate` (fetch new docs), the deferred §5 Q2
+  successor; `subject` (mis-fires on contact facts) stays deselected. The policy prices no kernel (§5
+  Q2): for the cheap recency re-weight, "apply when class-valid" is the VOI-sound move. **(Build
+  correction:** an earlier below-bar gate on recency was removed when TDD/parity surfaced the
+  confident-stale-report it would emit — the daemon must recency-check a count-led stale leader even
+  above the bar.**)**
 - `daemon/server.jl` — extend the `/decide` response with the optional `gather` fields; add `/manifest`
   dispatch. (`/decide`'s existing terminal shape is unchanged — additive.)
 - The operator-set policy params (§5 Q5) live in `bdsl/utility.bdsl` (or a sibling `policy.bdsl`):
@@ -161,12 +168,13 @@ would wrongly drop the truth-bearing admin doc.
 
 1. **retrieve / extract (baseline).** Body → `/retrieve` → hits; → `/extract` (no covariates) →
    candidates `{V_current, V_stale(2015), …}`, abstract observations, `rho`. Accumulated.
-2. **decide.** Body composes evidence + `u_bar` (`/utility`) → `POST /decide`. The daemon builds the
-   posterior — `V_stale` leads by corroboration count (the documented failure) — and reads the
-   posterior-shape features: `candidates-era-split = yes`, `leader-band = near-bar` (leads, not robust),
-   `owner-scoped = yes`. The **feature-policy** fires: era-split + owner-scoped + ¬above-bar ⇒ recency is
-   the class-valid discriminator ⇒ `effector = gather`, `probe = recency`, `target = V_stale/leader`.
-   (Subject is **not** selected: the policy knows subject mis-fires on owner-scoped contact facts.)
+2. **decide.** Body composes evidence + `u_bar` (`/utility`) → `POST /decide` with `era_split = yes`.
+   The daemon builds the posterior — `V_stale` leads by corroboration count (the documented failure),
+   whether that leaves it below the bar (it would abstain) or, when it out-documents enough, ABOVE it (it
+   would confidently report the *stale* value). Either way the **feature-policy** fires on `era-split`:
+   recency is the class-valid discriminator and a cheap re-weight, so it precedes the report ⇒ `effector
+   = gather`, `probe = recency`, `target = V_stale`. (Subject is **not** selected: it mis-fires on
+   owner-scoped contact facts.)
 3. **gather (steer).** Body receives `gather(recency)` → `/probe/recency` → `doc_date` covariate →
    `/extract` **with the recency covariate** → observations whose `time_factor` decays `V_stale`.
    Accumulated (the union only grows).
@@ -193,9 +201,12 @@ extension (drags the SSE bus); lift it wholesale into a lib (forces a false tran
 **Q2 — the gather steer (RESOLVED: feature-policy in the daemon).** The daemon emits `gather(probe,
 target)` from the posterior-shape features (`features.bdsl`) via an operator-set policy that encodes
 which covariate is class-valid (recency for era-split contact facts; subject for the partner-ID class;
-**not** subject for contact facts). It is honest as a *calibrated policy approximating VOI for cheap
-re-weighting probes when the leader is below bar* — not yet a kernel-priced VOI. Generalises the
-`gather` effector param `(target)` → `(probe, target)` — a "deployment event" per `capabilities.bdsl`.
+**not** subject for contact facts). It is honest as a *calibrated policy approximating VOI* — not yet a
+kernel-priced VOI. The cheap class-valid re-weight (recency on era-split) is applied **before** the
+report, not gated by it — a count-led stale leader can sit above the bar, so it must be recency-checked
+first (TDD/parity caught a below-bar gate that would have emitted that confident-wrong); the below-bar
+EU-gate is reserved for the **expensive** `corroborate` (successor). Generalises the `gather` effector
+param `(target)` → `(probe, target)` — a "deployment event" per `capabilities.bdsl`.
 *Named successor:* wire the existing `voi_gather` (`answer_brain.jl:204`) with per-probe predictive
 kernels (and a learned per-cell policy from the Stage-3 observation log). *Rejected:* full `voi_gather`
 now (kernel-modelling risk on the gate); model-selects-probes (covariate selection leaves the brain —
