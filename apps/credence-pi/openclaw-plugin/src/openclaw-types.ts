@@ -1,10 +1,11 @@
 // openclaw-types.ts — minimal local declarations of the OpenClaw plugin
 // API surface this body consumes.
 //
-// Sourced from OpenClaw (HEAD 36a596aa9f, 2026-06-02):
-//   - src/plugins/types.ts          (OpenClawPluginApi, api.on)
-//   - src/plugins/hook-types.ts     (before_tool_call / after_tool_call /
-//                                     llm_output events + results)
+// Sourced from OpenClaw (HEAD 7019da8c7b, 2026-06-17):
+//   - src/plugins/types.ts                         (OpenClawPluginApi, api.on, api.config)
+//   - src/plugins/hook-types.ts                    (before/after_tool_call, llm_output)
+//   - src/plugins/hook-before-agent-start.types.ts (before_model_resolve event/result)
+//   - src/config/types.models.ts                   (models.providers[*].models[*].cost)
 //
 // We declare ONLY what we consume so the plugin builds standalone with no
 // @openclaw/openclaw dependency — mirroring the dependency-free pattern of
@@ -53,6 +54,8 @@ export interface BeforeToolCallResult {
 // seam credence-pi uses to route by EU-max. Needs hooks.allowConversationAccess:true.
 export interface BeforeModelResolveEvent {
   prompt?: string;
+  /** Attachment metadata (current OpenClaw): kind + mimeType, for future file-aware routing. */
+  attachments?: Array<{ kind?: string; mimeType?: string }>;
 }
 
 export interface BeforeModelResolveResult {
@@ -114,11 +117,35 @@ export interface HookOpts {
   timeoutMs?: number;
 }
 
+// Narrow structural view of the OpenClawConfig slice we read to discover the user's model
+// roster (api.config). We declare ONLY these fields so the plugin stays dependency-free and
+// resilient to config churn; everything else on the real config is ignored.
+export interface OpenClawModelDefinitionSlice {
+  id: string;
+  name?: string;
+  input?: string[]; // supported modalities (text/image/…) — for future file-aware routing
+  cost?: { input?: number; output?: number }; // USD per million tokens
+}
+export interface OpenClawConfigSlice {
+  models?: {
+    providers?: Record<string, { models?: OpenClawModelDefinitionSlice[] }>;
+  };
+  agents?: {
+    // Allow-list of model refs ("provider/id") the agent may use, if configured.
+    defaults?: { models?: Record<string, unknown> };
+  };
+}
+
 export interface OpenClawPluginApi {
   id?: string;
   logger?: PluginLogger;
   // This plugin's resolved config (validated against openclaw.plugin.json).
   pluginConfig?: Record<string, unknown>;
+
+  // The host's resolved OpenClaw config (api-builder.ts attaches it). We read ONLY
+  // `models.providers` (the model catalog + pricing) and `agents.defaults.models` (the
+  // allow-list) to discover the routing roster — see OpenClawConfigSlice.
+  config?: OpenClawConfigSlice;
 
   // Cleanup hooks run on reset/delete/reload paths
   // (OpenClaw src/plugins/host-hooks.ts PluginRuntimeLifecycleRegistration).
