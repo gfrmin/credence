@@ -24,8 +24,21 @@ against it.
 - `daemon/observation_log.jl` — append-only JSONL + deterministic replay.
 - `daemon/main.jl` — load-and-ready skeleton.
 
-Deferred to Stage 2 (body-coupled): `daemon/server.jl` (HTTP/SSE sensor→effector loop) and
-`extension/*` (the pi-mono TS body), whose event schema the body defines.
+## Status — Stage 2a (the decision wire)
+
+Landed (`docs/answer-brain/move-2-design.md`): a **stateless** HTTP surface over the Stage-1 brain.
+
+- `daemon/server.jl` — `POST /decide` (`observations + candidates + rho + u_bar → effector +
+  report_index + value + credences + p_none + eu`) + `GET /ready`. Request/response, not SSE — the
+  decision is synchronous (move-2 §5 Q2). Rebuilds the posterior per call, so no per-question state.
+  Wire parity proven against `stage0_parity.json` (`tests/julia/test_server.jl`, 48 checks).
+- `brain/answer_brain.jl` — adds `decide_full` (returns the report index `optimise` chose, for the
+  wire), `terminal_decide` behaviour preserved (Stage-1 regression green).
+- the parity boundary's Python side is `life-agent`'s `bridge/observations.py` (separate repo).
+
+Deferred to Stage 2b (Move 3, body-coupled): the `life-agent` bridge HTTP service
+(`retrieve`/`extract`/`probe_*` over the live corpus) and `extension/*` (the pi-mono TS body + the
+minimal answering app), then the end-to-end eval + gate.
 
 ## Test
 

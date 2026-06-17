@@ -1,15 +1,15 @@
 # Role: brain
 """
-    main.jl — standalone entrypoint for the answer-brain daemon (Stage-1 skeleton).
+    main.jl — answer-brain daemon entrypoint (Stage 2a: the stateless decision wire).
 
-Loads Credence + the brain + the observation log, and reports ready. The HTTP/SSE wire
-surface (`server.jl`, the sensor→effector loop) is deferred to Stage 2, where the pi-mono
-body defines the sensor-event schema (move-1-design §0/§"Q2"). Until then this entrypoint
-exists to confirm the app loads under the repo project and to be the seam Stage 2 grows the
-server onto.
+Loads Credence + the brain + the HTTP server (`server.jl`) and serves `POST /decide` + `GET /ready`
+until interrupted. Stateless, so there is nothing to replay on boot (move-2-design §5 Resolution); the
+observation log / live-session wiring lands with the pi-mono body in Stage 2b (Move 3).
 
 Run:
     julia --project=<repo-root> apps/answer-brain/daemon/main.jl
+Env:
+    ANSWER_BRAIN_HOST (default 127.0.0.1), ANSWER_BRAIN_PORT (default 8799)
 """
 
 push!(LOAD_PATH, abspath(joinpath(@__DIR__, "..", "..", "..", "src")))
@@ -17,14 +17,23 @@ using Credence
 
 include(joinpath(@__DIR__, "..", "brain", "answer_brain.jl"))
 using .AnswerBrain
-include(joinpath(@__DIR__, "observation_log.jl"))
-using .ObservationLog
+include(joinpath(@__DIR__, "server.jl"))
+using .Server
 
-const BDSL_DIR = get(ENV, "ANSWER_BRAIN_BDSL_DIR",
-                     normpath(joinpath(@__DIR__, "..", "bdsl")))
-const LOG_PATH = get(ENV, "ANSWER_BRAIN_LOG",
-                     joinpath(homedir(), ".answer-brain", "observations.jsonl"))
+const HOST = get(ENV, "ANSWER_BRAIN_HOST", "127.0.0.1")
+const PORT = parse(Int, get(ENV, "ANSWER_BRAIN_PORT", "8799"))
 
-@info "answer-brain loaded (Stage 1: no wire surface — see move-1-design §Q2)" #=
-=#    channel = AnswerBrain.CANONICAL_CHANNEL bdsl_dir = BDSL_DIR log = LOG_PATH
-println(Dict("status" => "ready", "stage" => 1, "wire" => "deferred-to-stage-2"))
+function main()
+    server = start_daemon(; port = PORT, host = HOST)
+    @info "answer-brain daemon listening (Stage 2a: stateless /decide)" host = HOST port = PORT
+    try
+        wait(server)
+    catch e
+        e isa InterruptException || rethrow()
+    finally
+        stop_daemon(server)
+        @info "answer-brain daemon stopped"
+    end
+end
+
+main()

@@ -30,7 +30,7 @@ using Main.Credence: CategoricalMeasure, Finite, Kernel, PushOnly, condition, we
 import Main.Credence.Ontology: optimise, value, net_voi
 
 export Obs, ChannelParams, CANONICAL_CHANNEL,
-       candidate_posterior, terminal_decide, decision_fpa, voi_gather
+       candidate_posterior, terminal_decide, decide_full, decision_fpa, voi_gather
 
 # ── Stated channel parameters (the §4.2/§4.1 priors; calibration moves them) ────────────
 # Mirror of life-agent's `lookup.py` constants and `bdsl/utility.bdsl`. A `ChannelParams`
@@ -155,6 +155,15 @@ end
 _action_name(act::Int, k::Int)::String =
     act <= k ? "report" : act == k + 1 ? "hedge" : act == k + 2 ? "ask_clarify" : "abstain"
 
+# Shared decision: `optimise` over the terminal action set; returns the chosen action KEY + its EU.
+# The argmax is the single decision mechanism — no `weights` are read to select behaviour.
+function _decide(state::CategoricalMeasure, k::Int, u_bar::AbstractDict, cp::ChannelParams)
+    order, fpa = decision_fpa(k, u_bar; cp = cp)
+    act = optimise(state, order, fpa)          # argmax_a expect(state, fpa[a]) (single decision mech.)
+    eu  = value(state, order, fpa)             # = EU of the chosen action
+    (act, Float64(eu))
+end
+
 """
     terminal_decide(state, k, u_bar; cp=CANONICAL_CHANNEL) -> (action::String, eu::Float64)
 
@@ -163,10 +172,24 @@ _action_name(act::Int, k::Int)::String =
 """
 function terminal_decide(state::CategoricalMeasure, k::Int, u_bar::AbstractDict;
                          cp::ChannelParams = CANONICAL_CHANNEL)
-    order, fpa = decision_fpa(k, u_bar; cp = cp)
-    act = optimise(state, order, fpa)          # argmax_a expect(state, fpa[a]) (single decision mech.)
-    eu  = value(state, order, fpa)             # = EU of the chosen action
-    (_action_name(act, k), Float64(eu))
+    act, eu = _decide(state, k, u_bar, cp)
+    (_action_name(act, k), eu)
+end
+
+"""
+    decide_full(state, k, u_bar; cp=CANONICAL_CHANNEL)
+        -> (action::String, report_index::Union{Int,Nothing}, eu::Float64)
+
+As `terminal_decide`, but also returns the **0-based candidate index** `optimise` chose when the
+action is a report (`report_{j*}` ⇒ index `j*−1`), `nothing` otherwise. That index is the decision
+mechanism's own choice, not an `argmax(weights)` — the wire surface (`daemon/server.jl`) needs the
+reported value while keeping the Invariant-1 promise that no caller reads `weights` to pick an action.
+"""
+function decide_full(state::CategoricalMeasure, k::Int, u_bar::AbstractDict;
+                     cp::ChannelParams = CANONICAL_CHANNEL)
+    act, eu = _decide(state, k, u_bar, cp)
+    report_index = act <= k ? act - 1 : nothing
+    (_action_name(act, k), report_index, eu)
 end
 
 # ── The forward capability: VOI-priced gather/ask (NEW; no Stage-0 parity counterpart) ──
