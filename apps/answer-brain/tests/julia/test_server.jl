@@ -63,6 +63,25 @@ function request_for(case)
     )
 end
 
+# A synthetic below-bar two-candidate request (dispersed, harsh u_wrong) — the Move-4 gather inputs
+# ride on the same wire. `current`/`stale` are display labels only; era_split drives the gather branch.
+function gather_request(; era_split::Bool, applied::Vector{String} = String[])
+    Dict{String, Any}(
+        "question_id"    => "wire-gather",
+        "candidates"     => ["current", "stale"],
+        "rho"            => 0.7,
+        "u_bar"          => Dict{String, Any}("u_correct" => 1.0, "u_wrong" => -4.0,
+                            "u_hedged" => -0.5, "u_abstain" => 0.0, "lambda_int" => 1.0),
+        "observations"   => [
+            Dict{String, Any}("reports" => 0, "group" => 0, "authority" => 0.9,
+                              "subject_factor" => 1.0, "time_factor" => 1.0),
+            Dict{String, Any}("reports" => 1, "group" => 1, "authority" => 0.9,
+                              "subject_factor" => 1.0, "time_factor" => 1.0)],
+        "era_split"      => era_split,
+        "applied_probes" => applied,
+    )
+end
+
 # ── 0. Drift guard: the handler's default channel == the fixture's params (move-1 §0) ────
 let ch = data.channel_params
     cp = CANONICAL_CHANNEL
@@ -143,9 +162,37 @@ let port = 8791
                         "{not json"; status_exception = false, retry = false, readtimeout = 5)
         check("HTTP /decide rejects malformed JSON with 400", bad.status == 400;
               detail = "status=$(bad.status)")
+
+        # Move 4: a gather request over live HTTP returns the forward steer.
+        ghttp = HTTP.post("http://127.0.0.1:$port/decide", ["Content-Type" => "application/json"],
+                          JSON3.write(gather_request(; era_split = true)); retry = false, readtimeout = 5)
+        gresp = JSON3.read(String(ghttp.body))
+        check("HTTP /decide gather: era_split ⇒ gather(recency)",
+              ghttp.status == 200 && String(gresp.effector) == "gather" &&
+              String(gresp.probe) == "recency";
+              detail = "status=$(ghttp.status) effector=$(get(gresp, :effector, "∅"))")
     finally
         stop_daemon(server)
     end
+end
+
+# ── 4. The gather branch over the wire (Move 4): the forward steer + backward compatibility ──
+let r = Server.decide_response(gather_request(; era_split = true))
+    check("wire gather: below-bar + era_split ⇒ gather(recency)",
+          r["effector"] == "gather" && r["probe"] == "recency";
+          detail = "got effector=$(r["effector"]) probe=$(get(r, "probe", "∅"))")
+    check("wire gather: target is a candidate string, report_index null",
+          r["target"] in ("current", "stale") && r["report_index"] === nothing;
+          detail = "target=$(r["target"]) report_index=$(r["report_index"])")
+end
+let r = Server.decide_response(gather_request(; era_split = false))
+    check("wire gather: era_split absent ⇒ no gather (Stage-2a terminal, additive fields null)",
+          r["effector"] != "gather" && r["probe"] === nothing && r["target"] === nothing;
+          detail = "got $(r["effector"])")
+end
+let r = Server.decide_response(gather_request(; era_split = true, applied = ["recency"]))
+    check("wire gather: recency applied ⇒ no re-gather (terminates)",
+          r["effector"] != "gather"; detail = "got $(r["effector"])")
 end
 
 println("\n", "="^64)

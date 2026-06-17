@@ -30,7 +30,8 @@ using Main.Credence: CategoricalMeasure, Finite, Kernel, PushOnly, condition, we
 import Main.Credence.Ontology: optimise, value, net_voi
 
 export Obs, ChannelParams, CANONICAL_CHANNEL,
-       candidate_posterior, terminal_decide, decide_full, decision_fpa, voi_gather
+       candidate_posterior, terminal_decide, decide_full, decision_fpa, voi_gather,
+       provisional_leader, gather_decide
 
 # ── Stated channel parameters (the §4.2/§4.1 priors; calibration moves them) ────────────
 # Mirror of life-agent's `lookup.py` constants and `bdsl/utility.bdsl`. A `ChannelParams`
@@ -206,6 +207,48 @@ function voi_gather(state::CategoricalMeasure, k::Int, u_bar::AbstractDict,
                     cp::ChannelParams = CANONICAL_CHANNEL)::Float64
     order, fpa = decision_fpa(k, u_bar; cp = cp)
     Float64(net_voi(state, probe_kernel, order, fpa, possible_obs, cost))
+end
+
+# ── The forward gather steer: an operator-set feature-policy (Move 4, move-4-design §2C) ──
+"""
+    provisional_leader(state, k, u_bar; cp=CANONICAL_CHANNEL) -> Int
+
+The 0-based candidate index the decision mechanism would report **if forced to report** —
+`optimise` over the K `report_j` actions ALONE. Invariant 1: the leader comes from the decision
+mechanism, never `argmax(weights)`. Used as the `gather` target when the terminal decision
+withholds, so the steer names the candidate whose support the probe will test.
+"""
+function provisional_leader(state::CategoricalMeasure, k::Int, u_bar::AbstractDict;
+                            cp::ChannelParams = CANONICAL_CHANNEL)::Int
+    order, fpa = decision_fpa(k, u_bar; cp = cp)
+    optimise(state, order[1:k], fpa) - 1        # report keys 1..k only; key j ⇒ index j-1
+end
+
+"""
+    gather_decide(state, k, u_bar; era_split=false, applied_probes=String[], cp=CANONICAL_CHANNEL)
+        -> (effector, report_index, probe, target, eu)
+
+The Move-4 feature-policy (move-4-design §2C, §5 Q2). If the terminal decision is a confident
+`report`, take it — the leader cleared the EU bar (the bar already integrates `u_wrong` under Ū).
+Otherwise, if a **class-valid discriminating probe** is available-and-unapplied, emit
+`gather(probe, target)` to defer a below-bar answer; else the terminal decision (hedge / ask /
+abstain) stands. v0's only class-valid probe is `recency` on an `era_split` — the validated lever
+(`master-plan.md` §"probe library": stale leader 0.605 → ~0.09). `applied_probes` (body-held,
+resent each step) guarantees termination. corroborate / subject / dispersion-gating are the
+declared-but-deferred refinements (§5 Q2 named successor); their thresholds are the §5 Q5 params.
+`report_index`/`probe`/`target` are `nothing` where inapplicable (a report carries no probe; a
+gather carries no report index).
+"""
+function gather_decide(state::CategoricalMeasure, k::Int, u_bar::AbstractDict;
+                       era_split::Bool = false,
+                       applied_probes::AbstractVector{<:AbstractString} = String[],
+                       cp::ChannelParams = CANONICAL_CHANNEL)
+    action, report_index, eu = decide_full(state, k, u_bar; cp = cp)
+    action == "report" && return (action, report_index, nothing, nothing, eu)
+    if era_split && !("recency" in applied_probes)
+        return ("gather", nothing, "recency", provisional_leader(state, k, u_bar; cp = cp), eu)
+    end
+    (action, report_index, nothing, nothing, eu)
 end
 
 end # module AnswerBrain

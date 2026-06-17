@@ -15,16 +15,21 @@ probability. The effector and the reported candidate index both come from `Answe
 body to *display* the withheld leader, not to select an action.
 
 Routes:
-  POST /decide  {question_id?, observations[], candidates[], rho, u_bar, channel?}
-             →  {effector, report_index, value, credences[], p_none, eu}
+  POST /decide  {question_id?, observations[], candidates[], rho, u_bar, channel?,
+                 era_split?, owner_scoped?, applied_probes?}
+             →  {effector, report_index, value, probe, target, credences[], p_none, eu}
   GET  /ready → "ok"
+
+The `era_split?`/`owner_scoped?`/`applied_probes?` fields drive the Move-4 gather branch
+(`AnswerBrain.gather_decide`); absent ⇒ the Stage-2a terminal decision, unchanged. `effector` may
+now be `gather`, with `probe`/`target` naming the forward steer (null on a terminal decision).
 
 `decide_response(req::AbstractDict) -> Dict` is the pure handler the tests drive directly (no socket);
 `start_daemon`/`stop_daemon` wrap it in HTTP for the body + a curl smoke.
 """
 module Server
 
-using Main.AnswerBrain: Obs, ChannelParams, CANONICAL_CHANNEL, candidate_posterior, decide_full
+using Main.AnswerBrain: Obs, ChannelParams, CANONICAL_CHANNEL, candidate_posterior, gather_decide
 using Main.Credence: weights
 using HTTP
 using JSON3
@@ -54,8 +59,16 @@ end
 """
     decide_response(req) -> Dict
 
-The terminal decision for one question, given the evidence so far. Pure: same inputs → same Dict.
-Throws on a malformed request (the HTTP layer turns that into a 400).
+The decision for one question, given the evidence so far: the terminal effector (report / hedge /
+ask_clarify / abstain), or — when the body supplies `era_split` and a class-valid discriminating
+probe is available below the report bar — a forward `gather(probe, target)` steer
+(`AnswerBrain.gather_decide`, move-4-design §2C). Pure: same inputs → same Dict. Throws on a
+malformed request (the HTTP layer turns that into a 400).
+
+Optional request fields (all absent ⇒ the Stage-2a terminal decision, unchanged):
+  `era_split::Bool`           body-projected feature — candidates split across eras (recency discriminates)
+  `owner_scoped::Bool`        body-projected feature — reserved for the subject refinement (§5 Q2); v0 ignores it
+  `applied_probes::[String]`  probes already applied this question (body-held, resent) — guarantees termination
 """
 function decide_response(req::AbstractDict)::Dict{String, Any}
     candidates = String.(req["candidates"])
@@ -65,15 +78,20 @@ function decide_response(req::AbstractDict)::Dict{String, Any}
     cp = _channel(req)
     obs = Obs[_obs(o) for o in req["observations"]]
     u_bar = Dict{String, Float64}(String(kk) => Float64(vv) for (kk, vv) in req["u_bar"])
+    era_split = Bool(get(req, "era_split", false))
+    applied = String[String(p) for p in get(req, "applied_probes", String[])]
 
     post = candidate_posterior(k, obs, rho; cp = cp)
     w = weights(post)                                  # length k+1: candidates then NONE
-    effector, report_index, eu = decide_full(post, k, u_bar; cp = cp)
+    effector, report_index, probe, target, eu =
+        gather_decide(post, k, u_bar; era_split = era_split, applied_probes = applied, cp = cp)
 
     Dict{String, Any}(
-        "effector"     => effector,                    # report | hedge | ask_clarify | abstain
-        "report_index" => report_index,                # 0-based candidate idx, or nothing → null
+        "effector"     => effector,                    # report | hedge | ask_clarify | abstain | gather
+        "report_index" => report_index,                # 0-based candidate idx (report), or nothing → null
         "value"        => report_index === nothing ? nothing : candidates[report_index + 1],
+        "probe"        => probe,                        # the gather probe (e.g. "recency"), or null
+        "target"       => target === nothing ? nothing : candidates[target + 1],  # candidate to test, or null
         "credences"    => w[1:k],                       # candidate weights (NONE excluded)
         "p_none"       => w[k + 1],
         "eu"           => eu,
