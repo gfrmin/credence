@@ -26,6 +26,9 @@ const PORT = parse(Int, get(ENV, "ANSWER_BRAIN_PORT", "8799"))
 function main()
     server = start_daemon(; port = PORT, host = HOST)
     @info "answer-brain daemon listening (Stage 2a: stateless /decide)" host = HOST port = PORT
+    # SIGINT → catchable InterruptException (not a hard exit), so the finally below runs
+    # stop_daemon and releases the port cleanly on Ctrl-C (credence-pi daemon parity).
+    Base.exit_on_sigint(false)
     try
         wait(server)
     catch e

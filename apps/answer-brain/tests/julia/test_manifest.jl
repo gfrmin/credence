@@ -68,9 +68,10 @@ check("ask-user takes (text string)",
 check("abstain takes (reason string)",
       (a = _find(effs, "abstain"); a !== nothing && _has_param(a, "reason", "string") &&
        length(a["parameters"]) == 1))
-check("gather takes (target string)",
-      (a = _find(effs, "gather"); a !== nothing && _has_param(a, "target", "string") &&
-       length(a["parameters"]) == 1))
+check("gather takes (probe string) (target string)",
+      (a = _find(effs, "gather"); a !== nothing &&
+       _has_param(a, "probe", "string") && _has_param(a, "target", "string") &&
+       length(a["parameters"]) == 2))
 
 # The four posterior-shape features, each with its declared space (features.bdsl).
 expected_features = Dict(

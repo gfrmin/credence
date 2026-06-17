@@ -37,6 +37,7 @@
       (parameters (reason string)))
 
     ; --- gather: steer the body to fetch more evidence on a candidate ---
-    ;   target (string) — the candidate value to corroborate (the net_voi pick)
+    ;   probe  (string) — which probe to run (e.g. "recency"); the net_voi pick
+    ;   target (string) — the candidate value to corroborate
     (effector gather
-      (parameters (target string)))))
+      (parameters (probe string) (target string)))))
