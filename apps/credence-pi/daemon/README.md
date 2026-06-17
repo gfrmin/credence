@@ -26,8 +26,13 @@ expects `Credence` already loaded in `Main` — it is `include`d by
 `main.jl`, the tests, and the demo, not run directly.) Or run the
 published image:
 
-    docker run -p 8787:8787 -v ~/.credence-pi:/root/.credence-pi \
+    docker run -d --name credence-pi --restart unless-stopped \
+      -p 127.0.0.1:8787:8787 -v ~/.credence-pi:/root/.credence-pi \
       ghcr.io/gfrmin/credence-pi-daemon
+
+Or via Compose (same daemon, restart-resilient across reboots):
+
+    docker compose -f apps/credence-pi/docker-compose.yml up -d
 
 Default bind is `127.0.0.1:8787`. Override via environment:
 `CREDENCE_PI_HOST`, `CREDENCE_PI_PORT`, `CREDENCE_PI_BDSL_DIR`,
