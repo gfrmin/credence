@@ -2,6 +2,12 @@
 #
 # train_routing_brain.jl — distil the WARM routing belief from the measured oracle grid.
 #
+# SUPERSEDED (2026-06-17) by train_routing_from_matrix.jl: eval/calibration.jl showed this
+# short-MCQ warm MIS-RANKS tiers on agentic tasks (it orders haiku<sonnet<opus, but tb
+# reality is sonnet>opus). The shipped routing_brain.counts.json now comes from the AGENTIC
+# Terminal-Bench matrix. Kept for provenance; do NOT run it to regenerate the shipped belief
+# (it would re-introduce the mis-rank).
+#
 # Reads the real-model oracle grid (the de-risk fixture:
 # apps/python/credence_router/experiments/routing_dominance/oracle_grid.json — per
 # (model, question) measured MCQ correctness on the 50-item labelled bank) and emits

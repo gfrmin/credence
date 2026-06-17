@@ -54,12 +54,15 @@ let env = routing_env()
     @assert length(rt.costs) == 3 && rt.costs[1] < rt.costs[2] < rt.costs[3]
     ok("wire_routing! parses the declared roster (3 models, ascending cost)")
 
-    # Warm belief: posterior-mean accuracy at a short prompt is ordered cheap<mid<exp,
-    # shrunk from the measured 0.88/0.96/0.98 toward the Beta(2,2) prior.
+    # Warm belief (AGENTIC, from the tb matrix): posterior-mean accuracy at a short prompt is
+    # ordered haiku < opus < sonnet — sonnet is the best-believed on short agentic tasks. (The
+    # superseded MCQ warm wrongly ordered opus top; eval/calibration.jl quantified the
+    # mis-rank.) Beta(2,2)-shrunk from the measured short-bucket rates (haiku 0.33 / sonnet
+    # 0.70 / opus 0.57).
     θ = [posterior_accuracy(rt.model, rt.tops[i], ["short"]) for i in 1:3]
-    @assert θ[1] < θ[2] < θ[3]
-    @assert 0.80 < θ[1] < 0.90 && 0.90 < θ[3] < 0.96
-    ok("warm belief: P(correct|short) ordered haiku<sonnet<opus, Beta-shrunk ($(round.(θ, digits = 3)))")
+    @assert θ[1] < θ[3] < θ[2]          # haiku < opus < sonnet
+    @assert 0.30 < θ[1] < 0.42 && 0.62 < θ[2] < 0.72 && 0.50 < θ[3] < 0.62
+    ok("warm belief: P(correct|short) ordered haiku<opus<sonnet, agentic-warmed ($(round.(θ, digits = 3)))")
 
     @assert haskey(env, Symbol("route-decide"))
     ok("wire_routing! installed env[:route-decide]")
@@ -76,13 +79,14 @@ let env = routing_env()
     ok("cost-hawk (reward 0.02): routes the cheap model (haiku) at short AND long")
 end
 
-# Quality-hawk (reward 1.0): route the BEST-BELIEVED model where the belief is warm.
+# Quality-hawk (reward 1.0): route the BEST-BELIEVED model where the belief is warm — now
+# sonnet (the agentic warm's top tier at short), which is also CHEAPER than opus: better+cheaper.
 let env = routing_env(reward = 1.0)
     wire_routing!(env)
     choice = env[Symbol("route-decide")](Dict("prompt-length" => "short"))
-    @assert choice["model"] == "claude-opus-4-8"
-    @assert choice["provider"] == "anthropic" && choice["name"] == "opus"
-    ok("quality-hawk (reward 1.0): routes the best-believed model (opus) on a short prompt")
+    @assert choice["model"] == "claude-sonnet-4-6"
+    @assert choice["provider"] == "anthropic" && choice["name"] == "sonnet"
+    ok("quality-hawk (reward 1.0): routes the best-believed model (sonnet) on a short prompt — better AND cheaper than opus")
 end
 
 # Per-profile divergence on ONE shared belief is the Wald core: same warm belief, the
@@ -327,16 +331,17 @@ end
 # C4. Human approve/reject is the gold anchor: a KNOWN label drives θ hard.
 let rt = wire_routing!(routing_env())
     before = θat(rt, 1)
-    for _ in 1:25; route_outcome!(rt, rt.model_ids[1], FEAT_SHORT, false; human = false); end
-    @assert θat(rt, 1) < before - 0.2
+    for _ in 1:40; route_outcome!(rt, rt.model_ids[1], FEAT_SHORT, false; human = false); end
+    @assert θat(rt, 1) < before - 0.15      # sharp drop from the agentic warm start (~0.39)
     ok("human reject is the gold anchor: θ falls sharply ($(round(before, digits = 3)) → $(round(θat(rt, 1), digits = 3)))")
 end
 
-# C5. Identifiability (seeded synthetic stream). ρ (correct ⇒ clean-exec, the dominant
-# confound for high-accuracy models) recovers tightly; θ stays anchored-stable. σ (wrong ⇒
-# clean-exec) is only WEAKLY identified — C=0 is rare when models are mostly correct, so
-# little data bears on it (an honest limit; its decode influence is proportionally small).
-# Seeded ⇒ reproducible; bands carry comfortable margin.
+# C5. Identifiability (seeded synthetic stream). With the AGENTIC warm (θ≈0.4–0.7, not the
+# MCQ regime's ≈0.9), C=1 no longer dominates, so ρ = P(exec-clean | correct) is only
+# PARTIALLY identified: it recovers from the 0.67 prior toward 0.9 but lands ~0.78 (fewer C=1
+# samples than the high-accuracy regime — an honest limit of warming on harder tasks). θ
+# stays anchored-stable; σ stays weakly identified. Seeded ⇒ reproducible; bands carry
+# comfortable margin around the recovered values.
 let rt = wire_routing!(routing_env())
     ρ_true, σ_true = 0.9, 0.25
     θtrue = [θat(rt, a) for a in 1:3]            # the warm anchors — data is consistent with them
@@ -349,10 +354,10 @@ let rt = wire_routing!(routing_env())
         route_outcome!(rt, rt.model_ids[a], FEAT_SHORT, e)
     end
     Δθ = maximum(abs.([θat(rt, a) for a in 1:3] .- θtrue))
-    @assert abs(ρ̄of(rt) - ρ_true) < 0.06        # ρ tightly identified
+    @assert ρ̄of(rt) > 0.74 && abs(ρ̄of(rt) - ρ_true) < 0.15   # partially identified: 0.67 prior → ~0.78 → 0.9
     @assert Δθ < 0.05                            # θ anchored-stable under consistent data
-    @assert abs(σ̄of(rt) - σ_true) < 0.25         # σ weakly identified (rare C=0) — honest loose band
-    ok("identifiability: ρ̄=$(round(ρ̄of(rt), digits = 3))≈$(ρ_true) (tight), θ stable (Δ$(round(Δθ, digits = 3))); σ weakly identified")
+    @assert abs(σ̄of(rt) - σ_true) < 0.25         # σ weakly identified — honest loose band
+    ok("identifiability: ρ̄=$(round(ρ̄of(rt), digits = 3)) (0.67 prior → 0.9, partially identified), θ stable (Δ$(round(Δθ, digits = 3))); σ weak")
 end
 
 # ── D. Online learning through the daemon: route-outcome → live tops, exact replay ──
