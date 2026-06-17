@@ -15,10 +15,15 @@ probability. The effector and the reported candidate index both come from `Answe
 body to *display* the withheld leader, not to select an action.
 
 Routes:
-  POST /decide  {question_id?, observations[], candidates[], rho, u_bar, channel?,
-                 era_split?, owner_scoped?, applied_probes?}
-             →  {effector, report_index, value, probe, target, credences[], p_none, eu}
-  GET  /ready → "ok"
+  POST /decide   {question_id?, observations[], candidates[], rho, u_bar, channel?,
+                  era_split?, owner_scoped?, applied_probes?}
+             →   {effector, report_index, value, probe, target, credences[], p_none, eu}
+  GET  /manifest → {effectors:[{name,parameters:[{name,type}]}], features:[{name,spaceName}]}
+  GET  /ready    → "ok"
+
+`GET /manifest` serves the body's effector/feature vocabulary, parsed from `bdsl/*.bdsl` by the ONE
+library parser (`manifest.jl`); the body verifies its registered impls against it and has no parser
+of its own (move-4-design §0, §5 Q1).
 
 The `era_split?`/`owner_scoped?`/`applied_probes?` fields drive the Move-4 gather branch
 (`AnswerBrain.gather_decide`); absent ⇒ the Stage-2a terminal decision, unchanged. `effector` may
@@ -34,7 +39,16 @@ using Main.Credence: weights
 using HTTP
 using JSON3
 
-export decide_response, start_daemon, stop_daemon
+include(joinpath(@__DIR__, "manifest.jl"))
+using .Manifest: manifest_dict
+
+export decide_response, manifest_dict, start_daemon, stop_daemon
+
+# The bdsl the daemon serves at GET /manifest — the body's effector/feature vocabulary, parsed by
+# the ONE library parser (move-4-design §2C). Located relative to this file (daemon/ → ../bdsl).
+const _BDSL_DIR = abspath(joinpath(@__DIR__, "..", "bdsl"))
+const CAPABILITIES_PATH = joinpath(_BDSL_DIR, "capabilities.bdsl")
+const FEATURES_PATH = joinpath(_BDSL_DIR, "features.bdsl")
 
 # ── Request parsing (the wire → the brain's abstract types) ──────────────────────────────
 
@@ -126,6 +140,17 @@ function _handle_decide(stream::HTTP.Stream)
     _write_json_response(stream, 200, resp)
 end
 
+function _handle_manifest(stream::HTTP.Stream)
+    resp = try
+        manifest_dict(; capabilities_path = CAPABILITIES_PATH, features_path = FEATURES_PATH)
+    catch e
+        # A malformed/absent bdsl is an operator error, not a bad request → 500.
+        return _write_json_response(stream, 500,
+            Dict("error" => "manifest: $(sprint(showerror, e))"))
+    end
+    _write_json_response(stream, 200, resp)
+end
+
 """
     start_daemon(; port, host="127.0.0.1") -> server
 
@@ -139,6 +164,8 @@ function start_daemon(; port::Int, host::AbstractString = "127.0.0.1")
         target = stream.message.target
         if method == "POST" && target == "/decide"
             _handle_decide(stream)
+        elseif method == "GET" && target == "/manifest"
+            _handle_manifest(stream)
         elseif method == "GET" && target == "/ready"
             HTTP.setstatus(stream, 200)
             HTTP.setheader(stream, "Content-Type" => "text/plain")
