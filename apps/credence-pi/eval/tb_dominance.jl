@@ -36,7 +36,7 @@ _mean(v) = isempty(v) ? 0.0 : sum(v) / length(v)
 include(joinpath(@__DIR__, "..", "brain", "feature_brain.jl"))
 using .FeatureBrain: StructureBMA, build_model, build_prior, observe, context_from_features
 include(joinpath(@__DIR__, "..", "brain", "routing_brain.jl"))
-using .RoutingBrain: route
+using .RoutingBrain: route, posterior_accuracy
 
 const TIERS = ["haiku", "sonnet", "opus"]   # cheap → dear (per-token price order)
 
@@ -227,6 +227,34 @@ function cascade(test::Vector{TaskRow}, reward)
     (w, solves, cost)
 end
 
+# EU-gated escalation — the credence-pi metareasoning arm. Walk tiers cheapest→
+# dearest; at each rung (given cheaper rungs already failed) TRY iff its expected
+# utility is positive, reward·E[θ_a|X] ≥ E[cost_a|X] (the same per-tier resolved
+# belief + context-cost used by `route`); stop at the first OBSERVED solve. This is
+# deployable for testable work (the test suite is the verifier), captures the full
+# capability ladder WITHOUT predicting the boundary, and the EU gate stops it
+# over-escalating when a solve isn't worth the spend (where the naive cascade
+# over-pays). Myopic gate (ignores the option value of still-dearer rungs ⇒
+# conservative, under-escalates). Scored on realized outcomes (non-causal read-out,
+# mirroring eu_routed; in the live brain the gate is the canonical `optimise`).
+function escalation_eu(model, tops, cb, test::Vector{TaskRow}, reward)
+    w = 0.0; solves = 0; cost = 0.0
+    for t in test
+        X = context_from_features(model, featuredict(t))
+        ec = costs_at(cb, t)
+        paid = 0.0; solved = false
+        for a in eachindex(TIERS)                       # cheapest → dearest
+            θ = posterior_accuracy(model, tops[a], X)    # E[P(resolved_a | X)]
+            reward * θ >= ec[a] || break                 # EU gate: stop escalating
+            paid += t.cost[a]                            # pay this rung (realized)
+            if t.resolved[a]; solved = true; break; end  # observed solve → stop
+        end
+        cost += paid; solves += solved ? 1 : 0
+        w += (solved ? reward : 0.0) - paid
+    end
+    (w, solves, cost)
+end
+
 # ── Harness ──────────────────────────────────────────────────────────────────
 function parse_args(argv)
     a = Dict{String, Any}("path" => "", "seeds" => 20, "train-frac" => 0.6, "out" => "")
@@ -251,7 +279,7 @@ function main()
     diffs, cats, lens = fvals
 
     # Arms scored per profile, accumulated over seeds (shuffled train/test splits).
-    armnames = ["eu-max", "always-haiku", "always-sonnet", "always-opus",
+    armnames = ["eu-max", "escalation-eu", "always-haiku", "always-sonnet", "always-opus",
                 "argmax-accuracy", "best-fixed", "threshold(RouteLLM)", "oracle-cascade"]
     welf = Dict(p[1] => Dict(a => Float64[] for a in armnames) for p in PROFILES)
     solv = Dict(p[1] => Dict(a => Float64[] for a in armnames) for p in PROFILES)
@@ -285,6 +313,8 @@ function main()
             for a in armnames
                 if a == "oracle-cascade"
                     w, s, c = cascade(test, reward)
+                elseif a == "escalation-eu"
+                    w, s, c = escalation_eu(model, tops, cb, test, reward)
                 else
                     r = picks[a]
                     w = realized_welfare(r, test, reward)
@@ -325,21 +355,37 @@ function report(args, tasks, welf, solv, cst, armnames)
         end
     end
 
-    # Dominance verdict: per profile, EU-max vs each deployable foil by mean welfare regret.
-    println("\nDOMINANCE — EU-max mean-welfare margin vs each arm (≥0 ⇒ EU-max ≥ arm), per profile:")
-    deployable = ["always-haiku", "always-sonnet", "always-opus",
-                  "argmax-accuracy", "best-fixed", "threshold(RouteLLM)", "oracle-cascade"]
+    # CROSS-PROFILE dominance (the Wald complete-class claim): a deployment serves a
+    # MIX of profiles; no single fixed policy is optimal across them, but one adaptive
+    # arm can be. Scored by MINIMAX REGRET — each arm's worst-case shortfall vs the
+    # best arm for that profile (scale-fair, unlike a raw sum which quality-hawk's big
+    # numbers would dominate). Lowest worst-case regret = most robust single policy.
+    best_w = Dict(pname => maximum(avg(welf[pname][a]) for a in armnames) for (pname, _) in PROFILES)
+    worst_regret(a) = maximum(best_w[pname] - avg(welf[pname][a]) for (pname, _) in PROFILES)
+    println("\nCROSS-PROFILE — worst-case regret over {", join((p for (p, _) in PROFILES), ", "),
+            "} (one policy serving all profiles; lower = more robust):")
+    for a in sort(armnames; by = worst_regret)
+        mark = a in ("escalation-eu", "eu-max") ? "  ← credence-pi" : ""
+        println("  ", rpad(a, 22), @sprintf("worst-regret %.4f", worst_regret(a)), mark)
+    end
+
+    # Per-profile margins for the headline credence-pi arm (EU-gated escalation) vs each
+    # other arm (≥0 ⇒ escalation-eu ≥ arm; % = seed win-rate).
+    head = "escalation-eu"
+    println("\nDOMINANCE — ", head, " mean-welfare margin vs each arm, per profile:")
     print("  ", rpad("arm", 22)); for (p, _) in PROFILES; print(rpad(p, 16)); end; println()
-    for a in deployable
+    for a in armnames
+        a == head && continue
         print("  ", rpad(a, 22))
         for (pname, _) in PROFILES
-            rs = welf[pname]["eu-max"] .- welf[pname][a]
+            rs = welf[pname][head] .- welf[pname][a]
             win = count(>=(-1e-12), rs) / length(rs)
             print(rpad(@sprintf("%+.4f(%.0f%%)", avg(rs), 100win), 16))
         end
         println()
     end
-    println("  (oracle-cascade is the CLAIRVOYANT upper bound — knows each rung's success before paying.)")
+    println("  (oracle-cascade is the CLAIRVOYANT upper bound — knows each rung's success before paying;")
+    println("   escalation-eu pays each rung it tries but the EU gate halts it where a solve isn't worth it.)")
     println(bar, "\n")
 
     if !isempty(args["out"])
@@ -350,6 +396,9 @@ function report(args, tasks, welf, solv, cst, armnames)
             "welfare_mean" => Dict(p => Dict(a => avg(welf[p][a]) for a in armnames) for (p, _) in PROFILES),
             "solves_mean"  => Dict(p => Dict(a => avg(solv[p][a]) for a in armnames) for (p, _) in PROFILES),
             "cost_mean"    => Dict(p => Dict(a => avg(cst[p][a]) for a in armnames) for (p, _) in PROFILES),
+            "cross_profile_worst_regret" => Dict(a =>
+                maximum(maximum(avg(welf[p][x]) for x in armnames) - avg(welf[p][a])
+                        for (p, _) in PROFILES) for a in armnames),
         )
         mkpath(dirname(args["out"]))
         open(args["out"], "w") do io; JSON3.pretty(io, out); end
