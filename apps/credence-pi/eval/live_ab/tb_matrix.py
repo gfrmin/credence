@@ -92,8 +92,14 @@ def parse_stream(stream_path: Path) -> dict:
     """Extract cost/turns/tokens from a claude --output-format stream-json file.
 
     Authoritative source is the final `result` event (cumulative usage,
-    num_turns, total_cost_usd). Falls back to incomplete=True if absent
-    (timeout / install-fail / killed mid-run).
+    num_turns, total_cost_usd). When it is ABSENT (timeout / killed mid-run —
+    exactly the thrashing case, which must NOT read as $0), recover token totals
+    from the per-message `assistant` events: each message.id is re-emitted 2-3×
+    during streaming, so dedup by id taking the max-output occurrence (input and
+    cache tokens are request-time-fixed; only output grows). The recovered total
+    is a tight LOWER BOUND — the final message may have been truncated mid-output,
+    but input+cache (which dominate a thrash) are exact. parse_run prices the
+    recovered tokens at the verified per-tier rate and flags cost_lower_bound.
     """
     out = dict(
         complete=False, cost_usd=None, num_turns=None, duration_s=None,
@@ -104,6 +110,7 @@ def parse_stream(stream_path: Path) -> dict:
     if not stream_path.exists():
         return out
     result = None
+    by_id: dict[str, dict] = {}            # message.id -> usage with max output
     assistant_models: dict[str, int] = {}
     for ln in stream_path.read_text().splitlines():
         ln = ln.strip()
@@ -114,34 +121,45 @@ def parse_stream(stream_path: Path) -> dict:
         except json.JSONDecodeError:
             continue
         if r.get("type") == "assistant":
-            m = (r.get("message") or {}).get("model")
-            if m:
-                assistant_models[m] = assistant_models.get(m, 0) + 1
+            m = r.get("message") or {}
+            mid, u = m.get("id"), m.get("usage") or {}
+            if m.get("model"):
+                assistant_models[m["model"]] = assistant_models.get(m["model"], 0) + 1
+            if mid is not None:
+                prev = by_id.get(mid)
+                if prev is None or (u.get("output_tokens", 0) or 0) > (prev.get("output_tokens", 0) or 0):
+                    by_id[mid] = u
         elif r.get("type") == "result":
             result = r
-    if result is None:
-        # Incomplete run: best-effort primary model from assistant events.
-        if assistant_models:
-            out["primary_model"] = max(assistant_models, key=assistant_models.get)
+    if result is not None:
+        u = result.get("usage") or {}
+        mu = result.get("modelUsage") or {}
+        out.update(
+            complete=True,
+            cost_usd=result.get("total_cost_usd"),
+            num_turns=result.get("num_turns"),
+            duration_s=round((result.get("duration_ms") or 0) / 1000.0, 1),
+            is_error=result.get("is_error"),
+            stop_reason=result.get("stop_reason") or result.get("terminal_reason"),
+            input=u.get("input_tokens", 0) or 0,
+            output=u.get("output_tokens", 0) or 0,
+            cache_read=u.get("cache_read_input_tokens", 0) or 0,
+            cache_create=u.get("cache_creation_input_tokens", 0) or 0,
+            model_usage=mu,
+        )
+        if mu:
+            out["primary_model"] = max(
+                mu, key=lambda k: (mu[k].get("inputTokens", 0) + mu[k].get("outputTokens", 0)))
         return out
-    u = result.get("usage") or {}
-    mu = result.get("modelUsage") or {}
-    out.update(
-        complete=True,
-        cost_usd=result.get("total_cost_usd"),
-        num_turns=result.get("num_turns"),
-        duration_s=round((result.get("duration_ms") or 0) / 1000.0, 1),
-        is_error=result.get("is_error"),
-        stop_reason=result.get("stop_reason") or result.get("terminal_reason"),
-        input=u.get("input_tokens", 0) or 0,
-        output=u.get("output_tokens", 0) or 0,
-        cache_read=u.get("cache_read_input_tokens", 0) or 0,
-        cache_create=u.get("cache_creation_input_tokens", 0) or 0,
-        model_usage=mu,
-    )
-    if mu:
-        out["primary_model"] = max(
-            mu, key=lambda k: (mu[k].get("inputTokens", 0) + mu[k].get("outputTokens", 0)))
+    # No result event — recover token totals from the deduped assistant messages.
+    if by_id:
+        out["input"] = sum(u.get("input_tokens", 0) or 0 for u in by_id.values())
+        out["output"] = sum(u.get("output_tokens", 0) or 0 for u in by_id.values())
+        out["cache_read"] = sum(u.get("cache_read_input_tokens", 0) or 0 for u in by_id.values())
+        out["cache_create"] = sum(u.get("cache_creation_input_tokens", 0) or 0 for u in by_id.values())
+        out["num_turns"] = len(by_id)
+    if assistant_models:
+        out["primary_model"] = max(assistant_models, key=assistant_models.get)
     return out
 
 
@@ -187,6 +205,17 @@ def parse_run(run_dir: Path, tier: str) -> list[dict]:
         stream = trial_dir / "sessions" / "claude_stream.jsonl"
         s = parse_stream(stream)
         feats = task_features(task_id)
+        # Cost: claude's own total_cost_usd when the run completed (authoritative);
+        # else the verified-rate price of the recovered tokens (a lower bound — the
+        # thrash/timeout case must not read as $0).
+        if s["cost_usd"] is not None:
+            cost, lower = s["cost_usd"], False
+        elif (s["input"] or s["output"] or s["cache_read"] or s["cache_create"]):
+            cost = price_from_tokens(tier, s["input"], s["output"],
+                                     s["cache_read"], s["cache_create"])
+            lower = True
+        else:
+            cost, lower = None, False
         rows.append(dict(
             task=task_id,
             tier=tier,
@@ -196,7 +225,8 @@ def parse_run(run_dir: Path, tier: str) -> list[dict]:
             category=feats["category"],
             instr_len=feats["instr_len"],
             n_tags=feats["n_tags"],
-            cost_usd=s["cost_usd"],
+            cost_usd=cost,
+            cost_lower_bound=lower,
             num_turns=s["num_turns"],
             duration_s=s["duration_s"],
             input=s["input"], output=s["output"],
