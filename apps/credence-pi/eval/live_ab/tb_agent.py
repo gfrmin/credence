@@ -1,3 +1,4 @@
+# Role: eval
 """Custom Terminal-Bench agent: claude-code with clean stream-json capture.
 
 The stock `claude-code` agent pipes `claude --output-format stream-json` to a

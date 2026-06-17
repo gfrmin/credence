@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# Role: eval
 """Terminal-Bench capability×cost matrix for the credence-pi routing proof.
 
 For each model tier × task, run the `claude-code-stream-jsonl` agent (native

@@ -1,3 +1,0 @@
-The file calc.py defines a function add(a, b), but the tests in test_calc.py are failing.
-
-Fix the bug in calc.py so that all tests pass. After editing, run `python3 -m pytest -q` to confirm the tests pass.
