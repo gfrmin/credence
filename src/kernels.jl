@@ -51,6 +51,13 @@ end
 
 struct NormalGammaLikelihood <: LeafFamily end
 struct Exponential <: LeafFamily end
+# Count likelihood: obs ~ Poisson(λ), conjugate to a Gamma(α, β) prior on the
+# rate λ. One observation t updates Gamma(α, β) → Gamma(α + t, β + 1), so after
+# n counts with sum S the posterior is Gamma(α + S, β + n) and its mean
+# (α + S)/(β + n) = E[λ] is the posterior expected count — read through
+# `expect(::GammaPrevision, Identity)`. The conjugate dual of Exponential
+# (which models positive-real durations); Poisson models the integer counts.
+struct Poisson <: LeafFamily end
 
 struct FiringByTag <: LikelihoodFamily
     fires::Set{Int}

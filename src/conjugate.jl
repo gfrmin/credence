@@ -137,6 +137,8 @@ end
 function maybe_conjugate(p::GammaPrevision, k::Kernel)
     if k.likelihood_family isa Exponential
         return ConjugatePrevision(p, k.likelihood_family)
+    elseif k.likelihood_family isa Poisson
+        return ConjugatePrevision(p, k.likelihood_family)
     end
     nothing
 end
@@ -145,4 +147,16 @@ function update(cp::ConjugatePrevision{GammaPrevision, Exponential}, obs)
     r = Float64(obs)
     r > 0 || error("Exponential observations must be positive, got $r")
     ConjugatePrevision(GammaPrevision(cp.prior.alpha + 1.0, cp.prior.beta + r), cp.likelihood)
+end
+
+# ── Pair: (GammaPrevision, Poisson) ──
+# Conjugate count update: Gamma(α, β) prior on the rate λ, obs t ~ Poisson(λ) ⇒
+# posterior Gamma(α + t, β + 1). Mirrors the Exponential pair (its continuous
+# dual). Used by the routing brain's turns belief: E[turns] = mean of the
+# posterior Gamma, read through `expect(::GammaPrevision, Identity)`.
+function update(cp::ConjugatePrevision{GammaPrevision, Poisson}, obs)
+    t = Float64(obs)
+    (t >= 0 && t == floor(t)) ||
+        error("Poisson observations must be non-negative integers, got $obs")
+    ConjugatePrevision(GammaPrevision(cp.prior.alpha + t, cp.prior.beta + 1.0), cp.likelihood)
 end
