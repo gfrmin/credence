@@ -35,13 +35,17 @@ TASKS_DIR = ROOT / "tasks"
 RESULTS_DIR = ROOT / "results"
 SESSIONS = Path.home() / ".openclaw/agents/live-ab/sessions"
 
-# Real published prices, USD per 1M tokens (input, output, cacheRead, cacheWrite).
-# Local models run on the user's GPU -> $0 marginal cost (the free floor of the ladder).
+# Published prices, USD per 1M tokens (input, output, cacheRead, 5m-cacheWrite),
+# verified 2026-06-17 against platform.claude.com/docs/.../pricing. cw is the
+# 5-minute cache write (1.25x base input), the tier Claude Code's ephemeral_5m
+# caching uses. NB: these are the CURRENT 4.x prices — Opus 4.8 is $5/$25, NOT
+# the old Opus-4.1 $15/$75; Haiku 4.5 is $1/$5, NOT the old Haiku-3.5 $0.8/$4.
+# These reproduce claude's own total_cost_usd exactly.
 PRICES = {
     "local":  dict(i=0.0,  o=0.0,  cr=0.0,  cw=0.0),
-    "haiku":  dict(i=0.80, o=4.0,  cr=0.08, cw=1.0),
+    "haiku":  dict(i=1.0,  o=5.0,  cr=0.10, cw=1.25),
     "sonnet": dict(i=3.0,  o=15.0, cr=0.30, cw=3.75),
-    "opus":   dict(i=15.0, o=75.0, cr=1.50, cw=18.75),
+    "opus":   dict(i=5.0,  o=25.0, cr=0.50, cw=6.25),
 }
 # Named arms -> full model ref (None = routing arm: omit --model, let the daemon route).
 # The fleet is a cost/capability ladder: local ($0, but can't do agentic tool-use) ->

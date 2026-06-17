@@ -5,3 +5,5 @@ swebench/venvs/
 tb/
 __pycache__/
 *.pyc
+results/tb_matrix_smoke.jsonl
+results/tb_matrix_pilot.jsonl
