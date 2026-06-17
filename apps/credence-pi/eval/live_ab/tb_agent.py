@@ -43,6 +43,19 @@ class ClaudeCodeStreamJSONL(ClaudeCodeAgent):
         return "claude-code-stream-jsonl"
 
     @property
+    def _env(self) -> dict:
+        # Install nvm/node/claude under /opt, not $HOME (=/root). One task
+        # (extract-safely) mounts /root as a 100MB tmpfs, which overflows during
+        # the ~2GB node install → `claude: command not found`. /opt is roomy
+        # (overlay, not tmpfs), system-level (outside the task's /app workdir so it
+        # can't trip a "no extra files" check), and exists on all the tb base
+        # images. nvm installs to $HOME/.nvm and the run shell sources the same, so
+        # one HOME override fixes both install and invocation.
+        env = super()._env
+        env["HOME"] = "/opt"
+        return env
+
+    @property
     def _install_agent_script_path(self) -> Path:
         # The parent renders the template relative to its OWN file via
         # inspect.getfile(self.__class__); for a subclass that resolves to this

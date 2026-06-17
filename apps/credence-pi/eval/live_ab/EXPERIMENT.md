@@ -85,12 +85,46 @@ first-read killer); we report claude's realized bill, which encodes them.
   it is a separate, OpenClaw-only arm — and prior work shows local can't reliably
   do agentic tool-use, so it is the free-but-incapable floor, not a contender.
 
+## Findings (2026-06-17, 17-task matrix × 3 tiers, 40 seeds, 60/40 split)
+
+The matrix shows a real, multi-directional capability×cost spread: the cheapest-cost
+tier that solves is haiku on 8 tasks, sonnet on 2, opus on 3 (and 4 tasks no tier
+solves at budget). `configure-git-webserver` is solved by sonnet but FAILS on opus
+(which also costs 2×); `path-tracing` is solved by haiku but fails on sonnet. The
+per-task oracle solves 14/17 at $2.72 vs always-opus's 13/17 at $7.30.
+
+**Two routing strategies, opposite verdicts — the central result:**
+
+1. **Predict-then-route (up-front, `eu-max`) does NOT win.** difficulty/category/length
+   do not predict the idiosyncratic capability boundary (an "easy" task haiku fails; a
+   "hard" task haiku solves), so the feature belief can't beat a strong all-rounder
+   (always-sonnet). eu-max ties the other feature-based foils and beats only the
+   over-spenders. Honest negative result; the features don't carry the signal.
+
+2. **Observe-then-escalate (`escalation-eu`) WINS.** Try cheapest; escalate only when
+   reward·E[θ_next|X] ≥ E[cost_next] (the EU gate, same beliefs); stop at the first
+   OBSERVED solve (the task's test suite is the verifier — valid for testable agentic
+   work). It captures the full capability ladder WITHOUT predicting it, and the EU gate
+   stops it over-spending. Result (minimax regret across {cost-hawk, balanced,
+   quality-hawk}, lower=better): **escalation-eu 0.035** vs clairvoyant-cascade 1.41,
+   always-opus 2.94, always-sonnet 4.30, every fixed/RouteLLM policy ~8.0. It **beats
+   always-opus on every profile** and **dominates the clairvoyant FrugalGPT cascade**
+   (≥ on all profiles, strictly > on two) — beating the clairvoyant upper bound by being
+   EU-rational about when to escalate. This is the credence-pi metareasoning story.
+
+**Honest limits:** escalation needs an observable success signal (here the test suite;
+elsewhere a fallible verifier — a known FrugalGPT caveat). On the pure cost-hawk profile
+escalation-eu only ~ties always-haiku (within noise). 1 rep/cell ⇒ outcome noise (e.g.
+path-tracing's sonnet timeout); reps would sharpen. Cost on timed-out runs is a recovered
+lower bound. `cron-broken-network` excluded (grader can't score it).
+
 ## Status
 
 - [x] Stack validated (oracle + 3 tiers on hello-world; clean cost capture)
 - [x] Prices verified
-- [ ] Pilot matrix (6 tasks × 3 tiers) — measure spread + per-tier cost
-- [ ] Full matrix (~18–30 tasks × 3 tiers, reps on decision-relevant tasks)
-- [ ] Beliefs + train/test split + dominance test
-- [ ] Adversarial verification
+- [x] Pilot matrix (6 tasks × 3 tiers) — harness validated; spread too small to route
+- [x] Full matrix (17 tasks × 3 tiers) — `results/tb_matrix_full.jsonl`
+- [x] Beliefs + train/test split + dominance test — `tb_dominance.jl`; escalation-eu wins
+- [ ] Adversarial verification (confounds: leakage, foil fairness, metric, data noise)
 - [ ] Report: measured savings vs every fixed policy + honest limits
+- [ ] (next capability) live EU-gated escalation in the daemon; reps; OpenClaw grounding

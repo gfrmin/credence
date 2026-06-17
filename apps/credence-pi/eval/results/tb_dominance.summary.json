@@ -1,0 +1,138 @@
+{
+    "welfare_mean": {
+        "cost-hawk": {
+            "always-sonnet": -0.011193821249999947,
+            "eu-max": 0.2811030975,
+            "escalation-eu": 0.32464329999999997,
+            "oracle-cascade": -1.05875072375,
+            "threshold(RouteLLM)": 0.2843108175,
+            "always-opus": -1.856887825,
+            "best-fixed": 0.2843108175,
+            "always-haiku": 0.3529422475,
+            "argmax-accuracy": 0.3354308899999999
+        },
+        "quality-hawk": {
+            "always-sonnet": 21.48255617875,
+            "eu-max": 18.067706661250003,
+            "escalation-eu": 25.77874927625,
+            "oracle-cascade": 25.77874927625,
+            "threshold(RouteLLM)": 17.740560817500008,
+            "always-opus": 22.843112174999998,
+            "best-fixed": 17.740560817500008,
+            "always-haiku": 17.809192247500008,
+            "argmax-accuracy": 17.791680890000006
+        },
+        "balanced": {
+            "always-sonnet": 3.3825561787499994,
+            "eu-max": 3.048372498750001,
+            "escalation-eu": 3.3478379687500004,
+            "oracle-cascade": 3.17874927625,
+            "threshold(RouteLLM)": 3.0405608175000003,
+            "always-opus": 2.0431121749999996,
+            "best-fixed": 3.0405608175000003,
+            "always-haiku": 3.1091922475000007,
+            "argmax-accuracy": 3.09168089
+        }
+    },
+    "config": {
+        "tiers": [
+            "haiku",
+            "sonnet",
+            "opus"
+        ],
+        "tasks": 17,
+        "features": [
+            "difficulty",
+            "category",
+            "length"
+        ],
+        "seeds": 40,
+        "train_frac": 0.6,
+        "profiles": {
+            "cost-hawk": 0.25,
+            "quality-hawk": 5,
+            "balanced": 1
+        }
+    },
+    "cross_profile_worst_regret": {
+        "always-sonnet": 4.296193097500002,
+        "eu-max": 7.711042614999997,
+        "escalation-eu": 0.03471820999999897,
+        "oracle-cascade": 1.41169297125,
+        "threshold(RouteLLM)": 8.038188458749993,
+        "always-opus": 2.935637101250002,
+        "best-fixed": 8.038188458749993,
+        "always-haiku": 7.969557028749993,
+        "argmax-accuracy": 7.9870683862499945
+    },
+    "cost_mean": {
+        "cost-hawk": {
+            "always-sonnet": 1.1424438212499999,
+            "eu-max": 0.6688969025,
+            "escalation-eu": 0.6878567,
+            "oracle-cascade": 2.4712507237500003,
+            "threshold(RouteLLM)": 0.6344391825,
+            "always-opus": 3.1568878250000005,
+            "best-fixed": 0.6344391825,
+            "always-haiku": 0.5658077525,
+            "argmax-accuracy": 0.58331911
+        },
+        "quality-hawk": {
+            "always-sonnet": 1.1424438212499999,
+            "eu-max": 1.68229333875,
+            "escalation-eu": 2.4712507237500003,
+            "oracle-cascade": 2.4712507237500003,
+            "threshold(RouteLLM)": 0.6344391825,
+            "always-opus": 3.1568878250000005,
+            "best-fixed": 0.6344391825,
+            "always-haiku": 0.5658077525,
+            "argmax-accuracy": 0.58331911
+        },
+        "balanced": {
+            "always-sonnet": 1.1424438212499999,
+            "eu-max": 0.7266275012500001,
+            "escalation-eu": 2.0271620312500005,
+            "oracle-cascade": 2.4712507237500003,
+            "threshold(RouteLLM)": 0.6344391825,
+            "always-opus": 3.1568878250000005,
+            "best-fixed": 0.6344391825,
+            "always-haiku": 0.5658077525,
+            "argmax-accuracy": 0.58331911
+        }
+    },
+    "solves_mean": {
+        "cost-hawk": {
+            "always-sonnet": 4.525,
+            "eu-max": 3.8,
+            "escalation-eu": 4.05,
+            "oracle-cascade": 5.65,
+            "threshold(RouteLLM)": 3.675,
+            "always-opus": 5.2,
+            "best-fixed": 3.675,
+            "always-haiku": 3.675,
+            "argmax-accuracy": 3.675
+        },
+        "quality-hawk": {
+            "always-sonnet": 4.525,
+            "eu-max": 3.95,
+            "escalation-eu": 5.65,
+            "oracle-cascade": 5.65,
+            "threshold(RouteLLM)": 3.675,
+            "always-opus": 5.2,
+            "best-fixed": 3.675,
+            "always-haiku": 3.675,
+            "argmax-accuracy": 3.675
+        },
+        "balanced": {
+            "always-sonnet": 4.525,
+            "eu-max": 3.775,
+            "escalation-eu": 5.375,
+            "oracle-cascade": 5.65,
+            "threshold(RouteLLM)": 3.675,
+            "always-opus": 5.2,
+            "best-fixed": 3.675,
+            "always-haiku": 3.675,
+            "argmax-accuracy": 3.675
+        }
+    }
+}
