@@ -30,6 +30,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -38,6 +39,7 @@ ROOT = Path(__file__).resolve().parent
 RESULTS_DIR = ROOT / "results"
 TB_BIN = "/tmp/tb-tool/bin/tb"
 DATASET = "terminal-bench-core==0.1.1"
+DATASET_DIR = Path.home() / ".cache/terminal-bench/terminal-bench-core/0.1.1"
 DOCKER_HOST = "unix:///run/user/1000/podman/podman.sock"
 RUNS_OUT = "/tmp/tb-runs"
 
@@ -143,6 +145,33 @@ def parse_stream(stream_path: Path) -> dict:
     return out
 
 
+def task_features(task_id: str) -> dict:
+    """Context features X for a task, from its task.yaml — the router's observables.
+
+    difficulty/category are the human-assigned correlates of hardness; instr_len is
+    a prompt-only feature (used to refute 'you fed the label in as a feature').
+    """
+    f = DATASET_DIR / task_id / "task.yaml"
+    out = dict(difficulty=None, category=None, n_tags=0, instr_len=0,
+               max_agent_timeout=None)
+    if not f.exists():
+        return out
+    txt = f.read_text()
+    m = re.search(r"(?m)^difficulty:\s*(\S+)", txt)
+    out["difficulty"] = m.group(1) if m else None
+    m = re.search(r"(?m)^category:\s*(\S+)", txt)
+    out["category"] = m.group(1) if m else None
+    m = re.search(r"(?m)^max_agent_timeout_sec:\s*([0-9.]+)", txt)
+    out["max_agent_timeout"] = float(m.group(1)) if m else None
+    # Instruction block: 'instruction: |-' (or '|') up to the next top-level key.
+    im = re.search(r"(?ms)^instruction:\s*\|-?\s*\n(.*?)(?=^\S)", txt)
+    out["instr_len"] = len(im.group(1)) if im else 0
+    # tags: count list items between 'tags:' and the next top-level key.
+    tm = re.search(r"(?ms)^tags:\s*\n(.*?)(?=^\S)", txt)
+    out["n_tags"] = len(re.findall(r"(?m)^\s*-\s+\S", tm.group(1))) if tm else 0
+    return out
+
+
 def parse_run(run_dir: Path, tier: str) -> list[dict]:
     """Join tb's per-trial grade with the claude stream cost for every task."""
     top = run_dir / "results.json"
@@ -157,11 +186,16 @@ def parse_run(run_dir: Path, tier: str) -> list[dict]:
         trial_dir = run_dir / task_id / trial_name
         stream = trial_dir / "sessions" / "claude_stream.jsonl"
         s = parse_stream(stream)
+        feats = task_features(task_id)
         rows.append(dict(
             task=task_id,
             tier=tier,
             resolved=bool(res.get("is_resolved")),
             failure_mode=res.get("failure_mode"),
+            difficulty=feats["difficulty"],
+            category=feats["category"],
+            instr_len=feats["instr_len"],
+            n_tags=feats["n_tags"],
             cost_usd=s["cost_usd"],
             num_turns=s["num_turns"],
             duration_s=s["duration_s"],
@@ -177,7 +211,7 @@ def parse_run(run_dir: Path, tier: str) -> list[dict]:
 
 
 def run_arm(tier: str, tasks: list[str], n_concurrent: int, key: str,
-            timeout_mult: float) -> Path:
+            timeout_mult: float, label: str) -> Path:
     model = TIER_MODEL[tier]
     env = dict(os.environ)
     env["ANTHROPIC_API_KEY"] = key
@@ -187,7 +221,13 @@ def run_arm(tier: str, tasks: list[str], n_concurrent: int, key: str,
     # shadow a real package (e.g. /tmp/runs.py shadowing the `runs` dependency).
     existing = env.get("PYTHONPATH", "")
     env["PYTHONPATH"] = (str(ROOT) + os.pathsep + existing) if existing else str(ROOT)
-    run_id = f"matrix-{tier}"
+    run_id = f"matrix-{label}-{tier}"
+    # Fresh dir each invocation: a stale tb.lock from a prior run with different
+    # tasks makes tb try (and refuse) to resume. Re-runnable by construction.
+    run_dir = Path(RUNS_OUT) / run_id
+    if run_dir.exists():
+        import shutil
+        shutil.rmtree(run_dir, ignore_errors=True)
     cmd = [
         TB_BIN, "run",
         "--dataset", DATASET,
@@ -229,6 +269,7 @@ def main() -> None:
     pr = sub.add_parser("run")
     pr.add_argument("--tiers", default="haiku,sonnet,opus")
     pr.add_argument("--tasks", required=True, help="comma list of task ids")
+    pr.add_argument("--label", default="run", help="run-id label (pilot/full/...)")
     pr.add_argument("--n-concurrent", type=int, default=4)
     pr.add_argument("--timeout-mult", type=float, default=1.0)
     pr.add_argument("--out", default=str(RESULTS_DIR / "tb_matrix.jsonl"))
@@ -255,7 +296,8 @@ def main() -> None:
 
     all_rows: list[dict] = []
     for tier in tiers:
-        run_dir = run_arm(tier, tasks, args.n_concurrent, key, args.timeout_mult)
+        run_dir = run_arm(tier, tasks, args.n_concurrent, key, args.timeout_mult,
+                          args.label)
         rows = parse_run(run_dir, tier)
         all_rows.extend(rows)
         for r in rows:
