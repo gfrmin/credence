@@ -88,10 +88,12 @@ first-read killer); we report claude's realized bill, which encodes them.
 ## Findings (2026-06-17, 17-task matrix × 3 tiers, 40 seeds, 60/40 split)
 
 The matrix shows a real, multi-directional capability×cost spread: the cheapest-cost
-tier that solves is haiku on 8 tasks, sonnet on 2, opus on 3 (and 4 tasks no tier
-solves at budget). `configure-git-webserver` is solved by sonnet but FAILS on opus
-(which also costs 2×); `path-tracing` is solved by haiku but fails on sonnet. The
-per-task oracle solves 14/17 at $2.72 vs always-opus's 13/17 at $7.30.
+tier that solves is haiku on 9 tasks, sonnet on 2, opus on 3 (and 3 tasks — fibonacci-
+server, nginx-request-logging, polyglot-rust-c — no tier solves at budget).
+`configure-git-webserver` is solved by sonnet but FAILS on opus (which also costs 2×);
+`path-tracing` is solved by haiku but fails on sonnet (a single-rep inversion — likely a
+sonnet-timeout fluke; ≥3 reps would de-risk). The per-task oracle (cheapest solver)
+solves 14/17 at $2.72 vs always-opus's 13/17 at $7.30.
 
 **Two routing strategies, opposite verdicts — the central result:**
 
@@ -101,22 +103,46 @@ per-task oracle solves 14/17 at $2.72 vs always-opus's 13/17 at $7.30.
    (always-sonnet). eu-max ties the other feature-based foils and beats only the
    over-spenders. Honest negative result; the features don't carry the signal.
 
-2. **Observe-then-escalate (`escalation-eu`) WINS.** Try cheapest; escalate only when
-   reward·E[θ_next|X] ≥ E[cost_next] (the EU gate, same beliefs); stop at the first
-   OBSERVED solve (the task's test suite is the verifier — valid for testable agentic
-   work). It captures the full capability ladder WITHOUT predicting it, and the EU gate
-   stops it over-spending. Result (minimax regret across {cost-hawk, balanced,
-   quality-hawk}, lower=better): **escalation-eu 0.035** vs clairvoyant-cascade 1.41,
-   always-opus 2.94, always-sonnet 4.30, every fixed/RouteLLM policy ~8.0. It **beats
-   always-opus on every profile** and **dominates the clairvoyant FrugalGPT cascade**
-   (≥ on all profiles, strictly > on two) — beating the clairvoyant upper bound by being
-   EU-rational about when to escalate. This is the credence-pi metareasoning story.
+2. **Observe-then-escalate (`escalation-eu`) is the best DEPLOYABLE policy.** Try cheapest;
+   escalate only when the myopic single-step EU is positive, reward·E[θ_next|X] ≥
+   E[cost_next] (the gate, same beliefs); stop at the first OBSERVED solve (the test suite
+   is the verifier). It is `frugalgpt_cascade` PLUS that one gate — so the gate is the
+   entire difference. Result, **minimax regret vs the best deployable arm** across
+   {cost-hawk, balanced, quality-hawk} (100 seeds, lower=better): **escalation-eu 0.043**
+   vs plain frugalgpt-cascade 1.35, always-opus 2.59, always-sonnet 4.75, every
+   fixed/RouteLLM ~8.1. It **beats always-opus on every profile** and **dominates the plain
+   (gateless) FrugalGPT cascade** (≥ all profiles, strictly > cost-hawk & balanced — the EU
+   gate's value). It **recovers ~95% of the non-deployable clairvoyant-oracle ceiling** on
+   quality-hawk and **trails that oracle by ~0.4–1.4 welfare** on every profile — as any
+   deployable policy must (a per-task hindsight oracle weakly dominates by construction).
+   This is the credence-pi metareasoning story: not "beats the clairvoyant bound" (that is
+   impossible and was a mislabel — corrected after adversarial review), but "best
+   deployable, recovering most of the ceiling."
 
-**Honest limits:** escalation needs an observable success signal (here the test suite;
-elsewhere a fallible verifier — a known FrugalGPT caveat). On the pure cost-hawk profile
-escalation-eu only ~ties always-haiku (within noise). 1 rep/cell ⇒ outcome noise (e.g.
-path-tracing's sonnet timeout); reps would sharpen. Cost on timed-out runs is a recovered
-lower bound. `cron-broken-network` excluded (grader can't score it).
+**The win is cross-profile robustness, NOT per-profile dominance.** Per profile,
+escalation-eu is *second-best*: 3rd on cost-hawk (behind always-haiku and argmax-accuracy
+— it ~ties haiku, margin −0.04 but wins 64% of seeds), 2nd on balanced (behind
+always-sonnet, ~59% seeds), ties the cascade on quality-hawk. No fixed policy is good
+across the mix (each wins its own profile and is badly off elsewhere); escalation-eu is
+near-best *everywhere*, which is the minimax-regret win (the Wald complete-class point).
+
+**Honest limits:** (a) needs an observable success signal (here the test suite; elsewhere a
+fallible verifier — the known FrugalGPT caveat). (b) The gate is MYOPIC, not exact
+sequential EU-max; the exact backward-induction variant has worst-regret ~0.073 (the
+myopic gate edges it on *this* sample via conservatism — not a general claim). (c) The
+winning arm is not yet wired into the live daemon (offline eval result). (d) Headline
+regret is a RANGE: 0.043 at 100 seeds / train-frac 0.6, rising to ~0.14 at frac 0.5 and
+~0.06 at the binding reward r≈0.35 the 3-point profile set skips; report it as
+~0.04–0.14, robust as the *lowest* worst-case across every reconfiguration tried, not as a
+single point. (e) 1 rep/cell ⇒ outcome noise (path-tracing inversion); the 4 sonnet
+timeouts are recovered lower-bound costs (under-counting flatters always-sonnet more than
+escalation-eu, so correcting it doesn't break the result). (f) `cron-broken-network`
+excluded (grader can't score it). (g) Cascade-dominance leans partly on the 3 all-fail
+tasks (where the gate halts but the gateless cascade pays the full ladder); on the
+decision-relevant subset the margin narrows but escalation-eu still leads.
+
+*Verified by a 5-skeptic adversarial workflow (leakage clean; foil-fairness caught the
+clairvoyant mislabel — now fixed; metric/data/mechanism minor caveats folded in above).*
 
 ## Status
 
@@ -124,7 +150,9 @@ lower bound. `cron-broken-network` excluded (grader can't score it).
 - [x] Prices verified
 - [x] Pilot matrix (6 tasks × 3 tiers) — harness validated; spread too small to route
 - [x] Full matrix (17 tasks × 3 tiers) — `results/tb_matrix_full.jsonl`
-- [x] Beliefs + train/test split + dominance test — `tb_dominance.jl`; escalation-eu wins
-- [ ] Adversarial verification (confounds: leakage, foil fairness, metric, data noise)
-- [ ] Report: measured savings vs every fixed policy + honest limits
-- [ ] (next capability) live EU-gated escalation in the daemon; reps; OpenClaw grounding
+- [x] Beliefs + train/test split + dominance test — `tb_dominance.jl`; escalation-eu best deployable
+- [x] Adversarial verification (5-skeptic workflow) — SURVIVES-WITH-CAVEATS; clairvoyant
+      mislabel caught & fixed; minor caveats folded into Findings above
+- [~] Report: measured savings vs every fixed policy + honest limits (this doc; ≥3 reps next)
+- [ ] (next capability) live myopic-EU escalation in the daemon (via `optimise`); ≥3 reps;
+      OpenClaw-in-container grounding; exact sequential-EU gate variant
