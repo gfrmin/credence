@@ -22,17 +22,20 @@
 ; --- Routing feature vocabulary ---
 ;
 ; The brain conditions P(correct|X) on these. ONLY features honestly
-; extractable from a raw prompt belong here: before_model_resolve hands
-; the plugin the prompt and nothing else, so semantic category (the
-; signal the offline oracle measured) is NOT available live without a
-; classifier — which would be an arbitrary, unmeasured component. The
-; one honest live feature is prompt-length; the structure-BMA discovers
-; whether it predicts accuracy and collapses to the marginal if it does
-; not (so declaring it can never hurt correctness). The short/long
-; bucket boundary lives in the body extractor (routing-features.ts) —
-; the one train/live synchronisation point.
+; extractable at routing time belong here: before_model_resolve hands the
+; plugin the prompt (and, on current OpenClaw, attachment metadata) — not
+; semantic category, which would need an arbitrary, unmeasured classifier.
+; The honest live feature is prompt-length, now in FINER short/medium/long
+; buckets (prefer fine parameterisation — the structure-BMA discovers which
+; splits predict accuracy and collapses the rest to the marginal, so finer
+; can never hurt correctness). The bucket boundaries live in the body
+; extractor (routing-features.ts) — the train/live synchronisation point —
+; and the warm belief (routing_brain.counts.json) is seeded per bucket from
+; the agentic Terminal-Bench matrix (eval/train_routing_from_matrix.jl), so
+; the buckets carry real, length-varying agentic signal from install.
+; (attachments is the natural next covariate — see routing-features.ts.)
 (define prompt-length-space
-  (space :finite short long))
+  (space :finite short medium long))
 
 (define routing-features
   (list
