@@ -492,14 +492,23 @@ function handle_sensor_event(state::DaemonState,
             event_id = string(get(event_dict, "event_id", ""))
             features === nothing &&
                 error("route-request event $event_id missing required 'features'")
-            choice = route_decide(features)
-            emit_route_signal!(state, event_id, choice)
-            # Remember this turn's routed model so its tool-completed outcomes credit it
-            # (per-session; overwritten next turn). Transport bookkeeping, like pending_contexts.
-            if state.routing !== nothing
-                session_id = string(get(event_dict, "session_id", ""))
-                isempty(session_id) ||
-                    (state.pending_routes[session_id] = (choice["model"], features))
+            # The user's LIVE model roster (roster-aware routing): the body sends the models
+            # OpenClaw actually has + their costs. Absent ⇒ route-decide falls back to the
+            # declared default roster (back-compat with an older body).
+            roster = get(event_dict, "models", nothing)
+            choice = route_decide(features, roster)
+            if choice === nothing
+                # Inert: fewer than 2 candidate models ⇒ nothing to route between. Emit no
+                # signal; the body keeps OpenClaw's model (fail open). No pending-route stash.
+            else
+                emit_route_signal!(state, event_id, choice)
+                # Remember this turn's routed model so its tool-completed outcomes credit it
+                # (per-session; overwritten next turn). Transport bookkeeping, like pending_contexts.
+                if state.routing !== nothing
+                    session_id = string(get(event_dict, "session_id", ""))
+                    isempty(session_id) ||
+                        (state.pending_routes[session_id] = (choice["model"], features))
+                end
             end
         end
 

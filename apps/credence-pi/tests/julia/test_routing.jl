@@ -149,6 +149,55 @@ let env = routing_env(reward = 1.0)
     ok("escalation_next gate ≡ reward·E[θ|X] ≥ cost (boundary exact, via optimise)")
 end
 
+# ── A''. Roster-aware routing: the LIVE roster (the user's actual models) ────────
+# route-decide takes an optional per-request roster — the models OpenClaw actually has +
+# their costs. Known models reuse the warm belief; the user's OWN (unknown) models get a
+# cold prior + online learning; fewer than 2 candidates ⇒ inert (keep OpenClaw's model).
+# This is what makes routing safe to turn ON by default for any roster.
+
+# Known models in a live roster reuse the WARM belief: at equal cost, quality-hawk picks the
+# best-believed (opus) — the warm seed is used, not ignored, for a roster sent per request.
+let env = routing_env(reward = 1.0)
+    wire_routing!(env); decide = env[Symbol("route-decide")]
+    roster = [["haiku", "anthropic", "claude-haiku-4-5", 0.001],
+              ["opus",  "anthropic", "claude-opus-4-8",  0.001]]
+    @assert decide(Dict("prompt-length" => "short"), roster)["model"] == "claude-opus-4-8"
+    ok("roster-aware: known models in a live roster reuse the warm belief (quality-hawk → opus)")
+end
+
+# The user's OWN models (unknown to the warm seed) get a COLD prior (θ=0.5 each) ⇒ EU-max
+# reduces to CHEAPEST — the safe cost-saving default for an unseen roster — then learns up.
+let env = routing_env()   # cost-hawk reward 0.02
+    wire_routing!(env); decide = env[Symbol("route-decide")]
+    c1 = decide(Dict("prompt-length" => "short"),
+                [["cheapo", "x", "cheapo-1", 0.001], ["premium", "y", "premium-1", 0.5]])
+    @assert c1["model"] == "cheapo-1" && c1["provider"] == "x"
+    c2 = decide(Dict("prompt-length" => "short"),   # flip the costs ⇒ the other model
+                [["cheapo", "x", "cheapo-1", 0.5], ["premium", "y", "premium-1", 0.001]])
+    @assert c2["model"] == "premium-1"
+    ok("roster-aware: unknown models get a cold prior ⇒ EU-max picks the cheapest (cost-saving default)")
+end
+
+# Inert: a single-model roster has nothing to route between ⇒ route-decide returns nothing
+# (the body keeps OpenClaw's model). An EMPTY roster falls back to the declared default (≥2).
+let env = routing_env()
+    decide = (wire_routing!(env); env[Symbol("route-decide")])
+    @assert decide(Dict("prompt-length" => "short"), [["solo", "x", "solo-1", 0.01]]) === nothing
+    @assert decide(Dict("prompt-length" => "short"), Any[]) !== nothing
+    ok("roster-aware: <2 candidate models ⇒ route-decide is inert (returns nothing)")
+end
+
+# The user's own model LEARNS online and persists in extra_tops (keyed by id), exactly like a
+# default-roster model — so an unknown roster gets calibrated by real traffic over time.
+let rt = wire_routing!(routing_env())
+    @assert !haskey(rt.extra_tops, "mymodel-1")
+    for _ in 1:30; route_outcome!(rt, "mymodel-1", Dict("prompt-length" => "short"), true); end
+    @assert haskey(rt.extra_tops, "mymodel-1")
+    after = posterior_accuracy(rt.model, rt.extra_tops["mymodel-1"], ["short"])
+    @assert after > 0.5    # cold prior mean 0.5, raised by clean successes
+    ok("roster-aware: an unknown model learns online + persists in extra_tops (θ → $(round(after, digits = 3)))")
+end
+
 # ── B. Daemon transport: route-request → route signal ───────────────────
 
 include(joinpath(@__DIR__, "..", "..", "daemon", "server.jl"))
@@ -195,6 +244,30 @@ let path = tempname() * ".jsonl"
         "features" => Dict("prompt-length" => "short")))
     @assert isempty(snapshot(state.signal_queue))
     ok("route-request with routing unconfigured emits no signal (body fails open)")
+    rm(path; force = true)
+end
+
+# Roster-aware via the daemon: a route-request carrying the user's live `models` routes over
+# THAT roster (the user's own models, unknown to the warm seed), and a single-model roster is
+# inert (no signal). This is the on-by-default safety path end-to-end through the transport.
+let path = tempname() * ".jsonl"
+    state = init_state(; bdsl_dir = DAEMON_BDSL, log_path = path)
+    handle_sensor_event(state, Dict{String, Any}(
+        "event_type" => "route-request", "event_id" => "rr_dyn", "session_id" => "Sx",
+        "features" => Dict("prompt-length" => "short"),
+        "models" => Any[Dict("name" => "a", "provider" => "p", "model" => "my-cheap", "cost" => 0.001),
+                        Dict("name" => "b", "provider" => "p", "model" => "my-dear",  "cost" => 0.5)]))
+    sigs = snapshot(state.signal_queue)
+    @assert length(sigs) == 1 && sigs[1]["parameters"]["model"] == "my-cheap"
+    ok("daemon roster-aware: route-request with a live `models` roster routes the user's own models (cost-hawk → cheapest)")
+
+    state2 = init_state(; bdsl_dir = DAEMON_BDSL, log_path = tempname() * ".jsonl")
+    handle_sensor_event(state2, Dict{String, Any}(
+        "event_type" => "route-request", "event_id" => "rr_solo",
+        "features" => Dict("prompt-length" => "short"),
+        "models" => Any[Dict("name" => "a", "provider" => "p", "model" => "only-one", "cost" => 0.01)]))
+    @assert isempty(snapshot(state2.signal_queue))
+    ok("daemon roster-aware: single-model roster ⇒ no route signal (inert, fail open)")
     rm(path; force = true)
 end
 

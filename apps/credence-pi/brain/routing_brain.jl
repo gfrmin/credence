@@ -241,13 +241,31 @@ EmissionBelief(prior::NTuple{4, Float64} = _DEFAULT_EMISSION_PRIOR) =
 # belief — un-frozen vs v1's closure-captured constant.
 mutable struct RoutingState
     model::StructureBMA
-    tops::Vector{MixturePrevision}
+    tops::Vector{MixturePrevision}              # warm beliefs for the DEFAULT roster (positional)
+    extra_tops::Dict{String, MixturePrevision}  # beliefs for models NOT in the default roster —
+                                                # the user's OWN models: cold prior on first sight,
+                                                # then learned online; keyed by model id
     emission::EmissionBelief
+    # The DEFAULT roster (declared in routing.bdsl): the warm/known models, and the fallback
+    # used when a route-request carries no live roster. The LIVE roster (the user's actual
+    # OpenClaw models) arrives PER REQUEST — that is what makes routing roster-aware.
     names::Vector{String}
     providers::Vector{String}
     model_ids::Vector{String}
     costs::Vector{Float64}
     reward::Float64
+end
+
+# Fetch model_id's belief plus a setter to write an update back. KNOWN models (the default
+# roster) live in the positional `tops`; the user's OWN models live in `extra_tops` (cold
+# `build_prior` on first sight, then learned). No error on an unknown model — routing is
+# roster-aware, so any model the body routes to gets a coherent belief.
+function _belief_slot(rt::RoutingState, model_id::AbstractString)
+    a = findfirst(==(String(model_id)), rt.model_ids)
+    a !== nothing && return (rt.tops[a], top -> (rt.tops[a] = top))
+    id = String(model_id)
+    cur = get!(() -> build_prior(rt.model), rt.extra_tops, id)
+    (cur, top -> (rt.extra_tops[id] = top))
 end
 
 _ctx_key(X::AbstractVector) = join(string.(X), "|")
@@ -308,19 +326,18 @@ coordinate computation (a strategy), invisible to the DSL. Mutates `rt` in place
 """
 function route_outcome!(rt::RoutingState, model_id::AbstractString, features::AbstractDict,
                         success::Bool; human::Union{Nothing, Bool} = nothing)
-    a = findfirst(==(String(model_id)), rt.model_ids)
-    a === nothing && error("route_outcome!: unknown model id $(model_id)")
     X = context_from_features(rt.model, features)
     key = _ctx_key(X)
     e = success
+    top, setby = _belief_slot(rt, model_id)                 # known slot or the user's own model
     if human !== nothing
         C = human ? 1 : 0                                   # known correctness
-        rt.tops[a] = observe(rt.model, rt.tops[a], X, C)
+        setby(observe(rt.model, top, X, C))
         _update_emission!(rt.emission, key, C == 1, e, 1.0)
     else
-        θ̄ = posterior_accuracy(rt.model, rt.tops[a], X)     # E[θ_a|X] — the decode prior
+        θ̄ = posterior_accuracy(rt.model, top, X)            # E[θ|X] — the decode prior
         r, w, π = decode_correctness(rt.emission, θ̄, key, e)
-        rt.tops[a] = observe_soft(rt.model, rt.tops[a], X, r, w)
+        setby(observe_soft(rt.model, top, X, r, w))
         _update_emission!(rt.emission, key, true,  e, π)        # ρ gets weight π
         _update_emission!(rt.emission, key, false, e, 1.0 - π)  # σ gets weight 1−π
     end
@@ -376,21 +393,60 @@ function wire_routing!(env;
     rmodel = build_model_from_decls(rfeat)
     tops = _reconstruct_routing_tops(rmodel, K, warm_path)
 
-    rt = RoutingState(rmodel, tops, EmissionBelief(emission_prior), names, providers,
+    rt = RoutingState(rmodel, tops, Dict{String, MixturePrevision}(),
+                      EmissionBelief(emission_prior), names, providers,
                       model_ids, costs, reward)
 
-    # The daemon's routing call-site: a feature dict → the chosen model's wire fields.
-    # Reads `rt.tops` LIVE (route_outcome! mutates them); the argmax is the single canonical
-    # `optimise` inside `route` (Invariant 1); the only arithmetic is reward/cost coefficient
-    # construction from declared utility data.
-    env[Symbol("route-decide")] = (features) -> begin
-        X = context_from_features(rt.model, features)
-        a = route(rt.model, rt.tops, X, rt.costs, rt.reward)
-        Dict{String, Any}("model" => rt.model_ids[a], "provider" => rt.providers[a],
-                          "name" => rt.names[a])
-    end
+    # The daemon's routing call-site: (feature dict[, live roster]) → the chosen model's wire
+    # fields, or `nothing` (inert ⇒ body keeps OpenClaw's model). Reads rt's beliefs LIVE
+    # (route_outcome! mutates them); the argmax is the single canonical `optimise` inside
+    # `route` (Invariant 1); the only arithmetic is reward/cost coefficient construction.
+    env[Symbol("route-decide")] = (features, roster = nothing) -> _route_decide(rt, features, roster)
 
     rt
+end
+
+# Resolve a routing decision over the LIVE roster (the user's actual models, sent per request)
+# or the declared default roster. Returns `nothing` — body keeps OpenClaw's model — when fewer
+# than 2 candidates exist (routing is a no-op with nothing to choose between), so routing-on-
+# by-default is safe for a single-model install.
+function _route_decide(rt::RoutingState, features, roster)
+    names, providers, ids, costs, tops = _resolve_roster(rt, roster)
+    length(ids) >= 2 || return nothing
+    X = context_from_features(rt.model, features)
+    a = route(rt.model, tops, X, costs, rt.reward)
+    Dict{String, Any}("model" => ids[a], "provider" => providers[a], "name" => names[a])
+end
+
+# Aligned (names, providers, ids, costs, tops) for the decision. No live roster ⇒ the declared
+# default (warm beliefs). A live roster ⇒ each entry is (name provider model-id cost): a known
+# model reuses its warm/learned belief, an unknown one its cold/learned belief from extra_tops
+# (instantiated on first sight). This is how the user's OWN models get routed.
+function _resolve_roster(rt::RoutingState, roster)
+    (roster === nothing || (roster isa AbstractVector && isempty(roster))) &&
+        return (rt.names, rt.providers, rt.model_ids, rt.costs, rt.tops)
+    roster isa AbstractVector ||
+        error("route-decide: roster must be a list of (name provider model-id cost), got $(typeof(roster))")
+    names = String[]; providers = String[]; ids = String[]; costs = Float64[]
+    tops = MixturePrevision[]
+    for m in roster
+        name, provider, id, cost = _roster_entry(m)
+        push!(names, name); push!(providers, provider); push!(ids, id); push!(costs, cost)
+        push!(tops, _belief_slot(rt, id)[1])
+    end
+    (names, providers, ids, costs, tops)
+end
+
+# One roster entry off the wire: a 4-vector (name provider id cost) or a dict carrying those.
+function _roster_entry(m)
+    if m isa AbstractDict
+        id = String(get(m, "model", get(m, "model_id", get(m, "id", ""))))
+        return (String(get(m, "name", id)), String(get(m, "provider", "")), id,
+                Float64(get(m, "cost", 0.0)))
+    elseif m isa AbstractVector && length(m) == 4
+        return (string(m[1]), string(m[2]), string(m[3]), Float64(m[4]))
+    end
+    error("route-decide: roster entry must be (name provider model-id cost) or {model,provider,cost}, got $(m)")
 end
 
 end # module RoutingBrain
