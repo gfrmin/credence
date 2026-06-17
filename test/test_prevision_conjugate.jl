@@ -294,6 +294,54 @@ let k = Kernel(PositiveReals(), PositiveReals(),
           raised, "expected error on obs=-1.0")
 end
 
+# ── (GammaPrevision, Poisson) — count conjugate (the routing turns belief) ──
+#
+# Posterior is Gamma(α+t, β+1) per count t; after n counts summing to S,
+# Gamma(α+S, β+n), whose mean (α+S)/(β+n) = E[turns] is read through
+# expect(::GammaPrevision, Identity). The discrete dual of the Exponential pair.
+
+let k = Kernel(PositiveReals(), PositiveReals(),
+               h -> wrap_in_measure(GammaPrevision(1.0, h)),
+               (h, o) -> o * log(h) - h;
+               likelihood_family = Poisson())
+    using Credence: GammaPrevision
+
+    p = GammaPrevision(2.0, 3.0)
+
+    check("GammaPrevision + Poisson → :conjugate (net-new)",
+          _dispatch_path(p, k) === :conjugate,
+          "got $(_dispatch_path(p, k))")
+
+    # obs=4 (a count): α_n = α+t = 6, β_n = β+1 = 4
+    cp = maybe_conjugate(p, k)
+    updated = update(cp, 4).prior
+    check("GammaPrevision(2, 3) + Poisson obs=4 → Gamma(6, 4) (==)",
+          updated.alpha == 6.0 && updated.beta == 4.0,
+          "got α=$(updated.alpha), β=$(updated.beta)")
+
+    # Counts accumulate: Gamma(2,3) +3 +5 → Gamma(2+8, 3+2) = Gamma(10, 5)
+    after1 = update(maybe_conjugate(GammaPrevision(2.0, 3.0), k), 3).prior
+    after2 = update(maybe_conjugate(after1, k), 5).prior
+    check("Poisson counts accumulate: Gamma(2,3) +3 +5 → Gamma(10, 5) (==)",
+          after2.alpha == 10.0 && after2.beta == 5.0,
+          "got α=$(after2.alpha), β=$(after2.beta)")
+
+    # E[turns] = mean of Gamma(10,5) = 10/5 = 2.0, read through expect(Identity).
+    check("E[turns] = mean(Gamma(10,5)) = 2.0 via expect(Identity) (==)",
+          expect(after2, Identity()) == 2.0,
+          "got $(expect(after2, Identity()))")
+
+    # Non-integer counts must error (Poisson observations are integer counts).
+    raised = try
+        update(cp, 2.5)
+        false
+    catch
+        true
+    end
+    check("GammaPrevision + Poisson rejects non-integer obs",
+          raised, "expected error on obs=2.5")
+end
+
 # ── TaggedBetaPrevision: must NOT match as conjugate (transitional scaffolding) ──
 #
 # Per PR #19's Move 1 revision addendum (commit 6dce5e4), TaggedBetaMeasure
