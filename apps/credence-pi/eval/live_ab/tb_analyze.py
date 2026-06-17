@@ -84,7 +84,8 @@ def per_task(rows: list[dict]) -> None:
             c = r["cost_usd"] or 0
             cells.append(f"{ok}{c:>4.2f}")
             if r["resolved"]:
-                solving.append((TIER_RANK[t], t, c))
+                solving.append((c, t))
+        # cheapest *realized cost* that solves (not cheapest per-token tier)
         best = min(solving)[1] if solving else "none"
         print(f"{task:>34} {diff:>6} | " + " | ".join(f"{c:>6}" for c in cells) +
               f" | {best}")
@@ -109,11 +110,12 @@ def policies(full: dict) -> None:
         s, c = tally(lambda m, t=t: t)
         print(f"{'always-' + t:>22} {s:>3}/{n} {c:>9.4f} "
               f"{c/s if s else float('nan'):>9.4f}")
-    # Oracle: cheapest tier that solves; if none solve, cheapest (sunk cost).
+    # Oracle: cheapest realized COST that solves; if none solve, cheapest sunk cost.
     def oracle_pick(m):
-        solving = [(TIER_RANK[t], t) for t in TIERS if m[t]["resolved"]]
-        return (min(solving)[1] if solving
-                else min((TIER_RANK[t], t) for t in TIERS)[1])
+        solving = [(m[t]["cost_usd"] or 0, t) for t in TIERS if m[t]["resolved"]]
+        if solving:
+            return min(solving)[1]
+        return min((m[t]["cost_usd"] or 0, t) for t in TIERS)[1]
     s, c = tally(oracle_pick)
     print(f"{'ORACLE(cheapest-solve)':>22} {s:>3}/{n} {c:>9.4f} "
           f"{c/s if s else float('nan'):>9.4f}")
