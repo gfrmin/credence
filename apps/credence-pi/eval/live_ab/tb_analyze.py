@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# Role: eval
 """Descriptive analysis of the Terminal-Bench capability×cost matrix.
 
 DISPLAY / DIAGNOSTICS ONLY. This summarises the measured matrix and computes the

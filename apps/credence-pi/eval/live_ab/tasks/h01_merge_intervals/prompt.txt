@@ -1,3 +1,0 @@
-intervals.py has a function merge(intervals) that is supposed to merge all overlapping OR touching intervals and return them sorted and non-overlapping, but it has subtle bugs (it mishandles touching intervals and nested intervals).
-
-Fix merge in intervals.py so that every test in test_intervals.py passes. After editing, run `python3 -m pytest -q` to confirm all tests pass.
