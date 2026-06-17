@@ -12,12 +12,18 @@ Poisson-Gamma turns belief (the thrashing signal — a cheap model that loops bu
 more turns) and c̄_tier is the measured \$/turn for that tier. This is the thesis
 the toy could not show: the cheapest-priced model is not the cheapest-cost model.
 
-Claim (held-out tasks, scored on realized outcomes — non-causal read-out, the
-eval carve-out): the per-profile EU-max router weakly dominates every fixed
-single-tier policy and the deployable foils (argmax-accuracy, best-fixed table,
-RouteLLM-style threshold), and trails only the clairvoyant FrugalGPT cascade
-(which knows each rung's success before paying). Every belief update is
-`condition`; the routing argmax is the single `optimise` inside `route`.
+Two strategies, opposite verdicts (held-out tasks, realized-outcome read-out — the
+eval carve-out):
+  • UP-FRONT feature routing (eu-max) does NOT beat the fixed/deployable foils —
+    difficulty/category/length don't predict the idiosyncratic capability boundary
+    (honest negative). Every belief update is `condition`; argmax is `optimise` in `route`.
+  • OBSERVE-THEN-ESCALATE (escalation-eu = frugalgpt_cascade + a myopic EU gate) is the
+    best DEPLOYABLE policy: lowest minimax regret among deployable arms, beats always-opus
+    on every profile, and beats the plain gateless cascade. It TRAILS the clairvoyant-oracle
+    (the NON-deployable per-task hindsight ceiling), as any deployable policy must — the
+    gap is what the gate recovers. It is second-best on each individual profile; the win is
+    the cross-profile robustness (minimax regret). Caveat: needs an observable success
+    signal (here the test suite). See EXPERIMENT.md for the full honest accounting.
 
 Run:
     julia --project=<repo-root> apps/credence-pi/eval/tb_dominance.jl \
@@ -211,8 +217,12 @@ realized_solves(routed::Vector{Int}, test::Vector{TaskRow}) =
 realized_cost(routed::Vector{Int}, test::Vector{TaskRow}) =
     sum(test[i].cost[routed[i]] for i in eachindex(test); init = 0.0)
 
-# credence-lint: allow — precedent:baseline-comparison — clairvoyant FrugalGPT cascade upper bound (cheapest-first, stop at first real success, cumulative cost)
-function cascade(test::Vector{TaskRow}, reward)
+# credence-lint: allow — precedent:baseline-comparison — plain FrugalGPT cascade (DEPLOYABLE: cheapest-first, pay each rung run, stop at first OBSERVED success)
+# A deployable pay-as-you-go cascade: try tiers cheapest→dearest, pay each rung you run
+# (including failed ones), stop at the first observed success (test-suite verifier). This
+# is escalation-eu MINUS the EU gate — the apples-to-apples peer that isolates the gate's
+# value. NOT an oracle: it pays for failed rungs and the full ladder on unsolvable tasks.
+function frugalgpt_cascade(test::Vector{TaskRow}, reward)
     w = 0.0; solves = 0; cost = 0.0
     for t in test
         paid = 0.0; done = false
@@ -227,16 +237,37 @@ function cascade(test::Vector{TaskRow}, reward)
     (w, solves, cost)
 end
 
-# EU-gated escalation — the credence-pi metareasoning arm. Walk tiers cheapest→
-# dearest; at each rung (given cheaper rungs already failed) TRY iff its expected
-# utility is positive, reward·E[θ_a|X] ≥ E[cost_a|X] (the same per-tier resolved
-# belief + context-cost used by `route`); stop at the first OBSERVED solve. This is
-# deployable for testable work (the test suite is the verifier), captures the full
-# capability ladder WITHOUT predicting the boundary, and the EU gate stops it
-# over-escalating when a solve isn't worth the spend (where the naive cascade
-# over-pays). Myopic gate (ignores the option value of still-dearer rungs ⇒
-# conservative, under-escalates). Scored on realized outcomes (non-causal read-out,
-# mirroring eu_routed; in the live brain the gate is the canonical `optimise`).
+# The genuine CLAIRVOYANT ceiling (NON-deployable reference, not a competitor). With full
+# hindsight, each task takes its welfare-maximising action: the cheapest tier that solves
+# it (pay only that tier), or abstain ($0, no solve) if no tier clears reward·1 − cost.
+# A per-task oracle weakly dominates ANY deployable policy on realized welfare by
+# construction — it is the upper bound escalation-eu is measured AGAINST, never beaten.
+function clairvoyant_oracle(test::Vector{TaskRow}, reward)
+    w = 0.0; solves = 0; cost = 0.0
+    for t in test
+        best = 0.0; bi = 0                       # abstain baseline: welfare 0, no solve
+        for a in eachindex(TIERS)
+            u = reward * t.resolved[a] - t.cost[a]
+            if u > best; best = u; bi = a; end
+        end
+        w += best
+        if bi > 0; solves += 1; cost += t.cost[bi]; end
+    end
+    (w, solves, cost)
+end
+
+# MYOPIC EU-gated escalation — the credence-pi metareasoning arm. Walk tiers cheapest→
+# dearest; at each rung (given cheaper rungs already failed) TRY iff the single-step
+# expected utility is positive, reward·E[θ_a|X] ≥ E[cost_a|X] (the same per-tier resolved
+# belief + context-cost used by `route`); stop at the first OBSERVED solve. = frugalgpt_
+# cascade PLUS this one gate — so the gate alone is the win over the plain cascade: it
+# halts escalation where a solve isn't worth the spend, which the gateless cascade can't.
+# Deployable for testable work (the test suite is the verifier). The gate is MYOPIC
+# (ignores the option value of still-dearer rungs ⇒ conservative, under-escalates) — NOT
+# the exact sequential EU-max (that is escalation-dp; on this sample the myopic gate
+# happens to edge it on realized welfare via its conservatism). Scored on realized
+# outcomes (non-causal read-out, mirroring eu_routed); the live-brain version WOULD route
+# the 2-action {try,stop} gate through the canonical `optimise` (not yet wired).
 function escalation_eu(model, tops, cb, test::Vector{TaskRow}, reward)
     w = 0.0; solves = 0; cost = 0.0
     for t in test
@@ -279,8 +310,10 @@ function main()
     diffs, cats, lens = fvals
 
     # Arms scored per profile, accumulated over seeds (shuffled train/test splits).
-    armnames = ["eu-max", "escalation-eu", "always-haiku", "always-sonnet", "always-opus",
-                "argmax-accuracy", "best-fixed", "threshold(RouteLLM)", "oracle-cascade"]
+    # Deployable arms (real competitors) + one NON-deployable reference (clairvoyant-oracle).
+    deployable_arms = ["eu-max", "escalation-eu", "always-haiku", "always-sonnet", "always-opus",
+                       "argmax-accuracy", "best-fixed", "threshold(RouteLLM)", "frugalgpt-cascade"]
+    armnames = [deployable_arms; "clairvoyant-oracle"]
     welf = Dict(p[1] => Dict(a => Float64[] for a in armnames) for p in PROFILES)
     solv = Dict(p[1] => Dict(a => Float64[] for a in armnames) for p in PROFILES)
     cst  = Dict(p[1] => Dict(a => Float64[] for a in armnames) for p in PROFILES)
@@ -311,8 +344,10 @@ function main()
         for (pname, reward) in PROFILES
             picks["eu-max"] = eu_routed(model, tops, cb, test, reward)
             for a in armnames
-                if a == "oracle-cascade"
-                    w, s, c = cascade(test, reward)
+                if a == "frugalgpt-cascade"
+                    w, s, c = frugalgpt_cascade(test, reward)
+                elseif a == "clairvoyant-oracle"
+                    w, s, c = clairvoyant_oracle(test, reward)
                 elseif a == "escalation-eu"
                     w, s, c = escalation_eu(model, tops, cb, test, reward)
                 else
@@ -339,15 +374,18 @@ function report(args, tasks, welf, solv, cst, armnames)
             "   train-frac: ", args["train-frac"])
     nb = count(t -> any(t.resolved) && !all(t.resolved), tasks)
     println("tasks with a capability SPREAD (some tier solves, some fails): ", nb)
+    deployable = filter(!=("clairvoyant-oracle"), armnames)
     for (pname, reward) in PROFILES
         println("\n[", pname, "]  reward(\$/solve)=", reward,
-                "   (mean over seeds, held-out tasks)")
+                "   (mean over seeds, held-out tasks; * = non-deployable ceiling)")
         println("  ", rpad("arm", 22), rpad("welfare", 12), rpad("solves", 9), "cost")
         ranked = sort(armnames; by = a -> -avg(welf[pname][a]))
-        wbest = maximum(avg(welf[pname][a]) for a in armnames)
+        wbest_dep = maximum(avg(welf[pname][a]) for a in deployable)
         for a in ranked
-            mark = a == "eu-max" ? " ← EU-max" :
-                   (avg(welf[pname][a]) ≈ wbest ? " ← best" : "")
+            mark = a == "clairvoyant-oracle" ? " * CEILING (hindsight)" :
+                   a == "escalation-eu" ? " ← escalation-eu" :
+                   a == "eu-max" ? " ← up-front EU-max" :
+                   (avg(welf[pname][a]) ≈ wbest_dep ? " ← best deployable" : "")
             println("  ", rpad(a, 22),
                     rpad(@sprintf("%+.4f", avg(welf[pname][a])), 12),
                     rpad(@sprintf("%.1f", avg(solv[pname][a])), 9),
@@ -355,19 +393,23 @@ function report(args, tasks, welf, solv, cst, armnames)
         end
     end
 
-    # CROSS-PROFILE dominance (the Wald complete-class claim): a deployment serves a
-    # MIX of profiles; no single fixed policy is optimal across them, but one adaptive
-    # arm can be. Scored by MINIMAX REGRET — each arm's worst-case shortfall vs the
-    # best arm for that profile (scale-fair, unlike a raw sum which quality-hawk's big
-    # numbers would dominate). Lowest worst-case regret = most robust single policy.
-    best_w = Dict(pname => maximum(avg(welf[pname][a]) for a in armnames) for (pname, _) in PROFILES)
-    worst_regret(a) = maximum(best_w[pname] - avg(welf[pname][a]) for (pname, _) in PROFILES)
-    println("\nCROSS-PROFILE — worst-case regret over {", join((p for (p, _) in PROFILES), ", "),
-            "} (one policy serving all profiles; lower = more robust):")
-    for a in sort(armnames; by = worst_regret)
+    # CROSS-PROFILE robustness (the Wald complete-class claim): a deployment serves a MIX
+    # of profiles; no single fixed policy is optimal across them, but one adaptive arm can
+    # be. Scored by MINIMAX REGRET among DEPLOYABLE arms — each arm's worst-case shortfall
+    # vs the best DEPLOYABLE arm for that profile. (Per-profile raw welfare is dominated by
+    # the highest-reward profile; this is regret-vs-best, the robustness statement, not a
+    # scale-free claim about welfare levels.) Lowest worst-case regret = most robust policy.
+    best_dep = Dict(pname => maximum(avg(welf[pname][a]) for a in deployable) for (pname, _) in PROFILES)
+    worst_regret(a) = maximum(best_dep[pname] - avg(welf[pname][a]) for (pname, _) in PROFILES)
+    println("\nCROSS-PROFILE — worst-case regret vs best DEPLOYABLE arm over {",
+            join((p for (p, _) in PROFILES), ", "), "} (deployable only; lower = more robust):")
+    for a in sort(deployable; by = worst_regret)
         mark = a in ("escalation-eu", "eu-max") ? "  ← credence-pi" : ""
         println("  ", rpad(a, 22), @sprintf("worst-regret %.4f", worst_regret(a)), mark)
     end
+    println("  reference (non-deployable, hindsight): clairvoyant-oracle worst-regret ",
+            @sprintf("%.4f", worst_regret("clairvoyant-oracle")),
+            " — escalation-eu's gap to the true ceiling.")
 
     # Per-profile margins for the headline credence-pi arm (EU-gated escalation) vs each
     # other arm (≥0 ⇒ escalation-eu ≥ arm; % = seed win-rate).
@@ -384,8 +426,9 @@ function report(args, tasks, welf, solv, cst, armnames)
         end
         println()
     end
-    println("  (oracle-cascade is the CLAIRVOYANT upper bound — knows each rung's success before paying;")
-    println("   escalation-eu pays each rung it tries but the EU gate halts it where a solve isn't worth it.)")
+    println("  (frugalgpt-cascade = escalation-eu WITHOUT the EU gate — the gate is the whole difference.")
+    println("   clairvoyant-oracle is the NON-deployable hindsight ceiling: escalation-eu trails it, as any")
+    println("   deployable policy must — the margin is how much of the ceiling the gate recovers.)")
     println(bar, "\n")
 
     if !isempty(args["out"])
