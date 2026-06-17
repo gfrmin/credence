@@ -4,14 +4,14 @@ import assert from "node:assert/strict";
 import { computeTurnCost, buildPriceTable } from "../src/cost.js";
 import type { LlmOutputEvent } from "../src/openclaw-types.js";
 
-test("known model reconstructs USD from token counts (opus: 15 in / 75 out per Mtok)", () => {
+test("known model reconstructs USD from token counts (opus: 5 in / 25 out per Mtok)", () => {
   const table = buildPriceTable(undefined);
   const ev: LlmOutputEvent = {
     model: "claude-opus-4-8",
     usage: { input: 1_000_000, output: 1_000_000 },
   };
   const tc = computeTurnCost(ev, table);
-  assert.equal(tc.usd, 90); // 15 + 75
+  assert.equal(tc.usd, 30); // 5 + 25 (verified 2026-06 prices)
   assert.equal(tc.total_tokens, 2_000_000);
   assert.equal(tc.model, "claude-opus-4-8");
 });
