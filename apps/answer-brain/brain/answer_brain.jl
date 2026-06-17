@@ -1,0 +1,188 @@
+# Role: brain
+"""
+    answer_brain.jl — the answer-brain's belief + decision core (Stage 1).
+
+A native-Julia port of `life-agent`'s validated Stage-0 answerer
+(`src/life_agent/core/lookup.py`, `core/gather.py`): the tempered candidate posterior and
+the EU decision over the terminal effectors, plus the `net_voi`-priced gather/ask gate. See
+`docs/answer-brain/master-plan.md` and `docs/answer-brain/move-1-design.md`.
+
+The parity boundary (move-1-design §1): the brain reasons over ABSTRACT candidates and
+evidence groups. Candidate identity (string canon) and covariate projection are the body's
+job; an `Obs` here is pure numbers — which candidate index it reports, which ancestry group
+it belongs to, and its already-projected reliability covariates (authority / subject / time).
+
+Belief: a `CategoricalMeasure` over K candidate atoms `0..K-1` plus an explicit NONE atom `K`
+("the truth is not among the retrieved candidates"). Each observation conditions the
+categorical through a tempered `tabular_log_density` (PushOnly) kernel — the same construction
+`life-agent` ships to the skin (`apps/skin/server.jl` `build_kernel`), now built natively.
+
+Invariant 1 (single reasoner): this module DECLARES data (the kernel's log-density matrix, the
+`Tabular` utility vectors) and CALLS the Tier-1 primitives (`condition`, `optimise`, `value`,
+`net_voi`). It never reads `weights` to select behaviour — the argmax over candidates lives in
+`optimise` via K explicit `report_j` actions (move-1-design Open-Q1), not a hand-coded
+`argmax(weights)`.
+"""
+module AnswerBrain
+
+using Main.Credence: CategoricalMeasure, Finite, Kernel, PushOnly, condition, weights,
+                     Tabular, Functional
+import Main.Credence.Ontology: optimise, value, net_voi
+
+export Obs, ChannelParams, CANONICAL_CHANNEL,
+       candidate_posterior, terminal_decide, decision_fpa, voi_gather
+
+# ── Stated channel parameters (the §4.2/§4.1 priors; calibration moves them) ────────────
+# Mirror of life-agent's `lookup.py` constants and `bdsl/utility.bdsl`. A `ChannelParams`
+# value travels with every call so the parity test can pin these against the fixture's
+# `channel_params` (drift guard) rather than trusting a silent default.
+struct ChannelParams
+    a_alternatives::Float64   # effective number of wrong values a misreport spreads over
+    beta_ancestry::Float64    # within-document ancestry temper exponent
+    beta_model::Float64       # across-document (shared extractor) temper exponent
+    p_none_prior::Float64     # prior mass on none-of-the-retrieved
+    oracle_p::Float64         # owner-as-oracle reliability, pricing ask_clarify
+    prob_eps::Float64         # log-domain floor
+end
+
+const CANONICAL_CHANNEL = ChannelParams(10.0, 0.3, 0.7, 0.5, 0.9, 1e-12)
+
+# ── One observation, abstracted to numbers (the parity boundary) ────────────────────────
+struct Obs
+    reports::Int          # candidate index in 0..K-1 this observation asserts
+    group::Int            # ancestry-group id (chunks of one document share a group)
+    authority::Float64    # §4.1 source-authority prior
+    subject_factor::Float64   # §4.1 doc_subject covariate on aᵢ (1.0 = no covariate)
+    time_factor::Float64      # §4.1 doc_date covariate on aᵢ (1.0 = no covariate)
+end
+
+# ── The §4.2 lineage temper (pure; mirrors lookup.temper_scales, keyed on group) ────────
+"""
+    temper_scales(obs, cp) -> Vector{Float64}
+
+Per observation: within an ancestry group of size m the group counts as
+`1 + β_anc·(m-1)` effective observations; across the G groups (one shared extractor) the
+groups count as `1 + β_mod·(G-1)`. A single observation ⇒ scale 1.
+"""
+function temper_scales(obs::Vector{Obs}, cp::ChannelParams)::Vector{Float64}
+    counts = Dict{Int, Int}()
+    for o in obs
+        counts[o.group] = get(counts, o.group, 0) + 1
+    end
+    n_groups = length(counts)
+    s_mod = n_groups == 0 ? 1.0 : (1.0 + cp.beta_model * (n_groups - 1)) / n_groups
+    [begin
+         m = counts[o.group]
+         s_anc = (1.0 + cp.beta_ancestry * (m - 1)) / m
+         s_anc * s_mod
+     end for o in obs]
+end
+
+# ── The tempered noisy-channel log-density matrix (pure; mirrors observation_densities) ──
+"""
+    observation_densities(o, k, rho, scale, cp) -> Vector{Vector{Float64}}
+
+Rows are the K candidate hypotheses + NONE (last); columns the K reported-candidate atoms.
+With reliability `r = rho · authority · subject · time`, a match carries
+`scale·log(r + (1-r)/A)` and any miss `scale·log((1-r)/A)`; NONE misses everything.
+"""
+function observation_densities(o::Obs, k::Int, rho::Float64, scale::Float64,
+                               cp::ChannelParams)::Vector{Vector{Float64}}
+    r = rho * o.authority * o.subject_factor * o.time_factor
+    log_match = scale * log(max(r + (1.0 - r) / cp.a_alternatives, cp.prob_eps))
+    log_miss  = scale * log(max((1.0 - r) / cp.a_alternatives, cp.prob_eps))
+    rows = [[t == j ? log_match : log_miss for t in 0:(k - 1)] for j in 0:(k - 1)]
+    push!(rows, fill(log_miss, k))   # NONE row: every report is a misreport
+    rows
+end
+
+# ── The posterior: condition the candidate+NONE categorical on every observation ────────
+"""
+    candidate_posterior(k, obs, rho; cp=CANONICAL_CHANNEL) -> CategoricalMeasure
+
+The tempered posterior over K candidates + NONE. Same construction life-agent ships to the
+skin: a `categorical` prior (`p_none` on NONE, the rest uniform over candidates) conditioned
+on each observation through a `tabular_log_density` PushOnly kernel, in observation order.
+"""
+function candidate_posterior(k::Int, obs::Vector{Obs}, rho::Float64;
+                             cp::ChannelParams = CANONICAL_CHANNEL)::CategoricalMeasure
+    atoms = collect(Float64, 0:k)                       # 0..k-1 candidates, k = NONE
+    prior = vcat(fill((1.0 - cp.p_none_prior) / k, k), [cp.p_none_prior])
+    state = CategoricalMeasure(Finite(atoms), log.(prior))
+    scales = temper_scales(obs, cp)
+    src, tgt = Finite(atoms), Finite(collect(Float64, 0:(k - 1)))
+    for (o, scale) in zip(obs, scales)
+        dens = observation_densities(o, k, rho, scale, cp)
+        kern = Kernel(src, tgt, _ -> error("generate not used"),
+                      (h, ob) -> dens[Int(round(h)) + 1][Int(round(ob)) + 1];
+                      likelihood_family = PushOnly())  # credence-lint: allow — precedent:declarative-construction — tabular_log_density kernel, mirrors apps/skin/server.jl build_kernel
+        state = condition(state, kern, Float64(o.reports))
+    end
+    state
+end
+
+# ── The decision: optimise over {report_j × K, hedge, ask_clarify, abstain} ──────────────
+# action keys (deterministic numeric order = the skin's _sorted_action_keys semantics):
+#   1..k       report_j        reward candidate (j-1), every other atom + NONE = u_wrong
+#   k+1        hedge           the named-set value; misleads only when the truth is NONE
+#   k+2        ask_clarify     the oracle price (NOT a u_assert outcome)
+#   k+3        abstain         the gauge zero
+"""
+    decision_fpa(k, u_bar; cp=CANONICAL_CHANNEL) -> (order, fpa)
+
+The terminal preference: an ordered action-key vector and a `Dict` of `Tabular` utility
+vectors over the K+1 atoms. Pure declarative construction of the §4.4 utility (the argmax
+over candidates is left to `optimise` via the K `report_j` actions — Invariant 1).
+`u_bar` is the owner's utility posterior mean Ū, supplied by the body.
+"""
+function decision_fpa(k::Int, u_bar::AbstractDict;
+                      cp::ChannelParams = CANONICAL_CHANNEL)
+    u_c = Float64(u_bar["u_correct"]); u_w = Float64(u_bar["u_wrong"])
+    u_h = Float64(u_bar["u_hedged"]);  u_ab = Float64(u_bar["u_abstain"])
+    lam = Float64(u_bar["lambda_int"])
+    order = Int[]
+    fpa = Dict{Int, Functional}()
+    for j in 1:k                                   # report_j: reward candidate (j-1)
+        vals = fill(u_w, k + 1); vals[j] = u_c
+        fpa[j] = Tabular(vals); push!(order, j)
+    end
+    fpa[k + 1] = Tabular(vcat(fill(u_h, k), [u_w]));           push!(order, k + 1)  # hedge
+    fpa[k + 2] = Tabular(fill(cp.oracle_p * u_c - lam, k + 1)); push!(order, k + 2)  # ask
+    fpa[k + 3] = Tabular(fill(u_ab, k + 1));                    push!(order, k + 3)  # abstain
+    (order, fpa)
+end
+
+_action_name(act::Int, k::Int)::String =
+    act <= k ? "report" : act == k + 1 ? "hedge" : act == k + 2 ? "ask_clarify" : "abstain"
+
+"""
+    terminal_decide(state, k, u_bar; cp=CANONICAL_CHANNEL) -> (action::String, eu::Float64)
+
+`optimise` over the terminal action set on the live posterior; the chosen `report_j` maps to
+`"report"`. Returns the Stage-0 action vocabulary so parity compares like-for-like.
+"""
+function terminal_decide(state::CategoricalMeasure, k::Int, u_bar::AbstractDict;
+                         cp::ChannelParams = CANONICAL_CHANNEL)
+    order, fpa = decision_fpa(k, u_bar; cp = cp)
+    act = optimise(state, order, fpa)          # argmax_a expect(state, fpa[a]) (single decision mech.)
+    eu  = value(state, order, fpa)             # = EU of the chosen action
+    (_action_name(act, k), Float64(eu))
+end
+
+# ── The forward capability: VOI-priced gather/ask (NEW; no Stage-0 parity counterpart) ──
+"""
+    voi_gather(state, k, u_bar, probe_kernel, possible_obs, cost; cp=CANONICAL_CHANNEL)
+
+`net_voi` of one probe for the terminal decision: the expected gain in `value` from
+conditioning on the probe's observation, net of `cost`. Positive ⇒ the probe earns its
+keep. The forward gather/ask gate the Stage-0 loop lacked (it gathered unconditionally);
+priced against the SAME terminal preference, so gather competes with answer/abstain in one EU.
+"""
+function voi_gather(state::CategoricalMeasure, k::Int, u_bar::AbstractDict,
+                    probe_kernel::Kernel, possible_obs, cost::Float64;
+                    cp::ChannelParams = CANONICAL_CHANNEL)::Float64
+    order, fpa = decision_fpa(k, u_bar; cp = cp)
+    Float64(net_voi(state, probe_kernel, order, fpa, possible_obs, cost))
+end
+
+end # module AnswerBrain

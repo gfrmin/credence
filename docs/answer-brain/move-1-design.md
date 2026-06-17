@@ -147,6 +147,13 @@ the terminal {report/hedge/ask/abstain} decide**. Stating this honestly keeps th
 clean (no fabricated Python oracle for a path Python never ran). Push back if you'd rather defer
 `net_voi` entirely to Stage 2 and make Stage 1 pure terminal-decide parity.
 
+**Resolution (author-approved, in conversation).** Q1 → **(a)** K `report_j` actions; the
+argmax lives in `optimise`, no compute-on-weights in the app. Q2 → **defer `server.jl` to
+Stage 2**; build only the observation log + replay + a `main.jl` skeleton. Q3 → **build
+`voi_gather` + correctness-test it**, with parity scoped strictly to the posterior + terminal
+decide. All three are implemented as resolved; the parity + net_voi + replay tests are green
+(57 checks, 10 cases, `atol=1e-9`) and `tools/credence-lint check apps/answer-brain` is clean.
+
 ## 6. Risk + mitigation
 
 - **Silent port drift** in `observation_densities`/`temper_scales` (the only hand-translated

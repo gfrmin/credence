@@ -1,0 +1,427 @@
+{
+  "schema": "answer-brain/parity/v1",
+  "channel_params": {
+    "A_alternatives": 10.0,
+    "beta_ancestry": 0.3,
+    "beta_model": 0.7,
+    "p_none_prior": 0.5,
+    "oracle_p": 0.9,
+    "prob_eps": 1e-12
+  },
+  "action_order": [
+    "report",
+    "hedge",
+    "ask_clarify",
+    "abstain"
+  ],
+  "cases": [
+    {
+      "name": "single-observation",
+      "k": 1,
+      "rho": 0.5,
+      "u_bar": {
+        "u_correct": 1.0,
+        "u_abstain": 0.0,
+        "u_wrong": -4.0,
+        "u_hedged": -0.5,
+        "lambda_int": 0.05,
+        "kappa_att": 0.0
+      },
+      "observations": [
+        {
+          "reports": 0,
+          "group": 0,
+          "authority": 0.9,
+          "subject_factor": 1.0,
+          "time_factor": 1.0
+        }
+      ],
+      "expected": {
+        "weights": [
+          0.9017857142857142,
+          0.0982142857142857
+        ],
+        "p_none": 0.0982142857142857,
+        "action": "ask_clarify",
+        "eu": 0.8499999999999999
+      }
+    },
+    {
+      "name": "ancestry-temper-two-chunks-one-doc",
+      "k": 1,
+      "rho": 0.6,
+      "u_bar": {
+        "u_correct": 1.0,
+        "u_abstain": 0.0,
+        "u_wrong": -4.0,
+        "u_hedged": -0.5,
+        "lambda_int": 0.05,
+        "kappa_att": 0.0
+      },
+      "observations": [
+        {
+          "reports": 0,
+          "group": 0,
+          "authority": 0.95,
+          "subject_factor": 1.0,
+          "time_factor": 1.0
+        },
+        {
+          "reports": 0,
+          "group": 0,
+          "authority": 0.95,
+          "subject_factor": 1.0,
+          "time_factor": 1.0
+        }
+      ],
+      "expected": {
+        "weights": [
+          0.9693595411508403,
+          0.030640458849159634
+        ],
+        "p_none": 0.030640458849159634,
+        "action": "ask_clarify",
+        "eu": 0.85
+      }
+    },
+    {
+      "name": "model-temper-two-docs-agree",
+      "k": 1,
+      "rho": 0.6,
+      "u_bar": {
+        "u_correct": 1.0,
+        "u_abstain": 0.0,
+        "u_wrong": -4.0,
+        "u_hedged": -0.5,
+        "lambda_int": 0.05,
+        "kappa_att": 0.0
+      },
+      "observations": [
+        {
+          "reports": 0,
+          "group": 0,
+          "authority": 0.95,
+          "subject_factor": 1.0,
+          "time_factor": 1.0
+        },
+        {
+          "reports": 0,
+          "group": 1,
+          "authority": 0.95,
+          "subject_factor": 1.0,
+          "time_factor": 1.0
+        }
+      ],
+      "expected": {
+        "weights": [
+          0.9891981814648106,
+          0.010801818535189347
+        ],
+        "p_none": 0.010801818535189347,
+        "action": "report",
+        "eu": 0.9459909073240532
+      }
+    },
+    {
+      "name": "covariates-subject-and-time-attenuate",
+      "k": 2,
+      "rho": 0.6,
+      "u_bar": {
+        "u_correct": 1.0,
+        "u_abstain": 0.0,
+        "u_wrong": -4.0,
+        "u_hedged": -0.5,
+        "lambda_int": 0.05,
+        "kappa_att": 0.0
+      },
+      "observations": [
+        {
+          "reports": 0,
+          "group": 0,
+          "authority": 0.95,
+          "subject_factor": 0.05,
+          "time_factor": 0.3
+        },
+        {
+          "reports": 1,
+          "group": 1,
+          "authority": 0.9,
+          "subject_factor": 1.0,
+          "time_factor": 1.0
+        }
+      ],
+      "expected": {
+        "weights": [
+          0.09115192448547944,
+          0.7389220799623116,
+          0.16992599555220886
+        ],
+        "p_none": 0.16992599555220886,
+        "action": "ask_clarify",
+        "eu": 0.8499999999999999
+      }
+    },
+    {
+      "name": "none-dominant-weak-single",
+      "k": 1,
+      "rho": 0.3,
+      "u_bar": {
+        "u_correct": 1.0,
+        "u_abstain": 0.0,
+        "u_wrong": -6.0,
+        "u_hedged": -0.5,
+        "lambda_int": 0.2,
+        "kappa_att": 0.0
+      },
+      "observations": [
+        {
+          "reports": 0,
+          "group": 0,
+          "authority": 0.8,
+          "subject_factor": 1.0,
+          "time_factor": 0.1
+        }
+      ],
+      "expected": {
+        "weights": [
+          0.5547445255474452,
+          0.44525547445255476
+        ],
+        "p_none": 0.44525547445255476,
+        "action": "ask_clarify",
+        "eu": 0.7
+      }
+    },
+    {
+      "name": "dispersed-three-docs-disagree",
+      "k": 3,
+      "rho": 0.5,
+      "u_bar": {
+        "u_correct": 1.0,
+        "u_abstain": 0.0,
+        "u_wrong": -4.0,
+        "u_hedged": -0.5,
+        "lambda_int": 0.4,
+        "kappa_att": 0.0
+      },
+      "observations": [
+        {
+          "reports": 0,
+          "group": 0,
+          "authority": 0.9,
+          "subject_factor": 1.0,
+          "time_factor": 1.0
+        },
+        {
+          "reports": 1,
+          "group": 1,
+          "authority": 0.9,
+          "subject_factor": 1.0,
+          "time_factor": 1.0
+        },
+        {
+          "reports": 2,
+          "group": 2,
+          "authority": 0.9,
+          "subject_factor": 1.0,
+          "time_factor": 1.0
+        }
+      ],
+      "expected": {
+        "weights": [
+          0.2849757152053079,
+          0.284975715205308,
+          0.284975715205308,
+          0.14507285438407613
+        ],
+        "p_none": 0.14507285438407613,
+        "action": "ask_clarify",
+        "eu": 0.5
+      }
+    },
+    {
+      "name": "clear-leader-ask-attractive",
+      "k": 2,
+      "rho": 0.55,
+      "u_bar": {
+        "u_correct": 1.0,
+        "u_abstain": 0.0,
+        "u_wrong": -9.0,
+        "u_hedged": -0.5,
+        "lambda_int": 0.02,
+        "kappa_att": 0.0
+      },
+      "observations": [
+        {
+          "reports": 0,
+          "group": 0,
+          "authority": 0.95,
+          "subject_factor": 1.0,
+          "time_factor": 1.0
+        },
+        {
+          "reports": 0,
+          "group": 1,
+          "authority": 0.95,
+          "subject_factor": 1.0,
+          "time_factor": 1.0
+        },
+        {
+          "reports": 1,
+          "group": 2,
+          "authority": 0.9,
+          "subject_factor": 1.0,
+          "time_factor": 1.0
+        }
+      ],
+      "expected": {
+        "weights": [
+          0.8585792193502649,
+          0.10895220032996458,
+          0.03246858031977043
+        ],
+        "p_none": 0.03246858031977043,
+        "action": "ask_clarify",
+        "eu": 0.8799999999999999
+      }
+    },
+    {
+      "name": "hedge-wins-two-way-tie-costly-ask",
+      "k": 2,
+      "rho": 0.7,
+      "u_bar": {
+        "u_correct": 1.0,
+        "u_abstain": 0.0,
+        "u_wrong": -4.0,
+        "u_hedged": 0.7,
+        "lambda_int": 1.0,
+        "kappa_att": 0.0
+      },
+      "observations": [
+        {
+          "reports": 0,
+          "group": 0,
+          "authority": 0.95,
+          "subject_factor": 1.0,
+          "time_factor": 1.0
+        },
+        {
+          "reports": 1,
+          "group": 1,
+          "authority": 0.95,
+          "subject_factor": 1.0,
+          "time_factor": 1.0
+        }
+      ],
+      "expected": {
+        "weights": [
+          0.4648399049231899,
+          0.4648399049231901,
+          0.07032019015361993
+        ],
+        "p_none": 0.07032019015361993,
+        "action": "hedge",
+        "eu": 0.3694951062779862
+      }
+    },
+    {
+      "name": "abstain-wins-dispersed-costly-ask",
+      "k": 3,
+      "rho": 0.5,
+      "u_bar": {
+        "u_correct": 1.0,
+        "u_abstain": 0.0,
+        "u_wrong": -4.0,
+        "u_hedged": -0.5,
+        "lambda_int": 1.0,
+        "kappa_att": 0.0
+      },
+      "observations": [
+        {
+          "reports": 0,
+          "group": 0,
+          "authority": 0.9,
+          "subject_factor": 1.0,
+          "time_factor": 1.0
+        },
+        {
+          "reports": 1,
+          "group": 1,
+          "authority": 0.9,
+          "subject_factor": 1.0,
+          "time_factor": 1.0
+        },
+        {
+          "reports": 2,
+          "group": 2,
+          "authority": 0.9,
+          "subject_factor": 1.0,
+          "time_factor": 1.0
+        }
+      ],
+      "expected": {
+        "weights": [
+          0.2849757152053079,
+          0.284975715205308,
+          0.284975715205308,
+          0.14507285438407613
+        ],
+        "p_none": 0.14507285438407613,
+        "action": "abstain",
+        "eu": 0.0
+      }
+    },
+    {
+      "name": "report-wins-sharp-posterior",
+      "k": 1,
+      "rho": 0.9,
+      "u_bar": {
+        "u_correct": 1.0,
+        "u_abstain": 0.0,
+        "u_wrong": -1.0,
+        "u_hedged": -0.5,
+        "lambda_int": 0.5,
+        "kappa_att": 0.0
+      },
+      "observations": [
+        {
+          "reports": 0,
+          "group": 0,
+          "authority": 0.98,
+          "subject_factor": 1.0,
+          "time_factor": 1.0
+        },
+        {
+          "reports": 0,
+          "group": 1,
+          "authority": 0.98,
+          "subject_factor": 1.0,
+          "time_factor": 1.0
+        },
+        {
+          "reports": 0,
+          "group": 2,
+          "authority": 0.98,
+          "subject_factor": 1.0,
+          "time_factor": 1.0
+        },
+        {
+          "reports": 0,
+          "group": 3,
+          "authority": 0.98,
+          "subject_factor": 1.0,
+          "time_factor": 1.0
+        }
+      ],
+      "expected": {
+        "weights": [
+          0.9999985072451588,
+          1.4927548412608937e-06
+        ],
+        "p_none": 1.4927548412608937e-06,
+        "action": "report",
+        "eu": 0.9999970144903175
+      }
+    }
+  ]
+}
