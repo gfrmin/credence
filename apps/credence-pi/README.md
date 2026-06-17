@@ -26,13 +26,21 @@ not negotiable.
 ## Install
 
 ```bash
-# the brain
-docker run -p 8787:8787 -v ~/.credence-pi:/root/.credence-pi ghcr.io/gfrmin/credence-pi-daemon
+# the brain (Bayesian daemon) — detached, restart-resilient, state in ~/.credence-pi
+docker run -d --name credence-pi --restart unless-stopped \
+  -p 127.0.0.1:8787:8787 -v ~/.credence-pi:/root/.credence-pi \
+  ghcr.io/gfrmin/credence-pi-daemon
 
-# the body
+# the body (OpenClaw plugin) — governance + EU-max model routing, both ON by default
 openclaw plugins install @gfrmin/credence-pi-openclaw
 openclaw plugins enable credence-pi
 ```
+
+That's it. **Model routing is on by default**: credence-pi auto-discovers your
+configured models and routes each turn to the cheapest one whose expected accuracy
+justifies its cost — no config, and it learns from your traffic (`routing: false`
+to disable; a single-model setup is a no-op). Prefer Compose? `docker compose -f
+apps/credence-pi/docker-compose.yml up -d` runs the same daemon.
 
 ## See it work (no agent, no data needed)
 

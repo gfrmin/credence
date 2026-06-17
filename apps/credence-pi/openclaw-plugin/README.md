@@ -32,11 +32,11 @@ interception point is an OpenClaw **plugin** `before_tool_call` hook. See
 
 ## Install (operator)
 
-1. Start the brain daemon — it listens on `http://127.0.0.1:8787`. Either run
-   the published image
-   (`docker run -p 8787:8787 -v ~/.credence-pi:/root/.credence-pi ghcr.io/gfrmin/credence-pi-daemon`)
-   or run it from source
-   (`julia --project=<repo-root> apps/credence-pi/daemon/main.jl`).
+1. Start the brain daemon — it listens on `http://127.0.0.1:8787`. Detached +
+   restart-resilient: `docker run -d --name credence-pi --restart unless-stopped -p
+   127.0.0.1:8787:8787 -v ~/.credence-pi:/root/.credence-pi ghcr.io/gfrmin/credence-pi-daemon`
+   (or `docker compose -f ../docker-compose.yml up -d`, or from source:
+   `julia --project=<repo-root> apps/credence-pi/daemon/main.jl`).
    See `apps/credence-pi/daemon/README.md`.
 2. Build the plugin: `cd apps/credence-pi/openclaw-plugin && npm install && npm run build`.
 3. Install it into OpenClaw. From a published registry:
