@@ -1,0 +1,148 @@
+{
+    "welfare_mean": {
+        "cost-hawk": {
+            "always-sonnet": 0.024108565000000016,
+            "eu-max": 0.13064963116666667,
+            "escalation-eu": 0.11821516116666668,
+            "clairvoyant-oracle": 0.7507414965000001,
+            "threshold(RouteLLM)": 0.14343619633333335,
+            "always-opus": -1.4085989999999997,
+            "best-fixed": 0.07112361366666668,
+            "frugalgpt-cascade": -0.7320187881666665,
+            "always-haiku": 0.18715008966666666,
+            "argmax-accuracy": 0.13520460366666667
+        },
+        "quality-hawk": {
+            "always-sonnet": 23.394108564999996,
+            "eu-max": 19.347068291,
+            "escalation-eu": 25.456314545166666,
+            "clairvoyant-oracle": 26.75909194783333,
+            "threshold(RouteLLM)": 14.55176952966667,
+            "always-opus": 19.776401,
+            "best-fixed": 14.479456947000001,
+            "frugalgpt-cascade": 25.456314545166666,
+            "always-haiku": 14.595483423000003,
+            "argmax-accuracy": 14.543537937000002
+        },
+        "balanced": {
+            "always-sonnet": 3.7141085649999996,
+            "eu-max": 3.0110059776666676,
+            "escalation-eu": 3.693658901833333,
+            "clairvoyant-oracle": 4.7057586145,
+            "threshold(RouteLLM)": 2.4184361963333334,
+            "always-opus": 1.9364010000000003,
+            "best-fixed": 2.346123613666667,
+            "frugalgpt-cascade": 3.402981211833333,
+            "always-haiku": 2.4621500896666664,
+            "argmax-accuracy": 2.410204603666667
+        }
+    },
+    "config": {
+        "tiers": [
+            "haiku",
+            "sonnet",
+            "opus"
+        ],
+        "tasks": 17,
+        "features": [
+            "difficulty",
+            "category",
+            "length"
+        ],
+        "seeds": 100,
+        "train_frac": 0.6,
+        "profiles": {
+            "cost-hawk": 0.25,
+            "quality-hawk": 5,
+            "balanced": 1
+        }
+    },
+    "cross_profile_worst_regret": {
+        "always-sonnet": 3.3649833828333335,
+        "eu-max": 7.41202365683333,
+        "escalation-eu": 1.3027774026666634,
+        "clairvoyant-oracle": 0,
+        "threshold(RouteLLM)": 12.20732241816666,
+        "always-opus": 6.98269094783333,
+        "best-fixed": 12.279635000833329,
+        "frugalgpt-cascade": 1.4827602846666665,
+        "always-haiku": 12.163608524833327,
+        "argmax-accuracy": 12.215554010833328
+    },
+    "cost_mean": {
+        "cost-hawk": {
+            "always-sonnet": 1.205891435,
+            "eu-max": 0.6918503688333334,
+            "escalation-eu": 0.6909515055,
+            "clairvoyant-oracle": 0.43259183683333335,
+            "threshold(RouteLLM)": 0.6148971370000001,
+            "always-opus": 2.523599,
+            "best-fixed": 0.6872097196666668,
+            "frugalgpt-cascade": 2.1103521215,
+            "always-haiku": 0.5711832436666667,
+            "argmax-accuracy": 0.6231287296666668
+        },
+        "quality-hawk": {
+            "always-sonnet": 1.205891435,
+            "eu-max": 1.1362650423333334,
+            "escalation-eu": 2.1103521215,
+            "clairvoyant-oracle": 0.8075747188333334,
+            "threshold(RouteLLM)": 0.6148971370000001,
+            "always-opus": 2.523599,
+            "best-fixed": 0.6872097196666668,
+            "frugalgpt-cascade": 2.1103521215,
+            "always-haiku": 0.5711832436666667,
+            "argmax-accuracy": 0.6231287296666668
+        },
+        "balanced": {
+            "always-sonnet": 1.205891435,
+            "eu-max": 0.8423273556666667,
+            "escalation-eu": 1.8063410981666665,
+            "clairvoyant-oracle": 0.8075747188333334,
+            "threshold(RouteLLM)": 0.6148971370000001,
+            "always-opus": 2.523599,
+            "best-fixed": 0.6872097196666668,
+            "frugalgpt-cascade": 2.1103521215,
+            "always-haiku": 0.5711832436666667,
+            "argmax-accuracy": 0.6231287296666668
+        }
+    },
+    "solves_mean": {
+        "cost-hawk": {
+            "always-sonnet": 4.92,
+            "eu-max": 3.29,
+            "escalation-eu": 3.2366666666666664,
+            "clairvoyant-oracle": 4.733333333333334,
+            "threshold(RouteLLM)": 3.0333333333333328,
+            "always-opus": 4.46,
+            "best-fixed": 3.0333333333333328,
+            "frugalgpt-cascade": 5.513333333333333,
+            "always-haiku": 3.0333333333333328,
+            "argmax-accuracy": 3.0333333333333328
+        },
+        "quality-hawk": {
+            "always-sonnet": 4.92,
+            "eu-max": 4.096666666666667,
+            "escalation-eu": 5.513333333333333,
+            "clairvoyant-oracle": 5.513333333333333,
+            "threshold(RouteLLM)": 3.0333333333333328,
+            "always-opus": 4.46,
+            "best-fixed": 3.0333333333333328,
+            "frugalgpt-cascade": 5.513333333333333,
+            "always-haiku": 3.0333333333333328,
+            "argmax-accuracy": 3.0333333333333328
+        },
+        "balanced": {
+            "always-sonnet": 4.92,
+            "eu-max": 3.853333333333333,
+            "escalation-eu": 5.499999999999999,
+            "clairvoyant-oracle": 5.513333333333333,
+            "threshold(RouteLLM)": 3.0333333333333328,
+            "always-opus": 4.46,
+            "best-fixed": 3.0333333333333328,
+            "frugalgpt-cascade": 5.513333333333333,
+            "always-haiku": 3.0333333333333328,
+            "argmax-accuracy": 3.0333333333333328
+        }
+    }
+}
