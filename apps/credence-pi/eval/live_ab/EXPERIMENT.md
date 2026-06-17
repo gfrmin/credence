@@ -158,6 +158,28 @@ leads.
 *Verified by a 5-skeptic adversarial workflow (leakage clean; foil-fairness caught the
 clairvoyant mislabel — now fixed; metric/data/mechanism minor caveats folded in above).*
 
+## Calibration of the up-front belief (`eval/calibration.jl`)
+
+Is the belief's θ a *true* probability? The EU trade reward·θ − cost is only as good as θ's
+calibration, not just its ranking. Held-out predicted-θ vs realized-solve over the 3-rep
+matrix (100 seeds, 6300 pairs, difficulty/category/length features):
+
+| metric | value | read |
+|---|---|---|
+| ECE (10-bin) | **0.074** | moderate; under-confident at the low end (predicts ~0.17 where reality is ~0.77), well-calibrated mid-range |
+| AUROC | **0.59** | near-chance — the up-front belief barely *ranks* solve-vs-fail on held-out tasks |
+| Brier / log-score | 0.243 / 0.679 | — |
+
+The weak AUROC has a real, honest root cause: the warm belief orders haiku<sonnet<opus (from
+the MCQ oracle grid), but tb reality is sonnet>opus (sonnet solves 36/51, opus 32/51), so it
+**mis-ranks tiers** on agentic tasks. This is the dominance eval's verdict — **difficulty/
+category/length + the MCQ warm-seed don't predict the agentic capability boundary** — now
+quantified. It is exactly why **observe-then-escalate wins**: it needs no calibrated up-front
+θ, just an observed failure. The implication for live up-front routing: re-warm the belief on
+agentic outcomes and/or enrich the features (the structure-BMA auto-sophisticates) — bounded
+by what is honestly extractable at routing time. (Non-causal diagnostic; never feeds a
+decision — `posterior_accuracy` read-out only.)
+
 ## Status
 
 - [x] Stack validated (oracle + 3 tiers on hello-world; clean cost capture)
