@@ -1,0 +1,26 @@
+{
+  "name": "@credence/brain-body",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Transport-agnostic governor core for credence answer-brains on pi-mono (govern loop, manifest fetch+verify, effector/feature harness).",
+  "exports": {
+    ".": "./src/index.ts",
+    "./governor": "./src/governor.ts",
+    "./manifest": "./src/manifest.ts",
+    "./dispatch": "./src/dispatch.ts",
+    "./wire": "./src/wire.ts"
+  },
+  "scripts": {
+    "build": "tsc --noEmit",
+    "test": "node --import tsx --test tests/*.test.ts"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.5.0"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}
