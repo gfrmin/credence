@@ -1,0 +1,38 @@
+; ============================================================
+; features.bdsl — the candidate-set state vocabulary (Stage 1).
+;
+; The brain's belief is a posterior over candidate values + NONE.
+; These features summarise that posterior's SHAPE — the signals a
+; steering policy reads to decide gather-vs-answer-vs-ask. Declared
+; here; their extractors (which read the live posterior) land with
+; the body in Stage 2. Stage-1 decisions run directly off the
+; posterior + Ū (terminal_decide), so nothing reads these yet.
+; ============================================================
+
+; How concentrated the posterior is on its leader.
+(define dispersion-space
+  (space :finite sharp moderate dispersed))
+
+; Where the leading candidate's credence sits relative to the
+; u_wrong-implied report bar.
+(define leader-band-space
+  (space :finite below-bar near-bar above-bar))
+
+; Do the candidates' supporting documents split across eras (the
+; precondition for a stale-vs-current confusion — recency
+; discriminates)? Decouples recency from the router's time_indexed.
+(define era-split-space
+  (space :finite no yes))
+
+; Is the question owner-scoped ("my X")? Only then can whose-document
+; protect an identity fact; a relational/third-party question takes
+; the conservative path (gather amplifies no confound it cannot see).
+(define owner-scoped-space
+  (space :finite no yes))
+
+(define features
+  (list
+    (feature posterior-dispersion   dispersion-space)
+    (feature leader-credence-band   leader-band-space)
+    (feature candidates-era-split   era-split-space)
+    (feature owner-scoped           owner-scoped-space)))

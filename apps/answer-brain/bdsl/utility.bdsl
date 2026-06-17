@@ -1,0 +1,46 @@
+; ============================================================
+; utility.bdsl — declared channel-parameter priors (Stage 1).
+;
+; DATA the operator sets, read by the typed Julia brain
+; (apps/answer-brain/brain/answer_brain.jl, the ChannelParams
+; struct) at wire time. The .bdsl declares the numbers a human
+; chooses; the Julia brain builds the (too-large-to-transcribe)
+; categorical posterior and runs EU-max. The brain's
+; CANONICAL_CHANNEL mirrors these defaults, so the file is
+; documentation as much as configuration.
+;
+; These mirror life-agent's lookup.py stated channel parameters
+; (§4.2 lineage temper, §4.1 covariates). Each is a PRIOR that
+; calibration moves — never fitted to the gate (frozen-blind).
+;
+; NOT declared here: the owner's utility posterior mean Ū
+; (u_correct / u_wrong / u_hedged / u_abstain / lambda_int).
+; Ū is the LEARNED preference, supplied per-decision by the
+; body from life-agent's utility posterior — it is not an
+; operator-set constant and does not live in this file.
+; ============================================================
+
+; Effective number of wrong values a misreport spreads over (the
+; noisy-channel's A). Larger ⇒ a single agreeing observation is
+; more decisive (a miss is spread thinner).
+(define a-alternatives 10.0)
+
+; §4.2 ancestry temper: within ONE source document, m observations
+; count as 1 + beta-ancestry·(m-1) effective (chunks of one doc
+; corroborate less than independent docs). 0 ⇒ full discount to 1.
+(define beta-ancestry 0.3)
+
+; §4.2 model temper: across the G source documents (one shared
+; extractor produced every observation), the groups count as
+; 1 + beta-model·(G-1). Tempers shared-instrument over-counting.
+(define beta-model 0.7)
+
+; Prior mass on none-of-the-retrieved (the NONE atom: "the truth
+; is not among the retrieved candidates"). The complement of an
+; unproven extraction channel; the rest is uniform over candidates.
+(define p-none-prior 0.5)
+
+; Owner-as-oracle reliability, pricing ask-user: EU(ask) =
+; oracle-p·u_correct − lambda_int. The oracle is infallible WHEN
+; it knows; this is P(it knows). Not a u_assert outcome.
+(define oracle-p 0.9)

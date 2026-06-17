@@ -1,0 +1,43 @@
+; ============================================================
+; capabilities.bdsl — the answering body's effector manifest.
+;
+; Each (effector ...) declares one tentacle the body has. The
+; brain's action-space is exactly the declared effectors. The
+; body's startup verifies every effector has a registered
+; implementation. Read by both sides; changes are deployment
+; events, not runtime events. (Param impls firm up with the
+; pi-mono body in Stage 2; this is the Stage-1 declaration.)
+;
+; Brain terminal action → effector mapping (move-1-design §"Q1"):
+;   report (report_j, the EU-max candidate) → answer  (crisp)
+;   hedge  (the named-set value)            → answer  (a candidate set)
+;   ask_clarify                             → ask-user
+;   abstain                                 → abstain
+; plus the forward steer (net_voi-priced):  → gather
+; ============================================================
+
+(define manifest
+  (list
+
+    ; --- answer: emit an answer to the owner ---
+    ;   value     (string) — the asserted value, or a "·"-joined candidate set (hedge)
+    ;   credence  (string) — the posterior credence(s), rendered
+    ;   citations (string) — the supporting card numbers
+    (effector answer
+      (parameters (value string) (credence string) (citations string)))
+
+    ; --- ask-user: put the question to the owner (the oracle) ---
+    ;   text (string) — what to ask; the evidence did not settle it
+    (effector ask-user
+      (parameters (text string)))
+
+    ; --- abstain: assert nothing (the gauge zero) ---
+    ;   reason (string) — why withheld (e.g. dispersed posterior)
+    (effector abstain
+      (parameters (reason string)))
+
+    ; --- gather: steer the body to fetch more evidence on a candidate ---
+    ;   probe  (string) — which probe to run (e.g. "recency"); the net_voi pick
+    ;   target (string) — the candidate value to corroborate
+    (effector gather
+      (parameters (probe string) (target string)))))

@@ -1,0 +1,25 @@
+{
+  "name": "answer-brain-app",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Minimal pi-mono demo app: a local-Ollama agent answering through the answer-brain body. The demo, not the gate.",
+  "scripts": {
+    "build": "tsc --noEmit",
+    "check": "node --import tsx check.ts",
+    "ask": "node --import tsx main.ts"
+  },
+  "dependencies": {
+    "@earendil-works/pi-ai": "0.79.6",
+    "@earendil-works/pi-coding-agent": "0.79.6",
+    "answer-brain-extension": "file:../extension"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.5.0"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}
