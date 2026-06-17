@@ -25,9 +25,12 @@ export type PriceTable = Record<string, ModelPrice>;
 // the model id. Approximate; override via config `pricing`. Ordered by
 // specificity is not required — we pick the longest matching key.
 export const DEFAULT_PRICES: PriceTable = {
-  "claude-opus": { input: 15, output: 75, cacheRead: 1.5, cacheWrite: 18.75 },
+  // Anthropic 4.x, verified 2026-06 (platform.claude.com): input / output /
+  // cache-read / 5m-cache-write, USD per million tokens. (The prior table was
+  // stale — opus 15/75 and haiku 0.8/4 were the retired generation.)
+  "claude-opus": { input: 5, output: 25, cacheRead: 0.5, cacheWrite: 6.25 },
   "claude-sonnet": { input: 3, output: 15, cacheRead: 0.3, cacheWrite: 3.75 },
-  "claude-haiku": { input: 0.8, output: 4, cacheRead: 0.08, cacheWrite: 1 },
+  "claude-haiku": { input: 1, output: 5, cacheRead: 0.1, cacheWrite: 1.25 },
   "gpt-4o-mini": { input: 0.15, output: 0.6 },
   "gpt-4o": { input: 2.5, output: 10 },
   "gpt-4.1": { input: 2, output: 8 },
