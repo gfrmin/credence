@@ -134,11 +134,24 @@ is run and its result stated, not assumed.
   calibration priors, committed before results, folded from outcomes later, **never fitted to the gate**.
 
 ### D. The scripted gate driver (NEW) — life-agent `scripts/`
-- A deterministic Python driver: per eval question, run the loop (`/route` → `/retrieve` → `/extract`
-  → `/decide` → [`gather` → `/probe/*` → `/extract` → `/decide`]\* → terminal) against the live
-  bridge+daemon, collect the outcome, feed `run_eval --gate`. Reuses the Move-3 bridge clients and the
-  existing gate. **This is the certification.** No model drives it; extraction is the bridge's local
-  model (already how `/extract` works).
+- A deterministic Python driver: per eval question, run the loop (`route` → baseline `observe` →
+  top-candidate `corroborate`-gather → recency/subject covariates → `/decide` → [`gather(recency)` →
+  re-`observe` → `/decide`]\* → terminal) against the live daemon, **reusing `gather.py`'s own helpers**
+  (`_era_split`/`_top_candidates`/`_gather`, `LK.observe_hits`, `probes`) so only the decision differs.
+  Initial `applied_probes=["recency"]` iff `route.time_indexed`, to mirror `gather.py` exactly.
+- **Certified as end-to-end PARITY to `gather.py`** (the owner's framing, §5 Q3 amended): per question the
+  daemon-driven outcome (action + asserted value) must match `ask.answer(gather=True)`, with **zero new
+  confident-wrong**. The corrected gather policy matches `gather.py` by construction, so this certifies
+  the *wire* (`/extract`→`/decide`→gather→re-extract) end-to-end over the real corpus. A fresh
+  `P(Δ>δ)` run is **not** the target — the gather loop is already the typed policy (`run_eval.py:397`),
+  so it would reproduce ~0.848 (the wide-`u_wrong`-prior FAIL, not mechanics).
+- **Persists a call-matrix** (idea B1, schema from `bayesian-orchestrator`): one append-only JSONL row
+  per (question × policy ∈ {`gather.py`, `daemon`, `monolithic`, `oracle`}) — `{question_id, gold,
+  policy, action, asserted, correct}` — so future policy comparisons are offline+exact (the B1 seed that
+  de-starves the §8 gate's *N* axis; the dominant `u_wrong`-prior blocker is the reaction loop's, not
+  this). The report emits a **gated recommendation** (named gates `parity_holds`, `zero_confident_wrong`,
+  each pass/review; "certified" only if both pass), mirroring her auto-gating discipline. B5 hygiene:
+  append+fsync, fixed seed, resume-by-cached-rows.
 
 ### E. The minimal pi-mono app (NEW) — `apps/answer-brain/app/`
 - `createAgentSession({ model, resourceLoader })` (pi-mono `examples/sdk/01-minimal.ts`,
