@@ -4,6 +4,9 @@
   "version": "0.1.0",
   "type": "module",
   "description": "answer-brain pi-mono body: retrieve/extract/answer tools + the VOI governor over the daemon (/decide) and the life-agent bridge.",
+  "exports": {
+    ".": "./src/index.ts"
+  },
   "scripts": {
     "build": "tsc --noEmit",
     "test": "node --import tsx --test tests/*.test.ts"
