@@ -32,6 +32,7 @@ import {
 import { FeatureTracker } from "./features.js";
 import { SafetyTracker } from "./safety.js";
 import { extractRoutingFeatures } from "./routing-features.js";
+import { buildRoster, type RoutingModel } from "./roster.js";
 import { buildPriceTable, computeTurnCost, type PriceTable } from "./cost.js";
 import type {
   PluginEntry,
@@ -147,6 +148,9 @@ export interface GovernorOpts {
    *  measure what governance WOULD do on real usage without affecting runs —
    *  the basis for counterfactual telemetry. Default false (enforcing). */
   shadowMode: boolean;
+  /** The user's model roster (discovered from api.config), sent in each route-request so the
+   *  brain routes over the models OpenClaw actually has. Empty ⇒ routing is not registered. */
+  roster: RoutingModel[];
   log: Logger;
 }
 
@@ -173,7 +177,7 @@ export function createGovernor(
   opts: GovernorOpts,
 ): Governor {
   const { hookTimeoutMs, approvalTimeoutMs, priceTable, redactToolInputs,
-    shadowMode, log } = opts;
+    shadowMode, roster, log } = opts;
   const tracker = new FeatureTracker();
   // Safety (multi-outcome): accumulates taint from tool results and emits the taint-flow
   // features the harm posterior conditions on. The daemon ignores them unless harm
@@ -310,6 +314,9 @@ export function createGovernor(
       session_id: ctx.sessionId ?? ctx.sessionKey ?? "",
       timestamp: new Date().toISOString(),
       features,
+      // The user's live model roster (roster-aware routing): the brain routes over THESE
+      // models + their costs, not a hardcoded list. Always ≥2 here (register gates on it).
+      models: roster,
     });
 
     if (!post.ok) {
@@ -416,7 +423,7 @@ const plugin: PluginEntry = {
     const silent = cfg.silent === true;
     const redactToolInputs = cfg.redactToolInputs === true;
     const shadowMode = cfg.shadowMode === true;
-    const routingEnabled = cfg.routing === true;
+    const routingEnabled = cfg.routing !== false; // model routing is ON by default
     const priceTable = buildPriceTable(cfg.pricing);
 
     const log: Logger = (m, e) => {
@@ -424,6 +431,18 @@ const plugin: PluginEntry = {
       const msg = e === undefined ? m : `${m} ${String(e)}`;
       api.logger?.warn?.(msg);
     };
+
+    // Roster-aware routing: discover the user's models (+ costs) from the host config. Guarded —
+    // a missing/odd config yields an empty roster ⇒ routing stays inactive (never mis-routes to
+    // a hardcoded default). The body reads config (IO); the brain stays config-agnostic.
+    let roster: RoutingModel[] = [];
+    try {
+      roster = buildRoster(api.config, priceTable);
+    } catch (err) {
+      log("credence-pi: could not read the model roster from config; routing inactive", err);
+    }
+    // Route only when there are ≥2 priceable models to choose between; else leave OpenClaw's.
+    const routingActive = routingEnabled && roster.length >= 2;
 
     const client = createDaemonClient({
       baseUrl: daemonUrl,
@@ -436,6 +455,7 @@ const plugin: PluginEntry = {
       priceTable,
       redactToolInputs,
       shadowMode,
+      roster,
       log,
     });
     if (shadowMode) log("credence-pi: SHADOW MODE — observing only, never enforcing");
@@ -458,23 +478,31 @@ const plugin: PluginEntry = {
       );
     }
 
-    // Model routing (opt-in). Off by default: it overrides which model runs, needs
-    // hooks.allowConversationAccess:true, and a daemon configured with a routing roster
-    // (bdsl/routing.bdsl). When off we register no hook, so a governance-only install
-    // adds zero per-turn latency. Fails open: daemon down / no roster ⇒ OpenClaw's model.
-    if (routingEnabled) {
+    // Model routing — ON by default, roster-aware. The body discovered the user's models from
+    // config; route only when ≥2 are priceable (else OpenClaw keeps its model — a no-op, so
+    // single-model installs and undiscoverable rosters are unaffected). Set `routing: false` to
+    // disable. Fails open: daemon down / slow ⇒ OpenClaw's model.
+    if (routingActive) {
       try {
         api.on("before_model_resolve", gov.beforeModelResolve, {
           priority: 100,
           timeoutMs: hookTimeoutMs + 1_000,
         });
-        log("credence-pi: model routing ENABLED (before_model_resolve)");
+        log(
+          `credence-pi: model routing ACTIVE over ${roster.length} models ` +
+            `(${roster.map((m) => m.model).join(", ")})`,
+        );
       } catch (err) {
         log(
           "credence-pi: before_model_resolve hook unavailable on this host; routing disabled",
           err,
         );
       }
+    } else if (routingEnabled) {
+      log(
+        `credence-pi: routing enabled but ${roster.length} priceable model(s) discovered ` +
+          `(need ≥2); routing inactive — keeping OpenClaw's model`,
+      );
     }
 
     // Close the SSE stream + drain awaiters on reset/delete/reload so a

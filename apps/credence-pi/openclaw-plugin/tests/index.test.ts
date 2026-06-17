@@ -36,6 +36,7 @@ function harness(postOk = true, shadowMode = false) {
     priceTable: buildPriceTable(undefined),
     redactToolInputs: false,
     shadowMode,
+    roster: [],
     log: () => {},
   });
   const find = (t: string) => posted.find((e) => e.event_type === t);
@@ -135,6 +136,7 @@ test("redactToolInputs: tool input omitted from the sensor event", async () => {
     priceTable: buildPriceTable(undefined),
     redactToolInputs: true,
     shadowMode: false,
+    roster: [],
     log: () => {},
   });
   await gov.beforeToolCall(ev("bash", { params: { command: "secret-token-123" } }), ctx);
@@ -181,7 +183,9 @@ test("llm_output: posts turn-cost with reconstructed USD", async () => {
     ctx,
   );
   const t = h.find("turn-cost") as { usd: number; total_tokens: number } | undefined;
-  assert.equal(t?.usd, 90);
+  // opus $5 in + $25 out per Mtok (verified 2026-06): 1M·5 + 1M·25 = $30 (was $90 at the
+  // retired 15/75 pricing — corrected in cost.ts).
+  assert.equal(t?.usd, 30);
   assert.equal(t?.total_tokens, 2_000_000);
   h.gov.cleanup();
 });
