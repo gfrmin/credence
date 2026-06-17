@@ -36,9 +36,24 @@ Landed (`docs/answer-brain/move-2-design.md`): a **stateless** HTTP surface over
   wire), `terminal_decide` behaviour preserved (Stage-1 regression green).
 - the parity boundary's Python side is `life-agent`'s `bridge/observations.py` (separate repo).
 
-Deferred to Stage 2b (Move 3, body-coupled): the `life-agent` bridge HTTP service
-(`retrieve`/`extract`/`probe_*` over the live corpus) and `extension/*` (the pi-mono TS body + the
-minimal answering app), then the end-to-end eval + gate.
+## Status — Move 3 (the capability bridge)
+
+Landed (`docs/answer-brain/move-3-design.md`, in the **life-agent** repo): a **stateless**
+JSON-over-HTTP service (`life_agent/bridge/server.py`) — the second backend the body drives,
+beside the daemon's `/decide`.
+
+- `POST /route /retrieve /extract /probe/{recency,subject,authority,corroborate}`, `GET /utility
+  /ready` — each a thin wrapper of an existing tested read. The bridge gathers + shapes evidence;
+  the daemon decides. It holds no posterior and no per-question state; the owner profile + utility
+  are read server-side (loopback-bound), never over the wire.
+- `/extract` returns exactly `to_abstract_observations`'s output, so its `{candidates,
+  observations, rho}` + the body's `u_bar` (`GET /utility`) compose directly into `POST /decide`.
+- Hermetic contract tests + one opt-in live round-trip (`retrieve → extract → probe → extract`);
+  the retrieval seam was promoted to `life_agent/core/retrieval.py` (the bridge reuses it, no
+  src↛scripts import).
+
+Deferred to **Move 4** (body-coupled): `extension/*` (the pi-mono TS body + the minimal answering
+app), then the end-to-end eval + gate, and with it the model-choice-under-PII resolution.
 
 ## Test
 

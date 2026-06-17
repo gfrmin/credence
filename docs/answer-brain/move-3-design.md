@@ -70,7 +70,7 @@ Created — `life-agent` (`src/life_agent/bridge/`):
   | endpoint | wraps (file:line) | request → response |
   |---|---|---|
   | `POST /route` | `lookup.route_question` | `{question}` → `{construct, time_indexed} ⎮ null` (null ⇒ narrative path, the brain's non-lookup case) |
-  | `POST /retrieve` | `ask._retrieve_set` (`ask.py:546`, w/ `_expand_terms` `ask.py:518`) | `{question, k}` → `{hits:[{artifact_cache_key, chunk_text, score, origin}]}` |
+  | `POST /retrieve` | `retrieval.retrieve_set` + `retrieval.build_query` (`core/retrieval.py`) | `{question, terms?, k}` → `{hits:[{artifact_cache_key, chunk_text, score, origin}]}` |
   | `POST /extract` | `lookup.observe_hits` (`lookup.py:447`) + `candidates_from` (`lookup.py:520`) + `to_abstract_observations` | `{question, hits, covariates?, time_indexed?, today?}` → `{candidates:[str], observations:[{reports,group,authority,subject_factor,time_factor}], rho, indeterminate}` |
   | `POST /probe/recency` | `probes.probe_recency` | `{hit_keys}` → `{doc_date:{key: iso⎮null}}` |
   | `POST /probe/subject` | `probes.probe_subject` (profile loaded server-side) | `{hit_keys}` → `{subject_state:{key: state}}` |
@@ -89,6 +89,26 @@ Created — `life-agent` (`src/life_agent/bridge/`):
 - `bridge/__init__.py` — replace the "Move-3 service deferral" docstring with the service's contract.
 - `bin/answer-bridge` — debug entrypoint (`python -m life_agent.bridge.server`), mirroring
   `bin/ask-live`; prints the bound address and the endpoint list.
+
+**As-built refinements (Move 3 — author to confirm).** Three small, behaviour-preserving
+departures from the literal plan, forced by an import boundary the plan hadn't surfaced — the
+retrieval seam (`_retrieve_set`) lived in `scripts/ask.py`, and `src/` deliberately does not
+import from `scripts/` (the boundary `core/matching.py:5` also keeps). All three are tested and
+the full hermetic suite (916) stays green:
+1. **New `src/life_agent/core/retrieval.py`** — `build_query` + `retrieve_set` (verbatim from
+   `ask.py`). `ask.py` re-exports both (its callers and tests are unchanged), so there is still
+   exactly ONE retrieval implementation (the §6 "no second read" obligation). This is the only
+   edit to `ask.py` — its retrieval/expansion *math* is untouched; the functions just moved into
+   the package so the bridge can reuse them.
+2. **`/retrieve` takes `terms` as an INPUT** (the body supplies expansion), rather than the
+   bridge calling the cloud `_expand_terms`. This is the same cut §0/§3 make for `/extract`'s
+   covariates — expansion is a reformulation *policy* (the driver's job), and keeping it out
+   holds the bridge model-free + cloud-free (§8), strengthening the localhost/PII posture.
+   `_expand_terms` stays script-side; Move 4's body owns when to expand.
+3. **Boot reuses `tasks/read.pkm_root()`** for root resolution (not `ask._pkm_root`), again to
+   avoid the `src↛scripts` import; the bridge opens its own read-only catalogue handle with FTS.
+   `BridgeServer` is single-threaded (the body drives one sequential loop) — concurrency, and
+   with it duckdb thread-safety, is the Move-4 measurement §5 Q2 already defers.
 
 Created — tests (`life-agent`):
 - `tests/test_bridge_server.py` — **hermetic**: each endpoint's request/response shape over a fake
