@@ -9,7 +9,7 @@ import assert from "node:assert/strict";
 import type { BridgeClient } from "../src/bridge.js";
 import { createAnswerBrainExtension } from "../src/index.js";
 import type { PiLike, PiToolCallEvent, PiToolDefinition, ToolCallHandler, ToolCallOutcome } from "../src/pi.js";
-import type { DecideResponse, ExtractResult, Hit, RouteResult } from "../src/types.js";
+import type { DecideResponse, ExtractResult, Hit, LoggedDecision, RouteResult } from "../src/types.js";
 
 const MANIFEST = {
 	effectors: [
@@ -83,10 +83,22 @@ interface FakeBridgeOpts {
 	hits?: Hit[];
 	extractBaseline?: ExtractResult;
 	extractRecency?: ExtractResult;
+	logThrows?: boolean; // /log_decision rejects — proves logging is non-fatal to the decision
 }
 
-function fakeBridge(opts: FakeBridgeOpts = {}): { bridge: BridgeClient; extractCalls: boolean[] } {
+interface LogCall {
+	question: string;
+	retrievalKeys: string[];
+	decision: LoggedDecision;
+}
+
+function fakeBridge(opts: FakeBridgeOpts = {}): {
+	bridge: BridgeClient;
+	extractCalls: boolean[];
+	logged: LogCall[];
+} {
 	const extractCalls: boolean[] = [];
+	const logged: LogCall[] = [];
 	const bridge: BridgeClient = {
 		route: async () => (opts.route === undefined ? { construct: "mobile number", time_indexed: false } : opts.route),
 		retrieve: async () => opts.hits ?? [{ artifact_cache_key: "d1" }, { artifact_cache_key: "d2" }],
@@ -98,8 +110,13 @@ function fakeBridge(opts: FakeBridgeOpts = {}): { bridge: BridgeClient; extractC
 				: (opts.extractBaseline ?? extractResult());
 		},
 		utility: async () => ({ u_correct: 1, u_wrong: -4, u_hedged: -0.5, u_abstain: 0, lambda_int: 1 }),
+		logDecision: async (question, retrievalKeys, decision) => {
+			if (opts.logThrows) throw new Error("bridge /log_decision → 500");
+			logged.push({ question, retrievalKeys, decision });
+			return { decision_id: `ab-test-${logged.length}` };
+		},
 	};
-	return { bridge, extractCalls };
+	return { bridge, extractCalls, logged };
 }
 
 // GET /manifest → MANIFEST; POST /decide → the next scripted response.
@@ -160,6 +177,7 @@ test("statelessness: a new narrative question does not reuse the prior question'
 		probeRecency: async () => ({ d1: "2026-01-01" }),
 		extract: async () => extractResult({ candidates: ["A"], era_split: false }),
 		utility: async () => ({ u_correct: 1, u_wrong: -4, u_hedged: -0.5, u_abstain: 0, lambda_int: 1 }),
+		logDecision: async () => ({ decision_id: "ab-test" }),
 	};
 	// Only ONE /decide is scripted (q1). If q2's evidence leaked, q2 would decide → throw.
 	const ff = fakeFetch([decide({ effector: "report", value: "A", report_index: 0, credences: [0.9], p_none: 0.1 })]);
@@ -214,4 +232,80 @@ test("registers retrieve / extract / answer tools", async () => {
 	assert.ok(h.tool("retrieve_documents"));
 	assert.ok(h.tool("extract_candidates"));
 	assert.ok(h.tool("answer"));
+});
+
+// --- the verdict-emission seam: the body posts the terminal decision to /log_decision -----
+
+async function runOnce(
+	fb: ReturnType<typeof fakeBridge>,
+	decideQueue: DecideResponse[],
+	question = "what is my mobile number?",
+): Promise<ToolCallOutcome> {
+	const h = fakePi();
+	await createAnswerBrainExtension(h.pi, { bridge: fb.bridge, fetchImpl: fakeFetch(decideQueue), log: () => {} });
+	await h.tool("retrieve_documents").execute("1", { question });
+	await h.tool("extract_candidates").execute("2", {});
+	return h.govern({ toolName: "answer", input: { value: "draft" } });
+}
+
+test("logs the terminal report decision to the bridge for the reaction loop", async () => {
+	const fb = fakeBridge({ extractBaseline: extractResult({ era_split: false }) });
+	await runOnce(fb, [decide({ effector: "report", value: "Vcur", report_index: 1, credences: [0.1, 0.85], p_none: 0.05 })]);
+	assert.equal(fb.logged.length, 1, "one decision logged");
+	const { question, retrievalKeys, decision } = fb.logged[0];
+	assert.equal(question, "what is my mobile number?");
+	assert.deepEqual(retrievalKeys, ["d1", "d2"], "the hit keys the decision was grounded on");
+	assert.equal(decision.effector, "report");
+	assert.deepEqual(decision.credences, [0.1, 0.85], "credences forwarded in candidate order (bridge sorts)");
+	assert.deepEqual(decision.candidates, ["Vstale", "Vcur"]);
+	assert.equal(decision.p_none, 0.05);
+});
+
+test("logs the abstain decision (the row that folds into u_wrong)", async () => {
+	const fb = fakeBridge({ extractBaseline: extractResult({ era_split: false }) });
+	const outcome = await runOnce(fb, [decide({ effector: "abstain", credences: [0.3, 0.25], p_none: 0.45 })]);
+	assert.ok(outcome?.block, "abstain blocks");
+	assert.equal(fb.logged.length, 1);
+	assert.equal(fb.logged[0].decision.effector, "abstain");
+});
+
+test("gather-then-report logs ONCE — the terminal report, not the intermediate steer", async () => {
+	const fb = fakeBridge({ extractBaseline: extractResult(), extractRecency: extractResult() });
+	await runOnce(fb, [
+		decide({ effector: "gather", probe: "recency", target: "Vstale", credences: [0.55, 0.3], p_none: 0.15 }),
+		decide({ effector: "report", value: "Vcur", report_index: 1, credences: [0.1, 0.85], p_none: 0.05 }),
+	]);
+	assert.equal(fb.logged.length, 1, "the gather steer is not a logged decision");
+	assert.equal(fb.logged[0].decision.effector, "report");
+});
+
+test("a logging failure is non-fatal: the report is still allowed (answer unaffected)", async () => {
+	const fb = fakeBridge({ extractBaseline: extractResult({ era_split: false }), logThrows: true });
+	const h = fakePi();
+	await createAnswerBrainExtension(h.pi, {
+		bridge: fb.bridge,
+		fetchImpl: fakeFetch([decide({ effector: "report", value: "Vcur", report_index: 1, credences: [0.1, 0.85], p_none: 0.05 })]),
+		log: () => {},
+	});
+	await h.tool("retrieve_documents").execute("1", { question: "my mobile?" });
+	await h.tool("extract_candidates").execute("2", {});
+	const event: PiToolCallEvent = { toolName: "answer", input: { value: "draft" } };
+	const outcome = await h.govern(event);
+	assert.equal(outcome, undefined, "report still ALLOWED despite the logging failure");
+	assert.equal(event.input.value, "Vcur", "value still rewritten to the brain's");
+});
+
+test("does not log when the daemon is unreachable (no decision was made)", async () => {
+	const fb = fakeBridge({ extractBaseline: extractResult({ era_split: false }) });
+	const ff = ((url: string) => {
+		if (String(url).endsWith("/manifest")) return Promise.resolve({ ok: true, status: 200, json: async () => MANIFEST });
+		return Promise.reject(new Error("ECONNREFUSED"));
+	}) as unknown as typeof fetch;
+	const h = fakePi();
+	await createAnswerBrainExtension(h.pi, { bridge: fb.bridge, fetchImpl: ff, log: () => {} });
+	await h.tool("retrieve_documents").execute("1", { question: "my id?" });
+	await h.tool("extract_candidates").execute("2", {});
+	const outcome = await h.govern({ toolName: "answer", input: { value: "draft" } });
+	assert.ok(outcome?.block, "fail-closed");
+	assert.equal(fb.logged.length, 0, "nothing logged — only real terminal decisions are recorded");
 });

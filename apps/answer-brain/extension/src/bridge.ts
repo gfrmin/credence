@@ -3,7 +3,7 @@
 // shapes evidence, the body composes it. Errors throw (the governor fail-opens
 // around the whole loop); these calls are loopback and fast.
 
-import type { ExtractResult, Hit, RouteResult } from "./types.js";
+import type { ExtractResult, Hit, LoggedDecision, RouteResult } from "./types.js";
 
 export interface BridgeClient {
 	route(question: string): Promise<RouteResult | null>;
@@ -16,6 +16,13 @@ export interface BridgeClient {
 		timeIndexed: boolean,
 	): Promise<ExtractResult>;
 	utility(): Promise<Record<string, number>>;
+	/** The verdict-emission seam: record the terminal decision the governor enacted, so the
+	 *  owner's one-bit verdict folds into u_wrong. Returns the decision_id to react against. */
+	logDecision(
+		question: string,
+		retrievalKeys: string[],
+		decision: LoggedDecision,
+	): Promise<{ decision_id: string }>;
 }
 
 export interface BridgeOptions {
@@ -75,6 +82,13 @@ export function createBridgeClient(baseUrl: string, opts: BridgeOptions = {}): B
 		async utility() {
 			const { u_bar } = await call<{ u_bar: Record<string, number> }>("GET", "/utility");
 			return u_bar;
+		},
+		async logDecision(question, retrievalKeys, decision) {
+			return await call<{ decision_id: string }>("POST", "/log_decision", {
+				question,
+				retrieval_keys: retrievalKeys,
+				decision,
+			});
 		},
 	};
 }

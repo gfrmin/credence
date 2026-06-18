@@ -33,6 +33,20 @@ export interface ExtractResult {
 	era_split: boolean;
 }
 
+/** The terminal decision the body posts to the bridge's POST /log_decision (the
+ *  verdict-emission seam): the effector the governor enacted + the posterior, shaped so
+ *  life-agent appends it as a lookup decision and the owner's one-bit verdict folds into
+ *  u_wrong through the EXISTING reaction loop. `credences`/`candidates` are in candidate
+ *  order (the bridge sorts leader-first). */
+export interface LoggedDecision {
+	effector: string; // report | hedge | ask_clarify | abstain (a terminal action, never gather)
+	credences: number[];
+	p_none: number;
+	eu: number;
+	candidates: string[];
+	n_obs: number;
+}
+
 /** The daemon's POST /decide response (apps/answer-brain/daemon/server.jl). */
 export interface DecideResponse {
 	effector: string; // report | hedge | ask_clarify | abstain | gather
