@@ -24,6 +24,9 @@ COPY src/ src/
 COPY apps/credence-pi/bdsl/   apps/credence-pi/bdsl/
 COPY apps/credence-pi/brain/  apps/credence-pi/brain/
 COPY apps/credence-pi/daemon/ apps/credence-pi/daemon/
+# The value-report surface (GET /report): server.jl includes ../savings.jl, which in turn
+# includes daemon/observation_log.jl (already copied above). Without this the daemon won't load.
+COPY apps/credence-pi/savings.jl apps/credence-pi/savings.jl
 
 # Instantiate Credence's declared deps (HTTP ~1.11, JSON3, …) and precompile
 # into the depot, then a load smoke so the first container start is warm.
