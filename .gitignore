@@ -23,7 +23,6 @@ __pycache__/
 papers/**/*.aux
 papers/**/*.log
 papers/**/*.out
-papers/**/*.pdf
 
 # Debug logs
 apps/julia/qa_benchmark/llm_debug.log
