@@ -84,6 +84,38 @@ The long-form story: [the announcement](https://gfrm.in/posts/openclaw-cheaper-a
 [the architecture](https://gfrm.in/posts/credence-pi-pass-1/), and
 [what the brain learned](https://gfrm.in/posts/credence-pi-pass-2/).
 
+## Why it's low-risk to try
+
+The upside is measured and the downside is bounded by construction — and the
+downside argument is the part most "smarter router" pitches can't make.
+
+**Upside.** Routing is one expected-utility maximisation, over one learned belief,
+per call, for *your* trade-off. On 17 real Terminal-Bench tasks scored through the
+live daemon it beat **every** fixed single-model policy for the ordinary user (the
+`balanced` profile), with the largest gains on mixed easy/hard workloads — where no
+single model is the right default. It isn't racing a human who hand-picks the
+optimal model every turn (no one does that); it beats "pick one model and stick
+with it," which is what people actually do. No single fixed choice wins across a
+mixed workload; credence-pi finds the per-call optimum automatically. See
+[`eval/live_ab/EXPERIMENT.md`](./eval/live_ab/EXPERIMENT.md).
+
+**Downside ≈ 0.**
+
+- *Fail-open* — if the daemon is slow or down, OpenClaw runs exactly as it would
+  without credence-pi. It cannot break your agent.
+- *Uncertainty-gated* — when the belief is unsure, every profile collapses to the
+  same sensible default; credence-pi diverges from what you'd have done anyway only
+  on the calls where it has earned confidence. It cannot quietly make things worse.
+- *Minutes to adopt* — two commands, the body does no math, profiles switch with no
+  restart.
+
+High upside, near-zero downside, minutes to adopt: for a mixed OpenClaw workload,
+trying it is close to a no-brainer. The honest caveat is *magnitude* — how much you
+save depends on your workload, and the routing win was measured on benchmark tasks
+through a validated proxy (the capability×cost matrix, confirmed live by an OpenClaw
+spot-check on the real product), not yet on your own sessions. The direction is
+certain; the size, like the waste-blocking saving above, is what early users reveal.
+
 ## Why not just a rule?
 
 The waste result above is hash-set-easy, and the eval says so out loud. But the
