@@ -1,6 +1,6 @@
 {
   "id": "credence-pi",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "name": "credence-pi governance",
   "description": "Bayesian in-loop governance for the pi/OpenClaw agent — intercepts tool calls and halts/asks on low expected-value spend; logs outcomes and per-turn cost for the dollars-saved surface.",
   "activation": {

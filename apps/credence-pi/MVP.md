@@ -66,8 +66,9 @@ and the plugin logs a one-line in-session summary on session end:
 ## What's landed (each a tested, CI-green PR on master)
 
 - **Escalation backbone** (#131) — observe-then-escalate wired into the live daemon
-  (`escalate-request` ↔ in-process `escalation_next`, equivalence-tested). Best-welfare arm on
-  every profile vs every fixed single-model policy, through real daemon code.
+  (`escalate-request` ↔ in-process `escalation_next`, equivalence-tested). Best-welfare *point
+  estimate* on every profile through real daemon code; the per-profile margins have wide error
+  bars at 17 tasks (precision, not refutation — see Evidence), and the claim is cross-profile.
 - **MVP-A: time as a decision coordinate** (#132) — latency belief (reuses the Poisson-Gamma
   turns belief) + `w_time` folded into the EU offset across routing/escalation/governance.
   **Bit-identical at `w_time=0`.** The time/quality flip is live: reward 1.0 + `w-time` 0 →
@@ -77,10 +78,12 @@ and the plugin logs a one-line in-session summary on session end:
 - **MVP-C: value reporting** (#134) — `GET /report` + in-session summary.
 
 **Evidence.** All tested (40 routing + full feature-brain + 52 plugin assertions, lint-clean),
-plus the Terminal-Bench **dominance proof** (`eval/live_ab/EXPERIMENT.md`: escalation is the
-best deployable policy, minimax regret 0.069 vs every fixed/baseline router) and the
-**live-daemon escalation A/B** (`eval/live_ab/escalation_live.txt`: escalation is the
-best-welfare arm on all three profiles).
+plus the Terminal-Bench **cross-profile robustness proof** (`eval/live_ab/EXPERIMENT.md`:
+escalation is the best *deployable* policy by minimax regret, 0.069 vs 0.92 for the next
+deployable router) and the **live-daemon escalation A/B** (`eval/live_ab/escalation_live.txt`:
+escalation's welfare point estimate is best on all three profiles; the cluster-bootstrap CIs
+report the *precision* — wide at 17 tasks, a sample-size limit rather than a refutation — while
+the lower-variance solve-rate edge never crosses zero).
 
 ## MVP-D — the live proof on Terminal-Bench (DONE, 2026-06-18)
 
@@ -99,9 +102,10 @@ routed to sonnet pays more and gets the answer. OpenClaw reproduces the capabili
 per-(model,task) solve pattern exactly (fix-permissions haiku ✓; het-dates haiku ✗ / sonnet ✓;
 sqlite-db-truncate haiku ✗), validating that matrix as a faithful OpenClaw proxy.
 
-**Routing dominates every fixed router, per profile, across 17 real TB tasks**
-(`results/escalation_live.txt`, scored through the **live daemon**, leakage-free cold belief).
-credence-pi's observe-then-escalate is the best-welfare arm on every profile:
+**Cross-profile robustness across 17 real TB tasks** (`results/escalation_live.txt`, scored
+through the **live daemon**, leakage-free cold belief). No single fixed model is best for every
+profile — haiku wins cost-saver, sonnet wins balanced and quality-first — so observe-then-escalate
+tracks the per-profile best without being told which (best-welfare *point estimate* on all three):
 
 | profile | credence-pi (escalate) | always-haiku | always-sonnet | always-opus |
 |---|---|---|---|---|
@@ -109,8 +113,14 @@ credence-pi's observe-then-escalate is the best-welfare arm on every profile:
 | balanced | **0.5437** | 0.333 | 0.5313 | 0.277 |
 | quality-first | **3.6151** | 1.98 | 3.355 | 2.787 |
 
-No single fixed model is best for every profile; credence-pi's per-profile EU-max is — "smarter
-than every fixed router," measured on real TB tasks.
+Precision, not direction (cluster bootstrap over the 17 tasks, resampling tasks not the 51
+correlated rows): escalation's welfare point estimate tops every fixed model on all three profiles,
+but the per-call margins are small relative to task-to-task variance, so 17 tasks give wide
+intervals (balanced +0.012, CI [−0.10, +0.18]; quality-first +0.260, CI [−0.20, +0.95]) — a
+sample-size limit, **not** evidence the win is absent. The lower-variance **capability-union**
+signal is directionally firm: escalation solves more than any single tier (+0.078 solve-rate, CI
+[0.00, +0.22] — never crosses zero) on balanced/quality-first. Magnitude is carried by the
+better-powered offline minimax-regret result; a larger live sample (task #21) tightens the bars.
 
 **The plugin + daemon route + govern LIVE** (`oc_welfare_run.sh`): OpenClaw + the credence-pi
 plugin + the daemon, in-container, with `before_tool_call` governance and the daemon's routing
