@@ -554,6 +554,13 @@ function handle_sensor_event(state::DaemonState,
             choice === nothing ? (ack_extra["stop"] = true) : (ack_extra["route"] = choice)
         end
 
+    elseif event_type == "counterfactual-decision"
+        # Body-side shadow-mode telemetry: in observe-only mode the body would
+        # have blocked/asked but proceeded, and records that here. Already
+        # appended at step 1; no dispatch, no signal, no posterior touch. The
+        # dollars-saved surface (savings.jl) reads it to separate counterfactual
+        # "would-block" from enforced "prevented". Pure transport, like turn-cost.
+
     else
         @warn "handle_sensor_event: unknown event_type" event_type
     end

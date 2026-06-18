@@ -18,15 +18,24 @@ Honesty notes baked into the report:
   - Cost is per-TURN, not per-tool-call (pi exposes no per-tool usage), so
     "prevented spend" is an ESTIMATE: denied-calls x average-turn-cost. It
     is labelled as such, never presented as a guaranteed figure.
-  - The log records inbound sensor events, not the brain's effector
-    signals, so the unambiguous governance signal is "asked -> user
-    responded yes/no". proceed/block without an ask are not distinguished
-    here (a Phase-2 enhancement would log decisions).
+  - "Prevented" counts only ENFORCED blocks. The daemon logs a `decision`
+    record per brain decision regardless of mode; in shadow mode the body
+    proceeds anyway and logs a `counterfactual-decision`. Every shadowed block
+    is therefore BOTH a decision(block) and a counterfactual(block), so we
+    subtract the latter (enforced = decided - would) — otherwise /report would
+    claim prevention that never happened in an observe-only deployment.
+  - "Would have blocked" (shadow) is reported separately, with a bounded
+    false-block PROXY: of the exact-repeat would-blocks, how many had an
+    intervening workspace mutation (a plausible legitimate re-run) vs none
+    (almost-certainly waste). write/edit = hard mutation; bash/exec = ambiguous
+    but counted (the safe direction — it over-counts "legitimate", so it never
+    under-reports false blocks). The gold rate still needs opt-in user labels.
 """
 module Savings
 
 include(joinpath(@__DIR__, "daemon", "observation_log.jl"))
 using .ObservationLog: read_log
+using JSON3   # canonical fingerprint for the exact-repeat / false-block proxy
 
 export savings_report, format_report
 
@@ -53,6 +62,8 @@ function savings_report(path::AbstractString)
 
     # governance correlation
     proposed_tool = Dict{String, String}()   # tool-proposed event_id -> tool name
+    tps = NamedTuple[]                         # tool-proposed records in log order (false-block proxy)
+    counterfactuals = Tuple{String, String}[] # shadow-mode (in_response_to, effector) — would-have-enforced
     responses = Dict{String, String}()        # in_response_to -> response
     decisions = Dict{String, Int}()           # brain decision action -> count
     n_completed = 0
@@ -83,6 +94,12 @@ function savings_report(path::AbstractString)
             pc = get(ev, "proposed_call", nothing)
             tool = pc === nothing ? "(unknown)" : string(get(pc, "tool_name", "(unknown)"))
             proposed_tool[eid] = tool
+            # Keep the input + session + order for the exact-repeat proxy below.
+            input = pc === nothing ? nothing : get(pc, "input", nothing)
+            push!(tps, (eid = eid, sid = sid === nothing ? "" : string(sid), tool = tool, input = input))
+        elseif et == "counterfactual-decision"
+            push!(counterfactuals,
+                  (string(get(ev, "in_response_to", "")), string(get(ev, "effector", ""))))
         elseif et == "user-responded"
             irt = string(get(ev, "in_response_to", ""))
             responses[irt] = string(get(ev, "response", ""))
@@ -110,11 +127,62 @@ function savings_report(path::AbstractString)
     n_block = get(decisions, "block", 0)
     n_proceed = get(decisions, "proceed", 0)
     n_ask = get(decisions, "ask", 0)
-    prevented_calls = n_block
+
+    # Shadow mode: the brain still emits a `decision`, but the body proceeds and
+    # logs a `counterfactual-decision`. Every shadowed block is BOTH a
+    # decision(block) and a counterfactual(block); enforced blocks are only the
+    # former. So enforced = decided - would, and "prevented" counts only enforced
+    # ones (else /report claims prevention that never happened in shadow mode).
+    would_block = count(c -> c[2] == "block", counterfactuals)
+    would_ask   = count(c -> c[2] == "ask", counterfactuals)
+    prevented_calls = max(0, n_block - would_block)
 
     # ESTIMATE only — see module docstring. Per-turn cost (pi exposes no
     # per-tool cost), so avoided spend ~ prevented calls x average turn cost.
     estimated_prevented_usd = prevented_calls * avg_usd_per_turn
+    # Same per-turn estimate on the shadow would-blocks: what governance WOULD
+    # have saved on this traffic if enforcing. Labelled counterfactual.
+    estimated_counterfactual_usd = would_block * avg_usd_per_turn
+
+    # False-block PROXY (display-only): of the shadow would-blocks on an
+    # exact-repeat call, how many are plausibly LEGITIMATE re-runs (the workspace
+    # changed in between) vs almost-certainly waste (nothing changed). The brain
+    # blocks on (tool, args) alone and cannot see a change; this bounded post-hoc
+    # check is the honest estimate of that false-block rate. Asymmetry is
+    # deliberate: write/edit are a HARD mutation signal; bash/exec are AMBIGUOUS
+    # but counted as possible mutations — over-counting `candidate_legitimate`,
+    # which errs toward NOT under-reporting false blocks (the safe direction).
+    # Limitation: with redactToolInputs the input is null, so identical-call
+    # matching degrades (null inputs in a session collapse together) — noted, not
+    # fatal. Read-only / unknown intervening tools are treated as non-mutating.
+    tp_by_eid = Dict{String, Int}(t.eid => i for (i, t) in enumerate(tps))
+    _fp(input) = input === nothing ? "∅" : JSON3.write(input)
+    _is_mut(tool) = lowercase(tool) in ("write", "edit", "bash", "exec")   # KNOWN_TOOLS minus read
+    wb_candidate = 0
+    wb_waste = 0
+    for (irt, eff) in counterfactuals
+        eff == "block" || continue
+        i = get(tp_by_eid, irt, 0)
+        if i == 0
+            wb_candidate += 1   # cannot locate the call ⇒ don't call it waste (safe direction)
+            continue
+        end
+        cur = tps[i]
+        jprior = 0                              # nearest prior identical (tool, args) in this session
+        for j in (i - 1):-1:1
+            t = tps[j]
+            (t.sid == cur.sid && lowercase(t.tool) == lowercase(cur.tool) &&
+                _fp(t.input) == _fp(cur.input)) || continue
+            jprior = j
+            break
+        end
+        if jprior == 0
+            wb_candidate += 1   # no prior identical ⇒ not an exact-repeat we can call pure waste
+            continue
+        end
+        mutated = any(j -> tps[j].sid == cur.sid && _is_mut(tps[j].tool), (jprior + 1):(i - 1))
+        mutated ? (wb_candidate += 1) : (wb_waste += 1)
+    end
 
     return (
         total_events = length(records),
@@ -132,6 +200,10 @@ function savings_report(path::AbstractString)
         decided_proceed = n_proceed,
         decided_ask = n_ask,
         prevented_calls = prevented_calls,
+        would_block_calls = would_block,
+        would_ask_calls = would_ask,
+        would_block_candidate_legitimate = wb_candidate,
+        would_block_likely_waste = wb_waste,
         asked = n_asked,
         approved = n_approved,
         denied = n_denied,
@@ -139,6 +211,7 @@ function savings_report(path::AbstractString)
         completed = n_completed,
         denied_tools = denied_tools,
         estimated_prevented_usd = estimated_prevented_usd,
+        estimated_counterfactual_usd = estimated_counterfactual_usd,
     )
 end
 
@@ -177,8 +250,16 @@ function format_report(io::IO, r)
         println(io, "  user-denied tools:   ", join(r.denied_tools, ", "))
     end
     println(io)
-    println(io, "Estimated prevented spend (blocked calls x avg turn cost):")
+    println(io, "Estimated prevented spend (enforced blocks x avg turn cost):")
     println(io, "  ~ $(_usd(r.estimated_prevented_usd))   [ESTIMATE — cost is per-turn, not per-tool; see savings.jl]")
+    if r.would_block_calls > 0 || r.would_ask_calls > 0
+        println(io)
+        println(io, "Shadow / counterfactual (observed only — NOT enforced):")
+        println(io, "  would-block:   $(r.would_block_calls)   (~$(_usd(r.estimated_counterfactual_usd)) would-be-saved [ESTIMATE])")
+        println(io, "  would-ask:     $(r.would_ask_calls)")
+        println(io, "  would-blocks split: likely-waste $(r.would_block_likely_waste), candidate legitimate re-run $(r.would_block_candidate_legitimate)")
+        println(io, "                      [PROXY — write/edit=mutation, bash/exec=ambiguous; gold rate needs user labels]")
+    end
     println(io, "=" ^ 60)
 end
 

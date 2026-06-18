@@ -288,13 +288,25 @@ export function createGovernor(
     });
 
     // Observe-only: the brain decided and the daemon logged it; the body does
-    // not enforce. This is what lets operators measure counterfactual
-    // governance on real usage without changing any run.
+    // not enforce. We also durably RECORD the counterfactual (a body-owned fact,
+    // like governance-latency above) so the dollars-saved surface can separate
+    // "would have blocked" (shadow) from "actually prevented" (enforce). Without
+    // it, the daemon's `decision` log is identical in both modes and /report
+    // would count shadow would-blocks as real prevention.
     if (shadowMode) {
       if (sig && (sig.effector === "block" || sig.effector === "ask")) {
         log(
           `credence-pi[shadow]: would ${sig.effector} \`${event.toolName}\` — proceeding (shadow mode)`,
         );
+        void client.postSensor({
+          event_type: "counterfactual-decision",
+          event_id: newEventId(),
+          in_response_to: eventId,
+          session_id: ctx.sessionId ?? ctx.sessionKey ?? "",
+          timestamp: new Date().toISOString(),
+          effector: sig.effector,
+          tool_name: event.toolName,
+        });
       }
       return undefined;
     }
@@ -544,6 +556,18 @@ const plugin: PluginEntry = {
             `blocked ${n("prevented_calls")} waste call(s) (~$${n("estimated_prevented_usd").toFixed(4)} saved, est.); ` +
             `asked ${n("decided_ask")}, you denied ${n("denied")}. Full report: GET ${daemonUrl}/report`,
         );
+        // Shadow mode: nothing was enforced, so report the counterfactual
+        // separately — what governance WOULD have blocked, and the false-block
+        // proxy split (write/edit=mutation vs not; bash ambiguous → counted as
+        // a candidate re-run). Only shown when there were would-blocks.
+        if (n("would_block_calls") > 0) {
+          log(
+            `credence-pi[shadow]: would have blocked ${n("would_block_calls")} call(s) ` +
+              `(~$${n("estimated_counterfactual_usd").toFixed(4)} would-be-saved, est.) — NOT enforced; ` +
+              `~${n("would_block_likely_waste")} look like waste, ` +
+              `${n("would_block_candidate_legitimate")} like legitimate re-runs (proxy)`,
+          );
+        }
       } catch {
         /* best-effort display; never throws on cleanup */
       }
