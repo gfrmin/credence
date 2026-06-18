@@ -170,9 +170,12 @@ export async function decideWithGather(
 			!ev.appliedProbes.includes("recency");
 		if (!steerRecency) {
 			const signal = terminalSignal(resp, ev);
-			// Record the enacted decision for the reaction loop — AFTER deciding, best-effort, so a
-			// logging failure can never flip a good answer to a block (the signal returns regardless).
-			await logTerminalDecision(ev, resp, bridge, opts);
+			// Record the enacted decision for the reaction loop — best-effort and FIRE-AND-FORGET:
+			// NOT awaited, so a slow or hung bridge logger can never add latency to the govern path
+			// (an await here could, worst case, eat the govern timeout → fail-closed → silently
+			// withhold a good answer). logTerminalDecision swallows all its own errors, so the
+			// un-awaited promise never rejects.
+			void logTerminalDecision(ev, resp, bridge, opts);
 			return signal;
 		}
 

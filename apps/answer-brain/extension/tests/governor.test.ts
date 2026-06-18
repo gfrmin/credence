@@ -309,3 +309,15 @@ test("does not log when the daemon is unreachable (no decision was made)", async
 	assert.ok(outcome?.block, "fail-closed");
 	assert.equal(fb.logged.length, 0, "nothing logged — only real terminal decisions are recorded");
 });
+
+test("a hung logger does not block or delay the decision (fire-and-forget)", async () => {
+	const fb = fakeBridge({ extractBaseline: extractResult({ era_split: false }) });
+	// A logger that NEVER resolves: were it awaited, the govern loop would hang to its timeout and
+	// fail-closed — silently withholding a good answer. Fire-and-forget must return the decision
+	// without waiting on the logger. (With `await` instead of `void`, this test would time out.)
+	fb.bridge.logDecision = () => new Promise<{ decision_id: string }>(() => {});
+	const outcome = await runOnce(fb, [
+		decide({ effector: "report", value: "Vcur", report_index: 1, credences: [0.1, 0.85], p_none: 0.05 }),
+	]);
+	assert.equal(outcome, undefined, "report allowed immediately, not waiting on the logger");
+});
