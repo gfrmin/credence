@@ -56,6 +56,9 @@ function adaptPi(pi: ExtensionAPI): PiLike {
 // The decision the brain just logged for the current question (set by the extension's
 // onDecision hook), or null on a narrative/unlogged answer. The verdict prompt binds to it.
 let lastDecision: { decisionId: string; effector: string } | null = null;
+// Resolves the current question's "decision logged" wait — set per question in ask(), called by
+// the onDecision hook so the verdict prompt binds deterministically, not on a timed guess.
+let onDecisionLogged: (() => void) | null = null;
 
 // Post the owner's one-bit verdict to the bridge (/log_reaction) and echo the fold fate.
 // Fail-open: a verdict that fails to record must never break the loop.
@@ -90,10 +93,17 @@ async function captureVerdict(rl: readline.Interface): Promise<void> {
 // fire-and-forget decision log a beat to land so the verdict prompt can bind to it.
 async function ask(session: { prompt: (q: string) => Promise<unknown> }, question: string): Promise<void> {
 	lastDecision = null;
+	// Await the fire-and-forget decision log deterministically (bounded) so a verdictable decision
+	// is never dropped on a timing race — the onDecision hook resolves `logged`. Times out at 2s
+	// (a loopback append is sub-ms; a narrative/unlogged answer never resolves it → skip).
+	const logged = new Promise<void>((resolve) => {
+		onDecisionLogged = resolve;
+	});
 	console.error(`\nQ: ${question}\n`);
 	await session.prompt(question);
 	console.log();
-	await new Promise((r) => setTimeout(r, 50)); // the onDecision hook fires just after the answer
+	await Promise.race([logged, new Promise((r) => setTimeout(r, 2000))]);
+	onDecisionLogged = null;
 }
 
 async function main(): Promise<void> {
@@ -132,6 +142,8 @@ async function main(): Promise<void> {
 					log: (m) => console.error(`  [answer-brain] ${m}`),
 					onDecision: (d) => {
 						lastDecision = d;
+						onDecisionLogged?.();
+						onDecisionLogged = null;
 					},
 				});
 			},
