@@ -1,19 +1,18 @@
 /**
- * answer-brain demo app — a minimal pi-mono agent driven by a local Ollama model,
- * answering the owner's point-fact questions through the answer-brain body
- * (move-4-design §2E). THIS IS THE DEMO, NOT THE GATE: the gate
- * (life-agent/scripts/answer_brain_gate.py) certifies the decision math
- * deterministically; here a real LLM drives the tools and the brain governs the
- * answer, to *show* the govern+steer loop end-to-end. Its result is reported, not
- * assumed (the LLM is nondeterministic).
+ * answer-brain app — a pi-mono agent driven by a local Ollama model, answering the owner's
+ * point-fact questions through the answer-brain body and capturing a one-bit good/bad verdict
+ * that folds into u_wrong (Stage B). THIS IS THE DOGFOOD DRIVER, NOT THE GATE: the gate
+ * (life-agent/scripts/answer_brain_gate.py) certifies the decision math deterministically; here
+ * a real (nondeterministic) LLM drives the tools and the brain governs the answer, end-to-end.
  *
- * Prereqs (all on-machine; the corpus is the owner's real PII, so no cloud model):
- *   1. the daemon:  julia --project=$HOME/git/credence $HOME/git/credence/apps/answer-brain/daemon/main.jl
- *   2. the bridge:  (from a checkout with bridge `era_split`) python -m life_agent.bridge.server
- *   3. Ollama with the model pulled (default qwen2.5:7b-instruct).
+ * Use `bin/answer-brain` (life-agent), which starts the prereqs for you:
+ *   1. the daemon (Julia, :8799)   2. the bridge (:8798)   3. Ollama (model pulled)
  *
- * Run:  npx tsx main.ts "what is my mobile phone number?"
+ * Run:  npx tsx main.ts                 # REPL: ask, react [g]ood/[b]ad, repeat
+ *       npx tsx main.ts "my mobile?"    # one question, react, exit
  */
+
+import * as readline from "node:readline/promises";
 
 import { getModel as _getModel } from "@earendil-works/pi-ai";
 import {
@@ -54,9 +53,50 @@ function adaptPi(pi: ExtensionAPI): PiLike {
 	};
 }
 
-async function main(): Promise<void> {
-	const question = process.argv.slice(2).join(" ").trim() || "What is my mobile phone number?";
+// The decision the brain just logged for the current question (set by the extension's
+// onDecision hook), or null on a narrative/unlogged answer. The verdict prompt binds to it.
+let lastDecision: { decisionId: string; effector: string } | null = null;
 
+// Post the owner's one-bit verdict to the bridge (/log_reaction) and echo the fold fate.
+// Fail-open: a verdict that fails to record must never break the loop.
+async function postReaction(decisionId: string, valence: "good" | "bad"): Promise<void> {
+	try {
+		const resp = await fetch(`${BRIDGE_URL}/log_reaction`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ decision_id: decisionId, valence }),
+		});
+		if (!resp.ok) {
+			console.error(`  verdict not recorded (HTTP ${resp.status})`);
+			return;
+		}
+		const { folds, chosen_action } = (await resp.json()) as { folds: boolean; chosen_action: string };
+		const fate = folds ? "folds into u_wrong on the next gate run" : "recorded (only abstain verdicts fold)";
+		console.error(`  → ${valence.toUpperCase()} on ${chosen_action} — ${fate}`);
+	} catch (e) {
+		console.error(`  verdict not recorded: ${String(e)}`);
+	}
+}
+
+// One bit, no free text (the owner's prose is the loop's one expensive resource). Enter skips.
+async function captureVerdict(rl: readline.Interface): Promise<void> {
+	if (!lastDecision) return; // narrative path, or the decision was not logged — nothing to grade
+	const ans = (await rl.question("  [g]ood / [b]ad / Enter=skip > ")).trim().toLowerCase();
+	const valence = ans === "g" ? "good" : ans === "b" ? "bad" : null;
+	if (valence) await postReaction(lastDecision.decisionId, valence);
+}
+
+// Ask one question end-to-end: reset the per-question decision, stream the answer, then give the
+// fire-and-forget decision log a beat to land so the verdict prompt can bind to it.
+async function ask(session: { prompt: (q: string) => Promise<unknown> }, question: string): Promise<void> {
+	lastDecision = null;
+	console.error(`\nQ: ${question}\n`);
+	await session.prompt(question);
+	console.log();
+	await new Promise((r) => setTimeout(r, 50)); // the onDecision hook fires just after the answer
+}
+
+async function main(): Promise<void> {
 	const authStorage = AuthStorage.create();
 	const modelRegistry = ModelRegistry.create(authStorage);
 	// Register the local Ollama model (OpenAI-compatible). The apiKey is a dummy Ollama ignores.
@@ -90,6 +130,9 @@ async function main(): Promise<void> {
 					daemonUrl: DAEMON_URL,
 					bridgeUrl: BRIDGE_URL,
 					log: (m) => console.error(`  [answer-brain] ${m}`),
+					onDecision: (d) => {
+						lastDecision = d;
+					},
 				});
 			},
 		],
@@ -107,16 +150,29 @@ async function main(): Promise<void> {
 		thinkingLevel: "off",
 	});
 
-	console.error(`Q: ${question}\n`);
+	session.subscribe((event) => {
+		if (event.type === "message_update" && event.assistantMessageEvent.type === "text_delta") {
+			process.stdout.write(event.assistantMessageEvent.delta);
+		}
+	});
+
+	const argvQuestion = process.argv.slice(2).join(" ").trim();
+	const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
 	try {
-		session.subscribe((event) => {
-			if (event.type === "message_update" && event.assistantMessageEvent.type === "text_delta") {
-				process.stdout.write(event.assistantMessageEvent.delta);
+		if (argvQuestion) {
+			await ask(session, argvQuestion);
+			await captureVerdict(rl);
+		} else {
+			console.error("answer-brain — ask a point-fact question about yourself; 'quit' to exit.");
+			for (;;) {
+				const q = (await rl.question("\nask> ")).trim();
+				if (q === "" || q === "quit" || q === "exit") break;
+				await ask(session, q);
+				await captureVerdict(rl);
 			}
-		});
-		await session.prompt(question);
-		console.log();
+		}
 	} finally {
+		rl.close();
 		session.dispose();
 	}
 }
