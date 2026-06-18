@@ -64,6 +64,13 @@ jobs:
             julia --project=. "$f"
           done
 
+      - name: answer-brain Julia tests
+        run: |
+          for f in apps/answer-brain/tests/julia/*.jl; do
+            echo "=== $f ==="
+            julia --project=. "$f"
+          done
+
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
@@ -78,6 +85,23 @@ jobs:
 
       - name: credence-pi OpenClaw-plugin build + tests
         working-directory: apps/credence-pi/openclaw-plugin
+        run: |
+          npm install
+          npm run build
+          npm test
+
+      # ── answer-brain (the principled RAG answer-brain on pi-mono) ──
+      # The governor core (brain-body) and the pi-mono body extension.
+      # Each is self-contained: `tsc --noEmit` + node:test via tsx.
+      - name: answer-brain brain-body build + tests
+        working-directory: packages/brain-body
+        run: |
+          npm install
+          npm run build
+          npm test
+
+      - name: answer-brain extension build + tests
+        working-directory: apps/answer-brain/extension
         run: |
           npm install
           npm run build
