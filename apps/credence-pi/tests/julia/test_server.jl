@@ -135,8 +135,8 @@ fresh_state(; tmp_log) = init_state(; bdsl_dir = BDSL_DIR, log_path = tmp_log)
 
 let path = tempname() * ".jsonl"
     state = fresh_state(; tmp_log = path)
-    # Sabotage decide-action (now 3-arg: posterior, features, cost) AFTER init.
-    state.env[Symbol("decide-action")] = (posterior, features, cost) -> error("simulated brain failure")
+    # Sabotage decide-action (posterior, features, cost, profile) AFTER init.
+    state.env[Symbol("decide-action")] = (posterior, features, cost, profile = nothing) -> error("simulated brain failure")
 
     event = Dict{String, Any}(
         "event_type" => "tool-proposed",
