@@ -524,6 +524,31 @@ const plugin: PluginEntry = {
       );
     }
 
+    // In-session VALUE SUMMARY: on cleanup (session end / reload), fetch the daemon's report
+    // and log a one-line "what credence-pi did for you" — so the user SEES the value without a
+    // manual CLI (the trust/tune loop). Best-effort + fail-open: a down daemon / bad response is
+    // silently skipped, and it never throws on the cleanup path. Inline fetch (the shared
+    // daemon-client stays verbatim — this is a read-only display call, not the core wire).
+    async function logSessionSummary(): Promise<void> {
+      try {
+        const ctrl = new AbortController();
+        const t = setTimeout(() => ctrl.abort(), 2_000);
+        const res = await fetch(`${daemonUrl.replace(/\/+$/, "")}/report`, { signal: ctrl.signal });
+        clearTimeout(t);
+        if (!res.ok) return;
+        const r = (await res.json()) as Record<string, number>;
+        const n = (k: string) => (typeof r[k] === "number" ? r[k] : 0);
+        if (n("total_events") === 0) return;
+        log(
+          `credence-pi: this run — spend $${n("total_usd").toFixed(4)}; ` +
+            `blocked ${n("prevented_calls")} waste call(s) (~$${n("estimated_prevented_usd").toFixed(4)} saved, est.); ` +
+            `asked ${n("decided_ask")}, you denied ${n("denied")}. Full report: GET ${daemonUrl}/report`,
+        );
+      } catch {
+        /* best-effort display; never throws on cleanup */
+      }
+    }
+
     // Close the SSE stream + drain awaiters on reset/delete/reload so a
     // hot-reload does not accumulate daemon connections. Optional-chained
     // for hosts predating the lifecycle API.
@@ -532,7 +557,10 @@ const plugin: PluginEntry = {
         id: "credence-pi-governor",
         description:
           "Close the credence-pi daemon SSE stream and drain pending tool-call awaiters.",
-        cleanup: () => gov.cleanup(),
+        cleanup: () => {
+          void logSessionSummary(); // fire-and-forget value summary
+          gov.cleanup();
+        },
       });
     } catch (err) {
       log("credence-pi: could not register lifecycle cleanup", err);

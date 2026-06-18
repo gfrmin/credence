@@ -54,6 +54,13 @@ using .FeatureBrain: wire_brain!, build_model_from_env, reconstruct_posterior
 include(joinpath(@__DIR__, "..", "brain", "routing_brain.jl"))
 using .RoutingBrain: wire_routing!, route_outcome!
 
+# Value reporting (display-only, non-causal): the governance + dollars-saved surface, exposed
+# over GET /report so the body can show the user what credence-pi delivered — closing the
+# "manual `julia savings.jl`" gap. Savings nests its OWN ObservationLog (distinct from this
+# module's include above), so the two coexist without a name clash.
+include(joinpath(@__DIR__, "..", "savings.jl"))
+using .Savings: savings_report
+
 export start_daemon, stop_daemon, DaemonState
 export SignalQueue, enqueue!, snapshot, drain!
 export handle_sensor_event, action_to_signal, emit_signal!, emit_route_signal!
@@ -682,6 +689,21 @@ function start_daemon(; port::Int,
             HTTP.setheader(stream, "Content-Type" => "text/plain")
             HTTP.startwrite(stream)
             write(stream, "ok\n")
+        elseif method == "GET" && target == "/report"
+            # The value surface (display-only, non-causal): governance + dollars-saved tallies
+            # from the observation log, as JSON, so the body can show the user what credence-pi
+            # delivered this run. No reasoning here — reuses Savings.savings_report verbatim.
+            body = try
+                JSON3.write(savings_report(state.log_path))
+            catch e
+                @warn "report generation failed" error = e
+                JSON3.write(Dict("error" => "report unavailable"))
+            end
+            HTTP.setstatus(stream, 200)
+            HTTP.setheader(stream, "Content-Type" => "application/json")
+            HTTP.setheader(stream, "Content-Length" => string(sizeof(body)))
+            HTTP.startwrite(stream)
+            write(stream, body)
         else
             HTTP.setstatus(stream, 404)
             HTTP.startwrite(stream)
