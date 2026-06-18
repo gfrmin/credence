@@ -1,0 +1,41 @@
+MVP-D welfare A/B — credence-pi per-profile routing vs fixed routers
+  matrix=/home/g/git/worktrees/credence/live-ab/apps/credence-pi/eval/live_ab/results/welfare_matrix.jsonl  tasks(full)=6/6
+
+  tier     solved     cost$   time_s
+  qwen       0.83    0.0000     54.7
+  haiku      1.00    0.0074     31.1
+  sonnet     1.00    0.0379     34.4
+
+per-profile welfare (Σ reward·solved − money − w_time·time, the user's $):
+
+profile=batch-saver   reward=3.00 w_time=0.000  → credence-pi routes: QWEN
+  credence-pi    welfare=+15.0000   <<<
+  always-qwen    welfare=+15.0000  (= credence-pi's pick)
+  always-haiku   welfare=+17.9558
+  always-sonnet  welfare=+17.7727
+  -> credence-pi is NOT optimal (best=always-haiku) for this profile
+
+profile=cost-saver    reward=3.00 w_time=0.003  → credence-pi routes: HAIKU
+  credence-pi    welfare=+17.3954   <<<
+  always-qwen    welfare=+14.0148
+  always-haiku   welfare=+17.3954  (= credence-pi's pick)
+  always-sonnet  welfare=+17.1538
+  -> credence-pi is WELFARE-OPTIMAL for this profile
+
+profile=balanced      reward=3.00 w_time=0.017  → credence-pi routes: HAIKU
+  credence-pi    welfare=+14.7802   <<<
+  always-qwen    welfare= +9.4172
+  always-haiku   welfare=+14.7802  (= credence-pi's pick)
+  always-sonnet  welfare=+14.2656
+  -> credence-pi is WELFARE-OPTIMAL for this profile
+
+profile=speed-first   reward=3.00 w_time=0.042  → credence-pi routes: HAIKU
+  credence-pi    welfare=+10.1102   <<<
+  always-qwen    welfare= +1.2072
+  always-haiku   welfare=+10.1102  (= credence-pi's pick)
+  always-sonnet  welfare= +9.1081
+  -> credence-pi is WELFARE-OPTIMAL for this profile
+
+================================================================
+time⟷money divergence: batch-saver → QWEN (free, slow) ; speed-first → HAIKU (paid, fast)
+================================================================

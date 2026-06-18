@@ -1,0 +1,50 @@
+{
+  "artifact": "MVP-D eval routing LATENCY belief \u2014 measured mean wall-time per tier (short bucket)",
+  "source": "welfare matrix welfare_matrix.jsonl; end-to-end wall-time, turns collapsed (E[turns]=1, rate_s=mean wall-time)",
+  "note": "E[time|model,short]=expect(Gamma(1+sum_turns,0.1+n),Identity)*rate_s = 1.0*mean wall-time",
+  "turns_prior": [
+    1,
+    0.1
+  ],
+  "per_model": [
+    {
+      "model_id": "qwen2.5:7b-instruct",
+      "rate_s": 54.73333333333333,
+      "contexts": [
+        {
+          "ctx": [
+            "short"
+          ],
+          "sum_turns": 5.1,
+          "n_obs": 6
+        }
+      ]
+    },
+    {
+      "model_id": "claude-haiku-4-5",
+      "rate_s": 31.133333333333336,
+      "contexts": [
+        {
+          "ctx": [
+            "short"
+          ],
+          "sum_turns": 5.1,
+          "n_obs": 6
+        }
+      ]
+    },
+    {
+      "model_id": "claude-sonnet-4-6",
+      "rate_s": 34.38333333333333,
+      "contexts": [
+        {
+          "ctx": [
+            "short"
+          ],
+          "sum_turns": 5.1,
+          "n_obs": 6
+        }
+      ]
+    }
+  ]
+}

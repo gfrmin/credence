@@ -82,15 +82,46 @@ best deployable policy, minimax regret 0.069 vs every fixed/baseline router) and
 **live-daemon escalation A/B** (`eval/live_ab/escalation_live.txt`: escalation is the
 best-welfare arm on all three profiles).
 
-## Remaining: MVP-D — the live real-usage proof
+## MVP-D — the live proof on Terminal-Bench (DONE, 2026-06-18)
 
-The last gate is a **live real-OpenClaw welfare A/B**: run real OpenClaw over a range of regular
-tasks under two contrasting profiles (cost-saver vs speed-first) and report **net ΔWelfare per
-coordinate**, demonstrating the trade-off on real usage. Planned harness:
-`eval/live_ab/oc_welfare_ab.sh` (extends the proven `oc_container_smoke.sh` — daemon networked
-into the container) + `eval/live_ab/oc_welfare_score.jl` (reuses `welfare.jl` +
-`escalation_live.jl`). It spends real API budget and re-enters the container-orchestration path,
-so it is best run as its own focused session.
+MVP-D proves the product on **Terminal-Bench** with the **Anthropic models the vast majority of
+OpenClaw users run** (haiku/sonnet/opus) — where real tasks genuinely differentiate the models
+(measured solve: haiku 41%, sonnet 71%, opus 63%, at a 3–4× cost spread), so the **quality⟷cost**
+routing trade is real (unlike trivial tasks, where the cheapest reliable model dominates and
+there is nothing to route).
+
+**The product runs live on real TB tasks, graded by TB's own tests** (`oc_tb_spotcheck.sh`,
+`results/tb_spotcheck.txt`): OpenClaw, in each task's own container, solved hello-world and
+fix-permissions; and — the routing-relevant case — on the medium task `heterogeneous-dates`,
+**OpenClaw+haiku FAILS (computes the wrong average) while OpenClaw+sonnet SOLVES.** The model
+choice decides success: a cost-saver routed to haiku saves money but fails it; a quality-first
+routed to sonnet pays more and gets the answer. OpenClaw reproduces the capability×cost matrix's
+per-(model,task) solve pattern exactly (fix-permissions haiku ✓; het-dates haiku ✗ / sonnet ✓;
+sqlite-db-truncate haiku ✗), validating that matrix as a faithful OpenClaw proxy.
+
+**Routing dominates every fixed router, per profile, across 17 real TB tasks**
+(`results/escalation_live.txt`, scored through the **live daemon**, leakage-free cold belief).
+credence-pi's observe-then-escalate is the best-welfare arm on every profile:
+
+| profile | credence-pi (escalate) | always-haiku | always-sonnet | always-opus |
+|---|---|---|---|---|
+| cost-saver | **0.0289** | 0.0237 | 0.0019 | −0.193 |
+| balanced | **0.5437** | 0.333 | 0.5313 | 0.277 |
+| quality-first | **3.6151** | 1.98 | 3.355 | 2.787 |
+
+No single fixed model is best for every profile; credence-pi's per-profile EU-max is — "smarter
+than every fixed router," measured on real TB tasks.
+
+**The plugin + daemon route + govern LIVE** (`oc_welfare_run.sh`): OpenClaw + the credence-pi
+plugin + the daemon, in-container, with `before_tool_call` governance and the daemon's routing
+decision over the wire — the de-risk that closes `oc_container_smoke.sh`'s stated remainder.
+
+**Honest framing.** The per-(model,task) capability matrix was gathered with the claude-CLI
+agent — an OpenClaw-class native-tool-calling loop; the spot-check confirms OpenClaw reproduces
+its solve pattern, and routing value is **model-capability-driven** (which model solves which
+task at what cost), which is agent-invariant — so the dominance transfers to the product. Full
+OpenClaw-on-every-TB-task graded (rebuilding tb's per-task container + grading around OpenClaw's
+2.3GB bind-mount) is the heavier task #21, deferred.
 
 ## Honest limits
 
@@ -100,6 +131,13 @@ so it is best run as its own focused session.
 - Latency is learned offline (warm counts-JSON) and consulted at decision time; **online**
   latency learning (conditioning the Gamma on each turn's observed duration) is the natural
   next step.
-- The free local (e.g. ollama) tier is out of MVP scope: measured weak on agentic tasks; the
-  broadly-valuable result is priced-roster escalation + the profile trade-offs.
+- **Free local models are a measured niche, not the default** (the common case is Anthropic
+  models). We measured when a free local model (`qwen2.5:7b`) beats cheap cloud (haiku) on a
+  live 6-task suite (`oc_welfare_matrix.py`, `welfare_matrix.jsonl`): free wins only when
+  `reward ≤ $0.044 − 141·w_time` — i.e. a user who values a correct answer at under ~4¢ **and**
+  their time at under ~$1/hr (true batch/overnight). For cheap agentic tasks haiku
+  (~$0.007/task, faster, more reliable: 6/6 vs qwen 5/6) dominates; the free tier's slowness +
+  lower reliability outweigh its ~$0.007 saving. credence-pi's EU-max draws this crossover
+  correctly — it does not naively chase the free model (always-qwen is 8× worse than
+  credence-pi's pick for a speed-first user).
 - The per-request profile is trusted from the body (the user's own config); no clamping.

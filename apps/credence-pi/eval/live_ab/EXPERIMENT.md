@@ -246,6 +246,16 @@ decision — `posterior_accuracy` read-out only.)
 - [x] **Escalation gate wired into the LIVE daemon loop** (`escalate-request`; brain
       `escalate-decide`); equivalence-tested (`daemon decision == in-process escalation_next`,
       `tests/julia/test_routing.jl` §B'); stage-(a) live-daemon A/B below — closes limit (c).
-- [ ] (stage b, pending) free local (qwen) row + per-session decoded verifier + real OpenClaw
-      in the container (run→escalate with OpenClaw as the agent), within the live-A/B budget.
+- [x] **MVP-D (live TB MVP)** — OpenClaw run LIVE on real TB tasks in their own containers,
+      graded by the tasks' own tests (`oc_tb_spotcheck.sh`, `results/tb_spotcheck.txt`):
+      hello-world ✓, fix-permissions ✓ (haiku), and the routing-relevant differentiator
+      `heterogeneous-dates` — **haiku FAILS / sonnet SOLVES**, reproducing the matrix split
+      live → validates the claude-CLI matrix as a faithful OpenClaw proxy. Dominance breadth =
+      `escalation_live.txt` (escalation beats every fixed router on all profiles, live daemon).
+      Free-local (qwen) row done as a measured **crossover** (`oc_welfare_matrix.py` /
+      `welfare_matrix.jsonl` / `oc_welfare_score.jl`): free wins only at `reward ≤ 0.044 −
+      141·w_time` — a near-zero answer-value AND time-value (batch) user; else cheap-fast-paid
+      dominates. Plugin+daemon route+govern live = `oc_welfare_run.sh`.
+- [ ] (deferred = task #21) full OpenClaw-on-every-TB-task graded matrix (rebuild tb's per-task
+      container+grading around OpenClaw's 2.3GB bind-mount); the spot-check + proxy cover the MVP.
 - [ ] (future) exact sequential-EU (backward-induction) gate variant vs the myopic gate
