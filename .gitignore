@@ -20,9 +20,10 @@ __pycache__/
 .serena/cache/
 
 # LaTeX build artifacts
-papers/*.aux
-papers/*.log
-papers/*.pdf
+papers/**/*.aux
+papers/**/*.log
+papers/**/*.out
+papers/**/*.pdf
 
 # Debug logs
 apps/julia/qa_benchmark/llm_debug.log
