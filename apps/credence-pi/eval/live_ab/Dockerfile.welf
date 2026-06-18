@@ -1,0 +1,13 @@
+# Role: eval
+# Baked runner image for the MVP-D welfare A/B: the proven TB base + node v26
+# preinstalled, so each oc_welfare_run.sh invocation skips the ~2GB node install
+# (fast loop, and wall-clock ≈ openclaw-startup + model time, a consistent time signal).
+# Build: podman build -t credence-pi-welf:latest -f Dockerfile.welf .
+FROM ghcr.io/laude-institute/t-bench/python-3-13:latest
+ARG NODE_VER=v26.2.0
+RUN apt-get update -qq && apt-get install -y -qq curl xz-utils libatomic1 \
+ && rm -rf /var/lib/apt/lists/* \
+ && curl -fsSL "https://nodejs.org/dist/${NODE_VER}/node-${NODE_VER}-linux-x64.tar.xz" -o /tmp/node.tar.xz \
+ && mkdir -p /opt/node && tar -xJf /tmp/node.tar.xz -C /opt/node --strip-components=1 \
+ && rm /tmp/node.tar.xz
+ENV PATH=/opt/node/bin:$PATH
