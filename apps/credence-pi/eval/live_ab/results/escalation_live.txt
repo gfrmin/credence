@@ -1,5 +1,6 @@
 Live-daemon observe-then-escalate vs fixed policies
-  daemon=http://127.0.0.1:8787  worlds(tasks×reps)=51  belief=COLD (leakage-free, conservative)
+  daemon=http://127.0.0.1:8799  worlds(tasks×reps)=51  tasks=17  belief=COLD (leakage-free, conservative)
+  CIs: cluster bootstrap B=10000 resampling 17 tasks (seed 20260618); percentile under-covers at K=17 — indicative, BCa is the rigorous upgrade
 
 profile=cost-hawk  (per-world means)
   arm              welfare   solves      cost
@@ -8,6 +9,13 @@ profile=cost-hawk  (per-world means)
   always-sonnet     0.0019    0.706    0.1745
   always-opus      -0.1932    0.627    0.3501
   escalation vs always-sonnet: Δwelfare=+0.0269  Δcost=-0.0907  Δsolves=-0.255
+  95% CI (cluster bootstrap):
+    escalation     welfare +0.0289  [-0.0348, +0.0879]
+    always-haiku   welfare +0.0237  [-0.0390, +0.0824]  (best fixed)
+    always-sonnet  welfare +0.0019  [-0.0784, +0.0781]
+    always-opus    welfare -0.1932  [-0.4013, -0.0189]
+  escalation − best_fixed (always-haiku) WELFARE: Δ=+0.0052  CI [+0.0012, +0.0103]  one-sided p(esc≤best)=0.009
+  escalation − best_solver (always-sonnet) SOLVE-RATE: Δ=-0.255  CI [-0.510, +0.000]  one-sided p(esc≤best)=0.983
 
 profile=balanced  (per-world means)
   arm              welfare   solves      cost
@@ -16,6 +24,13 @@ profile=balanced  (per-world means)
   always-sonnet     0.5313    0.706    0.1745
   always-opus       0.2774    0.627    0.3501
   escalation vs always-sonnet: Δwelfare=+0.0123  Δcost=+0.0661  Δsolves=+0.078
+  95% CI (cluster bootstrap):
+    escalation     welfare +0.5437  [+0.2729, +0.7815]
+    always-haiku   welfare +0.3325  [+0.1328, +0.5351]
+    always-sonnet  welfare +0.5313  [+0.2959, +0.7432]  (best fixed)
+    always-opus    welfare +0.2774  [-0.0429, +0.5726]
+  escalation − best_fixed (always-sonnet) WELFARE: Δ=+0.0123  CI [-0.1036, +0.1761]  one-sided p(esc≤best)=0.466
+  escalation − best_solver (always-sonnet) SOLVE-RATE: Δ=+0.078  CI [+0.000, +0.216]  one-sided p(esc≤best)=0.119
 
 profile=quality-hawk  (per-world means)
   arm              welfare   solves      cost
@@ -24,4 +39,11 @@ profile=quality-hawk  (per-world means)
   always-sonnet     3.3549    0.706    0.1745
   always-opus       2.7872    0.627    0.3501
   escalation vs always-sonnet: Δwelfare=+0.2603  Δcost=+0.1319  Δsolves=+0.078
+  95% CI (cluster bootstrap):
+    escalation     welfare +3.6151  [+2.4627, +4.5723]
+    always-haiku   welfare +1.9795  [+1.0006, +2.9729]
+    always-sonnet  welfare +3.3549  [+2.1808, +4.2947]  (best fixed)
+    always-opus    welfare +2.7872  [+1.6695, +3.8622]
+  escalation − best_fixed (always-sonnet) WELFARE: Δ=+0.2603  CI [-0.2025, +0.9514]  one-sided p(esc≤best)=0.231
+  escalation − best_solver (always-sonnet) SOLVE-RATE: Δ=+0.078  CI [+0.000, +0.216]  one-sided p(esc≤best)=0.119
 
