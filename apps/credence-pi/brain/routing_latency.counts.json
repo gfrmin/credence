@@ -1,0 +1,92 @@
+{
+    "note": "Gamma sufficient statistic (sum_turns,n_obs) per (model,bucket) + measured rate_s (s/turn) per model. E[time]=expect(Gamma(α0+Σt,β0+n),Identity)·rate_s. Buckets match routing-features.ts.",
+    "turns_prior": [
+        1,
+        0.1
+    ],
+    "source": "tb_matrix_rep3.jsonl (agentic Terminal-Bench), bucketed by instruction length (short ≤400 / medium ≤1000 / long)",
+    "per_model": [
+        {
+            "rate_s": 6.213644524236984,
+            "model_id": "claude-haiku-4-5",
+            "contexts": [
+                {
+                    "sum_turns": 277,
+                    "n_obs": 30,
+                    "ctx": [
+                        "short"
+                    ]
+                },
+                {
+                    "sum_turns": 88,
+                    "n_obs": 6,
+                    "ctx": [
+                        "medium"
+                    ]
+                },
+                {
+                    "sum_turns": 192,
+                    "n_obs": 15,
+                    "ctx": [
+                        "long"
+                    ]
+                }
+            ]
+        },
+        {
+            "rate_s": 8.964745011086475,
+            "model_id": "claude-sonnet-4-6",
+            "contexts": [
+                {
+                    "sum_turns": 239,
+                    "n_obs": 30,
+                    "ctx": [
+                        "short"
+                    ]
+                },
+                {
+                    "sum_turns": 124,
+                    "n_obs": 6,
+                    "ctx": [
+                        "medium"
+                    ]
+                },
+                {
+                    "sum_turns": 142,
+                    "n_obs": 15,
+                    "ctx": [
+                        "long"
+                    ]
+                }
+            ]
+        },
+        {
+            "rate_s": 10.530043859649126,
+            "model_id": "claude-opus-4-8",
+            "contexts": [
+                {
+                    "sum_turns": 253,
+                    "n_obs": 30,
+                    "ctx": [
+                        "short"
+                    ]
+                },
+                {
+                    "sum_turns": 108,
+                    "n_obs": 6,
+                    "ctx": [
+                        "medium"
+                    ]
+                },
+                {
+                    "sum_turns": 112,
+                    "n_obs": 15,
+                    "ctx": [
+                        "long"
+                    ]
+                }
+            ]
+        }
+    ],
+    "artifact": "credence-pi routing LATENCY belief E[time|model,prompt-length] — Poisson-Gamma turns × measured s/turn"
+}

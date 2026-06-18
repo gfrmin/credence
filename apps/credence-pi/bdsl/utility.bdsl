@@ -74,3 +74,17 @@
 ; the cheap model until the belief shows a pricier one is worth it. Inert
 ; unless routing.bdsl declares a roster.
 (define correct-answer-value 0.02)
+
+; ── Time coordinate (w-time) ────────────────────────────────────────────
+; w-time (dollars per SECOND of the user's wall-clock): the value of one
+; second of the user's time — the most intuitive dial of all ("what is your
+; time worth?"). The EU folds in w_time·E[time|action,X], where E[time] is a
+; LEARNED Poisson-Gamma latency belief (turns × measured s/turn,
+; brain/routing_latency.counts.json) and w-time the declared weight. This is
+; the TIME/MONEY (and time/quality) trade-off dial: raise it and the router
+; prefers a FASTER model and escalates sooner (a slow cheap model burns the
+; user's expensive seconds); lower it and time is ignored. 0.0 ⇒ time-blind,
+; BIT-IDENTICAL to the pre-time brain. A $50/hr user values a second at
+; ~$0.014; a $180/hr user ~$0.05. Default 0 (each profile opts in). Read by
+; both the router (wire_routing!) and the governor (wire_brain!).
+(define w-time 0.0)

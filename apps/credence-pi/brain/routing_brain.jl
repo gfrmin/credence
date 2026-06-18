@@ -33,9 +33,9 @@ independence across models is the ProductMeasure, exactly as the waste⊗harm jo
 """
 module RoutingBrain
 
-using Main.Credence: MixturePrevision, BetaPrevision, Projection, LinearCombination,
-    TestFunction, Identity, Kernel, Interval, Finite, WeightedBernoulli, mean,
-    condition, expect, wrap_in_measure
+using Main.Credence: MixturePrevision, BetaPrevision, GammaPrevision, Projection,
+    LinearCombination, TestFunction, Identity, Kernel, Interval, Finite, WeightedBernoulli,
+    mean, condition, expect, wrap_in_measure
 import Main.Credence.Ontology: optimise, ProductMeasure, Measure
 # `..FeatureBrain` (the sibling submodule), NOT `Main.FeatureBrain`: this resolves both
 # when the eval includes both brains at Main (siblings of Main) and when the daemon
@@ -46,14 +46,62 @@ using ..FeatureBrain: StructureBMA, belief_at_context, context_from_features,
 using JSON3
 
 export route, route_eu, escalation_next, posterior_accuracy, wire_routing!,
-    RoutingState, EmissionBelief, route_outcome!, decode_correctness
+    RoutingState, EmissionBelief, route_outcome!, decode_correctness,
+    LatencyBelief, reconstruct_latency, latency_at
+
+# ── Latency belief: E[time | model, X] = E[turns|X]·s̄, the TIME coordinate ─────────
+#
+# Time is the profile coordinate that lets a user trade wall-clock against money/quality.
+# It is a LEARNED belief (you cannot know a call's duration before making it): the SAME
+# Poisson-Gamma "turns" belief the dominance eval already uses for E[cost] (tb_dominance.jl
+# `CostBelief`), reused for E[time]. E[time|model,X] = E[turns|model,X]·s̄_model, where the
+# per-model turns posterior is a Gamma (reconstructed below) read by `expect(·,Identity)`=α/β,
+# and s̄_model is the measured seconds/turn. The decision folds w_time·E[time] into the EU
+# offset (route/escalation_next), so a slow-but-cheap model loses to a fast one exactly when
+# the user values their seconds enough — the time/money trade-off, via the one `optimise`.
+#
+# Version-stable like the other warm artifacts: ship the Gamma sufficient statistic
+# (sum_turns, n_obs) per (model, context) + the measured rate_s per model + the prior; the
+# posterior Gamma(α0+Σt, β0+n) is order-independent, so reconstruction is exact (no
+# Serialization). E[time] is computed once at load through `expect` and cached per cell.
+struct LatencyBelief
+    time_mean::Dict{Tuple{String, String}, Float64}   # (model_id, ctx_key) -> E[time] seconds
+end
+
+# Reconstruct E[time] per (model, context) from the counts-JSON. Shape:
+# { "turns_prior":[α0,β0], "per_model":[ {"model_id":..., "rate_s":..,
+#   "contexts":[ {"ctx":["short"], "sum_turns":412, "n_obs":30 } ]} ] }
+function reconstruct_latency(path)::LatencyBelief
+    data = JSON3.read(read(String(path), String))
+    α0, β0 = Float64(data["turns_prior"][1]), Float64(data["turns_prior"][2])
+    tm = Dict{Tuple{String, String}, Float64}()
+    for pm in data["per_model"]
+        id = String(pm["model_id"]); rate = Float64(pm["rate_s"])
+        for ctx in pm["contexts"]
+            g = GammaPrevision(α0 + Float64(ctx["sum_turns"]), β0 + Float64(ctx["n_obs"]))
+            etime = Float64(expect(g, Identity())) * rate     # E[turns]=α/β, ×s̄ ⇒ E[time]
+            tm[(id, _ctx_key([String(c) for c in ctx["ctx"]]))] = etime
+        end
+    end
+    LatencyBelief(tm)
+end
+
+# E[time|model,X] seconds, or 0.0 for an unknown (model, context) ⇒ that candidate carries no
+# time term (conservative: time never penalises a model we have no latency belief for).
+latency_at(lb::LatencyBelief, model_id::AbstractString, X::AbstractVector) =
+    get(lb.time_mean, (String(model_id), _ctx_key(X)), 0.0)
+latency_at(::Nothing, ::AbstractString, ::AbstractVector) = 0.0
 
 # Per-action EU functional: reward·θ_a − cost_a, expressed over the joint belief's
 # a-th component (Projection(a) = θ_a). `reward` and `cost` are declared utility DATA;
 # multiplying them into LinearCombination coefficients is coefficient construction, not
 # probability arithmetic (mirrors decide_multi's `(-cost*(tf+aversion), Projection(1))`).
-_eu_functional(a::Int, reward::Float64, cost::Float64) =
-    LinearCombination(Tuple{Float64, TestFunction}[(reward, Projection(a))], -cost)
+# `time_cost` = w_time·E[time|a,X] (declared weight × learned latency, prepared upstream); it
+# folds into the SAME constant offset as `-cost` — E[time] is a known scalar at decision time
+# (it does not co-vary with the routing posterior θ), so it belongs in the offset, not a new
+# Projection. time_cost=0 ⇒ `-(cost+0.0)`==`-cost` ⇒ bit-identical to the pre-time functional.
+_eu_functional(a::Int, reward::Float64, cost::Float64, time_cost::Float64 = 0.0) =
+    LinearCombination(Tuple{Float64, TestFunction}[(reward, Projection(a))], -(cost + time_cost))
 
 # Build the joint belief over all K models at context X: a ProductMeasure of each
 # model's belief-at-context view (the independence-across-models assumption made
@@ -66,9 +114,12 @@ function _joint_at(model::StructureBMA, tops::AbstractVector, X::AbstractVector)
     ProductMeasure(cells), K
 end
 
-function _fpa(K::Int, reward::Real, costs::AbstractVector)
-    r = Float64(reward)
-    Dict{Int, LinearCombination}(a => _eu_functional(a, r, Float64(costs[a])) for a in 1:K)
+function _fpa(K::Int, reward::Real, costs::AbstractVector,
+             w_time::Real = 0.0, times = nothing)
+    r = Float64(reward); wt = Float64(w_time)
+    Dict{Int, LinearCombination}(
+        a => _eu_functional(a, r, Float64(costs[a]),
+                            times === nothing ? 0.0 : wt * Float64(times[a])) for a in 1:K)
 end
 
 """
@@ -85,11 +136,13 @@ fixed table is the Bayes rule for more than one profile — the Wald complete-cl
 core of the dominance proof.
 """
 function route(model::StructureBMA, tops::AbstractVector, X::AbstractVector,
-               costs::AbstractVector, reward::Real)
+               costs::AbstractVector, reward::Real; w_time::Real = 0.0, times = nothing)
     length(tops) == length(costs) ||
         error("route: tops/costs length mismatch ($(length(tops)) vs $(length(costs)))")
+    (times === nothing || length(times) == length(tops)) ||
+        error("route: tops/times length mismatch ($(length(tops)) vs $(length(times)))")
     joint, K = _joint_at(model, tops, X)
-    optimise(joint, collect(1:K), _fpa(K, reward, costs))
+    optimise(joint, collect(1:K), _fpa(K, reward, costs, w_time, times))
 end
 
 """
@@ -100,9 +153,9 @@ The EU is `expect` of the chosen action's functional — the same number `optimi
 maximised — so this re-reads through the canalised path, never recomputing it by hand.
 """
 function route_eu(model::StructureBMA, tops::AbstractVector, X::AbstractVector,
-                  costs::AbstractVector, reward::Real)
+                  costs::AbstractVector, reward::Real; w_time::Real = 0.0, times = nothing)
     joint, K = _joint_at(model, tops, X)
-    fpa = _fpa(K, reward, costs)
+    fpa = _fpa(K, reward, costs, w_time, times)
     a = optimise(joint, collect(1:K), fpa)
     a, Float64(expect(joint, fpa[a]))
 end
@@ -140,15 +193,17 @@ exact sequential value is a future refinement. This is the ONE escalation decisi
 calls it rather than reimplementing the gate (no host-side decision mechanism).
 """
 function escalation_next(model::StructureBMA, tops::AbstractVector, X::AbstractVector,
-                         costs_X::AbstractVector, reward::Real, tried)
-    r = Float64(reward)
+                         costs_X::AbstractVector, reward::Real, tried;
+                         w_time::Real = 0.0, times_X = nothing)
+    r = Float64(reward); wt = Float64(w_time)
     for a in eachindex(tops)                       # costs_X ascending ⇒ cheapest-first
         a in tried && continue
+        tc = times_X === nothing ? 0.0 : wt * Float64(times_X[a])   # w_time·E[time|a,X]
         # Single-tier joint + Projection(1) — mirror `route`'s ProductMeasure path so
         # `expect` resolves to Measure×LinearCombination (a bare MixtureMeasure×TestFunction
         # is ambiguous against the LinearCombination method).
         belief = ProductMeasure(Measure[wrap_in_measure(belief_at_context(model, tops[a], X))])
-        tryf = LinearCombination(Tuple{Float64, TestFunction}[(r, Projection(1))], -Float64(costs_X[a]))
+        tryf = LinearCombination(Tuple{Float64, TestFunction}[(r, Projection(1))], -(Float64(costs_X[a]) + tc))
         return optimise(belief, [1, 2], Dict(1 => tryf, 2 => _STOP_FUNCTIONAL)) == 1 ? a : 0
     end
     0
@@ -254,6 +309,8 @@ mutable struct RoutingState
     model_ids::Vector{String}
     costs::Vector{Float64}
     reward::Float64
+    w_time::Float64                             # profile weight on time ($/sec of the user's wall-clock)
+    latency::Union{LatencyBelief, Nothing}      # learned E[time|model,X]; nothing ⇒ time-blind (default)
 end
 
 # Fetch model_id's belief plus a setter to write an update back. KNOWN models (the default
@@ -381,6 +438,21 @@ function wire_routing!(env;
 
     reward = Float64(get(env, Symbol("correct-answer-value"), 0.02))
 
+    # TIME coordinate (profile dial): w-time = $/sec of the user's wall-clock. 0.0 ⇒ time-blind
+    # (bit-identical to the pre-time router). The latency belief is opt-in by file presence
+    # (like the tail belief): absent ⇒ nothing ⇒ no time term. routing-latency-path overrides.
+    w_time = Float64(get(env, Symbol("w-time"), 0.0))
+    latency = let p = get(env, Symbol("routing-latency-path"),
+                          joinpath(@__DIR__, "routing_latency.counts.json"))
+        (p === nothing || isempty(string(p)) || !isfile(string(p))) ? nothing :
+            try
+                reconstruct_latency(p)
+            catch e
+                @warn "routing latency belief failed to load; time-blind" path = string(p) error = e
+                nothing
+            end
+    end
+
     # Emission prior: declared (`emission-prior`) auditable data, else the directional default.
     ep = get(env, Symbol("emission-prior"), nothing)
     emission_prior = (ep isa AbstractVector && length(ep) == 4) ?
@@ -395,7 +467,7 @@ function wire_routing!(env;
 
     rt = RoutingState(rmodel, tops, Dict{String, MixturePrevision}(),
                       EmissionBelief(emission_prior), names, providers,
-                      model_ids, costs, reward)
+                      model_ids, costs, reward, w_time, latency)
 
     # The daemon's routing call-site: (feature dict[, live roster]) → the chosen model's wire
     # fields, or `nothing` (inert ⇒ body keeps OpenClaw's model). Reads rt's beliefs LIVE
@@ -424,7 +496,8 @@ function _route_decide(rt::RoutingState, features, roster)
     names, providers, ids, costs, tops = _resolve_roster(rt, roster)
     length(ids) >= 2 || return nothing
     X = context_from_features(rt.model, features)
-    a = route(rt.model, tops, X, costs, rt.reward)
+    times = Float64[latency_at(rt.latency, ids[a], X) for a in eachindex(ids)]   # E[time|a,X], 0 if unknown
+    a = route(rt.model, tops, X, costs, rt.reward; w_time = rt.w_time, times = times)
     Dict{String, Any}("model" => ids[a], "provider" => providers[a], "name" => names[a])
 end
 
@@ -441,7 +514,9 @@ function _escalate_decide(rt::RoutingState, features, roster, tried, reward)
     order = sortperm(costs)                              # cheapest → dearest
     X = context_from_features(rt.model, features)
     triedset = Set{Int}(Int(t) for t in tried)          # indices in cost-ascending space
-    a = escalation_next(rt.model, tops[order], X, costs[order], Float64(reward), triedset)
+    times = Float64[latency_at(rt.latency, ids[i], X) for i in order]   # E[time], aligned to tops[order]
+    a = escalation_next(rt.model, tops[order], X, costs[order], Float64(reward), triedset;
+                        w_time = rt.w_time, times_X = times)
     a == 0 && return nothing                             # no positive-EU rung ⇒ STOP
     j = order[a]
     Dict{String, Any}("model" => ids[j], "provider" => providers[j], "name" => names[j],

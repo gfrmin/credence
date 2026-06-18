@@ -32,7 +32,7 @@ action argmax is the single canonical `optimise`.
 module FeatureBrain
 
 using Main.Credence: BetaPrevision, TaggedBetaPrevision, SparseStructurePrevision,
-    ProductPrevision, MixturePrevision,
+    ProductPrevision, MixturePrevision, GammaPrevision,
     Prevision, Kernel, Interval, Finite, BetaBernoulli, SoftBernoulli, Flat, FiringByTag, Identity,
     Projection, LinearCombination, TestFunction, GeometricTail, mean, FeatureDecl, condition, expect,
     cell_at, wrap_in_measure
@@ -349,10 +349,14 @@ block prevents (0 ⇒ the myopic per-call decision; supplied by the tail brain a
 `expect(continuation_belief, GeometricTail())`).
 """
 function decide(model::StructureBMA, top::MixturePrevision, X::AbstractVector, cost::Float64;
-                aversion::Float64, interrupt_cost::Float64, expected_repeats::Float64 = 0.0)
+                aversion::Float64, interrupt_cost::Float64, expected_repeats::Float64 = 0.0,
+                w_time::Float64 = 0.0, exp_time::Float64 = 0.0)
     bx = belief_at_context(model, top, X)
     tf = 1.0 + expected_repeats                       # expected calls a block prevents: this one + the tail
-    block_fn = _lin(-cost * (tf + aversion), cost * tf)   # c·(1+m) − c·[(1+m)+λ]·θ
+    # TIME coordinate: a block also SAVES the call's wall-clock (E[time]·tf seconds), valued at
+    # w_time $/sec. Folds into the block offset next to the money saving c·tf. 0 ⇒ bit-identical.
+    tcost = w_time * exp_time * tf
+    block_fn = _lin(-cost * (tf + aversion), cost * tf + tcost)   # c·(1+m) + w_time·E[time]·(1+m) − c·[(1+m)+λ]·θ
     fpa_pb = Dict{Symbol, LinearCombination}(:proceed => _const(0.0), :block => block_fn)
     # EU(ask) = voi − q, computed through the canonical `net_voi` stdlib op (the
     # cost subtraction lives in stdlib, not as host arithmetic here) and entered
@@ -392,19 +396,21 @@ function decide_multi(waste_model::StructureBMA, top_waste::MixturePrevision,
                       harm_model::StructureBMA, harm_top::MixturePrevision,
                       Xw::AbstractVector, Xh::AbstractVector, cost::Float64;
                       aversion::Float64, interrupt_cost::Float64, harm_cost::Float64,
-                      expected_repeats::Float64 = 0.0)
+                      expected_repeats::Float64 = 0.0,
+                      w_time::Float64 = 0.0, exp_time::Float64 = 0.0)
     bxa = belief_at_context(waste_model, top_waste, Xw)   # P(approve|Xw)
     bxu = belief_at_context(harm_model, harm_top, Xh)     # P(unsafe|Xh)
     joint = ProductMeasure(Measure[wrap_in_measure(bxa), wrap_in_measure(bxu)])
     tf = 1.0 + expected_repeats        # expected calls a block prevents (waste tail; harm is one-shot)
-    # EU(block) = c·(1+m)·[1−θ_a] − cλθ_a + H·θ_u over the joint (Projection(1)=θ_a, Projection(2)=θ_u)
+    tcost = w_time * exp_time * tf      # time a block saves (w_time $/sec × E[time]·tf); 0 ⇒ bit-identical
+    # EU(block) = c·(1+m)·[1−θ_a] + w_time·E[time]·(1+m) − cλθ_a + H·θ_u over the joint
     block_fn = LinearCombination(Tuple{Float64, TestFunction}[
-        (-cost * (tf + aversion), Projection(1)), (harm_cost, Projection(2))], cost * tf)
-    # EU(ask): VOI of the user resolving approve, against the SAME tail-aware block payoff so
+        (-cost * (tf + aversion), Projection(1)), (harm_cost, Projection(2))], cost * tf + tcost)
+    # EU(ask): VOI of the user resolving approve, against the SAME tail+time-aware block payoff so
     # asking about a likely-long loop inherits the (1+m)× value; a constant so all three
     # actions compare through one optimise.
     eu_ask = net_voi(bxa, _decision_kernel(), [:proceed, :block],
-                     Dict(:proceed => _const(0.0), :block => _lin(-cost * (tf + aversion), cost * tf)),
+                     Dict(:proceed => _const(0.0), :block => _lin(-cost * (tf + aversion), cost * tf + tcost)),
                      [0, 1], interrupt_cost)
     fpa = Dict(:proceed => _const(0.0), :block => block_fn, :ask => _const(eu_ask))
     optimise(joint, [:proceed, :block, :ask], fpa)
@@ -466,6 +472,7 @@ function wire_brain!(env)
 
     H        = Float64(get(env, Symbol("harm-cost"), 0.0))
     hresp    = Symbol(get(env, Symbol("harm-response"), "ask"))  # :ask (confirm) | :block (enforce)
+    wtime    = Float64(get(env, Symbol("w-time"), 0.0))          # TIME coordinate: $/sec of wall-clock
 
     model = build_model_from_env(env; alpha0 = a0, beta0 = b0, p_edge = p_edge)
 
@@ -530,6 +537,31 @@ function wire_brain!(env)
     m_at(X) = tail_top === nothing ? 0.0 :
               expect(belief_at_context(model, tail_top, X), GeometricTail())
 
+    # Optional governance LATENCY belief (TIME coordinate) — OPT-IN by file presence, like the
+    # tail belief. Per-context Poisson-Gamma E[turns|X] (read by `expect`=α/β) × measured s̄/turn
+    # ⇒ E[time|X] seconds a block would save. Absent ⇒ exp_time=0 ⇒ time-blind governance
+    # (bit-identical). Version-stable counts-JSON (sufficient statistic), reconstructed exactly.
+    gov_latency = nothing
+    lpath = get(env, Symbol("governance-latency-path"), joinpath(@__DIR__, "governance_latency.counts.json"))
+    if lpath !== nothing && !isempty(string(lpath)) && isfile(string(lpath))
+        try
+            data = JSON3.read(read(string(lpath), String))
+            α0, β0 = Float64(data["turns_prior"][1]), Float64(data["turns_prior"][2])
+            rate = Float64(data["rate_s"])
+            tm = Dict{String, Float64}()
+            for ctx in data["contexts"]
+                g = GammaPrevision(α0 + Float64(ctx["sum_turns"]), β0 + Float64(ctx["n_obs"]))
+                tm[join(string.(ctx["ctx"]), "|")] = Float64(expect(g, Identity())) * rate
+            end
+            gov_latency = tm
+            @info "credence-pi: governance latency belief ON (time coordinate)" path=string(lpath)
+        catch e
+            @warn "credence-pi: governance latency failed to load; time-blind" error=e
+            gov_latency = nothing
+        end
+    end
+    time_at(X) = gov_latency === nothing ? 0.0 : get(gov_latency, join(string.(X), "|"), 0.0)
+
     env[Symbol("make-prior")] = () -> build_prior(model)
 
     env[Symbol("decide-action")] = (top, features, cost) -> begin
@@ -542,7 +574,8 @@ function wire_brain!(env)
             Xh = context_from_features(harm_model, features)
             m = m_at(Xw)
             d = decide_multi(model, top, harm_model, harm_top, Xw, Xh, c;
-                             aversion = λ, interrupt_cost = q, harm_cost = H, expected_repeats = m)
+                             aversion = λ, interrupt_cost = q, harm_cost = H, expected_repeats = m,
+                             w_time = wtime, exp_time = time_at(Xw))
             # Research-stage effector policy (harm-response = :ask): a harm-DRIVEN stop is a
             # CONFIRMATION, not a refusal — the harm belief is benchmark-seeded, not yet
             # user-calibrated, so asking has value and the response is the calibration
@@ -550,13 +583,15 @@ function wire_brain!(env)
             # Like shadowMode, this is an effector policy, not a change to the EU reasoning:
             # the harm term decided "do not proceed"; :ask realises that as "confirm".
             if d === :block && hresp === :ask
-                d_waste = decide(model, top, Xw, c; aversion = λ, interrupt_cost = q, expected_repeats = m)
+                d_waste = decide(model, top, Xw, c; aversion = λ, interrupt_cost = q,
+                                 expected_repeats = m, w_time = wtime, exp_time = time_at(Xw))
                 d = d_waste === :block ? :block : :ask   # harm was the driver ⇒ confirm
             end
             d
         else
             X = context_from_features(model, features)
-            decide(model, top, X, c; aversion = λ, interrupt_cost = q, expected_repeats = m_at(X))
+            decide(model, top, X, c; aversion = λ, interrupt_cost = q, expected_repeats = m_at(X),
+                   w_time = wtime, exp_time = time_at(X))
         end
     end
 
