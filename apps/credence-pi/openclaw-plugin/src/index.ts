@@ -34,6 +34,7 @@ import { SafetyTracker } from "./safety.js";
 import { extractRoutingFeatures } from "./routing-features.js";
 import { buildRoster, type RoutingModel } from "./roster.js";
 import { buildPriceTable, computeTurnCost, type PriceTable } from "./cost.js";
+import { resolveProfile, type Profile } from "./profile.js";
 import type {
   PluginEntry,
   BeforeToolCallEvent,
@@ -151,6 +152,10 @@ export interface GovernorOpts {
   /** The user's model roster (discovered from api.config), sent in each route-request so the
    *  brain routes over the models OpenClaw actually has. Empty ⇒ routing is not registered. */
   roster: RoutingModel[];
+  /** The user's utility profile (cost/time/quality/risk trade-offs), sent in each sensor event
+   *  so the daemon applies the user's preferences per-request (no restart). The brain does the
+   *  EU-max; this is preference DATA the body ships. */
+  profile: Profile;
   log: Logger;
 }
 
@@ -177,7 +182,7 @@ export function createGovernor(
   opts: GovernorOpts,
 ): Governor {
   const { hookTimeoutMs, approvalTimeoutMs, priceTable, redactToolInputs,
-    shadowMode, roster, log } = opts;
+    shadowMode, roster, profile, log } = opts;
   const tracker = new FeatureTracker();
   // Safety (multi-outcome): accumulates taint from tool results and emits the taint-flow
   // features the harm posterior conditions on. The daemon ignores them unless harm
@@ -243,6 +248,8 @@ export function createGovernor(
         tool_name: event.toolName,
         input: redactToolInputs ? null : event.params,
       },
+      // The user's utility weights (λ/q/harm/w_time read here) — preference, not learning.
+      profile,
     });
 
     if (!post.ok) {
@@ -317,6 +324,8 @@ export function createGovernor(
       // The user's live model roster (roster-aware routing): the brain routes over THESE
       // models + their costs, not a hardcoded list. Always ≥2 here (register gates on it).
       models: roster,
+      // The user's utility weights (reward + w_time read here) — the time/money trade-off.
+      profile,
     });
 
     if (!post.ok) {
@@ -425,6 +434,15 @@ const plugin: PluginEntry = {
     const shadowMode = cfg.shadowMode === true;
     const routingEnabled = cfg.routing !== false; // model routing is ON by default
     const priceTable = buildPriceTable(cfg.pricing);
+    // The user's utility profile: a named preset (default `balanced`) + an optional per-dial
+    // override, resolved to the full weight vector sent with each sensor event. This is how a
+    // user expresses their cost/time/quality/risk trade-off — no daemon restart, no Julia edit.
+    const profile = resolveProfile(
+      typeof cfg.profile === "string" ? cfg.profile : undefined,
+      typeof cfg.profileOverride === "object" && cfg.profileOverride !== null
+        ? (cfg.profileOverride as Record<string, unknown>)
+        : undefined,
+    );
 
     const log: Logger = (m, e) => {
       if (silent) return;
@@ -456,6 +474,7 @@ const plugin: PluginEntry = {
       redactToolInputs,
       shadowMode,
       roster,
+      profile,
       log,
     });
     if (shadowMode) log("credence-pi: SHADOW MODE — observing only, never enforcing");

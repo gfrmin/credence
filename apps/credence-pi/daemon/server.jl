@@ -422,7 +422,9 @@ function handle_sensor_event(state::DaemonState,
             error("tool-proposed event $event_id missing required 'features' (Pass 2 brain)")
         state.pending_contexts[event_id] = features
         decide = state.env[Symbol("decide-action")]
-        action = decide(state.posterior[], features, state.last_cost[])
+        # Per-request profile (the user's utility weights) — body-supplied, no daemon restart.
+        action = decide(state.posterior[], features, state.last_cost[],
+                        get(event_dict, "profile", nothing))
         action isa Symbol || error("decide-action returned non-Symbol: $(typeof(action))")
         emit_signal!(state, event_id, action, event_dict)
 
@@ -503,7 +505,8 @@ function handle_sensor_event(state::DaemonState,
             # OpenClaw actually has + their costs. Absent ⇒ route-decide falls back to the
             # declared default roster (back-compat with an older body).
             roster = get(event_dict, "models", nothing)
-            choice = route_decide(features, roster)
+            # Per-request profile (the user's utility weights: reward/w_time) — body-supplied.
+            choice = route_decide(features, roster, get(event_dict, "profile", nothing))
             if choice === nothing
                 # Inert: fewer than 2 candidate models ⇒ nothing to route between. Emit no
                 # signal; the body keeps OpenClaw's model (fail open). No pending-route stash.
@@ -538,9 +541,9 @@ function handle_sensor_event(state::DaemonState,
             roster = get(event_dict, "models", nothing)
             tried  = get(event_dict, "tried", Int[])
             reward = get(event_dict, "reward", nothing)
-            choice = reward === nothing ?
-                escalate_decide(features, roster, tried) :
-                escalate_decide(features, roster, tried, Float64(reward))
+            # Per-request profile (reward/w_time override); reward field kept for back-compat.
+            choice = escalate_decide(features, roster, tried, reward,
+                                     get(event_dict, "profile", nothing))
             choice === nothing ? (ack_extra["stop"] = true) : (ack_extra["route"] = choice)
         end
 

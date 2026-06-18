@@ -473,7 +473,8 @@ function wire_routing!(env;
     # fields, or `nothing` (inert ⇒ body keeps OpenClaw's model). Reads rt's beliefs LIVE
     # (route_outcome! mutates them); the argmax is the single canonical `optimise` inside
     # `route` (Invariant 1); the only arithmetic is reward/cost coefficient construction.
-    env[Symbol("route-decide")] = (features, roster = nothing) -> _route_decide(rt, features, roster)
+    env[Symbol("route-decide")] = (features, roster = nothing, profile = nothing) ->
+        _route_decide(rt, features, roster, profile)
 
     # Observe-then-escalate call-site (the dominance proof's WINNING policy, now wired live):
     # (feature dict, live roster, tried-set, reward) → the next rung's wire fields + its
@@ -482,8 +483,9 @@ function wire_routing!(env;
     # the single canonical `optimise` inside `escalation_next` (Invariant 1); the host drives
     # the try→observe→escalate loop. Reads rt's beliefs LIVE, same as route-decide.
     env[Symbol("escalate-decide")] =
-        (features, roster = nothing, tried = Int[], reward = rt.reward) ->
-            _escalate_decide(rt, features, roster, tried, reward)
+        (features, roster = nothing, tried = Int[], reward = nothing, profile = nothing) ->
+            _escalate_decide(rt, features, roster, tried,
+                             reward === nothing ? rt.reward : Float64(reward), profile)
 
     rt
 end
@@ -492,12 +494,22 @@ end
 # or the declared default roster. Returns `nothing` — body keeps OpenClaw's model — when fewer
 # than 2 candidates exist (routing is a no-op with nothing to choose between), so routing-on-
 # by-default is safe for a single-model install.
-function _route_decide(rt::RoutingState, features, roster)
+# Per-request profile override: the user's utility weights, sent by the body PER REQUEST (like
+# the live roster), so a user switches their cost/time/quality trade-off with NO daemon restart.
+# Returns the override value for `key` if the profile carries it, else the wired default. The
+# profile is preference DATA the body ships; the brain still does all the EU-max (body math-free).
+_pget(profile, key::AbstractString, default::Float64)::Float64 =
+    (profile isa AbstractDict && haskey(profile, key) && profile[key] !== nothing) ?
+        Float64(profile[key]) : default
+
+function _route_decide(rt::RoutingState, features, roster, profile = nothing)
     names, providers, ids, costs, tops = _resolve_roster(rt, roster)
     length(ids) >= 2 || return nothing
+    reward = _pget(profile, "reward", rt.reward)        # quality coordinate (per-request override)
+    w_time = _pget(profile, "w_time", rt.w_time)        # time coordinate (per-request override)
     X = context_from_features(rt.model, features)
     times = Float64[latency_at(rt.latency, ids[a], X) for a in eachindex(ids)]   # E[time|a,X], 0 if unknown
-    a = route(rt.model, tops, X, costs, rt.reward; w_time = rt.w_time, times = times)
+    a = route(rt.model, tops, X, costs, reward; w_time = w_time, times = times)
     Dict{String, Any}("model" => ids[a], "provider" => providers[a], "name" => names[a])
 end
 
@@ -508,15 +520,17 @@ end
 # rungs are ordered cheapest-first because `escalation_next` scans `eachindex(tops)` ascending.
 # The returned `tier_index` is in that cost-ascending space, so the host pushes it straight
 # back into `tried` on a failure (mirrors the eval's `push!(tried, a)` loop).
-function _escalate_decide(rt::RoutingState, features, roster, tried, reward)
+function _escalate_decide(rt::RoutingState, features, roster, tried, reward, profile = nothing)
     names, providers, ids, costs, tops = _resolve_roster(rt, roster)
     length(ids) >= 2 || return nothing
+    reward = _pget(profile, "reward", Float64(reward))   # per-request quality override
+    w_time = _pget(profile, "w_time", rt.w_time)         # per-request time override
     order = sortperm(costs)                              # cheapest → dearest
     X = context_from_features(rt.model, features)
     triedset = Set{Int}(Int(t) for t in tried)          # indices in cost-ascending space
     times = Float64[latency_at(rt.latency, ids[i], X) for i in order]   # E[time], aligned to tops[order]
-    a = escalation_next(rt.model, tops[order], X, costs[order], Float64(reward), triedset;
-                        w_time = rt.w_time, times_X = times)
+    a = escalation_next(rt.model, tops[order], X, costs[order], reward, triedset;
+                        w_time = w_time, times_X = times)
     a == 0 && return nothing                             # no positive-EU rung ⇒ STOP
     j = order[a]
     Dict{String, Any}("model" => ids[j], "provider" => providers[j], "name" => names[j],
