@@ -179,6 +179,12 @@ function load_env(bdsl_dir::AbstractString)
         end
     end
     wire_brain!(env)
+    # Optional routing warm-belief override (mirrors CREDENCE_PI_WARM_BRAIN for governance):
+    # CREDENCE_PI_ROUTING_BRAIN="" forces a COLD routing start (no warm seed) — used by the
+    # live-escalation A/B to score the gate leakage-free, since the shipped warm belief is
+    # trained on the same matrix. Absent ⇒ wire_routing! uses its default counts.json.
+    haskey(ENV, "CREDENCE_PI_ROUTING_BRAIN") &&
+        (env[Symbol("routing-brain-path")] = ENV["CREDENCE_PI_ROUTING_BRAIN"])
     routing = wire_routing!(env)   # RoutingState iff a roster was declared; else nothing
     (env, routing)
 end
@@ -404,6 +410,7 @@ function handle_sensor_event(state::DaemonState,
 
     # 2. Dispatch.
     event_type = get(event_dict, "event_type", "")
+    ack_extra = Dict{String, Any}()        # request/response payload (e.g. escalate-request)
     if event_type == "tool-proposed"
         # Fix 1: forward the raw feature dict + the latest per-turn cost into the
         # brain. Transport only — the cell-mapping / EU-max happens brain-side.
@@ -512,14 +519,39 @@ function handle_sensor_event(state::DaemonState,
             end
         end
 
+    elseif event_type == "escalate-request"
+        # Observe-then-escalate (the dominance proof's WINNING gate, now wired live). Like
+        # route-request, but the host drives a try→observe→escalate loop: each call passes the
+        # rungs already `tried` (failed) this attempt and the per-call `reward` profile; the
+        # brain returns the next cheapest positive-EU rung or STOP. The decision rides back
+        # SYNCHRONOUSLY in the ack (`route`/`stop`), so the host reads the POST response — no
+        # signal-queue round-trip. NEVER touches the governance posterior (separate belief).
+        escalate_decide = get(state.env, Symbol("escalate-decide"), nothing)
+        if escalate_decide === nothing
+            @warn "escalate-request received but routing is not configured; ignoring (body fails open)"
+            ack_extra["stop"] = true
+        else
+            features = get(event_dict, "features", nothing)
+            event_id = string(get(event_dict, "event_id", ""))
+            features === nothing &&
+                error("escalate-request event $event_id missing required 'features'")
+            roster = get(event_dict, "models", nothing)
+            tried  = get(event_dict, "tried", Int[])
+            reward = get(event_dict, "reward", nothing)
+            choice = reward === nothing ?
+                escalate_decide(features, roster, tried) :
+                escalate_decide(features, roster, tried, Float64(reward))
+            choice === nothing ? (ack_extra["stop"] = true) : (ack_extra["route"] = choice)
+        end
+
     else
         @warn "handle_sensor_event: unknown event_type" event_type
     end
 
-    Dict{String, Any}(
+    merge(Dict{String, Any}(
         "ack"      => true,
         "event_id" => string(get(event_dict, "event_id", "")),
-    )
+    ), ack_extra)
 end
 
 # ── HTTP transport ────────────────────────────────────────────────────
