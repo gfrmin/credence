@@ -117,6 +117,36 @@ function terminalSignal(resp: DecideResponse, ev: Evidence): EffectorSignal {
 	}
 }
 
+// Terminal brain actions; `gather` is a steer the body enacts internally, never logged.
+const TERMINAL_ACTIONS = new Set(["report", "hedge", "ask_clarify", "abstain"]);
+
+// The verdict-emission seam (move-4 successor): post the terminal decision the governor
+// enacted to the bridge's /log_decision, so the owner's one-bit verdict folds into u_wrong
+// through life-agent's EXISTING reaction loop. BEST-EFFORT: a logging failure is non-fatal —
+// it must never change the decision — so errors are swallowed (noted via onStep). The bridge
+// owns the write and sorts the candidate-order credences leader-first.
+async function logTerminalDecision(
+	ev: Evidence,
+	resp: DecideResponse,
+	bridge: BridgeClient,
+	opts: DecideOptions,
+): Promise<void> {
+	if (!TERMINAL_ACTIONS.has(resp.effector)) return; // a non-terminal slipped through; nothing to log
+	try {
+		const { decision_id } = await bridge.logDecision(ev.question, ev.hitKeys, {
+			effector: resp.effector,
+			credences: resp.credences,
+			p_none: resp.p_none,
+			eu: resp.eu,
+			candidates: ev.candidates,
+			n_obs: ev.observations.length,
+		});
+		opts.onStep?.(`decision logged ${decision_id} — react with: /react ${decision_id} g|b`);
+	} catch (e) {
+		opts.onStep?.(`decision logging failed (non-fatal, answer unaffected): ${String(e)}`);
+	}
+}
+
 /**
  * The injected `askBrain`: decide, enacting any `gather(recency)` steer internally,
  * and return the terminal effector signal. Mutates `ev` (the accumulator) in place —
@@ -139,7 +169,14 @@ export async function decideWithGather(
 			resp.probe === "recency" &&
 			!ev.appliedProbes.includes("recency");
 		if (!steerRecency) {
-			return terminalSignal(resp, ev);
+			const signal = terminalSignal(resp, ev);
+			// Record the enacted decision for the reaction loop — best-effort and FIRE-AND-FORGET:
+			// NOT awaited, so a slow or hung bridge logger can never add latency to the govern path
+			// (an await here could, worst case, eat the govern timeout → fail-closed → silently
+			// withhold a good answer). logTerminalDecision swallows all its own errors, so the
+			// un-awaited promise never rejects.
+			void logTerminalDecision(ev, resp, bridge, opts);
+			return signal;
 		}
 
 		opts.onStep?.(
