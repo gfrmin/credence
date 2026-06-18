@@ -140,8 +140,10 @@ fallible verifier — the known FrugalGPT caveat). (b) The gate is MYOPIC (singl
 the exact sequential EU-max: it ignores the option value of still-dearer rungs, so it
 under-escalates (conservative). On this sample the conservatism doesn't hurt; the exact
 backward-induction variant is future work, not a claimed result. (c) The gate now lives in
-the brain (`RoutingBrain.escalation_next`, via `optimise`) and the eval calls it, but it is
-not yet wired into the live daemon loop (offline eval result). (d) Headline regret 0.069 is
+the brain (`RoutingBrain.escalation_next`, via `optimise`) AND is wired into the live daemon
+loop (`escalate-request`, §"Live-daemon escalation" below) — a unit test asserts the daemon
+decision equals in-process `escalation_next` on identical inputs, so this offline result
+transfers to the live system. (d) Headline regret 0.069 is
 the canonical config (3 reps, 100 seeds, train-frac 0.6, 3-point profile set); the
 single-rep sensitivity sweep put the range at ~0.04–0.14 across reconfigurations and the
 rep3 point sits inside it. Robust as the *lowest* worst-case among deployable arms by 13×,
@@ -157,6 +159,50 @@ leads.
 
 *Verified by a 5-skeptic adversarial workflow (leakage clean; foil-fairness caught the
 clairvoyant mislabel — now fixed; metric/data/mechanism minor caveats folded in above).*
+
+## Live-daemon escalation (stage a) — the gate wired into the daemon loop
+
+The dominance result above was an *in-process* eval. This stage runs the SAME observe-then-
+escalate gate **as live daemon code**: `eval/live_ab/escalation_live.jl` drives the
+try→observe→escalate loop entirely over the running daemon's `escalate-request` HTTP handler
+(280 round-trips per run, logged), scoring realized welfare on the 17-task × 3-rep matrix (51
+worlds). Two guards make it honest:
+
+- **Cold belief** (`CREDENCE_PI_ROUTING_BRAIN=""`): the shipped warm belief was trained on
+  this matrix, so we run the gate with the *cold* prior (θ=0.5). This is leakage-free AND a
+  **conservative lower bound** — the deployed warm belief can only sharpen the gate. With cold
+  θ the gate is purely "is the next rung worth its cost vs reward·0.5"; the observed `resolved`
+  (ground truth) drives escalation.
+- **Leave-one-task-out cost**: the gate's only matrix-derived input is per-(tier,difficulty)
+  expected cost, computed excluding the scored task. (Cost is not the `resolved` label.)
+
+Realized per-world means (reward = profile value of a correct answer):
+
+| profile | arm | welfare | solves | cost ($) |
+|---|---|---:|---:|---:|
+| **cost-hawk** (0.25) | **escalation** | **0.0289** | 0.451 | 0.0839 |
+| | always-haiku | 0.0237 | 0.412 | 0.0793 |
+| | always-sonnet | 0.0019 | 0.706 | 0.1745 |
+| | always-opus | −0.1932 | 0.627 | 0.3501 |
+| **balanced** (1.0) | **escalation** | **0.5437** | 0.784 | 0.2406 |
+| | always-haiku | 0.3325 | 0.412 | 0.0793 |
+| | always-sonnet | 0.5313 | 0.706 | 0.1745 |
+| | always-opus | 0.2774 | 0.627 | 0.3501 |
+| **quality-hawk** (5.0) | **escalation** | **3.6151** | 0.784 | 0.3064 |
+| | always-sonnet | 3.3549 | 0.706 | 0.1745 |
+| | always-opus | 2.7872 | 0.627 | 0.3501 |
+| | always-haiku | 1.9795 | 0.412 | 0.0793 |
+
+**Escalation is the best-welfare arm on every profile**, through the live daemon, with a cold
+(leakage-free) belief — dominating every fixed single-model policy. Versus the A/B baseline
+always-sonnet: **+0.027 / +0.012 / +0.260 welfare** (cost-hawk / balanced / quality-hawk). The
+mechanism is visible in the table: on cost-hawk it is frugal (−52% cost: $0.084 vs $0.175,
+stopping early when a solve isn't worth its price); on balanced/quality-hawk it **solves MORE
+than any single tier** (0.784 vs sonnet 0.706, even opus 0.627) because it captures the *union*
+of tier capabilities — exactly the non-monotonic tasks (path-tracing only haiku;
+configure-git-webserver only sonnet) that no fixed order can exploit. This is the cross-profile
+robustness claim, now measured end-to-end through real daemon code. (Output:
+`results/escalation_live.txt`. Stage b adds a free local row + a live OpenClaw confirmation.)
 
 ## Calibration of the up-front belief (`eval/calibration.jl`)
 
@@ -197,6 +243,9 @@ decision — `posterior_accuracy` read-out only.)
 - [x] OpenClaw-in-container smoke (`live_ab/oc_container_smoke.sh`) — OpenClaw runs in a
       Terminal-Bench container and completes a real task (haiku, transport=embedded).
 - [x] Report: measured savings vs every fixed policy + honest limits (this doc)
-- [ ] (full build, pending go/no-go) credence gateway/daemon networked into the container +
-      task-level escalation orchestration (run→test→escalate) with OpenClaw as the agent
+- [x] **Escalation gate wired into the LIVE daemon loop** (`escalate-request`; brain
+      `escalate-decide`); equivalence-tested (`daemon decision == in-process escalation_next`,
+      `tests/julia/test_routing.jl` §B'); stage-(a) live-daemon A/B below — closes limit (c).
+- [ ] (stage b, pending) free local (qwen) row + per-session decoded verifier + real OpenClaw
+      in the container (run→escalate with OpenClaw as the agent), within the live-A/B budget.
 - [ ] (future) exact sequential-EU (backward-induction) gate variant vs the myopic gate

@@ -1,0 +1,27 @@
+Live-daemon observe-then-escalate vs fixed policies
+  daemon=http://127.0.0.1:8787  worlds(tasks×reps)=51  belief=COLD (leakage-free, conservative)
+
+profile=cost-hawk  (per-world means)
+  arm              welfare   solves      cost
+  escalation        0.0289    0.451    0.0839  <<<
+  always-haiku      0.0237    0.412    0.0793
+  always-sonnet     0.0019    0.706    0.1745
+  always-opus      -0.1932    0.627    0.3501
+  escalation vs always-sonnet: Δwelfare=+0.0269  Δcost=-0.0907  Δsolves=-0.255
+
+profile=balanced  (per-world means)
+  arm              welfare   solves      cost
+  escalation        0.5437    0.784    0.2406  <<<
+  always-haiku      0.3325    0.412    0.0793
+  always-sonnet     0.5313    0.706    0.1745
+  always-opus       0.2774    0.627    0.3501
+  escalation vs always-sonnet: Δwelfare=+0.0123  Δcost=+0.0661  Δsolves=+0.078
+
+profile=quality-hawk  (per-world means)
+  arm              welfare   solves      cost
+  escalation        3.6151    0.784    0.3064  <<<
+  always-haiku      1.9795    0.412    0.0793
+  always-sonnet     3.3549    0.706    0.1745
+  always-opus       2.7872    0.627    0.3501
+  escalation vs always-sonnet: Δwelfare=+0.2603  Δcost=+0.1319  Δsolves=+0.078
+

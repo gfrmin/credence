@@ -153,6 +153,29 @@ let env = routing_env(reward = 1.0)
     ok("escalation_next gate ≡ reward·E[θ|X] ≥ cost (boundary exact, via optimise)")
 end
 
+# escalate-decide: the closure the DAEMON calls (env[:escalate-decide]) must be a faithful
+# wrapper of escalation_next — same rung on identical inputs. This is the brain half of
+# closing EXPERIMENT.md honest-limit (c) (the gate wired into the live loop, not just the eval).
+let env = routing_env(reward = 1.0)
+    rt = wire_routing!(env); decide = env[Symbol("escalate-decide")]
+    costs = [0.01, 0.05, 0.20]                                   # ascending E[cost|tier]
+    roster = [["haiku",  "anthropic", "claude-haiku-4-5",  costs[1]],   # KNOWN ids ⇒ warm tops
+              ["sonnet", "anthropic", "claude-sonnet-4-6", costs[2]],
+              ["opus",   "anthropic", "claude-opus-4-8",   costs[3]]]
+    for tried in (Int[], [1], [1, 2], [1, 2, 3])
+        ref = escalation_next(rt.model, rt.tops, ["short"], costs, 1.0, Set{Int}(tried))
+        got = decide(Dict("prompt-length" => "short"), roster, tried)
+        @assert (got === nothing ? 0 : got["tier_index"]) == ref
+    end
+    ok("escalate-decide == in-process escalation_next on identical inputs (the daemon's gate is faithful)")
+
+    # Sort-robustness: escalation_next scans cheapest-first, so escalate-decide must order the
+    # roster by cost itself — a dearest-first roster still yields the cheapest rung at tried=[].
+    g = decide(Dict("prompt-length" => "short"), reverse(roster), Int[])
+    @assert g["model"] == "claude-haiku-4-5" && g["tier_index"] == 1
+    ok("escalate-decide sorts by cost: a dearest-first roster still escalates cheapest-first")
+end
+
 # ── A''. Roster-aware routing: the LIVE roster (the user's actual models) ────────
 # route-decide takes an optional per-request roster — the models OpenClaw actually has +
 # their costs. Known models reuse the warm belief; the user's OWN (unknown) models get a
@@ -272,6 +295,46 @@ let path = tempname() * ".jsonl"
         "models" => Any[Dict("name" => "a", "provider" => "p", "model" => "only-one", "cost" => 0.01)]))
     @assert isempty(snapshot(state2.signal_queue))
     ok("daemon roster-aware: single-model roster ⇒ no route signal (inert, fail open)")
+    rm(path; force = true)
+end
+
+# ── B'. Observe-then-escalate THROUGH the daemon (escalate-request) ──────────────
+# Closes EXPERIMENT.md honest-limit (c): the EU escalation gate now runs as live daemon code.
+# The host drives try→observe→escalate by re-POSTing with the failed rungs in `tried`; the
+# decision rides back synchronously in the ack (`route`/`stop`). The live-A/B harness
+# (eval/live_ab/escalation_live.jl) scores realized welfare over exactly this path.
+let path = tempname() * ".jsonl"
+    state = init_state(; bdsl_dir = DAEMON_BDSL, log_path = path)
+    @assert haskey(state.env, Symbol("escalate-decide"))
+    w_before = weights(state.posterior[])
+    costs = [0.01, 0.05, 0.20]
+    roster = Any[Dict("name" => "haiku",  "provider" => "anthropic", "model" => "claude-haiku-4-5",  "cost" => costs[1]),
+                 Dict("name" => "sonnet", "provider" => "anthropic", "model" => "claude-sonnet-4-6", "cost" => costs[2]),
+                 Dict("name" => "opus",   "provider" => "anthropic", "model" => "claude-opus-4-8",   "cost" => costs[3])]
+    esc(tried) = handle_sensor_event(state, Dict{String, Any}("event_type" => "escalate-request",
+        "event_id" => "e", "features" => Dict("prompt-length" => "short"),
+        "models" => roster, "tried" => tried, "reward" => 1.0))
+    model_of(ack) = haskey(ack, "route") ? ack["route"]["model"] : (get(ack, "stop", false) ? "STOP" : "?")
+    @assert model_of(esc(Int[]))   == "claude-haiku-4-5"
+    @assert model_of(esc([1]))     == "claude-sonnet-4-6"
+    @assert model_of(esc([1, 2]))  == "claude-opus-4-8"
+    @assert model_of(esc([1, 2, 3])) == "STOP"
+    ok("daemon escalate-request: try→escalate→STOP ladder over the live roster (haiku→sonnet→opus→STOP)")
+
+    # Full-path equivalence: the daemon's escalate-request decision == in-process escalation_next
+    # (via Server.RoutingBrain — the daemon's own module instance, per the section-D note).
+    for tried in (Int[], [1], [1, 2], [1, 2, 3])
+        got = let a = esc(tried); haskey(a, "route") ? a["route"]["tier_index"] : 0 end
+        ref = Server.RoutingBrain.escalation_next(state.routing.model, state.routing.tops,
+                                                  ["short"], costs, 1.0, Set{Int}(tried))
+        @assert got == ref
+    end
+    ok("daemon escalate-request decision == in-process escalation_next (gate wired faithfully — closes EXPERIMENT.md limit (c))")
+
+    # Routing is a SEPARATE belief: an escalate-request must not touch the governance posterior.
+    # credence-lint: allow — precedent:test-oracle — governance-posterior equality oracle (escalation must not learn governance)
+    @assert weights(state.posterior[]) == w_before
+    ok("daemon escalate-request leaves the governance posterior untouched (separate belief)")
     rm(path; force = true)
 end
 

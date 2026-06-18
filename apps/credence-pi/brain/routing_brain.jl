@@ -403,6 +403,16 @@ function wire_routing!(env;
     # `route` (Invariant 1); the only arithmetic is reward/cost coefficient construction.
     env[Symbol("route-decide")] = (features, roster = nothing) -> _route_decide(rt, features, roster)
 
+    # Observe-then-escalate call-site (the dominance proof's WINNING policy, now wired live):
+    # (feature dict, live roster, tried-set, reward) → the next rung's wire fields + its
+    # cost-ascending `tier_index` (the host adds it to `tried` on an observed failure), or
+    # `nothing` (STOP — no positive-EU rung left ⇒ body keeps the current model). The gate is
+    # the single canonical `optimise` inside `escalation_next` (Invariant 1); the host drives
+    # the try→observe→escalate loop. Reads rt's beliefs LIVE, same as route-decide.
+    env[Symbol("escalate-decide")] =
+        (features, roster = nothing, tried = Int[], reward = rt.reward) ->
+            _escalate_decide(rt, features, roster, tried, reward)
+
     rt
 end
 
@@ -416,6 +426,26 @@ function _route_decide(rt::RoutingState, features, roster)
     X = context_from_features(rt.model, features)
     a = route(rt.model, tops, X, costs, rt.reward)
     Dict{String, Any}("model" => ids[a], "provider" => providers[a], "name" => names[a])
+end
+
+# One escalation step over the LIVE roster: the cheapest not-yet-`tried` rung whose myopic
+# try-EU clears the stop gate, else `nothing` (STOP). `tried` carries cost-ascending indices
+# the host accumulated from observed failures; `reward` is the per-call profile value (defaults
+# to the wired reward). The gate is `escalation_next` (the canonical {try,stop} `optimise`);
+# rungs are ordered cheapest-first because `escalation_next` scans `eachindex(tops)` ascending.
+# The returned `tier_index` is in that cost-ascending space, so the host pushes it straight
+# back into `tried` on a failure (mirrors the eval's `push!(tried, a)` loop).
+function _escalate_decide(rt::RoutingState, features, roster, tried, reward)
+    names, providers, ids, costs, tops = _resolve_roster(rt, roster)
+    length(ids) >= 2 || return nothing
+    order = sortperm(costs)                              # cheapest → dearest
+    X = context_from_features(rt.model, features)
+    triedset = Set{Int}(Int(t) for t in tried)          # indices in cost-ascending space
+    a = escalation_next(rt.model, tops[order], X, costs[order], Float64(reward), triedset)
+    a == 0 && return nothing                             # no positive-EU rung ⇒ STOP
+    j = order[a]
+    Dict{String, Any}("model" => ids[j], "provider" => providers[j], "name" => names[j],
+                      "tier_index" => a)
 end
 
 # Aligned (names, providers, ids, costs, tops) for the decision. No live roster ⇒ the declared
