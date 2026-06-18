@@ -28,6 +28,9 @@ export interface DecideOptions {
 	timeoutMs: number;
 	fetchImpl?: typeof fetch;
 	onStep?: (msg: string) => void;
+	/** Fired best-effort when a terminal decision is logged — the app binds the owner's
+	 *  in-session good/bad verdict to this `decisionId` (POST /log_reaction). */
+	onDecision?: (decision: { decisionId: string; effector: string }) => void;
 }
 
 const MAX_GATHER_STEPS = 4; // recency fires at most once; this is a runaway backstop
@@ -142,6 +145,7 @@ async function logTerminalDecision(
 			n_obs: ev.observations.length,
 		});
 		opts.onStep?.(`decision logged ${decision_id} — react with: /react ${decision_id} g|b`);
+		opts.onDecision?.({ decisionId: decision_id, effector: resp.effector });
 	} catch (e) {
 		opts.onStep?.(`decision logging failed (non-fatal, answer unaffected): ${String(e)}`);
 	}

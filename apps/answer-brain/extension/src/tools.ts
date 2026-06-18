@@ -24,6 +24,9 @@ export interface InstallDeps {
 	fetchImpl?: typeof fetch;
 	log?: (msg: string) => void;
 	retrieveK?: number;
+	/** Fired best-effort when a terminal decision is logged — the app binds the owner's
+	 *  in-session verdict to this decisionId (POST /log_reaction). */
+	onDecision?: (decision: { decisionId: string; effector: string }) => void;
 }
 
 const ANSWER_TOOL = "answer";
@@ -157,6 +160,7 @@ export function installAnswerBrain(pi: PiLike, deps: InstallDeps): void {
 					timeoutMs: perCallTimeout,
 					fetchImpl: deps.fetchImpl,
 					onStep: log,
+					onDecision: deps.onDecision,
 				}),
 			dispatch: (signal) => dispatchEffector(effectors, signal, (impl, p) => impl(p, event)),
 			// Fail CLOSED for an answer agent: a brain-unreachable failure must NOT leak an

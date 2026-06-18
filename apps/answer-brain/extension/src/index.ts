@@ -22,6 +22,9 @@ export interface ExtensionOptions {
 	bridge?: BridgeClient;
 	log?: (msg: string) => void;
 	retrieveK?: number;
+	/** Fired best-effort when a terminal decision is logged — the app binds the owner's
+	 *  in-session good/bad verdict to this decisionId (POST /log_reaction). */
+	onDecision?: (decision: { decisionId: string; effector: string }) => void;
 }
 
 const DEFAULT_DAEMON_URL = "http://127.0.0.1:8799";
@@ -49,6 +52,7 @@ export async function createAnswerBrainExtension(pi: PiLike, opts: ExtensionOpti
 		fetchImpl: opts.fetchImpl,
 		log,
 		retrieveK: opts.retrieveK,
+		onDecision: opts.onDecision,
 	});
 }
 

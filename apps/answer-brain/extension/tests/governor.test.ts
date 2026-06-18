@@ -321,3 +321,42 @@ test("a hung logger does not block or delay the decision (fire-and-forget)", asy
 	]);
 	assert.equal(outcome, undefined, "report allowed immediately, not waiting on the logger");
 });
+
+// --- onDecision: the hook the app binds the in-session verdict to -------------------------
+
+const flush = (): Promise<void> => new Promise((r) => setTimeout(r, 0));
+
+test("onDecision fires with the logged decision_id and effector (the app's react hook)", async () => {
+	const fb = fakeBridge({ extractBaseline: extractResult({ era_split: false }) });
+	const seen: { decisionId: string; effector: string }[] = [];
+	const h = fakePi();
+	await createAnswerBrainExtension(h.pi, {
+		bridge: fb.bridge,
+		fetchImpl: fakeFetch([decide({ effector: "report", value: "Vcur", report_index: 1, credences: [0.1, 0.85], p_none: 0.05 })]),
+		log: () => {},
+		onDecision: (d) => seen.push(d),
+	});
+	await h.tool("retrieve_documents").execute("1", { question: "my mobile?" });
+	await h.tool("extract_candidates").execute("2", {});
+	await h.govern({ toolName: "answer", input: { value: "draft" } });
+	await flush(); // onDecision fires after the fire-and-forget log resolves
+	assert.equal(seen.length, 1);
+	assert.equal(seen[0].effector, "report");
+	assert.ok(seen[0].decisionId.startsWith("ab-test-"), "carries the bridge's decision_id");
+});
+
+test("onDecision does not fire when no decision is logged (daemon unreachable)", async () => {
+	const fb = fakeBridge({ extractBaseline: extractResult({ era_split: false }) });
+	const seen: unknown[] = [];
+	const ff = ((url: string) => {
+		if (String(url).endsWith("/manifest")) return Promise.resolve({ ok: true, status: 200, json: async () => MANIFEST });
+		return Promise.reject(new Error("ECONNREFUSED"));
+	}) as unknown as typeof fetch;
+	const h = fakePi();
+	await createAnswerBrainExtension(h.pi, { bridge: fb.bridge, fetchImpl: ff, log: () => {}, onDecision: (d) => seen.push(d) });
+	await h.tool("retrieve_documents").execute("1", { question: "my id?" });
+	await h.tool("extract_candidates").execute("2", {});
+	await h.govern({ toolName: "answer", input: { value: "draft" } });
+	await flush();
+	assert.equal(seen.length, 0, "no decision logged → no react hook");
+});
