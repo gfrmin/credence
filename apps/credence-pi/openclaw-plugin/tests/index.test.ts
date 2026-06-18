@@ -165,6 +165,44 @@ test("shadowMode: block signal → proceeds (undefined), but still sensed + late
   h.gov.cleanup();
 });
 
+test("shadowMode: block → posts counterfactual-decision (effector/tool/in_response_to) and proceeds", async () => {
+  const h = harness(true, true); // postOk, shadowMode
+  const p = h.gov.beforeToolCall(ev("bash"), ctx);
+  await flush();
+  const eid = h.lastProposedId();
+  h.signal("block", eid);
+  assert.equal(await p, undefined); // shadow never enforces
+  const cf = h.find("counterfactual-decision") as
+    | { effector: string; tool_name: string; in_response_to: string }
+    | undefined;
+  assert.ok(cf, "a block in shadow mode must record a counterfactual-decision");
+  assert.equal(cf?.effector, "block");
+  assert.equal(cf?.tool_name, "bash");
+  assert.equal(cf?.in_response_to, eid);
+  h.gov.cleanup();
+});
+
+test("shadowMode: ask → counterfactual-decision with effector=ask", async () => {
+  const h = harness(true, true);
+  const p = h.gov.beforeToolCall(ev("bash"), ctx);
+  await flush();
+  h.signal("ask", h.lastProposedId(), { text: "Allow?" });
+  assert.equal(await p, undefined);
+  const cf = h.find("counterfactual-decision") as { effector: string } | undefined;
+  assert.equal(cf?.effector, "ask");
+  h.gov.cleanup();
+});
+
+test("shadowMode: proceed → no counterfactual-decision (nothing would have been enforced)", async () => {
+  const h = harness(true, true);
+  const p = h.gov.beforeToolCall(ev("bash"), ctx);
+  await flush();
+  h.signal("proceed", h.lastProposedId());
+  assert.equal(await p, undefined);
+  assert.equal(h.find("counterfactual-decision"), undefined);
+  h.gov.cleanup();
+});
+
 test("after_tool_call: posts tool-completed correlated by toolCallId", async () => {
   const h = harness();
   await h.gov.afterToolCall({ toolName: "bash", toolCallId: "tc1", params: {}, durationMs: 12 }, ctx);
