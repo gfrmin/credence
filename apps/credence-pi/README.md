@@ -64,12 +64,17 @@ see [`eval/results/`](./eval/results/)):
 - an injected exfiltration surfaced as a confirmation at **0.94 precision**,
   interrupting 1.2% of safe sessions.
 
-**Certain, not yet measured.** Blocking a re-run of an identical call cannot, by
-construction, cost you anything: that call already produced its result, so the
-governor hands back the tokens, the dollars, and the wait it would have taken.
-The direction is certain; the size of the saving on real usage is not, because it
-depends on how often your agent actually loops, which only your sessions reveal.
-Turning that into a measured number is the main thing early users provide.
+**Certain in direction, not yet measured — and not free of false blocks.** When the
+agent re-runs a call it already made *and nothing has changed*, blocking it hands
+back the tokens, dollars, and wait that re-run would have cost. But the block keys on
+`(tool, args)` alone — it does **not** check whether the workspace changed in between,
+so a *legitimate* re-run (re-running the tests after an edit) is byte-identical and
+would also be blocked. That false-block rate is unmeasured: the held-out corpus has no
+edit-context to expose it, and the 1.0/1.0 above is against the exact-repeat
+*definition* of waste, not against true waste (see
+[`eval/results/FINDINGS.md`](./eval/results/FINDINGS.md)). How much you save — and how
+often a block is a false one — is exactly what shadow mode measures on your own
+sessions (see What's next).
 
 The label: research-stage. Waste-blocking is enforced; safety governance ships
 in **confirm mode** (harm-driven stops are questions, never silent blocks, and
@@ -90,31 +95,36 @@ The upside is measured and the downside is bounded by construction — and the
 downside argument is the part most "smarter router" pitches can't make.
 
 **Upside.** Routing is one expected-utility maximisation, over one learned belief,
-per call, for *your* trade-off. On 17 real Terminal-Bench tasks scored through the
-live daemon it beat **every** fixed single-model policy for the ordinary user (the
-`balanced` profile), with the largest gains on mixed easy/hard workloads — where no
-single model is the right default. It isn't racing a human who hand-picks the
-optimal model every turn (no one does that); it beats "pick one model and stick
-with it," which is what people actually do. No single fixed choice wins across a
-mixed workload; credence-pi finds the per-call optimum automatically. See
-[`eval/live_ab/EXPERIMENT.md`](./eval/live_ab/EXPERIMENT.md).
+per call, for *your* trade-off. Across 17 real Terminal-Bench tasks scored through the
+live daemon, escalation's welfare beats **every** fixed single-model policy on **every**
+profile — and the point is **cross-profile**: no single fixed model is best for every
+user (haiku wins a cost-saver, sonnet wins balanced and quality-first), so "pick one
+model and stick with it" is wrong for *someone*, and credence-pi tracks the per-profile
+best without being told which. It captures the *union* of the tiers' capabilities — it
+solves more tasks than any single tier (the solve-rate edge's bootstrap CI never crosses
+zero). The honest qualifier is **precision, not direction**: 17 tasks is too small to put
+tight error bars on the per-call welfare margins (the cluster-bootstrap CIs are wide —
+that is a sample-size limit, *not* evidence the win is absent), so the *magnitude* is
+carried by the better-powered offline minimax-regret result, and a head-on run on your own
+logs is what would tighten it. See [`eval/live_ab/EXPERIMENT.md`](./eval/live_ab/EXPERIMENT.md).
 
-**Downside ≈ 0.**
+**Low, bounded downside.**
 
 - *Fail-open* — if the daemon is slow or down, OpenClaw runs exactly as it would
   without credence-pi. It cannot break your agent.
 - *Uncertainty-gated* — when the belief is unsure, every profile collapses to the
   same sensible default; credence-pi diverges from what you'd have done anyway only
-  on the calls where it has earned confidence. It cannot quietly make things worse.
-- *Minutes to adopt* — two commands, the body does no math, profiles switch with no
-  restart.
+  on the calls where it has earned confidence.
+- *Minutes to adopt* — two commands, the body does no math, profiles switch
+  per-request with no restart.
 
-High upside, near-zero downside, minutes to adopt: for a mixed OpenClaw workload,
-trying it is close to a no-brainer. The honest caveat is *magnitude* — how much you
-save depends on your workload, and the routing win was measured on benchmark tasks
-through a validated proxy (the capability×cost matrix, confirmed live by an OpenClaw
-spot-check on the real product), not yet on your own sessions. The direction is
-certain; the size, like the waste-blocking saving above, is what early users reveal.
+The one real downside is the false block above: the waste governor keys on
+`(tool, args)` and can stop a legitimate re-run (tests after an edit). It is small and
+fail-open, not zero — so the honest recommendation is to **run shadow mode first**
+(observe-only; it reports what it *would* have blocked, the would-save, and a
+write/edit-aware false-block proxy) and turn on enforcement once you've seen the
+false-block rate on your own traffic. Magnitude on both sides — savings and false
+blocks — depends on your workload and is what early users reveal.
 
 ## Why not just a rule?
 
@@ -136,10 +146,13 @@ The full argument, with the numbers, is
 
 ## What's next
 
-- **Live-enforcement telemetry.** Shadow mode plus opt-in users, to turn the
-  certain-but-unmeasured saving into a measured one and to test the safety
-  confirmations against real threats rather than a benchmark. This is the gate
-  the honest claims above are waiting on.
+- **Live-enforcement telemetry.** Shadow mode now reports what governance *would*
+  have done — counterfactual blocks, an estimated would-save, and a write/edit-aware
+  false-block proxy — so an observe-only run on your own traffic yields the
+  false-block rate and would-save directly. What remains is opt-in users to turn those
+  counterfactuals into enforced, gold-labelled numbers, and to test the safety
+  confirmations against real threats rather than a benchmark. This is the gate the
+  honest claims above are waiting on.
 - **Raising the safety ceiling.** A tool-boundary governor can see at most about
   three in ten of unsafe trajectories; reaching higher means reading signals
   beyond the tool call. A named frontier, not a silent gap.

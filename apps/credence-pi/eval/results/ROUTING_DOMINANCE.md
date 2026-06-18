@@ -1,12 +1,15 @@
-# Routing dominance: credence-pi routes better AND smarter than every system
+# Routing dominance: credence-pi is Wald-admissible across user profiles, and strictly dominant when the belief is well-resolved
 
 **Claim.** For model routing — pick which LLM answers each request — Bayesian
-EU-maximisation over a feature-conditioned belief *dominates every competing router*:
-on a cost-sensitive user it strictly beats all of them (every seed), and on a
-quality-maximising user it matches the provably-optimal rule. No fixed router can do
-this, because for k ≥ 2 models the per-user-profile optimum genuinely differs and a
-single table is the Bayes rule for at most one profile (Wald complete class). The
-richer the belief, the larger the win — and the belief gets richer *on its own*.
+EU-maximisation over a feature-conditioned belief is **undominated by every competing
+router** (Wald-admissible across user profiles), and **strictly dominates** them in the
+regime where the belief is well-resolved or the model gaps are real: on a cost-sensitive
+user it strictly beats all of them (every seed), and on a quality-maximising user it
+matches the provably-optimal rule. No fixed router can be admissible across profiles,
+because for k ≥ 2 models the per-user-profile optimum genuinely differs and a single
+table is the Bayes rule for at most one profile (Wald complete class). The richer the
+belief, the larger the win — and the belief gets richer *on its own*. (On reality at
+small scale the strict-dominance regime is data-bound — see "Real-model validation".)
 
 > **Two regimes, stated honestly up front.** The synthetic pillars below show the
 > mechanism's *ceiling* — strict dominance when the belief is well-resolved or model gaps
@@ -54,11 +57,13 @@ noisy data**, which is what this measures.
 | argmax-accuracy (cost-blind) | +3.224 | 100% |
 | best-fixed-table (profile-blind) | +3.224 | 100% |
 | threshold-router (RouteLLM 2-bin) | +2.018 | 100% |
-| **oracle-cascade (clairvoyant FrugalGPT)** | **+0.571** | **100%** |
+| **foresight cascade (FrugalGPT, knows each rung before paying)** | **+0.571** | **100%** |
 
-Rich even beats the *clairvoyant* cascade here — a cascade that knows each rung's
-correctness before paying still loses, because its cumulative rung cost is a penalty
-no cascade escapes on a cost-sensitive user.
+Rich beats even this *foresight* cascade on cost-hawk — but note this is **not** an upper
+bound: unlike a per-task oracle, the cascade still pays each rung's cost as it climbs, so
+beating it is expected, not a beaten ceiling (its cumulative rung cost is a penalty no
+cascade escapes on a cost-sensitive user). The genuine upper bound is the per-task oracle,
+which leads everywhere and is non-deployable (it needs each rung's correctness before paying).
 
 **Quality-max profile:** rich *matches* the accuracy-maximising Bayes rule
 (always-exp, best-fixed, argmax-accuracy, category-only all route the top model —

@@ -6,11 +6,12 @@ selects the model maximising expected utility
 
     EU(model | X) = value · P(resolved | model, X) − E[cost | model, X]
 
-**dominates every fixed single-model policy** (always-haiku / always-sonnet /
-always-opus) and naive heuristics — on *real* agentic terminal tasks, not toy
-coding. The dominance comes from exploiting the capability×cost spread: a cheap
-model that thrashes on a hard task burns more turns/tokens and can cost **more**
-than a dearer model that one-shots it, while still failing.
+**is the best deployable policy by cross-profile minimax regret** over every fixed
+single-model policy (always-haiku / always-sonnet / always-opus) and naive heuristics —
+on *real* agentic terminal tasks, not toy coding. The edge comes from exploiting the
+capability×cost spread: a cheap model that thrashes on a hard task burns more
+turns/tokens and can cost **more** than a dearer model that one-shots it, while still
+failing.
 
 This is grounded in real-world OpenClaw-class usage: the instrument is
 `claude-code` (native tool-calling, same agentic class as OpenClaw — Bash/Edit/
@@ -193,16 +194,26 @@ Realized per-world means (reward = profile value of a correct answer):
 | | always-opus | 2.7872 | 0.627 | 0.3501 |
 | | always-haiku | 1.9795 | 0.412 | 0.0793 |
 
-**Escalation is the best-welfare arm on every profile**, through the live daemon, with a cold
-(leakage-free) belief — dominating every fixed single-model policy. Versus the A/B baseline
-always-sonnet: **+0.027 / +0.012 / +0.260 welfare** (cost-hawk / balanced / quality-hawk). The
-mechanism is visible in the table: on cost-hawk it is frugal (−52% cost: $0.084 vs $0.175,
-stopping early when a solve isn't worth its price); on balanced/quality-hawk it **solves MORE
-than any single tier** (0.784 vs sonnet 0.706, even opus 0.627) because it captures the *union*
-of tier capabilities — exactly the non-monotonic tasks (path-tracing only haiku;
-configure-git-webserver only sonnet) that no fixed order can exploit. This is the cross-profile
-robustness claim, now measured end-to-end through real daemon code. (Output:
-`results/escalation_live.txt`. Stage b adds a free local row + a live OpenClaw confirmation.)
+**Escalation's welfare point estimate is best on every profile**, through the live daemon, with a
+cold (leakage-free) belief. Versus the A/B baseline always-sonnet: **+0.027 / +0.012 / +0.260
+welfare** (cost-hawk / balanced / quality-hawk). A cluster bootstrap over the 17 tasks (reps within
+a task are correlated, so we resample TASKS, not the 51 rows; percentile, under-covering at K=17)
+quantifies the *precision* — and the honest reading is **under-powered, not refuted**: the per-call
+welfare margins are small relative to task-to-task variance, so 17 tasks give wide intervals
+(cost-hawk +0.005, CI [+0.001, +0.010], p=0.009 — significant but economically negligible; balanced
++0.012, CI [−0.10, +0.18], p=0.47; quality-hawk +0.260, CI [−0.20, +0.95], p=0.23). A wide interval
+here is a sample-size statement, **not** evidence the margin is zero — the point estimates favour
+escalation on all three. The **lower-variance** capability-union signal is directionally firm:
+escalation **solves more than any single tier** (0.784 vs sonnet 0.706 on balanced/quality-hawk;
+solve-rate Δ +0.078, CI [0.00, +0.22] — never crosses zero), capturing the *union* of tier
+capabilities — the non-monotonic tasks (path-tracing only haiku; configure-git-webserver only
+sonnet) no fixed order exploits. On cost-hawk it is frugal instead (−52% cost: $0.084 vs $0.175,
+stopping early when a solve isn't worth its price). So the live A/B confirms the mechanism and the
+direction end-to-end; tightening the per-profile *magnitude* needs a larger sample (task #21) or
+the better-powered offline minimax sim above — consistent with the "cross-profile robustness"
+framing, which is the structural fact that no single model wins all profiles, independent of the
+per-profile error bars. (Output: `results/escalation_live.txt`, with the bootstrap CIs. Stage b
+adds a free local row + a live OpenClaw confirmation.)
 
 ## Calibration of the up-front belief (`eval/calibration.jl`)
 
@@ -250,8 +261,9 @@ decision — `posterior_accuracy` read-out only.)
       graded by the tasks' own tests (`oc_tb_spotcheck.sh`, `results/tb_spotcheck.txt`):
       hello-world ✓, fix-permissions ✓ (haiku), and the routing-relevant differentiator
       `heterogeneous-dates` — **haiku FAILS / sonnet SOLVES**, reproducing the matrix split
-      live → validates the claude-CLI matrix as a faithful OpenClaw proxy. Dominance breadth =
-      `escalation_live.txt` (escalation beats every fixed router on all profiles, live daemon).
+      live → validates the claude-CLI matrix as a faithful OpenClaw proxy. Cross-profile breadth =
+      `escalation_live.txt` (escalation's point estimate best on all profiles; per-profile welfare
+      bars wide at 17 tasks — precision, not refutation; bootstrap CIs in that file).
       Free-local (qwen) row done as a measured **crossover** (`oc_welfare_matrix.py` /
       `welfare_matrix.jsonl` / `oc_welfare_score.jl`): free wins only at `reward ≤ 0.044 −
       141·w_time` — a near-zero answer-value AND time-value (batch) user; else cheap-fast-paid
