@@ -24,7 +24,7 @@ include(joinpath(@__DIR__, "..", "..", "brain", "feature_brain.jl"))
 using .FeatureBrain: build_model, observe, observe_soft
 include(joinpath(@__DIR__, "..", "..", "brain", "routing_brain.jl"))
 using .RoutingBrain: wire_routing!, route, escalation_next, posterior_accuracy,
-    route_outcome!, _ctx_key
+    route_outcome!, _ctx_key, reconstruct_latency, latency_at, LatencyBelief
 
 const BDSL_DIR = joinpath(@__DIR__, "..", "..", "bdsl")
 const TOL = 1e-12
@@ -174,6 +174,48 @@ let env = routing_env(reward = 1.0)
     g = decide(Dict("prompt-length" => "short"), reverse(roster), Int[])
     @assert g["model"] == "claude-haiku-4-5" && g["tier_index"] == 1
     ok("escalate-decide sorts by cost: a dearest-first roster still escalates cheapest-first")
+end
+
+# ── A'''. The TIME coordinate: w_time·E[time] in the routing EU (time vs money/quality) ──
+# Time is the profile dial that lets a user trade wall-clock against money/quality. E[time] is a
+# learned Poisson-Gamma latency belief; w_time the declared $/sec weight; the EU folds w_time·
+# E[time] into the offset. w_time=0 ⇒ bit-identical (the GeometricTail-rollout discipline).
+const LATENCY_JSON = joinpath(@__DIR__, "..", "..", "brain", "routing_latency.counts.json")
+
+# The latency belief reconstructs E[time|model,X] from version-stable counts; opus is slower
+# than haiku on the measured matrix (the time signal); unknown (model/ctx) ⇒ 0 (no time term).
+let lb = reconstruct_latency(LATENCY_JSON)
+    t_opus = latency_at(lb, "claude-opus-4-8", ["short"])
+    t_haiku = latency_at(lb, "claude-haiku-4-5", ["short"])
+    @assert t_opus > 0.0 && t_haiku > 0.0
+    @assert t_opus > t_haiku                                   # opus slower/turn ⇒ more wall-clock
+    @assert latency_at(lb, "unknown-model", ["short"]) == 0.0  # conservative: no belief ⇒ no penalty
+    @assert latency_at(nothing, "claude-opus-4-8", ["short"]) == 0.0
+    # credence-lint: allow — precedent:test-oracle — exact reconstruction-determinism oracle
+    @assert latency_at(reconstruct_latency(LATENCY_JSON), "claude-opus-4-8", ["short"]) == t_opus
+    ok("latency belief: E[time] reconstructs (opus $(round(Int, t_opus))s > haiku $(round(Int, t_haiku))s short), 0 for unknown, deterministic")
+end
+
+# w_time=0 ⇒ the time term is exactly 0 ⇒ route is bit-identical regardless of the times vector.
+let env = routing_env(reward = 1.0)
+    rt = wire_routing!(env); X = ["short"]; costs = [0.01, 0.05, 0.20]; times = [99.0, 5.0, 50.0]
+    base = route(rt.model, rt.tops, X, costs, 1.0)
+    # credence-lint: allow — precedent:test-oracle — w_time=0 bit-identical equality oracle
+    @assert route(rt.model, rt.tops, X, costs, 1.0; w_time = 0.0, times = times) == base
+    @assert route(rt.model, rt.tops, X, costs, 1.0; w_time = 0.0, times = nothing) == base
+    ok("route: w_time=0 is bit-identical regardless of times (time-blind ⇒ unchanged)")
+end
+
+# Time/quality trade-off, LIVE through route-decide (the wired path: w-time read + latency
+# loaded). Same belief + reward; the TIME dial alone flips the choice from the accuracy winner
+# (sonnet) to the FASTER model (haiku) — the "time vs money/quality" the MVP must express.
+let q0 = (e = routing_env(reward = 1.0); wire_routing!(e); e[Symbol("route-decide")](Dict("prompt-length" => "short"))),
+    qt = (e = routing_env(reward = 1.0); e[Symbol("w-time")] = 0.03; wire_routing!(e);
+          e[Symbol("route-decide")](Dict("prompt-length" => "short")))
+    @assert q0["model"] == "claude-sonnet-4-6"    # w-time 0: the accuracy winner
+    @assert qt["model"] == "claude-haiku-4-5"     # w-time 0.03: the faster model
+    @assert q0["model"] != qt["model"]
+    ok("time/quality trade-off (live): reward 1.0 + w-time 0 → sonnet (accurate); + w-time 0.03 → haiku (fast)")
 end
 
 # ── A''. Roster-aware routing: the LIVE roster (the user's actual models) ────────

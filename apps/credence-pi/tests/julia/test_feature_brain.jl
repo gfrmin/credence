@@ -261,6 +261,20 @@ let
         check("attention-precious + tail-aware → governs (≠proceed)", d_la !== :proceed, "got $d_la")
     end
 
+    # (d-time) TIME coordinate (the MVP's time dial in governance): a call the time-blind EU
+    #     PROCEEDS on, valuing the user's wall-clock GOVERNS. θ=0.6, λ=1 ⇒ block EU=−0.2 (<0,
+    #     proceed); a block also SAVES E[time] seconds (here w_time·E[time]=0.02·30=0.60 > the
+    #     0.20 gap) ⇒ block wins. w_time=0 ⇒ bit-identical regardless of exp_time. q=1.0 isolates
+    #     proceed-vs-block (ask suppressed), mirroring (d).
+    let wt = mk(4, 2)
+        d_blind = decide(wm, wt, X, 1.0; aversion=1.0, interrupt_cost=1.0, w_time=0.0, exp_time=30.0)
+        d_ref   = decide(wm, wt, X, 1.0; aversion=1.0, interrupt_cost=1.0)
+        d_time  = decide(wm, wt, X, 1.0; aversion=1.0, interrupt_cost=1.0, w_time=0.02, exp_time=30.0)
+        check("time-blind (w_time=0) ≡ default decide regardless of exp_time", d_blind === d_ref, "blind=$d_blind ref=$d_ref")
+        check("time-blind → proceed (under-values the loop's wall-clock)", d_blind === :proceed, "got $d_blind")
+        check("valuing time (w_time·E[time]=0.60 saved) → governs (≠proceed)", d_time !== :proceed, "got $d_time")
+    end
+
     # (e) decide_multi: m=0 ≡ default; m>0 scales the waste tail (harm term untouched).
     let hm = build_model(["ctx"], [["c"]])
         function mkh(a, d)
