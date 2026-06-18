@@ -49,6 +49,17 @@
         "type": "object",
         "description": "Optional per-model USD price overrides in $/million tokens: { \"<model-id>\": { \"input\": <num>, \"output\": <num>, \"cacheRead\": <num>, \"cacheWrite\": <num> } }. Merged over the built-in table.",
         "additionalProperties": true
+      },
+      "profile": {
+        "type": "string",
+        "enum": ["cost-saver", "balanced", "quality-first", "speed-first"],
+        "description": "Your cost/time/quality/risk trade-off, as a named preset. cost-saver: cheapest models, block waste readily, time cheap. balanced: the middle. quality-first: pay for the best model, escalate fully, fewer false blocks. speed-first: fastest models, escalate sooner, rarely interrupt (your time is valuable). Sent to the daemon per request — switch any time, no restart. credence-pi does ONE EU-max over a shared belief with YOUR utility (Savage factorisation).",
+        "default": "balanced"
+      },
+      "profileOverride": {
+        "type": "object",
+        "description": "Advanced: override individual utility dials on top of the preset. Keys: reward ($ value of a correct answer — quality), lambda (false-block aversion), q (interruption cost $), harm (harm cost $), w_time ($ per SECOND of your wall-clock — e.g. a $50/hr user ≈ 0.014). Any subset; unspecified dials keep the preset's value.",
+        "additionalProperties": true
       }
     }
   }

@@ -339,6 +339,13 @@ const _ID = Identity()
 _lin(coeff::Float64, off::Float64) = LinearCombination(Tuple{Float64, TestFunction}[(coeff, _ID)], off)
 _const(off::Float64) = LinearCombination(Tuple{Float64, TestFunction}[], off)
 
+# Per-request profile override (the user's utility weights, shipped by the body PER REQUEST so a
+# user switches their trade-off with no daemon restart): the value for `key` if present, else the
+# wired default. Preference DATA from the body; the brain still does all the EU-max.
+_pget(profile, key::AbstractString, default::Float64)::Float64 =
+    (profile isa AbstractDict && haskey(profile, key) && profile[key] !== nothing) ?
+        Float64(profile[key]) : default
+
 """
     decide(model, top, X, cost; aversion, interrupt_cost, expected_repeats=0.0) -> Symbol
 
@@ -564,9 +571,13 @@ function wire_brain!(env)
 
     env[Symbol("make-prior")] = () -> build_prior(model)
 
-    env[Symbol("decide-action")] = (top, features, cost) -> begin
+    env[Symbol("decide-action")] = (top, features, cost, profile = nothing) -> begin
         c = cost === nothing ? fallback : Float64(cost)
         c = c <= 0.0 ? fallback : c
+        # Per-request profile override (the user's utility weights, no daemon restart): λ/q/H/w_time
+        # for THIS decision only; absent ⇒ the wired defaults. Beliefs untouched.
+        λc = _pget(profile, "lambda", λ); qc = _pget(profile, "q", q)
+        Hc = _pget(profile, "harm", H); wt = _pget(profile, "w_time", wtime)
         # Multi-outcome only when harm is active AND the body sent the safety features for
         # this event; otherwise the single-outcome waste decision (unchanged).
         if harm_model !== nothing && harm_top !== nothing && _has_features(harm_model, features)
@@ -574,8 +585,8 @@ function wire_brain!(env)
             Xh = context_from_features(harm_model, features)
             m = m_at(Xw)
             d = decide_multi(model, top, harm_model, harm_top, Xw, Xh, c;
-                             aversion = λ, interrupt_cost = q, harm_cost = H, expected_repeats = m,
-                             w_time = wtime, exp_time = time_at(Xw))
+                             aversion = λc, interrupt_cost = qc, harm_cost = Hc, expected_repeats = m,
+                             w_time = wt, exp_time = time_at(Xw))
             # Research-stage effector policy (harm-response = :ask): a harm-DRIVEN stop is a
             # CONFIRMATION, not a refusal — the harm belief is benchmark-seeded, not yet
             # user-calibrated, so asking has value and the response is the calibration
@@ -583,15 +594,15 @@ function wire_brain!(env)
             # Like shadowMode, this is an effector policy, not a change to the EU reasoning:
             # the harm term decided "do not proceed"; :ask realises that as "confirm".
             if d === :block && hresp === :ask
-                d_waste = decide(model, top, Xw, c; aversion = λ, interrupt_cost = q,
-                                 expected_repeats = m, w_time = wtime, exp_time = time_at(Xw))
+                d_waste = decide(model, top, Xw, c; aversion = λc, interrupt_cost = qc,
+                                 expected_repeats = m, w_time = wt, exp_time = time_at(Xw))
                 d = d_waste === :block ? :block : :ask   # harm was the driver ⇒ confirm
             end
             d
         else
             X = context_from_features(model, features)
-            decide(model, top, X, c; aversion = λ, interrupt_cost = q, expected_repeats = m_at(X),
-                   w_time = wtime, exp_time = time_at(X))
+            decide(model, top, X, c; aversion = λc, interrupt_cost = qc, expected_repeats = m_at(X),
+                   w_time = wt, exp_time = time_at(X))
         end
     end
 

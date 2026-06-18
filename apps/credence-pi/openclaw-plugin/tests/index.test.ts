@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 
 import { createGovernor } from "../src/index.js";
 import { buildPriceTable } from "../src/cost.js";
+import { resolveProfile } from "../src/profile.js";
 import type { DaemonClient, SignalEnvelope } from "../src/daemon-client.js";
 import type { BeforeToolCallEvent, ToolContext } from "../src/openclaw-types.js";
 
@@ -37,6 +38,7 @@ function harness(postOk = true, shadowMode = false) {
     redactToolInputs: false,
     shadowMode,
     roster: [],
+    profile: resolveProfile("balanced", undefined),
     log: () => {},
   });
   const find = (t: string) => posted.find((e) => e.event_type === t);
@@ -137,6 +139,7 @@ test("redactToolInputs: tool input omitted from the sensor event", async () => {
     redactToolInputs: true,
     shadowMode: false,
     roster: [],
+    profile: resolveProfile("balanced", undefined),
     log: () => {},
   });
   await gov.beforeToolCall(ev("bash", { params: { command: "secret-token-123" } }), ctx);

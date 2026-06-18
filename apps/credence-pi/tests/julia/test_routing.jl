@@ -380,6 +380,34 @@ let path = tempname() * ".jsonl"
     rm(path; force = true)
 end
 
+# ── B''. Per-request PROFILE override: one daemon, many users' trade-offs, no restart ──
+# The user's utility weights ride in the route-request `profile` (like the live roster), so a
+# user switches cost/time/quality WITHOUT a daemon restart. The SAME daemon + belief routes
+# differently per profile: speed-first (high w_time) → the faster model; quality-first (high
+# reward, no time pressure) → a stronger one. This is the MVP's "handle different trade-offs".
+let path = tempname() * ".jsonl"
+    state = init_state(; bdsl_dir = DAEMON_BDSL, log_path = path)
+    w_before2 = weights(state.posterior[])
+    route_with(profile) = begin
+        handle_sensor_event(state, Dict{String, Any}("event_type" => "route-request",
+            "event_id" => "rp", "features" => Dict("prompt-length" => "short"), "profile" => profile))
+        snapshot(state.signal_queue)[end]["parameters"]["model"]
+    end
+    speed   = route_with(Dict("reward" => 1.0, "w_time" => 0.05))   # time precious
+    quality = route_with(Dict("reward" => 5.0, "w_time" => 0.0))    # quality precious, time free
+    @assert speed == "claude-haiku-4-5"        # speed-first ⇒ the FASTER model
+    @assert quality != "claude-haiku-4-5"      # quality-first ⇒ a stronger model
+    @assert speed != quality
+    ok("per-request profile: same daemon, speed-first → $speed, quality-first → $quality (no restart)")
+
+    # A profile override is PREFERENCE, never learning: a route-request with a profile must not
+    # touch the governance posterior (separate belief, like the un-profiled path).
+    # credence-lint: allow — precedent:test-oracle — governance-posterior equality oracle (profile is preference, not learning)
+    @assert weights(state.posterior[]) == w_before2
+    ok("per-request profile: routing with a profile leaves the governance posterior untouched")
+    rm(path; force = true)
+end
+
 # ── C. Online correctness learning (brain): soft evidence + learned confounds ───
 #
 # The deferred online signal, landed. We never see model correctness; we see whether the
