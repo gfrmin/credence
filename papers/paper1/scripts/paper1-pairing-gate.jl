@@ -6,7 +6,7 @@
 # response table regenerated from the same seed. If it passes, reusing the saved
 # LLM runs is validly paired with the freshly-run inferred agents. Offline:
 #   julia --project=. scripts/paper1-pairing-gate.jl
-const ROOT = normpath(joinpath(@__DIR__, ".."))
+const ROOT = normpath(joinpath(@__DIR__, "..", "..", ".."))
 push!(LOAD_PATH, joinpath(ROOT, "src"))
 using Credence
 using Random

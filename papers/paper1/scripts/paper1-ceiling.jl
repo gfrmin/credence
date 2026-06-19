@@ -10,7 +10,7 @@
 # learning VOI agent (163.7). Headroom exists; experiment (2) [reachable bound,
 # paper1-reachable.jl] then shows it is horizon-locked. Run offline:
 #   julia --project=. scripts/paper1-ceiling.jl
-const ROOT = normpath(joinpath(@__DIR__, ".."))
+const ROOT = normpath(joinpath(@__DIR__, "..", "..", ".."))
 include(joinpath(ROOT, "apps", "julia", "qa_benchmark", "host.jl"))
 using Random
 

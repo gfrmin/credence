@@ -20,7 +20,7 @@
 #   benchmark decoupled optimum  ≤ 189  ⇒ ship A (stronger: the true decoupled
 #                                         ceiling can't beat optimism in this regime).
 # ─────────────────────────────────────────────────────────────────────────────
-const ROOT = normpath(joinpath(@__DIR__, ".."))
+const ROOT = normpath(joinpath(@__DIR__, "..", "..", ".."))
 include(joinpath(ROOT, "apps/julia/qa_benchmark/environment.jl"))
 using Random
 

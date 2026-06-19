@@ -16,7 +16,7 @@
 # (agent.bdsl:horizon-step, oracle 216.8 > greedy 189.4). This script is retained
 # as the conservative-bound provenance; the live ceiling is paper1-horizon-gate.jl.
 # Offline:  julia --project=. scripts/paper1-reachable.jl
-const ROOT = normpath(joinpath(@__DIR__, ".."))
+const ROOT = normpath(joinpath(@__DIR__, "..", "..", ".."))
 include(joinpath(ROOT, "apps", "julia", "qa_benchmark", "host.jl"))
 using Random
 

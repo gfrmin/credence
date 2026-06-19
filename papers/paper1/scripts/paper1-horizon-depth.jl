@@ -11,7 +11,7 @@
 # each question the agent re-plans a fresh depth-d lookahead, acts, observes the
 # real outcome, re-plans. Myopic tail at depth exhaustion: (h remaining)·best-submit.
 # ─────────────────────────────────────────────────────────────────────────────
-const ROOT = normpath(joinpath(@__DIR__, ".."))
+const ROOT = normpath(joinpath(@__DIR__, "..", "..", ".."))
 include(joinpath(ROOT, "apps/julia/qa_benchmark/environment.jl"))
 using Random
 const TOOLS = make_spec_tools(); const NT = length(TOOLS)

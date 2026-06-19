@@ -16,10 +16,10 @@
 # the B2c update_reliability(row, π, outcome). Reduces to the oracle mechanism
 # when π is one-hot. greedy_inferred anchor must reproduce the host's 149.6.
 # ─────────────────────────────────────────────────────────────────────────────
-push!(LOAD_PATH, joinpath(normpath(joinpath(@__DIR__, "..")), "src"))
+push!(LOAD_PATH, joinpath(normpath(joinpath(@__DIR__, "..", "..", "..")), "src"))
 using Credence, Random, JSON3
 using Credence: BetaPrevision
-const QA = joinpath(normpath(joinpath(@__DIR__, "..")), "apps", "julia", "qa_benchmark")
+const QA = joinpath(normpath(joinpath(@__DIR__, "..", "..", "..")), "apps", "julia", "qa_benchmark")
 include(joinpath(QA, "environment.jl"))
 include(joinpath(QA, "category_inference.jl"))
 include(joinpath(QA, "category_update.jl"))
