@@ -31,7 +31,8 @@ import Main.Credence.Ontology: optimise, value, net_voi
 
 export Obs, ChannelParams, CANONICAL_CHANNEL,
        candidate_posterior, terminal_decide, decide_full, decision_fpa, voi_gather,
-       provisional_leader, gather_decide
+       provisional_leader, gather_decide,
+       Transform, ScheduleCtx, default_registry, schedule_decide
 
 # ── Stated channel parameters (the §4.2/§4.1 priors; calibration moves them) ────────────
 # Mirror of life-agent's `lookup.py` constants and `bdsl/utility.bdsl`. A `ChannelParams`
@@ -237,24 +238,117 @@ function _corroborate_kernel(k::Int, gather_rho::Float64, cp::ChannelParams)::Ke
            likelihood_family = PushOnly())  # credence-lint: allow — precedent:declarative-construction — corroborate probe, mirrors observation_densities
 end
 
+# ── The transformation registry: the menu becomes DATA (the VOI scheduler) ───────────────
+# The owner's directive: one rule — schedule whichever transformation maximises VOI−cost on this
+# data, cheap or expensive alike. `net_voi` is the principled mechanism; hardcoding the menu (the
+# old 3-branch cascade) was the unprincipled part. A `Transform` is one menu entry; `schedule`
+# prices the whole menu in one uniform loop. The honest boundary (three named kinds — uniformity
+# claimed only where it holds): a transform is VOI-schedulable iff its OUTPUT is modelled as a
+# likelihood (a kernel) over the belief's space.
+#   :voi   — VOI-priced refine. Output is a kernel over the fixed candidate set; `net_voi` integrates
+#            it against the posterior and gathers the argmax if it clears its cost. (corroborate)
+#   :guard — mandatory non-VOI refine. Defends an OUT-OF-MODEL risk the candidate belief cannot price
+#            (the belief has no atom for "misattributed to the owner"), so VOI over it is blind and
+#            the guard must fire unconditionally. (recency-on-era_split; the owner-scoped corroborate)
+# `:grow` (discovery/recall — enlarges K) cannot be priced by VOI over a closed categorical (Plan §1);
+# it is a non-VOI action the BODY triggers (a bridge capability + re-decide), never a registry probe.
+struct Transform
+    name::String        # registry id (unique within a registry)
+    probe::String       # emitted wire-probe name (the body's capability; the `applied_probes` dedup key)
+    kind::Symbol        # :voi | :guard
+    applies::Function   # (action::String, ctx::ScheduleCtx) -> Bool — eligibility on this decision
+    kernel_fn::Function # (k::Int, cp::ChannelParams) -> Kernel — the output-likelihood model (:voi only)
+    cost::Float64       # cost-in-utility, commensurate with `value` (:voi only; guards: 0.0)
+end
+
+# Request-level gates the registry's `applies` predicates read (the per-question context). Transform
+# kernels/costs are baked into the Transform itself (so model tiers each carry their own rho/cost —
+# Slice 2); `ctx` carries only what gates eligibility and the termination set.
+struct ScheduleCtx
+    era_split::Bool
+    owner_scoped::Bool
+    gather_rho::Float64
+    gather_cost::Float64
+    applied_probes::Vector{String}
+end
+
+_no_kernel(::Int, ::ChannelParams)::Kernel = error("a :guard transform has no VOI kernel")
+
 """
-    gather_decide(state, k, u_bar; era_split=false, applied_probes=String[], cp=CANONICAL_CHANNEL)
+    default_registry(; gather_rho=0.0, gather_cost=0.0) -> Vector{Transform}
+
+The v0 menu, reproducing the validated behaviour exactly:
+- `recency` (`:guard`): rule out staleness before any terminal report — a count-led stale leader can
+  sit ABOVE the EU bar, and reporting it without the recency re-weight is a confident-wrong
+  (`gather.py` applies recency pre-decision; the daemon ports that). Fires whenever `era_split` holds.
+- `corroborate_owner` (`:guard`): the owner-scoped ATTRIBUTION guard — an owner-scoped question about
+  to REPORT an in-set leader must first corroborate with a subject-aware re-read, because the cheap
+  per-chunk extractor is owner-CENTRIC (it reports the owner's OWN value for a relative's question).
+  The risk lives outside the candidate belief, so it is mandatory, not VOI-priced.
+- `corroborate_voi` (`:voi`, only when `gather_rho > 0`): the §2-A rescue — a WITHHOLDING leader may be
+  rescued by a `net_voi`-gated re-read, gathered only if re-reading is expected to move `value` by more
+  than its cost. Omitted when `gather_rho == 0` (no re-read budget) ⇒ the default is byte-identical.
+Both corroborate entries emit the same wire probe `"corroborate"`, so `applied_probes` disables both
+once either fires (the loop terminates).
+"""
+function default_registry(; gather_rho::Float64 = 0.0, gather_cost::Float64 = 0.0)::Vector{Transform}
+    reg = Transform[
+        Transform("recency", "recency", :guard,
+                  (action, ctx) -> ctx.era_split, _no_kernel, 0.0),
+        Transform("corroborate_owner", "corroborate", :guard,
+                  (action, ctx) -> ctx.owner_scoped && action == "report", _no_kernel, 0.0),
+    ]
+    if gather_rho > 0.0
+        push!(reg, Transform("corroborate_voi", "corroborate", :voi,
+                  (action, ctx) -> action != "report",
+                  (k, cp) -> _corroborate_kernel(k, gather_rho, cp), gather_cost))
+    end
+    reg
+end
+
+"""
+    schedule(state, k, u_bar, registry, ctx; cp=CANONICAL_CHANNEL)
         -> (effector, report_index, probe, target, eu)
 
-The Move-4 feature-policy (move-4-design §2C, §5 Q2). A **cheap, class-valid re-weighting probe**
-is applied BEFORE the terminal report, not gated behind it: whenever `era_split` holds (the
-candidates span eras — the stale-vs-current precondition) and `recency` is unapplied, emit
-`gather(recency, leader)` so the body re-weights by recency and re-decides. A confident report must
-first rule out the staleness `era_split` signals — a count-led STALE value can sit ABOVE the EU
-bar, and reporting it without the recency check is a confident-wrong (`gather.py` applies recency
-pre-decision for exactly this reason; the daemon ports that). `applied_probes` (body-held, resent)
-makes recency fire at most once, so the loop terminates; afterwards the terminal decision (report /
-hedge / ask / abstain) stands. v0's only class-valid probe is `recency` on `era_split` (the
-validated lever — `master-plan.md` §"probe library": stale leader 0.605 → ~0.09). The EXPENSIVE
-gather — `corroborate` (fetch new documents), EU-gated on a below-bar leader — plus `subject` and
-dispersion-gating are the declared-but-deferred refinements (§5 Q2 named successor; their thresholds
-are the §5 Q5 params). `report_index`/`probe`/`target` are `nothing` where inapplicable (a report
-carries no probe; a gather carries no report index).
+The uniform VOI scheduler. Decide terminally once, then over the registry: every eligible, unapplied
+**guard** fires first (mandatory, registry order — it defends a risk the belief can't price); then
+every eligible, unapplied **:voi** transform is priced by `net_voi` and the argmax is gathered iff it
+clears its cost. None fire ⇒ the terminal decision stands. `applied_probes` (keyed on the emitted
+`probe`, body-held and resent) makes each probe fire at most once ⇒ the loop terminates. Parity: an
+empty / fully-applied registry returns exactly `decide_full`'s terminal tuple.
+"""
+function schedule_decide(state::CategoricalMeasure, k::Int, u_bar::AbstractDict,
+                  registry::Vector{Transform}, ctx::ScheduleCtx;
+                  cp::ChannelParams = CANONICAL_CHANNEL)
+    action, report_index, eu = decide_full(state, k, u_bar; cp = cp)
+    leader() = provisional_leader(state, k, u_bar; cp = cp)
+    # Guards first: mandatory, registry order. A guard prices an out-of-model risk VOI is blind to.
+    for t in registry
+        t.kind === :guard || continue
+        t.probe in ctx.applied_probes && continue
+        t.applies(action, ctx) && return ("gather", nothing, t.probe, leader(), eu)
+    end
+    # :voi transforms: price each eligible, unapplied one; gather the argmax if its net_voi > 0.
+    best = nothing; best_nv = 0.0
+    for t in registry
+        t.kind === :voi || continue
+        t.probe in ctx.applied_probes && continue
+        t.applies(action, ctx) || continue
+        nv = voi_gather(state, k, u_bar, t.kernel_fn(k, cp), collect(Float64, 0:(k - 1)), t.cost; cp = cp)
+        nv > best_nv && (best_nv = nv; best = t)
+    end
+    best === nothing && return (action, report_index, nothing, nothing, eu)
+    ("gather", nothing, best.probe, leader(), eu)
+end
+
+"""
+    gather_decide(state, k, u_bar; era_split=false, owner_scoped=false, gather_rho=0.0,
+                  gather_cost=0.0, applied_probes=String[], cp=CANONICAL_CHANNEL)
+        -> (effector, report_index, probe, target, eu)
+
+Thin wrapper: build the `default_registry` from the request flags and run `schedule`. Kept as the
+daemon's entry point so every existing caller/test is unchanged; the menu-as-data refactor lives in
+`schedule`. `report_index`/`probe`/`target` are `nothing` where inapplicable.
 """
 function gather_decide(state::CategoricalMeasure, k::Int, u_bar::AbstractDict;
                        era_split::Bool = false,
@@ -263,38 +357,10 @@ function gather_decide(state::CategoricalMeasure, k::Int, u_bar::AbstractDict;
                        gather_cost::Float64 = 0.0,
                        applied_probes::AbstractVector{<:AbstractString} = String[],
                        cp::ChannelParams = CANONICAL_CHANNEL)
-    action, report_index, eu = decide_full(state, k, u_bar; cp = cp)
-    if era_split && !("recency" in applied_probes)
-        # Rule out staleness before any terminal report (even a confident one): the recency
-        # re-weight is cheap and class-valid here, so it precedes the decision rather than being
-        # gated by it — a count-led stale leader above the bar must be recency-checked first.
-        return ("gather", nothing, "recency", provisional_leader(state, k, u_bar; cp = cp), eu)
-    end
-    # The owner-scoped ATTRIBUTION guard (§5 Q2, now realized): an owner-scoped question about to
-    # REPORT an in-set leader must first corroborate it with a subject-aware re-read. The cheap
-    # per-chunk extractor is owner-CENTRIC — it will report the owner's OWN value for a relative's
-    # question (the partner's-id / mother's-passport class: a confident wrong-subject report). The
-    # body enacts `gather(corroborate, leader)` by re-extracting with the whole-document,
-    # subject-aware model and re-posting that observation; if the high-reliability read disagrees,
-    # mass moves to NONE and the re-decide withholds (disagree⇒abstain falls out of `condition` +
-    # the NONE atom — no separate "disagreement" construct). Mandatory here; the net_voi pricing of
-    # WHEN to pay for the re-read is Slice 3. `applied_probes` makes it fire once ⇒ the loop ends.
-    if owner_scoped && action == "report" && !("corroborate" in applied_probes)
-        return ("gather", nothing, "corroborate", provisional_leader(state, k, u_bar; cp = cp), eu)
-    end
-    # §2-A (Slice 3) — a WITHHOLDING leader (abstain / hedge / ask) may be rescued by a
-    # net_voi-GATED expensive re-read: price `corroborate` against the terminal decision, and gather
-    # only if re-reading is expected to move `value` by more than its cost. `gather_rho == 0` (the
-    # body sent no re-read budget) ⇒ skip, so the daemon's default is unchanged (additive). This is
-    # the "buy the cloud only when it pays" — selective, not the §2-C mandatory attribution guard.
-    if action != "report" && gather_rho > 0.0 && !("corroborate" in applied_probes)
-        kern = _corroborate_kernel(k, gather_rho, cp)
-        if voi_gather(state, k, u_bar, kern, collect(Float64, 0:(k - 1)), gather_cost) > 0.0
-            return ("gather", nothing, "corroborate",
-                    provisional_leader(state, k, u_bar; cp = cp), eu)
-        end
-    end
-    (action, report_index, nothing, nothing, eu)
+    reg = default_registry(; gather_rho = gather_rho, gather_cost = gather_cost)
+    ctx = ScheduleCtx(era_split, owner_scoped, gather_rho, gather_cost,
+                      collect(String, applied_probes))
+    schedule_decide(state, k, u_bar, reg, ctx; cp = cp)
 end
 
 end # module AnswerBrain
