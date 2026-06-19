@@ -245,6 +245,7 @@ carries no probe; a gather carries no report index).
 """
 function gather_decide(state::CategoricalMeasure, k::Int, u_bar::AbstractDict;
                        era_split::Bool = false,
+                       owner_scoped::Bool = false,
                        applied_probes::AbstractVector{<:AbstractString} = String[],
                        cp::ChannelParams = CANONICAL_CHANNEL)
     action, report_index, eu = decide_full(state, k, u_bar; cp = cp)
@@ -253,6 +254,18 @@ function gather_decide(state::CategoricalMeasure, k::Int, u_bar::AbstractDict;
         # re-weight is cheap and class-valid here, so it precedes the decision rather than being
         # gated by it — a count-led stale leader above the bar must be recency-checked first.
         return ("gather", nothing, "recency", provisional_leader(state, k, u_bar; cp = cp), eu)
+    end
+    # The owner-scoped ATTRIBUTION guard (§5 Q2, now realized): an owner-scoped question about to
+    # REPORT an in-set leader must first corroborate it with a subject-aware re-read. The cheap
+    # per-chunk extractor is owner-CENTRIC — it will report the owner's OWN value for a relative's
+    # question (the partner's-id / mother's-passport class: a confident wrong-subject report). The
+    # body enacts `gather(corroborate, leader)` by re-extracting with the whole-document,
+    # subject-aware model and re-posting that observation; if the high-reliability read disagrees,
+    # mass moves to NONE and the re-decide withholds (disagree⇒abstain falls out of `condition` +
+    # the NONE atom — no separate "disagreement" construct). Mandatory here; the net_voi pricing of
+    # WHEN to pay for the re-read is Slice 3. `applied_probes` makes it fire once ⇒ the loop ends.
+    if owner_scoped && action == "report" && !("corroborate" in applied_probes)
+        return ("gather", nothing, "corroborate", provisional_leader(state, k, u_bar; cp = cp), eu)
     end
     (action, report_index, nothing, nothing, eu)
 end
