@@ -97,12 +97,14 @@ function decide_response(req::AbstractDict)::Dict{String, Any}
     u_bar = Dict{String, Float64}(String(kk) => Float64(vv) for (kk, vv) in req["u_bar"])
     era_split = Bool(get(req, "era_split", false))
     owner_scoped = Bool(get(req, "owner_scoped", false))
-    applied = String[String(p) for p in get(req, "applied_probes", String[])]
+    gather_rho = Float64(get(req, "gather_rho", 0.0))    # the corroborate re-read's reliability …
+    gather_cost = Float64(get(req, "gather_cost", 0.0))  # … and its cost (utility units) — 0 ⇒ off
 
     post = candidate_posterior(k, obs, rho; cp = cp)
     w = weights(post)                                  # length k+1: candidates then NONE
     effector, report_index, probe, target, eu =
         gather_decide(post, k, u_bar; era_split = era_split, owner_scoped = owner_scoped,
+                      gather_rho = gather_rho, gather_cost = gather_cost,
                       applied_probes = applied, cp = cp)
 
     Dict{String, Any}(
