@@ -171,6 +171,59 @@ let k = 2,
     check("§2-A: gather_rho=0 is the unchanged terminal decision", eff3 == a0; detail = "got $eff3")
 end
 
+# ── 2d. The transform REGISTRY + uniform `schedule` (the menu-as-data refactor) ──────────
+# `gather_decide` is now a thin wrapper over `schedule(state, k, u_bar, registry, ctx)`. These
+# pin the three properties the refactor must hold: parity with the wrapper, guards fire
+# unconditionally (not VOI-priced), and the :voi loop gathers the net_voi ARGMAX among rivals.
+let k = 2,
+    ubar = Dict("u_correct" => 1.0, "u_wrong" => -4.0, "u_hedged" => -0.5,
+                "u_abstain" => 0.0, "lambda_int" => 1.0),
+    obs = Obs[Obs(0, 0, 0.9, 1.0, 1.0), Obs(1, 1, 0.9, 1.0, 1.0)]   # dispersed ⇒ withholds
+
+    post = candidate_posterior(k, obs, 0.7)
+    # (a) parity: schedule over the default registry == the gather_decide wrapper, field-for-field.
+    direct = gather_decide(post, k, ubar; gather_rho = 0.9, gather_cost = 0.0)
+    reg    = default_registry(; gather_rho = 0.9, gather_cost = 0.0)
+    ctx    = ScheduleCtx(false, false, 0.9, 0.0, String[])
+    viareg = schedule_decide(post, k, ubar, reg, ctx)
+    check("schedule: default_registry reproduces gather_decide exactly (parity)",
+          viareg == direct; detail = "got $viareg want $direct")
+
+    # (c) argmax over two rival :voi transforms: a near-useless re-read (ρ≈0 ⇒ net_voi≤0) and a
+    # strong one (ρ=0.9 ⇒ net_voi>0). The scheduler must gather the STRONG one, by name.
+    rivals = Transform[
+        Transform("corrob_weak", "corrob_weak", :voi, (a, c) -> a != "report",
+                  (kk, cp) -> AnswerBrain._corroborate_kernel(kk, 0.01, cp), 0.0),
+        Transform("corrob_strong", "corrob_strong", :voi, (a, c) -> a != "report",
+                  (kk, cp) -> AnswerBrain._corroborate_kernel(kk, 0.9, cp), 0.0),
+    ]
+    eff, _, probe, _, _ = schedule_decide(post, k, ubar, rivals, ctx)
+    check("schedule: gathers the net_voi ARGMAX among rival :voi transforms",
+          eff == "gather" && probe == "corrob_strong"; detail = "got $eff/$probe")
+    # the weak rival ALONE does not clear its (zero) cost ⇒ no gather, terminal stands.
+    effw, _, _, _, _ = schedule_decide(post, k, ubar, rivals[1:1], ctx)
+    check("schedule: a useless :voi transform (ρ≈0) does not gather",
+          effw != "gather"; detail = "got $effw")
+end
+
+# (b) a :guard fires UNCONDITIONALLY (no VOI pricing): an owner-scoped in-set report must
+# corroborate even though the guard carries no kernel and is never net_voi-priced.
+let k = 1,
+    ubar = Dict("u_correct" => 1.0, "u_wrong" => -2.0, "u_hedged" => -0.5,
+                "u_abstain" => 0.0, "lambda_int" => 1.0),
+    obs = Obs[Obs(0, 0, 0.95, 1.0, 1.0), Obs(0, 1, 0.95, 1.0, 1.0)]   # sharp single-candidate ⇒ reports
+
+    post = candidate_posterior(k, obs, 0.9)
+    base, _, _, _, _ = schedule_decide(post, k, ubar, default_registry(),
+                                ScheduleCtx(false, false, 0.0, 0.0, String[]))
+    check("schedule: a confident in-set leader reports when no guard applies", base == "report";
+          detail = "got $base")
+    eff, _, probe, _, _ = schedule_decide(post, k, ubar, default_registry(),
+                                   ScheduleCtx(false, true, 0.0, 0.0, String[]))   # owner_scoped
+    check("schedule: the owner-scoped :guard fires unconditionally before the report",
+          eff == "gather" && probe == "corroborate"; detail = "got $eff/$probe")
+end
+
 # ── 3. Observation-log replay reconstructs the posterior exactly ────────────────────────
 let case = first(data.cases),
     k = Int(case.k), rho = Float64(case.rho)
