@@ -32,7 +32,7 @@ import Main.Credence.Ontology: optimise, value, net_voi
 export Obs, ChannelParams, CANONICAL_CHANNEL,
        candidate_posterior, terminal_decide, decide_full, decision_fpa, voi_gather,
        provisional_leader, gather_decide,
-       Transform, ScheduleCtx, default_registry, schedule_decide
+       Transform, ScheduleCtx, default_registry, registry_from_wire, schedule_decide
 
 # ── Stated channel parameters (the §4.2/§4.1 priors; calibration moves them) ────────────
 # Mirror of life-agent's `lookup.py` constants and `bdsl/utility.bdsl`. A `ChannelParams`
@@ -304,6 +304,39 @@ function default_registry(; gather_rho::Float64 = 0.0, gather_cost::Float64 = 0.
                   (k, cp) -> _corroborate_kernel(k, gather_rho, cp), gather_cost))
     end
     reg
+end
+
+# The built-in eligibility predicates a wire trigger names. The MENU is data (which transforms, at
+# what rho/cost — the body declares them per question), but the `applies` predicates and the kernel
+# stay in the brain: the wire ships a `trigger` STRING, not a Julia closure.
+const _TRIGGERS = Dict{String, Function}(
+    "era_split"    => (action, ctx) -> ctx.era_split,                          # recency guard
+    "owner_report" => (action, ctx) -> ctx.owner_scoped && action == "report", # attribution guard
+    "below_bar"    => (action, ctx) -> action != "report",                     # the §2-A rescue gate
+)
+
+"""
+    registry_from_wire(descriptors; cp=CANONICAL_CHANNEL) -> Vector{Transform}
+
+Build a registry from the body's declared menu (Slice 2 — model-tier escalation). Each descriptor is
+`{name, probe, kind, trigger, rho, cost}`: `kind` ∈ {"voi","guard"}, `trigger` ∈ keys(`_TRIGGERS`),
+and a `:voi` entry's `kernel_fn` is the corroborate noisy-channel at its own `rho` (so a haiku /
+sonnet / opus tier each carry their own reliability + cost, and `schedule_decide` gathers the
+net_voi ARGMAX among them — the cost-efficient tier wins; sequential escalation emerges as the loop
+re-prices the remaining tiers after the chosen one is applied). The body enacts the chosen tier by
+its `probe` name.
+"""
+function registry_from_wire(descriptors; cp::ChannelParams = CANONICAL_CHANNEL)::Vector{Transform}
+    map(descriptors) do d
+        name    = String(d["name"])
+        probe   = String(get(d, "probe", name))
+        kind    = Symbol(d["kind"])
+        applies = _TRIGGERS[String(d["trigger"])]
+        rho     = Float64(get(d, "rho", 0.0))
+        cost    = Float64(get(d, "cost", 0.0))
+        kfn     = kind === :voi ? ((k, cpp) -> _corroborate_kernel(k, rho, cpp)) : _no_kernel
+        Transform(name, probe, kind, applies, kfn, cost)
+    end
 end
 
 """
