@@ -99,6 +99,7 @@ function decide_response(req::AbstractDict)::Dict{String, Any}
     owner_scoped = Bool(get(req, "owner_scoped", false))
     gather_rho = Float64(get(req, "gather_rho", 0.0))    # the corroborate re-read's reliability …
     gather_cost = Float64(get(req, "gather_cost", 0.0))  # … and its cost (utility units) — 0 ⇒ off
+    applied = String[String(p) for p in get(req, "applied_probes", String[])]
 
     post = candidate_posterior(k, obs, rho; cp = cp)
     w = weights(post)                                  # length k+1: candidates then NONE
