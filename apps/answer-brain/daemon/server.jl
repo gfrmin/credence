@@ -34,7 +34,8 @@ now be `gather`, with `probe`/`target` naming the forward steer (null on a termi
 """
 module Server
 
-using Main.AnswerBrain: Obs, ChannelParams, CANONICAL_CHANNEL, candidate_posterior, gather_decide
+using Main.AnswerBrain: Obs, ChannelParams, CANONICAL_CHANNEL, candidate_posterior, gather_decide,
+                        ScheduleCtx, registry_from_wire, schedule_decide
 using Main.Credence: weights
 using HTTP
 using JSON3
@@ -103,10 +104,19 @@ function decide_response(req::AbstractDict)::Dict{String, Any}
 
     post = candidate_posterior(k, obs, rho; cp = cp)
     w = weights(post)                                  # length k+1: candidates then NONE
+    # The menu is data: when the body declares a `transforms` list (Slice 2 — e.g. the corroborate
+    # model-tier ladder), build the registry from it and run the uniform scheduler; absent ⇒ the
+    # default registry built from the flags (byte-identical to the Stage-2a path).
     effector, report_index, probe, target, eu =
-        gather_decide(post, k, u_bar; era_split = era_split, owner_scoped = owner_scoped,
-                      gather_rho = gather_rho, gather_cost = gather_cost,
-                      applied_probes = applied, cp = cp)
+        if haskey(req, "transforms")
+            reg = registry_from_wire(req["transforms"]; cp = cp)
+            ctx = ScheduleCtx(era_split, owner_scoped, gather_rho, gather_cost, applied)
+            schedule_decide(post, k, u_bar, reg, ctx; cp = cp)
+        else
+            gather_decide(post, k, u_bar; era_split = era_split, owner_scoped = owner_scoped,
+                          gather_rho = gather_rho, gather_cost = gather_cost,
+                          applied_probes = applied, cp = cp)
+        end
 
     Dict{String, Any}(
         "effector"     => effector,                    # report | hedge | ask_clarify | abstain | gather

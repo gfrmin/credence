@@ -213,6 +213,21 @@ let r = Server.decide_response(gather_request(; era_split = false, gather_rho = 
           r["effector"] != "gather"; detail = "got $(r["effector"])")
 end
 
+# Slice 2 — the data-driven `transforms` menu over the wire: a below-bar leader with a corroborate
+# tier LADDER gathers the net_voi-argmax tier, named by its probe (the body enacts that model).
+let req = gather_request(; era_split = false)
+    req["transforms"] = Any[
+        Dict{String, Any}("name" => "corroborate_haiku", "probe" => "corroborate_haiku",
+                          "kind" => "voi", "trigger" => "below_bar", "rho" => 0.80, "cost" => 0.0),
+        Dict{String, Any}("name" => "corroborate_opus", "probe" => "corroborate_opus",
+                          "kind" => "voi", "trigger" => "below_bar", "rho" => 0.95, "cost" => 0.0),
+    ]
+    r = Server.decide_response(req)
+    check("wire Slice-2: a tier ladder ⇒ gather the argmax tier by probe name",
+          r["effector"] == "gather" && r["probe"] == "corroborate_opus";
+          detail = "got effector=$(r["effector"]) probe=$(get(r, "probe", "∅"))")
+end
+
 println("\n", "="^64)
 println("answer-brain Stage-2a: $(length(PASSED)) checks PASSED · $(length(data.cases)) wire-parity cases")
 println("="^64)

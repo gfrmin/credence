@@ -224,6 +224,41 @@ let k = 1,
           eff == "gather" && probe == "corroborate"; detail = "got $eff/$probe")
 end
 
+# ── 2e. registry_from_wire: the data-driven menu (Slice 2 — model-tier escalation) ───────
+# The body declares a corroborate tier ladder over the wire; `schedule_decide` gathers the net_voi
+# ARGMAX tier (the cost-efficient one), enacted by its probe name. Cost-monotone tiers ⇒ the cheap
+# tier wins when the dear tier's marginal VOI doesn't justify its marginal cost.
+let k = 2,
+    ubar = Dict("u_correct" => 1.0, "u_wrong" => -4.0, "u_hedged" => -0.5,
+                "u_abstain" => 0.0, "lambda_int" => 1.0),
+    obs = Obs[Obs(0, 0, 0.9, 1.0, 1.0), Obs(1, 1, 0.9, 1.0, 1.0)]   # dispersed ⇒ withholds
+
+    post = candidate_posterior(k, obs, 0.7)
+    ctx  = ScheduleCtx(false, false, 0.0, 0.0, String[])
+    ladder = Any[
+        Dict("name" => "corroborate_haiku", "probe" => "corroborate_haiku", "kind" => "voi",
+             "trigger" => "below_bar", "rho" => 0.80, "cost" => 0.0),
+        Dict("name" => "corroborate_opus", "probe" => "corroborate_opus", "kind" => "voi",
+             "trigger" => "below_bar", "rho" => 0.95, "cost" => 0.0),
+    ]
+    reg = registry_from_wire(ladder)
+    check("registry_from_wire: one Transform per descriptor", length(reg) == 2;
+          detail = "got $(length(reg))")
+    eff, _, probe, _, _ = schedule_decide(post, k, ubar, reg, ctx)
+    check("escalation: free tiers ⇒ gather the highest-rho (argmax net_voi) tier",
+          eff == "gather" && probe == "corroborate_opus"; detail = "got $probe")
+    # price the opus tier above its marginal VOI ⇒ the cheaper haiku tier wins (cost-efficient argmax)
+    l2 = deepcopy(ladder); l2[2]["cost"] = 100.0
+    _, _, probe2, _, _ = schedule_decide(post, k, ubar, registry_from_wire(l2), ctx)
+    check("escalation: a tier priced above its VOI yields to the cheaper effective tier",
+          probe2 == "corroborate_haiku"; detail = "got $probe2")
+    # both tiers priced out ⇒ no gather, the terminal withholds (cost-gated, uniformly)
+    l3 = deepcopy(ladder); l3[1]["cost"] = 100.0; l3[2]["cost"] = 100.0
+    eff3, _, _, _, _ = schedule_decide(post, k, ubar, registry_from_wire(l3), ctx)
+    check("escalation: all tiers priced out ⇒ terminal withholds", eff3 != "gather";
+          detail = "got $eff3")
+end
+
 # ── 3. Observation-log replay reconstructs the posterior exactly ────────────────────────
 let case = first(data.cases),
     k = Int(case.k), rho = Float64(case.rho)
