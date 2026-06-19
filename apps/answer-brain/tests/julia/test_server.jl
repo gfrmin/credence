@@ -65,7 +65,9 @@ end
 
 # A synthetic below-bar two-candidate request (dispersed, harsh u_wrong) — the Move-4 gather inputs
 # ride on the same wire. `current`/`stale` are display labels only; era_split drives the gather branch.
-function gather_request(; era_split::Bool, applied::Vector{String} = String[])
+function gather_request(; era_split::Bool, applied::Vector{String} = String[],
+                        gather_rho::Float64 = 0.0, gather_cost::Float64 = 0.0,
+                        owner_scoped::Bool = false)
     Dict{String, Any}(
         "question_id"    => "wire-gather",
         "candidates"     => ["current", "stale"],
@@ -79,6 +81,9 @@ function gather_request(; era_split::Bool, applied::Vector{String} = String[])
                               "subject_factor" => 1.0, "time_factor" => 1.0)],
         "era_split"      => era_split,
         "applied_probes" => applied,
+        "gather_rho"     => gather_rho,
+        "gather_cost"    => gather_cost,
+        "owner_scoped"   => owner_scoped,
     )
 end
 
@@ -192,6 +197,19 @@ let r = Server.decide_response(gather_request(; era_split = false))
 end
 let r = Server.decide_response(gather_request(; era_split = true, applied = ["recency"]))
     check("wire gather: recency applied ⇒ no re-gather (terminates)",
+          r["effector"] != "gather"; detail = "got $(r["effector"])")
+end
+
+# §2-A corroborate over the wire (Slice 3) — the regression the dropped-`applied` bug failed: any
+# request carrying gather_rho must thread cleanly to gather_decide, and a below-bar leader whose
+# corroborate VOI clears its cost must gather(corroborate).
+let r = Server.decide_response(gather_request(; era_split = false, gather_rho = 0.95, gather_cost = 0.02))
+    check("wire §2-A: below-bar leader + gather_rho ⇒ net_voi-gated gather(corroborate)",
+          r["effector"] == "gather" && r["probe"] == "corroborate";
+          detail = "got effector=$(r["effector"]) probe=$(get(r, "probe", "∅"))")
+end
+let r = Server.decide_response(gather_request(; era_split = false, gather_rho = 0.95, gather_cost = 1e6))
+    check("wire §2-A: a corroborate priced above its VOI ⇒ no gather (cost-gated over the wire)",
           r["effector"] != "gather"; detail = "got $(r["effector"])")
 end
 

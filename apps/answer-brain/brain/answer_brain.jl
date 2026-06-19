@@ -224,6 +224,19 @@ function provisional_leader(state::CategoricalMeasure, k::Int, u_bar::AbstractDi
     optimise(state, order[1:k], fpa) - 1        # report keys 1..k only; key j ⇒ index j-1
 end
 
+# The corroborate probe KERNEL (Slice 3): the tempered noisy-channel at the re-read's reliability
+# `gather_rho` over a NEUTRAL source (authority=subject=time=1) — `observation_densities`, the same
+# matrix `candidate_posterior` conditions on. `net_voi` integrates it against the current posterior
+# to PRICE "would a high-reliability re-read move the decision?" WITHOUT running it (Plan §1: the
+# in-set corroboration VOI is well-defined over the fixed candidate set; discovery is not).
+function _corroborate_kernel(k::Int, gather_rho::Float64, cp::ChannelParams)::Kernel
+    dens = observation_densities(Obs(0, 0, 1.0, 1.0, 1.0), k, gather_rho, 1.0, cp)
+    Kernel(Finite(collect(Float64, 0:k)), Finite(collect(Float64, 0:(k - 1))),
+           _ -> error("generate not used"),
+           (h, o) -> dens[Int(round(h)) + 1][Int(round(o)) + 1];
+           likelihood_family = PushOnly())  # credence-lint: allow — precedent:declarative-construction — corroborate probe, mirrors observation_densities
+end
+
 """
     gather_decide(state, k, u_bar; era_split=false, applied_probes=String[], cp=CANONICAL_CHANNEL)
         -> (effector, report_index, probe, target, eu)
@@ -245,6 +258,9 @@ carries no probe; a gather carries no report index).
 """
 function gather_decide(state::CategoricalMeasure, k::Int, u_bar::AbstractDict;
                        era_split::Bool = false,
+                       owner_scoped::Bool = false,
+                       gather_rho::Float64 = 0.0,
+                       gather_cost::Float64 = 0.0,
                        applied_probes::AbstractVector{<:AbstractString} = String[],
                        cp::ChannelParams = CANONICAL_CHANNEL)
     action, report_index, eu = decide_full(state, k, u_bar; cp = cp)
@@ -253,6 +269,30 @@ function gather_decide(state::CategoricalMeasure, k::Int, u_bar::AbstractDict;
         # re-weight is cheap and class-valid here, so it precedes the decision rather than being
         # gated by it — a count-led stale leader above the bar must be recency-checked first.
         return ("gather", nothing, "recency", provisional_leader(state, k, u_bar; cp = cp), eu)
+    end
+    # The owner-scoped ATTRIBUTION guard (§5 Q2, now realized): an owner-scoped question about to
+    # REPORT an in-set leader must first corroborate it with a subject-aware re-read. The cheap
+    # per-chunk extractor is owner-CENTRIC — it will report the owner's OWN value for a relative's
+    # question (the partner's-id / mother's-passport class: a confident wrong-subject report). The
+    # body enacts `gather(corroborate, leader)` by re-extracting with the whole-document,
+    # subject-aware model and re-posting that observation; if the high-reliability read disagrees,
+    # mass moves to NONE and the re-decide withholds (disagree⇒abstain falls out of `condition` +
+    # the NONE atom — no separate "disagreement" construct). Mandatory here; the net_voi pricing of
+    # WHEN to pay for the re-read is Slice 3. `applied_probes` makes it fire once ⇒ the loop ends.
+    if owner_scoped && action == "report" && !("corroborate" in applied_probes)
+        return ("gather", nothing, "corroborate", provisional_leader(state, k, u_bar; cp = cp), eu)
+    end
+    # §2-A (Slice 3) — a WITHHOLDING leader (abstain / hedge / ask) may be rescued by a
+    # net_voi-GATED expensive re-read: price `corroborate` against the terminal decision, and gather
+    # only if re-reading is expected to move `value` by more than its cost. `gather_rho == 0` (the
+    # body sent no re-read budget) ⇒ skip, so the daemon's default is unchanged (additive). This is
+    # the "buy the cloud only when it pays" — selective, not the §2-C mandatory attribution guard.
+    if action != "report" && gather_rho > 0.0 && !("corroborate" in applied_probes)
+        kern = _corroborate_kernel(k, gather_rho, cp)
+        if voi_gather(state, k, u_bar, kern, collect(Float64, 0:(k - 1)), gather_cost) > 0.0
+            return ("gather", nothing, "corroborate",
+                    provisional_leader(state, k, u_bar; cp = cp), eu)
+        end
     end
     (action, report_index, nothing, nothing, eu)
 end

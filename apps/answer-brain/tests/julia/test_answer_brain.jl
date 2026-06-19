@@ -119,6 +119,58 @@ let k = 2,
           voi_gather(post, k, ubar, perfect, possible, 0.01) > 0.0)
 end
 
+# ── 2b. owner_scoped corroborate guard (correctness; additive ⇒ parity-preserving) ──────
+let k = 2,
+    ubar = Dict("u_correct" => 1.0, "u_wrong" => -4.0, "u_hedged" => -0.5,
+                "u_abstain" => 0.0, "lambda_int" => 1.0),
+    # two independent groups both report candidate 0 ⇒ a confident in-set leader that REPORTS
+    obs = Obs[Obs(0, 0, 1.0, 1.0, 1.0), Obs(0, 1, 1.0, 1.0, 1.0)]
+
+    post = candidate_posterior(k, obs, 0.95)
+    a0, _, _, _, _ = gather_decide(post, k, ubar)
+    check("gather_decide: a confident leader reports when not owner-scoped", a0 == "report";
+          detail = "got $a0")
+    # owner_scoped=false is byte-identical to the plain terminal decision (the parity guarantee)
+    check("gather_decide: owner_scoped=false == the unchanged terminal decision",
+          a0 == terminal_decide(post, k, ubar)[1])
+
+    eff, _, probe, target, _ = gather_decide(post, k, ubar; owner_scoped = true)
+    check("gather_decide: an owner-scoped report corroborates first (attribution guard)",
+          eff == "gather" && probe == "corroborate"; detail = "got $eff/$probe")
+    check("gather_decide: the corroborate target is the provisional leader", target == 0;
+          detail = "got $target")
+
+    # once corroborated (the body re-extracted + re-posted), the terminal report stands ⇒ the loop
+    # terminates; a disagreeing re-read would instead have moved mass to NONE and withheld.
+    a2, _, _, _, _ = gather_decide(post, k, ubar; owner_scoped = true,
+                                   applied_probes = ["corroborate"])
+    check("gather_decide: after corroborate the owner-scoped report stands (termination)",
+          a2 == "report"; detail = "got $a2")
+end
+
+# ── 2c. §2-A net_voi-gated corroborate (Slice 3): rescue a below-bar leader only when it pays ──
+let k = 2,
+    ubar = Dict("u_correct" => 1.0, "u_wrong" => -4.0, "u_hedged" => -0.5,
+                "u_abstain" => 0.0, "lambda_int" => 1.0),
+    obs = Obs[Obs(0, 0, 0.9, 1.0, 1.0), Obs(1, 1, 0.9, 1.0, 1.0)]   # dispersed two-way ⇒ withholds
+
+    post = candidate_posterior(k, obs, 0.7)
+    a0, _, _, _, _ = gather_decide(post, k, ubar)
+    check("§2-A: a dispersed leader withholds without a re-read budget (gather_rho=0)",
+          a0 != "report"; detail = "got $a0")
+    # a high-reliability re-read can concentrate the dispersed posterior ⇒ positive VOI ⇒ gather
+    eff, _, probe, _, _ = gather_decide(post, k, ubar; gather_rho = 0.9, gather_cost = 0.0)
+    check("§2-A: a below-bar leader with positive corroborate VOI gathers (free re-read)",
+          eff == "gather" && probe == "corroborate"; detail = "got $eff/$probe")
+    # the same re-read priced ABOVE its VOI ⇒ not worth it ⇒ the withholding decision stands
+    eff2, _, _, _, _ = gather_decide(post, k, ubar; gather_rho = 0.9, gather_cost = 10.0)
+    check("§2-A: a corroborate priced above its VOI does NOT gather (cost-gated)",
+          eff2 != "gather"; detail = "got $eff2")
+    # gather_rho = 0 ⇒ §2-A off ⇒ identical to the plain terminal (additive / parity-preserving)
+    eff3, _, _, _, _ = gather_decide(post, k, ubar; gather_rho = 0.0, gather_cost = 0.0)
+    check("§2-A: gather_rho=0 is the unchanged terminal decision", eff3 == a0; detail = "got $eff3")
+end
+
 # ── 3. Observation-log replay reconstructs the posterior exactly ────────────────────────
 let case = first(data.cases),
     k = Int(case.k), rho = Float64(case.rho)

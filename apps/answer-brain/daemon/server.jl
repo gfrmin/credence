@@ -82,7 +82,9 @@ any terminal report, ruling out a stale leader first (`AnswerBrain.gather_decide
 
 Optional request fields (all absent ⇒ the Stage-2a terminal decision, unchanged):
   `era_split::Bool`           body-projected feature — candidates split across eras (recency discriminates)
-  `owner_scoped::Bool`        body-projected feature — reserved for the subject refinement (§5 Q2); v0 ignores it
+  `owner_scoped::Bool`        body-projected — an owner-scoped report corroborates first (the
+                              attribution guard, `AnswerBrain.gather_decide`): the body re-extracts
+                              with the subject-aware model and re-posts before any in-set report
   `applied_probes::[String]`  probes already applied this question (body-held, resent) — guarantees termination
 """
 function decide_response(req::AbstractDict)::Dict{String, Any}
@@ -94,12 +96,17 @@ function decide_response(req::AbstractDict)::Dict{String, Any}
     obs = Obs[_obs(o) for o in req["observations"]]
     u_bar = Dict{String, Float64}(String(kk) => Float64(vv) for (kk, vv) in req["u_bar"])
     era_split = Bool(get(req, "era_split", false))
+    owner_scoped = Bool(get(req, "owner_scoped", false))
+    gather_rho = Float64(get(req, "gather_rho", 0.0))    # the corroborate re-read's reliability …
+    gather_cost = Float64(get(req, "gather_cost", 0.0))  # … and its cost (utility units) — 0 ⇒ off
     applied = String[String(p) for p in get(req, "applied_probes", String[])]
 
     post = candidate_posterior(k, obs, rho; cp = cp)
     w = weights(post)                                  # length k+1: candidates then NONE
     effector, report_index, probe, target, eu =
-        gather_decide(post, k, u_bar; era_split = era_split, applied_probes = applied, cp = cp)
+        gather_decide(post, k, u_bar; era_split = era_split, owner_scoped = owner_scoped,
+                      gather_rho = gather_rho, gather_cost = gather_cost,
+                      applied_probes = applied, cp = cp)
 
     Dict{String, Any}(
         "effector"     => effector,                    # report | hedge | ask_clarify | abstain | gather
