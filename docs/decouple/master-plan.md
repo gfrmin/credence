@@ -42,18 +42,22 @@ each app repo  =  DATA + THIN BODY
   credence-skin-client  pure JSON-RPC wire client (no juliacall, no math)
 ```
 
-The contract is the **skin protocol** (method set + opaque state IDs). Transport
-framing (stdio vs http) is an implementation detail off one dispatch. Public
-consumption surface = GHCR images + `credence-skin-client`. Zero embedding
-packages.
+The contract is the **skin protocol** (method set + opaque state IDs). **Transport
+must match the state model:** the skin holds a single-tenant state registry, so
+**stdio is the engine wire** (the OS process boundary is the tenancy boundary).
+HTTP is reserved for product images with an external protocol obligation
+(credence-proxy, credence-pi daemon) — *not* the skin; an HTTP skin would need
+session isolation and is deferred until a real single-tenant-remote consumer needs
+it. Public consumption surface = GHCR images + `credence-skin-client`. Zero
+embedding packages.
 
 ## Moves
 
 | Move | Branch | Deliverable |
 |------|--------|-------------|
-| **0 — Contract** | `decouple/contract` | `credence-skin` image; skin over stdio+http off one dispatch; `PROTOCOL_VERSION` split from engine semver + handshake; inline-BDSL `initialize` (retire `.jl` plugin injection from the external surface); extract `credence-skin-client` (PyPI); demote `credence`/`credence-agents` from PyPI; write the co-released-image exception into CLAUDE.md/SPEC.md. |
-| **1 — life-agent pilot** | `decouple/life-agent` | Repoint `brain.py` off `$CREDENCE_REPO` onto a pinned image (`docker run -i` stdio, reusing `SubprocessTransport`); add `HttpTransport`; move life-agent BDSL in-repo, passed inline; audit for host-side probability arithmetic. Thin brain — no stdlib promotion. |
-| **2 — rssfeed** | `decouple/rssfeed` | Promote `PlackettLuceFiring` likelihood family (`src/kernels.jl`) + implement the advertised `plackett_luce` skin builder; express the rss ranker as BDSL over the (already-stdlib) program-space layer; thin Python wire client in rssfeed; retire `apps/julia/rss/`. |
+| **0 — Contract** ✅ | `decouple/contract` | **DONE (PR #140, merged).** `credence-skin` image (stdio); `PROTOCOL_VERSION` split from engine semver + handshake (`-32010`); inline-BDSL `dsl_sources` (`.jl` plugin injection demoted to co-released-image-only); extracted `credence-skin-client`; demoted `credence`/`credence-agents`/`credence-router` from public PyPI; co-released-image exception in SPEC §6.9 + CLAUDE.md. (`serve_http` *not* built — stdio only.) |
+| **2 — rssfeed** (next, reprioritized ahead of Move 1) | `decouple/rssfeed` | MAUT ranker enablement, **wire-only over stdio**. Two protocol-shaped engine additions: a uniform prevision-serialization protocol (`params(p)` + `read_params` verb) and a family registry the BDSL `:family` surface reflects (`:normal/:soft/:weighted`). Domain-neutral `examples/maut_demo.bdsl` + end-to-end example + `/load/observe/score`→skin-verb mapping (rssfeed-side adapter). `apps/julia/rss/` → reference-only (program-space/PlackettLuce superseded; read-order is noise for a swipe-reader). See `move-2-design.md`. |
+| **1 — life-agent pilot** (after rssfeed) | `decouple/life-agent` | Repoint `brain.py` off `$CREDENCE_REPO` onto the pinned `credence-skin` image (`docker run -i` stdio, reusing `SubprocessTransport`); move life-agent BDSL in-repo, passed inline as `dsl_sources`; audit for host-side probability arithmetic. Thin brain — no stdlib promotion. |
 | **3 — credence-pi refit** | `decouple/credence-pi` | Lift StructureBMA builder into `src/structure_bma.jl`; add `structure_bma` / `structure_observe` / `belief_at_context` skin verbs (body never transcribes the 2ⁿ prior); credence-pi BDSL stays as data; TS wire client; bless the daemon as a co-released product image. |
 
 Each move = design-doc PR then code PR, per `docs/posture-4/DESIGN-DOC-TEMPLATE.md`.
