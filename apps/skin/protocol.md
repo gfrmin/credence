@@ -1,7 +1,21 @@
 # Credence Skin Protocol
 
+Protocol-Version: 1.0
+
 JSON-RPC 2.0 over stdio. Skin reads newline-delimited JSON from stdin,
 writes newline-delimited JSON to stdout, logs to stderr.
+
+The protocol version is the contract apps pin, versioned independently of the
+engine semver (which rides the `credence-skin` image tag). MAJOR bumps on a
+breaking change; MINOR on additive. `initialize` rejects a mismatching client
+major with error `-32010`. The `Protocol-Version` header above is the source of
+truth, asserted in CI to equal `PROTOCOL_VERSION` in `server.jl`.
+
+### Changelog
+
+- **1.0** — initial versioned contract. Adds `dsl_sources` (inline BDSL), the
+  protocol-major handshake, and error `-32010`. `dsl_files`/`plugins` (host
+  paths) demoted to co-released-image-only.
 
 ## Framing
 
@@ -17,30 +31,44 @@ No Content-Length headers (unlike LSP). One request per line.
 
 ### initialize
 
-Called once after spawning the skin process. Loads the Credence module
-and optionally preloads DSL programs and Julia plugin files.
+Called once after spawning the skin process. Performs the protocol handshake
+and optionally preloads DSL programs.
 
 ```json
 {"method": "initialize", "params": {
-  "dsl_files": {
-    "router": "/path/to/router.bdsl",
-    "agent": "/path/to/credence_agent.bdsl"
-  },
-  "plugins": ["/path/to/domain_kernels.jl"]
+  "protocol": "1",
+  "dsl_sources": {
+    "agent": "(defun choose ...) ; inline BDSL source string"
+  }
 }}
 ```
 
 Response:
 
 ```json
-{"result": {"version": "0.1.0"}}
+{"result": {"version": "0.1.0", "protocol": "1.0", "methods": ["create_state", "condition", ...]}}
 ```
 
-`dsl_files`: optional map of name -> path. Each .bdsl file is loaded into
-a named DSL environment. The name becomes the `env_id` for `call_dsl`.
+`protocol`: optional client-pinned protocol major. If present and its major
+differs from the server's, `initialize` returns error `-32010` and the client
+must refuse to proceed. Omitting it is backward-compatible (legacy clients).
 
-`plugins`: optional list of .jl files to `include()`. These can register
-custom kernel constructors in the skin's kernel registry.
+`dsl_sources`: optional map of name -> inline BDSL **source string**. This is
+the wire-contract surface for declaring a domain: the engine loads the source
+directly and never reaches into the host filesystem. The name becomes the
+`env_id` for `call_dsl`.
+
+Response fields: `version` (engine semver), `protocol` (wire protocol version),
+`methods` (advertised method set for client capability discovery).
+
+**Co-released-image-only params** (valid only when the caller shares a filesystem
+with the engine — e.g. credence-proxy loading `examples/router.bdsl` from inside
+its own image — NOT part of the external wire contract):
+
+- `dsl_files`: map of name -> host **path** to a `.bdsl` file.
+- `plugins`: list of host `.jl` paths to `include()`. Loading host code into the
+  engine process is a brain-injection vector; external consumers declare domains
+  as data (`dsl_sources`), never as code. The server logs a warning when used.
 
 ### shutdown
 
@@ -643,3 +671,4 @@ Standard JSON-RPC 2.0 error responses:
 | -32000 | State not found |
 | -32001 | DSL error (build_kernel / build_function failed) |
 | -32002 | Inference error (condition / expect / log_predictive failed) |
+| -32010 | Protocol major mismatch (client pinned an incompatible wire major) |
