@@ -1,9 +1,13 @@
-# credence-pi — OpenClaw plugin body
+# credence-pi
 
-The **body** that lets the credence-pi Bayesian brain govern a real
-pi/OpenClaw agent. It registers an OpenClaw `before_tool_call` hook,
-forwards each proposed tool call to the credence-pi daemon (the opaque
-brain), and maps the brain's decision back to OpenClaw:
+Bayesian **routing and governance** for OpenClaw. One brain, one utility
+function, your cost/quality trade-off.
+
+- **`before_model_resolve`** — EU-max model routing: picks the cheapest
+  model whose expected accuracy justifies it, learns from outcomes. On by
+  default.
+- **`before_tool_call`** — in-loop governance: forwards each proposed tool
+  call to the credence-pi daemon and maps the decision back to OpenClaw:
 
 | brain effector | OpenClaw result |
 |---|---|
@@ -63,6 +67,8 @@ interception point is an OpenClaw **plugin** `before_tool_call` hook. See
 | `routing` | `true` | EU-max **model routing** via `before_model_resolve` — ON by default, roster-aware (see below); set `false` to disable |
 | `silent` | `false` | suppress info/warn logs |
 | `pricing` | — | per-model USD/Mtok overrides: `{ "<model>": { "input": n, "output": n, "cacheRead": n, "cacheWrite": n } }` |
+| `profile` | `"balanced"` | your cost/quality trade-off preset: `cost-saver`, `balanced`, `quality-first`, `speed-first` — sent to the daemon per request, switch any time |
+| `profileOverride` | — | advanced: override individual utility dials on top of the preset — keys: `reward`, `lambda`, `q`, `harm`, `w_time`; any subset |
 
 **Privacy:** by default the daemon logs `proposed_call.input` (commands, paths) to
 `~/.credence-pi/observations.jsonl`. Set `redactToolInputs: true` to keep inputs out of the log.

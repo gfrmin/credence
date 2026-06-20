@@ -1,8 +1,8 @@
 {
   "name": "@gfrmin/credence-pi-openclaw",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "type": "module",
-  "description": "credence-pi body: OpenClaw plugin that governs tool calls via the credence-pi Bayesian brain (before_tool_call -> allow/block/ask) and logs outcomes + per-turn cost.",
+  "description": "Bayesian routing and governance for OpenClaw — picks the right model per turn (before_model_resolve) and blocks low-EU tool calls (before_tool_call). One brain, one utility function, your cost/quality trade-off.",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "license": "AGPL-3.0-or-later",
@@ -19,6 +19,9 @@
     "ai-agent",
     "governance",
     "bayesian",
+    "model-routing",
+    "cost-optimization",
+    "llm-routing",
     "tool-call",
     "llm-cost",
     "expected-utility"

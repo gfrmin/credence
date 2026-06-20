@@ -1,8 +1,8 @@
 {
   "id": "credence-pi",
-  "version": "0.2.0",
-  "name": "credence-pi governance",
-  "description": "Bayesian in-loop governance for the pi/OpenClaw agent — intercepts tool calls and halts/asks on low expected-value spend; logs outcomes and per-turn cost for the dollars-saved surface.",
+  "version": "0.2.1",
+  "name": "credence-pi",
+  "description": "Bayesian routing and governance for OpenClaw — picks the right model per turn (before_model_resolve) and blocks low-EU tool calls (before_tool_call). One brain, one utility function, your cost/quality trade-off.",
   "activation": {
     "onStartup": true
   },
@@ -37,8 +37,8 @@
       },
       "routing": {
         "type": "boolean",
-        "description": "Enable EU-max model routing: register before_model_resolve and override the model per request via the daemon's route decision. Needs a daemon configured with a routing roster (bdsl/routing.bdsl, shipped by default). The before_model_resolve hook is active out of the box on current OpenClaw (like llm_output); the plugin registers it defensively so an older host that lacks it just runs without routing. Fails open (daemon down / no roster => OpenClaw keeps its configured model). Off by default.",
-        "default": false
+        "description": "EU-max model routing via before_model_resolve — picks the cheapest model whose expected accuracy justifies it under the active profile, and learns from outcomes. On by default; needs ≥2 priceable models to activate (single-model installs are a silent no-op). Fails open (daemon down / undiscoverable roster => OpenClaw keeps its configured model). Set false to disable.",
+        "default": true
       },
       "silent": {
         "type": "boolean",
