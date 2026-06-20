@@ -539,7 +539,11 @@ class SkinClient:
     ) -> Any:
         """Call a named function from a loaded DSL environment.
 
-        Use {"ref": state_id} in args to pass state references.
+        Args may be scalars, lists, state refs ({"ref": state_id}), or belief-specs
+        ({"type":"beta","alpha":…,"beta":…}, {"type":"gaussian","mu":…,"sigma":…}, …),
+        which are reconstructed into beliefs without registering state (protocol 1.1).
+        A belief returned by the function comes back as a belief-spec dict (or a list
+        of them); scalars/vectors come back unwrapped.
         """
         result = self._call("call_dsl", {
             "env_id": env_id,

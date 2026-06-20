@@ -69,6 +69,27 @@ struct DispatchByComponent <: LikelihoodFamily
     classify::Function
 end
 
+# ─────────────────────────────────────────────────────────────────────
+# Family registry: the keyword surface the BDSL `:family` reflects.
+# ─────────────────────────────────────────────────────────────────────
+# Maps a BDSL family keyword → (constructor, arity), where `arity` is the
+# number of trailing numeric arguments the `(kernel … :family <kw> <args…>)`
+# form consumes. Families self-register below, so the BDSL surface tracks the
+# roster automatically — adding a family needs no edit to the eval parser.
+# The constructor receives exactly `arity` Float64 args (splatted by eval).
+const FAMILY_REGISTRY = Dict{Symbol, Tuple{Function, Int}}()
+
+function register_family!(keyword::Symbol, constructor::Function, arity::Int = 0)
+    FAMILY_REGISTRY[keyword] = (constructor, arity)
+    return nothing
+end
+
+register_family!(:bernoulli, () -> BetaBernoulli(), 0)
+register_family!(:flat,      () -> Flat(), 0)
+register_family!(:soft,      () -> SoftBernoulli(), 0)
+register_family!(:weighted,  () -> WeightedBernoulli(), 0)
+register_family!(:normal,    (sigma) -> NormalNormal(Float64(sigma)), 1)
+
 struct Kernel
     source::Space
     target::Space

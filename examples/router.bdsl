@@ -22,9 +22,13 @@
 ; No :family keyword — defaults to PushOnly, which is correct for this
 ; push-only kernel (the host uses it to pushforward the prior, never to
 ; condition a TaggedBetaMeasure). If a DSL-authored kernel is used to
-; condition a TaggedBetaMeasure, declare its leaf family:
-;   (kernel H O gen :family bernoulli)   ; Beta-Bernoulli conjugate
-;   (kernel H O gen :family flat)        ; no posterior update
+; condition a TaggedBetaMeasure, declare its leaf family. The keyword roster
+; (the FAMILY_REGISTRY the BDSL reflects) is:
+;   (kernel H O gen :family bernoulli)    ; Beta-Bernoulli conjugate (obs ∈ {0,1})
+;   (kernel H O gen :family flat)         ; no posterior update
+;   (kernel H O gen :family soft)         ; SoftBernoulli — graded/virtual evidence (r,w)
+;   (kernel H O gen :family weighted)     ; WeightedBernoulli — weighted-count evidence (o,w)
+;   (kernel H O gen :family normal 0.3)   ; NormalNormal — signed Gaussian, obs-noise σ
 ; Router families (FiringByTag, DispatchByComponent) carry closures and
 ; must be constructed in Julia, not in the DSL.
 (define quality-kernel
