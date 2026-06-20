@@ -12,6 +12,7 @@ credence-llm-state.json
 __pycache__/
 *.egg-info/
 /dist/
+build/
 
 # Eval data artefacts (outputs, not inputs)
 /data/
