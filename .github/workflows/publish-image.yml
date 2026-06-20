@@ -380,7 +380,10 @@ jobs:
           echo "=== skin output ==="
           echo "$out"
           echo "$out" | grep -q '"status":"ready"' || { echo "no ready sentinel"; exit 1; }
-          echo "$out" | grep -q '"protocol":"1.0"' || { echo "initialize did not return protocol 1.0"; exit 1; }
+          # Version-agnostic: assert initialize returns a protocol field. The exact
+          # version is pinned separately by the unit-tests header==PROTOCOL_VERSION
+          # invariant, so this smoke need not chase MINOR bumps.
+          echo "$out" | grep -q '"protocol":"' || { echo "initialize did not return a protocol field"; exit 1; }
           echo "skin wire smoke OK"
 
   publish-skin:
