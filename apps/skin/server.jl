@@ -74,6 +74,17 @@ struct MethodNotFound <: Exception
     method::String
 end
 
+# Raised by `initialize` when the client's pinned protocol major does not
+# match the server's. Surfaces as JSON-RPC error -32010 so a client compiled
+# against an incompatible contract refuses to proceed rather than silently
+# misinterpreting later responses. See docs/decouple/move-0-design.md §4.
+struct ProtocolMismatch <: Exception
+    server::String
+    client::String
+end
+Base.showerror(io::IO, e::ProtocolMismatch) =
+    print(io, "protocol major mismatch: server ", e.server, ", client ", e.client)
+
 # Wrapping exceptions for narrower client-facing error codes. Thrown at
 # handler boundaries around build_kernel / build_function / condition /
 # expect call sites so that protocol errors (-32001) vs inference errors
@@ -519,6 +530,25 @@ end
 # Method dispatch
 # ═══════════════════════════════════════
 
+# Wire protocol version, versioned independently of the engine semver (which
+# rides the `credence-skin` image tag). MAJOR bumps on a breaking protocol
+# change; MINOR on additive. Apps pin the major in code and `initialize`
+# rejects a mismatching major with -32010. See docs/decouple/master-plan.md.
+const PROTOCOL_VERSION = "1.0"
+protocol_major(v) = String(first(split(String(v), ".")))
+
+# Advertised method set, returned by `initialize` for client capability
+# discovery. Must stay in sync with the `handle_request` dispatch below
+# (the `_dispatch_path` diagnostic verb is intentionally omitted).
+const SKIN_METHODS = [
+    "initialize", "shutdown", "create_state", "destroy_state",
+    "snapshot_state", "restore_state", "condition", "condition_on_event",
+    "weights", "mean", "expect", "optimise", "value", "draw", "enumerate",
+    "perturb_grammar", "add_programs", "sync_prune", "sync_truncate",
+    "top_grammars", "belief_summary", "condition_and_prune", "eu_interact",
+    "call_dsl", "factor", "replace_factor", "n_factors",
+]
+
 function handle_request(method::String, params, id)
     if method == "initialize"
         handle_initialize(params)
@@ -586,7 +616,29 @@ end
 # ═══════════════════════════════════════
 
 function handle_initialize(params)
-    # Load DSL files
+    # Protocol handshake: if the client pins a protocol major, reject a
+    # mismatch up front rather than misinterpreting later responses. Omitted
+    # `protocol` means a legacy client — proceed (backward compatible).
+    client_proto = get(params, "protocol", nothing)
+    if client_proto !== nothing
+        cmaj = protocol_major(client_proto)
+        smaj = protocol_major(PROTOCOL_VERSION)
+        cmaj == smaj || throw(ProtocolMismatch(smaj, cmaj))
+    end
+
+    # Inline DSL sources (the external surface): name -> BDSL source string,
+    # passed over the wire so the engine never reaches into the host
+    # filesystem. This is how a containerised consumer declares its domain.
+    dsl_sources = get(params, "dsl_sources", Dict())
+    for (name, source) in dsl_sources
+        env = load_dsl(string(source))
+        DSL_ENVS[string(name)] = env
+        log_msg("Loaded DSL: $name (inline source)")
+    end
+
+    # Path-based DSL files: co-released-image-only (the engine and the .bdsl
+    # share a filesystem inside an engine-repo image, e.g. credence-proxy
+    # loading examples/router.bdsl). Not part of the external wire contract.
     dsl_files = get(params, "dsl_files", Dict())
     for (name, path) in dsl_files
         source = read(string(path), String)
@@ -595,14 +647,18 @@ function handle_initialize(params)
         log_msg("Loaded DSL: $name from $path")
     end
 
-    # Load plugins
+    # Julia plugin injection: co-released-image-only. Loading host .jl into the
+    # engine process is a brain-injection vector and is NOT part of the external
+    # wire contract; external consumers declare domains as data (dsl_sources),
+    # never as code. See docs/decouple/master-plan.md.
     plugins = get(params, "plugins", [])
     for path in plugins
+        log_msg("WARNING: plugin injection is co-released-image-only, not a wire-contract surface: $path")
         include(string(path))
         log_msg("Loaded plugin: $path")
     end
 
-    Dict("version" => "0.1.0")
+    Dict("version" => "0.1.0", "protocol" => PROTOCOL_VERSION, "methods" => SKIN_METHODS)
 end
 
 function handle_create_state(params)
@@ -1213,6 +1269,8 @@ function main()
                 -32000
             elseif e isa MethodNotFound
                 -32601
+            elseif e isa ProtocolMismatch
+                -32010
             elseif e isa DSLError
                 -32001
             elseif e isa InferenceError

@@ -23,6 +23,12 @@ from typing import Any
 
 log = logging.getLogger(__name__)
 
+# Wire protocol major this client is compiled against. Sent in `initialize`
+# so the server rejects (-32010) a breaking-change mismatch; also re-checked
+# against the server's returned `protocol` to catch a legacy server that
+# ignored the field. Bump only on a breaking protocol change.
+PROTOCOL_MAJOR = "1"
+
 
 class SkinError(Exception):
     """Error from the skin process."""
@@ -167,16 +173,33 @@ class SkinClient:
         self,
         dsl_files: dict[str, str | Path] | None = None,
         plugins: list[str | Path] | None = None,
+        dsl_sources: dict[str, str] | None = None,
     ) -> dict:
-        """Initialize the skin. Must be called before other operations."""
-        params: dict[str, Any] = {}
+        """Initialize the skin. Must be called before other operations.
+
+        `dsl_sources` (name -> inline BDSL source string) is the wire-contract
+        surface: the engine never reads the host filesystem. `dsl_files`/`plugins`
+        (host paths) are co-released-image-only — valid when the caller shares a
+        filesystem with the engine (e.g. credence-proxy loading examples/), not
+        across the wire. The pinned protocol major is sent and re-verified.
+        """
+        params: dict[str, Any] = {"protocol": PROTOCOL_MAJOR}
+        if dsl_sources:
+            params["dsl_sources"] = dict(dsl_sources)
         if dsl_files:
             params["dsl_files"] = {
                 name: str(Path(path).resolve()) for name, path in dsl_files.items()
             }
         if plugins:
             params["plugins"] = [str(Path(p).resolve()) for p in plugins]
-        return self._call("initialize", params)
+        result = self._call("initialize", params)
+        server_proto = str(result.get("protocol", "")).split(".")[0]
+        if server_proto and server_proto != PROTOCOL_MAJOR:
+            raise SkinError(
+                -32010,
+                f"protocol major mismatch: server {server_proto}, client {PROTOCOL_MAJOR}",
+            )
+        return result
 
     def shutdown(self):
         """Bounded-time shutdown.
