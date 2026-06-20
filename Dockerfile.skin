@@ -1,0 +1,46 @@
+# syntax=docker/dockerfile:1
+# credence-skin — the versioned Credence engine artifact.
+#
+# Exposes the skin JSON-RPC wire (protocol-versioned, see apps/skin/protocol.md)
+# over stdio. This is the pinnable unit external apps depend on: they run it as
+# `docker run --rm -i ghcr.io/gfrmin/credence-skin:<tag>` and talk newline-
+# delimited JSON-RPC over the child's stdio, declaring their domain as inline
+# BDSL (`dsl_sources`). State stays server-side as opaque IDs — the wire is the
+# only consumption surface and the engine never reaches into the host filesystem.
+#
+# Build (from repo root):
+#   docker build -f Dockerfile.skin -t credence-skin .
+# Run:
+#   docker run --rm -i credence-skin   # then write JSON-RPC lines to stdin
+
+ARG JULIA_VERSION=1.11
+
+# ── Stage 1: instantiate + precompile the Credence project ───────────────
+FROM julia:${JULIA_VERSION}-bookworm AS build
+ENV JULIA_DEPOT_PATH=/depot
+WORKDIR /credence
+
+# Engine only: the Credence project + DSL source + the skin wire. No app
+# bodies, no domain BDSL — apps declare their domain as data over the wire.
+COPY Project.toml ./
+COPY src/ src/
+COPY apps/skin/ apps/skin/
+
+# Instantiate Credence's declared deps (JSON3, …) and precompile into the
+# depot, then a load smoke so the first container start is warm. Real
+# inference warmth is verified by the CI skin-smoke job, which drives a full
+# initialize + create_state + condition cycle against the built image.
+RUN julia --project=/credence -e 'using Pkg; Pkg.instantiate(); Pkg.precompile()' \
+ && julia --project=/credence -e 'push!(LOAD_PATH,"/credence/src"); using Credence, JSON3; println("Credence + skin deps precompiled")'
+
+# ── Stage 2: runtime ─────────────────────────────────────────────────────
+FROM julia:${JULIA_VERSION}-bookworm AS runtime
+ENV JULIA_DEPOT_PATH=/depot \
+    PYTHON_JULIACALL_HANDLE_SIGNALS=yes
+COPY --from=build /depot /depot
+COPY --from=build /credence /credence
+WORKDIR /credence
+
+# stdio JSON-RPC: no port, no HTTP healthcheck. The server emits a
+# {"status":"ready"} sentinel on stdout once loaded; consumers wait for it.
+ENTRYPOINT ["julia", "--project=/credence", "/credence/apps/skin/server.jl"]

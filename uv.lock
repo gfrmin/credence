@@ -16,6 +16,7 @@ members = [
     "credence",
     "credence-agents",
     "credence-router",
+    "credence-skin-client",
 ]
 
 [[package]]
@@ -672,6 +673,24 @@ dev = [
     { name = "pytest", specifier = ">=9.0.2" },
     { name = "ruff", specifier = ">=0.15.5" },
 ]
+
+[[package]]
+name = "credence-skin-client"
+version = "0.1.0"
+source = { editable = "apps/skin/clients/python" }
+
+[package.optional-dependencies]
+dev = [
+    { name = "pytest" },
+    { name = "ruff" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "pytest", marker = "extra == 'dev'", specifier = ">=7.4" },
+    { name = "ruff", marker = "extra == 'dev'" },
+]
+provides-extras = ["dev"]
 
 [[package]]
 name = "cycler"

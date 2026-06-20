@@ -4,4 +4,5 @@ members = [
     "apps/python/credence_agents",
     "apps/python/credence_router",
     "apps/python/bayesian_if",
+    "apps/skin/clients/python",
 ]

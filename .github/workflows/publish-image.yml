@@ -45,6 +45,14 @@ jobs:
       - name: credence-lint apps/ (pass one)
         run: python3 tools/credence-lint/credence_lint.py --repo-root . check apps/
 
+      - name: Skin protocol-version invariant (header == PROTOCOL_VERSION)
+        run: |
+          hdr=$(grep -m1 '^Protocol-Version:' apps/skin/protocol.md | sed 's/Protocol-Version:[[:space:]]*//')
+          cnst=$(grep -m1 'const PROTOCOL_VERSION' apps/skin/server.jl | sed 's/.*= *"//; s/".*//')
+          echo "protocol.md header: '$hdr'  |  server.jl const: '$cnst'"
+          test -n "$hdr" && test "$hdr" = "$cnst" \
+            || { echo "Protocol-Version header must equal PROTOCOL_VERSION in server.jl"; exit 1; }
+
       - name: Run credence_router + credence_agents pytest
         env:
           ANTHROPIC_API_KEY: sk-ant-test-smoke
@@ -331,3 +339,95 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha,scope=credence-pi-daemon
           cache-to: type=gha,mode=max,scope=credence-pi-daemon
+
+  # ── credence-skin (the versioned Credence engine artifact) ──────────────
+  # Builds Dockerfile.skin -> ghcr.io/<owner>/credence-skin and smoke-tests the
+  # stdio JSON-RPC wire (initialize handshake) before publishing. Separate GHA
+  # cache scope so the engine image doesn't evict the proxy/daemon caches.
+  skin-smoke-build:
+    name: Build skin amd64 + stdio smoke
+    runs-on: ubuntu-latest
+    needs: unit-tests
+    # No packages: write — build + smoke only; never pushes.
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build skin amd64 for smoke test
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile.skin
+          platforms: linux/amd64
+          load: true
+          tags: credence-skin:smoke
+          cache-from: type=gha,scope=credence-skin
+          cache-to: type=gha,mode=max,scope=credence-skin
+
+      - name: Smoke-test the skin wire (initialize handshake over stdio)
+        run: |
+          set -e
+          out=$(printf '%s\n%s\n' \
+            '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocol":"1"}}' \
+            '{"jsonrpc":"2.0","id":2,"method":"shutdown","params":{}}' \
+            | timeout 180 docker run --rm -i credence-skin:smoke)
+          echo "=== skin output ==="
+          echo "$out"
+          echo "$out" | grep -q '"status":"ready"' || { echo "no ready sentinel"; exit 1; }
+          echo "$out" | grep -q '"protocol":"1.0"' || { echo "initialize did not return protocol 1.0"; exit 1; }
+          echo "skin wire smoke OK"
+
+  publish-skin:
+    name: Publish skin multi-arch to GHCR
+    runs-on: ubuntu-latest
+    needs: skin-smoke-build
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/master' || startsWith(github.ref, 'refs/tags/v'))
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract skin image metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ github.repository_owner }}/credence-skin
+          tags: |
+            type=ref,event=branch
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=sha,format=short
+            type=raw,value=latest,enable=${{ github.ref == format('refs/heads/{0}', 'master') }}
+
+      - name: Build and push skin multi-arch
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile.skin
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=credence-skin
+          cache-to: type=gha,mode=max,scope=credence-skin
