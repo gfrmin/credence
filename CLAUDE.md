@@ -438,6 +438,17 @@ Two-tier architecture. See SPEC.md for details.
     credence_bindings, credence_agents, credence_router (credence-proxy gateway),
     bayesian_if. The body talks to the skin, never to Measures directly.
 
+  **Consumption boundary (the `decouple` commitment, SPEC §6.9).** *External*
+  applications consume the engine across exactly one surface — the protocol-versioned
+  **skin wire** (opaque server-side state → Invariant 1 by construction), via the thin
+  `credence-skin-client` against the `credence-skin` image. They declare their domain as
+  inline BDSL **data** (`dsl_sources`) and carry no probabilistic Julia. In-process
+  `juliacall` embedding (`credence`/`credence-agents`) *is* a brain and is demoted to
+  engine-repo-internal (`Private :: Do Not Upload`); the sole exception is code
+  **co-released inside an engine-repo image** (credence-proxy, credence-pi-daemon), which
+  may embed because the brain is versioned with the engine. credence must not enable an
+  external app to host its own brain. See `docs/decouple/master-plan.md`.
+
     ┌──────────────────────────────────┐
     │  Four types                      │  FROZEN
     │  Space, Prevision, Event, Kernel │  (Grammar = a discrete Space

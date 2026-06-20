@@ -5,11 +5,15 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "credence-agents"
 version = "0.4.0"
-description = "Bayesian decision theory engine for AI agents — Beta posteriors, VOI, and EU maximisation. Foundation for credence-router."
+description = "INTERNAL (engine-repo-only): in-process juliacall agent library. NOT a public consumption surface — external apps talk the skin wire via credence-skin-client; only co-released images (credence-proxy) may embed it. See docs/decouple/master-plan.md."
 license = "AGPL-3.0-only"
 requires-python = ">=3.11"
 readme = "README.md"
+# Demoted from a public PyPI surface: in-process embedding IS a brain, which the
+# decouple architecture forbids for external apps. The "Private" classifier blocks
+# upload; the package stays importable in-repo for the co-released credence-proxy.
 classifiers = [
+    "Private :: Do Not Upload",
     "Development Status :: 3 - Alpha",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",

@@ -5,8 +5,13 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "credence"
 version = "0.1.0"
-description = "Python bindings for the Credence Bayesian decision-making DSL"
+description = "INTERNAL (engine-repo-only): in-process juliacall bindings to the Credence DSL. NOT a public consumption surface — external apps talk the skin wire via credence-skin-client. See docs/decouple/master-plan.md."
 requires-python = ">=3.11"
+# Demoted from a public PyPI surface: in-process embedding IS a brain, which the
+# decouple architecture forbids for external apps. The classifier blocks upload.
+classifiers = [
+    "Private :: Do Not Upload",
+]
 dependencies = [
     "juliacall>=0.9",
     "numpy>=1.24",
