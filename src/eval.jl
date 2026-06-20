@@ -555,13 +555,13 @@ function _eval_kernel(args, env)
         if kw.value == :family
             family_set && error("kernel: duplicate :family keyword")
             i + 1 <= length(args) ||
-                error(":family requires a value (one of: bernoulli, flat)")
+                error(":family requires a family name (one of: $(_family_keywords()))")
             fam_atom = args[i+1]
             (fam_atom isa Atom && fam_atom.value isa Symbol) ||
-                error(":family value must be a symbol (one of: bernoulli, flat), got $(args[i+1])")
-            family = _parse_family_keyword(fam_atom.value)
+                error(":family value must be a symbol (one of: $(_family_keywords())), got $(args[i+1])")
+            family, consumed = _build_family(fam_atom.value, args, i + 2)
             family_set = true
-            i += 2
+            i += 2 + consumed
         else
             error("kernel: unknown keyword :$(kw.value) (accepted: :family)")
         end
@@ -571,10 +571,27 @@ function _eval_kernel(args, env)
     Kernel(source, target, gen, log_dens; likelihood_family = family)
 end
 
-_parse_family_keyword(s::Symbol) =
-    s === :bernoulli ? BetaBernoulli() :
-    s === :flat      ? Flat() :
-    error(":family value :$s unknown (one of: bernoulli, flat)")
+# Build a LikelihoodFamily for the BDSL `:family <kw> <args…>` form by dispatching
+# through the Ontology FAMILY_REGISTRY (families self-register there, so this
+# parser needs no edit when the roster grows). Consumes the family's declared
+# `arity` of trailing numeric args starting at `start`; returns (family, n_consumed).
+function _build_family(kw::Symbol, args, start::Int)
+    haskey(FAMILY_REGISTRY, kw) ||
+        error(":family value :$kw unknown (one of: $(_family_keywords()))")
+    ctor, arity = FAMILY_REGISTRY[kw]
+    nums = Float64[]
+    for j in start:(start + arity - 1)
+        j <= length(args) ||
+            error(":family $kw requires $arity numeric argument(s)")
+        a = args[j]
+        (a isa Atom && a.value isa Number) ||
+            error(":family $kw argument $(j - start + 1) must be a number, got $(args[j])")
+        push!(nums, Float64(a.value))
+    end
+    return ctor(nums...), arity
+end
+
+_family_keywords() = join(sort(string.(collect(keys(FAMILY_REGISTRY)))), ", ")
 
 function _make_log_density(target::Finite, gen::Function)
     # Generator returns a distribution spec: either a function (observation → log-probability)

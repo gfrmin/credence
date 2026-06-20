@@ -37,6 +37,7 @@ export ConditionalPrevision
 export ConjugatePrevision, maybe_conjugate, update, _dispatch_path
 export push_component!, replace_component!
 export CenteredPower, CenteredSquare, GeometricTail
+export params
 # At Move 2, `Ontology`'s `Functional` hierarchy is aliased onto these
 # types (`const Functional = TestFunction` plus `import ..Previsions:
 # Identity, …`), so both modules export the same bindings (they resolve
@@ -780,5 +781,28 @@ function replace_component!(p::MixturePrevision, i::Int, c::Prevision)
     components[i] = c
     return p
 end
+
+# ═══════════════════════════════════════
+# Serialization protocol: params
+# ═══════════════════════════════════════
+#
+# `params(p)` is the canonical SERIALIZATION view of a conjugate Prevision: a
+# type tag plus the sufficient statistics, as a NamedTuple of plain numbers. It
+# is the inverse of construction (`BetaPrevision(α,β)`; the BDSL `(measure …
+# :beta α β)`; the skin `create_state{type:beta,…}` / `build_belief`), so a
+# belief round-trips bit-exact: reconstruct(params(p)) ≡ p.
+#
+# This is the Invariant-3 serialization representation, kept distinct from the
+# computation views (`mean`, `variance`, `expect`). Reading parameter fields
+# here is legitimate — this is prevision.jl, the home of these structs, and
+# emitting sufficient statistics for the wire is not a decision-feeding
+# computation (Invariant 1). `params` is deliberately NOT added to the BDSL
+# `default_env`: model code speaks beliefs, never raw parameters. Vectors are
+# copied so the snapshot never aliases the shared-reference internal store.
+params(p::BetaPrevision)        = (type = :beta,        alpha = p.alpha, beta = p.beta)
+params(p::GaussianPrevision)    = (type = :gaussian,    mu = p.mu,       sigma = p.sigma)
+params(p::GammaPrevision)       = (type = :gamma,       alpha = p.alpha, beta = p.beta)
+params(p::DirichletPrevision)   = (type = :dirichlet,   alpha = copy(p.alpha))
+params(p::CategoricalPrevision) = (type = :categorical, log_weights = copy(p.log_weights))
 
 end # module Previsions

@@ -1,6 +1,6 @@
 # Credence Skin Protocol
 
-Protocol-Version: 1.0
+Protocol-Version: 1.1
 
 JSON-RPC 2.0 over stdio. Skin reads newline-delimited JSON from stdin,
 writes newline-delimited JSON to stdout, logs to stderr.
@@ -13,6 +13,10 @@ truth, asserted in CI to equal `PROTOCOL_VERSION` in `server.jl`.
 
 ### Changelog
 
+- **1.1** — `call_dsl` becomes a pure belief-function evaluator: a belief crosses
+  the wire as a declarative `{type, params}` spec — reconstructed from a `call_dsl`
+  arg (never registered) and emitted as a `call_dsl` return (no `state_id`). See
+  `call_dsl` below. Additive; no existing verb changes shape.
 - **1.0** — initial versioned contract. Adds `dsl_sources` (inline BDSL), the
   protocol-major handshake, and error `-32010`. `dsl_files`/`plugins` (host
   paths) demoted to co-released-image-only.
@@ -519,8 +523,33 @@ Arguments can be:
 - **Scalars**: numbers, booleans, strings
 - **Lists**: JSON arrays (converted to Julia vectors)
 - **State references**: `{"ref": "state_id"}` (resolved to the Julia object)
+- **Belief specs**: a `{"type": …, …}` dict in the same shape as `create_state`
+  (`{"type":"beta","alpha":…,"beta":…}`, `{"type":"gaussian","mu":…,"sigma":…}`, …)
+  is **reconstructed into a belief without registering it** — the pure way to pass a
+  belief INTO a `call_dsl` function. (Protocol 1.1.)
 
-Example with state references:
+#### Pure belief round-trip (protocol 1.1)
+
+`call_dsl` is a pure belief-function evaluator. A belief **returned** by a DSL
+function is serialized inline as a `{type, params}` spec via the `params` protocol
+— **no `state_id`, no registry** — so a stateless consumer can persist it and pass
+it back as a belief-spec arg next call. A list of beliefs returns as a list of
+specs; scalar/numeric returns are unchanged (`{"value": …}`). This is how a model
+like `examples/maut_demo.bdsl` runs entirely over the wire with the consumer
+holding the only durable state.
+
+```json
+{"method": "call_dsl", "params": {
+  "env_id": "model", "function": "observe",
+  "args": [{"type":"gaussian","mu":0.0,"sigma":1.0}, 0.8]
+}}
+```
+
+```json
+{"result": {"type":"gaussian","mu":0.64,"sigma":0.4472135954999579}}
+```
+
+Example with state references (the stateful mode, for long-lived agents):
 
 ```json
 {"method": "call_dsl", "params": {

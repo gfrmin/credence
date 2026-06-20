@@ -1,0 +1,46 @@
+; maut_demo.bdsl — a domain-neutral parametric MAUT preference model.
+;
+; Demonstrates the decouple Move-2 pattern: a consuming app declares its
+; preference model as a PURE BDSL program and drives it over the skin wire via
+; call_dsl. Every function here is pure — it takes beliefs (reconstructed at the
+; wire from declarative {type, params} specs) and returns beliefs or numbers.
+; There is NO state and NO raw-parameter access: the model speaks beliefs, the
+; skin speaks params (serialization), the consuming app holds the durable store.
+;
+; The model: each FEATURE has a WEIGHT belief. An ENGAGEMENT SIGNAL conditions a
+; weight via a declared :family kernel. An article SCORE is Σ mean(wᵢ)·featureᵢ.
+; Feature names are the host's concern (a name→index map); here weights are a
+; positional list. No RSS vocabulary lives in the engine.
+
+; ── A graded-evidence kernel for a signed (Gaussian) weight ──
+; The observation is the signed evidence value; σ is the declared observation
+; noise. `:family normal 0.5` exposes the NormalNormal conjugate update — the
+; whole point of the Move-2 family registry. (For a [0,1] weight use `:family
+; bernoulli` with obs ∈ {0,1}, or `:family soft`/`:family weighted` for graded
+; evidence; see examples/router.bdsl for the keyword roster.)
+(define signed-kernel
+  (kernel (space :euclidean 1) (space :euclidean 1)
+          (lambda (mu) (lambda (o) o))
+          :family normal 0.5))
+
+; ── observe: condition ONE weight belief on ONE signed observation ──
+; Pure: belief in, belief out. The host picks which weight by position.
+(define observe (lambda (w obs) (condition w signed-kernel obs)))
+
+; ── score ONE article ──
+; weights: positional list of weight beliefs. features: the article's feature
+; values, same order. Returns Σ mean(wᵢ)·featureᵢ. Reads beliefs through `mean`
+; only — never raw α/β/μ/σ.
+(define score
+  (lambda (weights features)
+    (fold-init + 0.0
+      (map (lambda (i) (* (mean (nth weights i)) (nth features i)))
+           (range (length weights))))))
+
+; ── score a BATCH of articles ──
+; articles: a list of feature-lists. Returns a numeric vector of scores in input
+; order (matching the host's name→index map). A numeric return crosses the wire
+; as {value: [...]}; a belief return crosses as a {type, params} spec.
+(define score-batch
+  (lambda (weights articles)
+    (map (lambda (a) (score weights a)) articles)))

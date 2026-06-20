@@ -18,7 +18,7 @@ using Credence: Event, TagSet, FeatureEquals, FeatureInterval, Conjunction, Disj
 using Credence: _dispatch_path
 using Credence: weights, mean, variance, prune, truncate, logsumexp
 using Credence: CategoricalMeasure, ProductMeasure, MixtureMeasure
-using Credence: Prevision
+using Credence: Prevision, Measure, params
 using Credence: BetaPrevision, TaggedBetaPrevision, GaussianPrevision
 using Credence: GammaPrevision, DirichletPrevision, NormalGammaPrevision
 using Credence: ProductPrevision, MixturePrevision, CategoricalPrevision
@@ -490,6 +490,12 @@ function resolve_arg(arg)
     if arg isa Dict || arg isa JSON3.Object
         if haskey(arg, "ref")
             return get_state(string(arg["ref"]))
+        elseif haskey(arg, "type")
+            # A declarative belief-spec (same shape as create_state) — reconstruct
+            # the belief WITHOUT registering it. This is how a belief crosses the
+            # wire INTO a pure call_dsl function: build, never hold. See
+            # docs/decouple/move-2-design.md.
+            return build_prevision(arg)
         end
         # Otherwise it's a nested dict — convert to Julia dict
         return Dict{String, Any}(string(k) => resolve_arg(v) for (k, v) in pairs(arg))
@@ -508,6 +514,15 @@ end
 # Serialization helpers
 # ═══════════════════════════════════════
 
+# Serialize a belief (Prevision or Measure facade) to a declarative belief-spec
+# dict via the `params` protocol — the same shape `create_state`/`build_prevision`
+# consume, so it round-trips. The `:type` tag becomes a string. PURE: emits the
+# belief OUT of a call_dsl function without registering any state.
+function _belief_spec(belief)
+    nt = params(belief)
+    Dict{String, Any}(string(k) => (v isa Symbol ? string(v) : v) for (k, v) in pairs(nt))
+end
+
 function serialize_value(val)
     if val isa Number
         Dict("value" => val)
@@ -519,8 +534,15 @@ function serialize_value(val)
         Dict("value" => collect(Float64, val))
     elseif val isa Tuple && all(x -> x isa Number, val)
         Dict("value" => collect(val))
+    elseif val isa Prevision || val isa Measure
+        # A belief returned from a pure call_dsl function → inline belief-spec,
+        # no state registry. See docs/decouple/move-2-design.md.
+        _belief_spec(val)
+    elseif val isa AbstractVector && all(x -> x isa Prevision || x isa Measure, val)
+        # A positional list of beliefs (e.g. a MAUT weight vector) → list of specs.
+        [_belief_spec(x) for x in val]
     else
-        # Opaque Julia object (including nested lists, measures, etc.)
+        # Opaque Julia object (nested lists, agent states, etc.)
         # Wrap as a single state — the host passes it back via {"ref": id}
         Dict("state_id" => register_state(val))
     end
@@ -534,7 +556,7 @@ end
 # rides the `credence-skin` image tag). MAJOR bumps on a breaking protocol
 # change; MINOR on additive. Apps pin the major in code and `initialize`
 # rejects a mismatching major with -32010. See docs/decouple/master-plan.md.
-const PROTOCOL_VERSION = "1.0"
+const PROTOCOL_VERSION = "1.1"
 protocol_major(v) = String(first(split(String(v), ".")))
 
 # Advertised method set, returned by `initialize` for client capability

@@ -960,7 +960,7 @@ def test_initialize_returns_contract():
     skin = SkinClient()
     try:
         result = skin.initialize()
-        assert result["protocol"] == "1.0", f"protocol: {result.get('protocol')}"
+        assert result["protocol"] == "1.1", f"protocol: {result.get('protocol')}"
         assert "version" in result, "engine version missing"
         methods = result["methods"]
         # Core canalised verbs must be advertised for client capability discovery.
@@ -1005,8 +1005,50 @@ def test_dsl_sources_inline_equivalent_to_path():
         # a subsequent call_dsl against the loaded env resolves (the path-based
         # test_router_roundtrip already covers the path branch).
         result = skin.initialize(dsl_sources={"router": source})
-        assert result["protocol"] == "1.0"
+        assert result["protocol"] == "1.1"
         print("PASS: inline dsl_sources loads equivalently to a path load")
+    finally:
+        skin.shutdown()
+
+
+# ── call_dsl pure belief round-trip (decouple Move 2) ──
+
+
+def test_call_dsl_belief_roundtrip():
+    """call_dsl is a pure belief-function evaluator: a belief crosses the wire as a
+    declarative {type, params} spec (reconstructed by resolve_arg, never registered),
+    is conditioned by a pure model closure, and returns as a belief-spec (serialized
+    by serialize_value via the params protocol) — no state_id, no registry."""
+    model = """
+    (define grade-kernel
+      (kernel (space :euclidean 1) (space :euclidean 1)
+              (lambda (mu) (lambda (o) o))
+              :family normal 0.3))
+    (define observe-one (lambda (w obs) (condition w grade-kernel obs)))
+    (define score-one (lambda (w feat) (* (mean w) feat)))
+    """
+    skin = SkinClient()
+    try:
+        skin.initialize(dsl_sources={"model": model})
+        # belief-spec IN -> conditioned belief-spec OUT, no state_id
+        out = skin._call("call_dsl", {
+            "env_id": "model", "function": "observe-one",
+            "args": [{"type": "gaussian", "mu": 0.0, "sigma": 1.0}, 0.7],
+        })
+        assert "state_id" not in out, f"belief leaked as state: {out}"
+        assert out["type"] == "gaussian", out
+        # NormalNormal posterior with prior σ=1, obs-noise σ=0.3, obs=0.7:
+        # τ_post = 1 + 1/0.09; μ = (0 + 0.7/0.09)/τ_post.
+        tau = 1.0 + 1.0 / 0.09
+        assert abs(out["mu"] - (0.7 / 0.09) / tau) < 1e-9, out
+        assert abs(out["sigma"] - (1.0 / tau) ** 0.5) < 1e-9, out
+        # score: a belief-spec arg + a feature -> a plain number
+        s = skin._call("call_dsl", {
+            "env_id": "model", "function": "score-one",
+            "args": [{"type": "gaussian", "mu": out["mu"], "sigma": out["sigma"]}, 2.0],
+        })
+        assert abs(s["value"] - 2.0 * out["mu"]) < 1e-9, s
+        print("PASS: call_dsl pure belief round-trip")
     finally:
         skin.shutdown()
 
@@ -1065,5 +1107,7 @@ if __name__ == "__main__":
     test_protocol_major_mismatch()
     print()
     test_dsl_sources_inline_equivalent_to_path()
+    print()
+    test_call_dsl_belief_roundtrip()
     print()
     print("All tests passed!")

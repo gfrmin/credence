@@ -27,6 +27,7 @@ import ..Previsions: ExchangeablePrevision, decompose
 import ..Previsions: ParticlePrevision, QuadraturePrevision
 import ..Previsions: ConditionalPrevision
 import ..Previsions: condition
+import ..Previsions: params
 import ..Previsions: ConjugatePrevision, maybe_conjugate, update, _dispatch_path
 import ..Previsions: CenteredPower, CenteredSquare, GeometricTail
 import ..Previsions: Indicator, apply
@@ -35,6 +36,7 @@ export Space, Finite, Interval, ProductSpace, Simplex, Euclidean, PositiveReals,
 export Measure, CategoricalMeasure, BetaMeasure, TaggedBetaMeasure, GaussianMeasure, GammaMeasure, ExponentialMeasure, DirichletMeasure, NormalGammaMeasure, EnumerationMeasure, ProductMeasure, MixtureMeasure
 export Kernel, FactorSelector, kernel_source, kernel_target, kernel_params
 export LikelihoodFamily, LeafFamily, PushOnly, BetaBernoulli, WeightedBernoulli, SoftBernoulli, Flat, FiringByTag, DispatchByComponent, DepthCapExceeded
+export FAMILY_REGISTRY, register_family!
 export NormalNormal, Categorical, NormalGammaLikelihood, Exponential, Poisson
 export Event, TagSet, FeatureEquals, FeatureInterval, Conjunction, Disjunction, Complement
 export indicator_kernel, feature_value, BOOLEAN_SPACE
@@ -203,6 +205,12 @@ function Base.getproperty(m::TaggedBetaMeasure, s::Symbol)
 end
 
 Base.propertynames(::TaggedBetaMeasure) = (:tag, :beta, :space, :prevision)
+
+# Serialization protocol (see prevision.jl): a Measure facade serializes via the
+# Prevision it wraps. Leaf facades (Beta/Gaussian/Gamma/Dirichlet/Categorical…)
+# all hold a `:prevision` field; this generic method forwards to it. Facades
+# without one (e.g. EnumerationMeasure) fall through to a clear MethodError.
+params(m::Measure) = params(getfield(m, :prevision))
 
 mean(m::BetaMeasure) = m.alpha / (m.alpha + m.beta)
 variance(m::BetaMeasure) = m.alpha * m.beta / ((m.alpha + m.beta)^2 * (m.alpha + m.beta + 1))
