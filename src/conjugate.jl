@@ -94,6 +94,40 @@ function update(cp::ConjugatePrevision{GaussianPrevision, NormalNormal}, obs)
     ConjugatePrevision(GaussianPrevision(μ_post, σ_post), cp.likelihood)
 end
 
+# ── Pair: (MvGaussianPrevision, LinearGaussian) ──
+# Exact Bayesian-linear-regression / Kalman measurement update. Prior
+# w ~ N(m, Σ), observation y ~ N(aᵀw, σ²). The posterior is the closed-form
+#   Σa = Σ·a ;  ŷ = aᵀm ;  s = σ² + aᵀΣa ;  k = Σa/s
+#   m' = m + k·(y − ŷ) ;  Σ' = Σ − (Σa)(Σa)ᵀ/s.
+# The off-diagonal of the rank-1 correction (Σa)(Σa)ᵀ/s is the explaining-away
+# signal (anti-correlation between co-firing weights) and is kept in full — the
+# ontology is exact, no mean-field collapse. Per-feature marginals (the
+# consumer's persisted view) are read off diag(Σ') via `variance`. See
+# docs/linear-gaussian-conjugate.md.
+
+function maybe_conjugate(p::MvGaussianPrevision, k::Kernel)
+    if k.likelihood_family isa LinearGaussian
+        return ConjugatePrevision(p, k.likelihood_family)
+    end
+    nothing
+end
+
+function update(cp::ConjugatePrevision{MvGaussianPrevision, LinearGaussian}, obs)
+    a = cp.likelihood.coeffs
+    m = cp.prior.mu
+    Σ = cp.prior.Sigma
+    length(a) == length(m) ||
+        error("LinearGaussian update: coeffs length $(length(a)) ≠ state dim $(length(m))")
+    σ² = cp.likelihood.sigma_obs^2
+    Σa = Σ * a
+    ŷ = dot(a, m)
+    s = σ² + dot(a, Σa)
+    k = Σa ./ s
+    m′ = m .+ k .* (Float64(obs) - ŷ)
+    Σ′ = Σ .- (Σa * Σa') ./ s
+    ConjugatePrevision(MvGaussianPrevision(m′, Σ′), cp.likelihood)
+end
+
 # ── Pair: (DirichletPrevision, Categorical) ──
 
 function maybe_conjugate(p::DirichletPrevision, k::Kernel)

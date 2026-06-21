@@ -45,6 +45,20 @@ struct NormalNormal <: LeafFamily
     sigma_obs::Float64
 end
 
+# Linear-Gaussian (Bayesian-linear-regression) likelihood: one scalar
+# observation `y ~ N(aᵀw, σ²)` of a linear combination of a multivariate
+# Gaussian state `w`. `coeffs` is the per-observation coefficient vector `a`
+# (the article's feature values); `sigma_obs` is σ. Conjugate to a dense
+# `MvGaussianPrevision` prior via the exact Kalman measurement update
+# (src/conjugate.jl). Unlike NormalNormal's single scalar, the coefficient
+# vector is observation-specific and variable-length, so this family is built
+# per-observation (skin kernel spec / in-Julia), NOT via the fixed-arity
+# `FAMILY_REGISTRY`. See docs/linear-gaussian-conjugate.md.
+struct LinearGaussian <: LeafFamily
+    coeffs::Vector{Float64}
+    sigma_obs::Float64
+end
+
 struct Categorical{T} <: LeafFamily
     categories::Finite{T}
 end
@@ -89,6 +103,10 @@ register_family!(:flat,      () -> Flat(), 0)
 register_family!(:soft,      () -> SoftBernoulli(), 0)
 register_family!(:weighted,  () -> WeightedBernoulli(), 0)
 register_family!(:normal,    (sigma) -> NormalNormal(Float64(sigma)), 1)
+# Two args: `xs` (the per-observation coefficient vector — a runtime list, hence
+# the `:family` arg-evaluation generalisation) and `sigma` (observation noise).
+register_family!(Symbol("linear-gaussian"),
+                 (xs, sigma) -> LinearGaussian(collect(Float64, xs), Float64(sigma)), 2)
 
 struct Kernel
     source::Space

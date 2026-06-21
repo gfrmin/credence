@@ -28,6 +28,16 @@ end
 
 variance(p::BetaPrevision) = p.alpha * p.beta / ((p.alpha + p.beta)^2 * (p.alpha + p.beta + 1))
 variance(p::GaussianPrevision) = p.sigma^2
+# Per-coordinate marginal variances diag(Σ) — exact (a Gaussian's marginals are
+# read off the covariance diagonal). Cross-covariance is in `p.Sigma`.
+variance(p::MvGaussianPrevision) = [p.Sigma[i, i] for i in 1:length(p.mu)]
+
+# The exact i-th marginal of a multivariate Gaussian is the scalar Gaussian
+# N(μᵢ, Σᵢᵢ) — what a consumer persisting per-feature {mu, sigma} reads back.
+# Marginalisation drops cross-covariance by construction; that projection is the
+# consumer's explicit choice (the joint Σ stays available on `p`).
+marginal(p::MvGaussianPrevision, i::Int) =
+    GaussianPrevision(p.mu[i], sqrt(p.Sigma[i, i]))
 
 probability(p::Prevision, e::Event) = expect(p, Indicator(e))
 
@@ -62,6 +72,7 @@ end
 weights(p::BetaPrevision) = throw(WeightsDomainError(_WEIGHTS_DOMAIN_MSG))
 weights(p::TaggedBetaPrevision) = throw(WeightsDomainError(_WEIGHTS_DOMAIN_MSG))
 weights(p::GaussianPrevision) = throw(WeightsDomainError(_WEIGHTS_DOMAIN_MSG))
+weights(p::MvGaussianPrevision) = throw(WeightsDomainError(_WEIGHTS_DOMAIN_MSG))
 weights(p::GammaPrevision) = throw(WeightsDomainError(_WEIGHTS_DOMAIN_MSG))
 weights(p::DirichletPrevision) = p.alpha ./ sum(p.alpha)
 weights(p::NormalGammaPrevision) = throw(WeightsDomainError(_WEIGHTS_DOMAIN_MSG))

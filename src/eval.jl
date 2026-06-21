@@ -559,7 +559,7 @@ function _eval_kernel(args, env)
             fam_atom = args[i+1]
             (fam_atom isa Atom && fam_atom.value isa Symbol) ||
                 error(":family value must be a symbol (one of: $(_family_keywords())), got $(args[i+1])")
-            family, consumed = _build_family(fam_atom.value, args, i + 2)
+            family, consumed = _build_family(fam_atom.value, args, i + 2, env)
             family_set = true
             i += 2 + consumed
         else
@@ -574,21 +574,22 @@ end
 # Build a LikelihoodFamily for the BDSL `:family <kw> <args…>` form by dispatching
 # through the Ontology FAMILY_REGISTRY (families self-register there, so this
 # parser needs no edit when the roster grows). Consumes the family's declared
-# `arity` of trailing numeric args starting at `start`; returns (family, n_consumed).
-function _build_family(kw::Symbol, args, start::Int)
+# `arity` of trailing argument expressions starting at `start`, each EVALUATED in
+# `env` (so a literal `0.5` and a runtime symbol `xs` are both admissible — the
+# latter is what `:family linear-gaussian xs sigma` needs for its per-observation
+# coefficient vector). The registered constructor coerces the evaluated values to
+# the family's field types. Returns (family, n_consumed).
+function _build_family(kw::Symbol, args, start::Int, env)
     haskey(FAMILY_REGISTRY, kw) ||
         error(":family value :$kw unknown (one of: $(_family_keywords()))")
     ctor, arity = FAMILY_REGISTRY[kw]
-    nums = Float64[]
+    vals = Any[]
     for j in start:(start + arity - 1)
         j <= length(args) ||
-            error(":family $kw requires $arity numeric argument(s)")
-        a = args[j]
-        (a isa Atom && a.value isa Number) ||
-            error(":family $kw argument $(j - start + 1) must be a number, got $(args[j])")
-        push!(nums, Float64(a.value))
+            error(":family $kw requires $arity argument(s)")
+        push!(vals, eval_dsl(args[j], env))
     end
-    return ctor(nums...), arity
+    return ctor(vals...), arity
 end
 
 _family_keywords() = join(sort(string.(collect(keys(FAMILY_REGISTRY)))), ", ")

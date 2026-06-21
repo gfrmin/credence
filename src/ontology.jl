@@ -16,13 +16,13 @@ condition, push_measure, draw, prune, truncate, log_marginal.
 """
 module Ontology
 
-using LinearAlgebra: SymTridiagonal, eigen
+using LinearAlgebra: SymTridiagonal, eigen, dot, cholesky, Symmetric
 
 # ── Move 2: unify Functional hierarchy onto Previsions.TestFunction ──
 import ..Previsions: Prevision
 import ..Previsions: TestFunction, Identity, Projection, NestedProjection,
                      Tabular, LinearCombination, OpaqueClosure, FiringChoice, expect
-import ..Previsions: BetaPrevision, TaggedBetaPrevision, SparseStructurePrevision, GaussianPrevision, GammaPrevision, CategoricalPrevision, DirichletPrevision, NormalGammaPrevision, ProductPrevision, MixturePrevision
+import ..Previsions: BetaPrevision, TaggedBetaPrevision, SparseStructurePrevision, GaussianPrevision, MvGaussianPrevision, GammaPrevision, CategoricalPrevision, DirichletPrevision, NormalGammaPrevision, ProductPrevision, MixturePrevision
 import ..Previsions: ExchangeablePrevision, decompose
 import ..Previsions: ParticlePrevision, QuadraturePrevision
 import ..Previsions: ConditionalPrevision
@@ -33,11 +33,11 @@ import ..Previsions: CenteredPower, CenteredSquare, GeometricTail
 import ..Previsions: Indicator, apply
 
 export Space, Finite, Interval, ProductSpace, Simplex, Euclidean, PositiveReals, support
-export Measure, CategoricalMeasure, BetaMeasure, TaggedBetaMeasure, GaussianMeasure, GammaMeasure, ExponentialMeasure, DirichletMeasure, NormalGammaMeasure, EnumerationMeasure, ProductMeasure, MixtureMeasure
+export Measure, CategoricalMeasure, BetaMeasure, TaggedBetaMeasure, GaussianMeasure, MvGaussianMeasure, GammaMeasure, ExponentialMeasure, DirichletMeasure, NormalGammaMeasure, EnumerationMeasure, ProductMeasure, MixtureMeasure
 export Kernel, FactorSelector, kernel_source, kernel_target, kernel_params
 export LikelihoodFamily, LeafFamily, PushOnly, BetaBernoulli, WeightedBernoulli, SoftBernoulli, Flat, FiringByTag, DispatchByComponent, DepthCapExceeded
 export FAMILY_REGISTRY, register_family!
-export NormalNormal, Categorical, NormalGammaLikelihood, Exponential, Poisson
+export NormalNormal, LinearGaussian, Categorical, NormalGammaLikelihood, Exponential, Poisson
 export Event, TagSet, FeatureEquals, FeatureInterval, Conjunction, Disjunction, Complement
 export indicator_kernel, feature_value, BOOLEAN_SPACE
 export Functional, Identity, Projection, NestedProjection, Tabular, LinearCombination, OpaqueClosure
@@ -243,6 +243,38 @@ Base.propertynames(::GaussianMeasure) = (:mu, :sigma, :space, :prevision)
 
 mean(m::GaussianMeasure) = m.mu
 variance(m::GaussianMeasure) = m.sigma^2
+
+# ── Multivariate Gaussian: dense-covariance belief over Euclidean(d) ──
+
+struct MvGaussianMeasure <: Measure
+    prevision::MvGaussianPrevision
+    space::Euclidean
+
+    function MvGaussianMeasure(space::Euclidean, prevision::MvGaussianPrevision)
+        space.dim == length(prevision.mu) ||
+            error("MvGaussianMeasure: space dim $(space.dim) ≠ length(mu) $(length(prevision.mu))")
+        new(prevision, space)
+    end
+end
+
+MvGaussianMeasure(mu::Vector{Float64}, Sigma::Matrix{Float64}) =
+    MvGaussianMeasure(Euclidean(length(mu)), MvGaussianPrevision(mu, Sigma))
+
+function Base.getproperty(m::MvGaussianMeasure, s::Symbol)
+    if s === :mu || s === :Sigma
+        return getproperty(getfield(m, :prevision), s)
+    else
+        return getfield(m, s)
+    end
+end
+
+Base.propertynames(::MvGaussianMeasure) = (:mu, :Sigma, :space, :prevision)
+
+# `mean` is the vector μ; `variance` is the per-coordinate marginal variances
+# diag(Σ) — the exact marginals (a Gaussian's marginals are read off Σ's
+# diagonal). Cross-covariance lives in `m.Sigma`.
+mean(m::MvGaussianMeasure) = copy(m.mu)
+variance(m::MvGaussianMeasure) = [m.Sigma[i, i] for i in 1:m.space.dim]
 
 # ── Dirichlet: distribution over the probability simplex ──
 
@@ -451,6 +483,7 @@ function wrap_in_measure(p::TaggedBetaPrevision)
 end
 
 wrap_in_measure(p::GaussianPrevision) = GaussianMeasure(Euclidean(1), p.mu, p.sigma)
+wrap_in_measure(p::MvGaussianPrevision) = MvGaussianMeasure(Euclidean(length(p.mu)), p)
 wrap_in_measure(p::GammaPrevision) = GammaMeasure(PositiveReals(), p.alpha, p.beta)
 
 function wrap_in_measure(p::ProductPrevision)
@@ -740,6 +773,7 @@ function expect(p::BetaPrevision, ::GeometricTail)
     p.alpha / (p.beta - 1.0)
 end
 expect(p::GaussianPrevision, ::Identity) = p.mu
+expect(p::MvGaussianPrevision, ::Identity) = copy(p.mu)
 expect(p::GammaPrevision, ::Identity) = p.alpha / p.beta
 expect(p::DirichletPrevision, ::Identity) = p.alpha ./ sum(p.alpha)
 expect(p::NormalGammaPrevision, ::Identity) = p.μ
@@ -962,6 +996,19 @@ function condition(m::GaussianMeasure, k::Kernel, observation)
     _condition_by_grid(m, k, observation)
 end
 
+# Measure-facade for the exact LinearGaussian conjugate. Without this the generic
+# particle fallback (condition(::Measure, …)) would shadow the conjugate when the
+# DSL passes a Measure (it speaks Measures, not Previsions). No grid/particle
+# fallback for a dense-covariance state — an unrecognised kernel is an error.
+function condition(m::MvGaussianMeasure, k::Kernel, observation)
+    cp = maybe_conjugate(m.prevision, k)
+    cp !== nothing || error(
+        "condition(::MvGaussianMeasure, ...) supports only the LinearGaussian conjugate; " *
+        "got likelihood_family $(typeof(k.likelihood_family)).")
+    updated = update(cp, observation).prior
+    return MvGaussianMeasure(m.space, updated)
+end
+
 function condition(m::DirichletMeasure, k::Kernel, observation)
     cp = maybe_conjugate(m.prevision, k)
     if cp !== nothing
@@ -1019,6 +1066,18 @@ function condition(p::GaussianPrevision, k::Kernel, observation)
     end
     conditioned = condition(wrap_in_measure(p), k, observation)
     conditioned.prevision
+end
+
+# A multivariate Gaussian is conditioned only through its LinearGaussian
+# conjugate (the exact Kalman update). There is no generic grid/particle
+# fallback for the dense-covariance state — an unrecognised kernel is a
+# construction error, surfaced with remediation (mirrors NormalGamma).
+function condition(p::MvGaussianPrevision, k::Kernel, observation)
+    cp = maybe_conjugate(p, k)
+    cp !== nothing && return update(cp, observation).prior
+    error("condition(::MvGaussianPrevision, ...) supports only the LinearGaussian " *
+          "conjugate; got likelihood_family $(typeof(k.likelihood_family)). Construct " *
+          "the kernel with likelihood_family = LinearGaussian(coeffs, sigma_obs).")
 end
 
 function condition(p::GammaPrevision, k::Kernel, observation)
@@ -1547,6 +1606,10 @@ end
 draw(p::TaggedBetaPrevision) = draw(p.beta)
 
 draw(p::GaussianPrevision) = p.mu + p.sigma * randn()
+
+# Multivariate normal sample: μ + L·z with L the lower Cholesky factor of Σ
+# (Σ = L·Lᵀ) and z ~ N(0, I). `draw` is the host-side randomness boundary.
+draw(p::MvGaussianPrevision) = p.mu .+ cholesky(Symmetric(p.Sigma)).L * randn(length(p.mu))
 
 draw(p::GammaPrevision) = _draw_gamma(p.alpha) / p.beta
 

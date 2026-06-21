@@ -20,6 +20,7 @@ using Credence: weights, mean, variance, prune, truncate, logsumexp
 using Credence: CategoricalMeasure, ProductMeasure, MixtureMeasure
 using Credence: Prevision, Measure, params
 using Credence: BetaPrevision, TaggedBetaPrevision, GaussianPrevision
+using Credence: MvGaussianPrevision, MvGaussianMeasure, LinearGaussian, GaussianMeasure
 using Credence: GammaPrevision, DirichletPrevision, NormalGammaPrevision
 using Credence: ProductPrevision, MixturePrevision, CategoricalPrevision
 using Credence: Finite, Interval, ProductSpace, Euclidean, PositiveReals, Simplex
@@ -159,6 +160,10 @@ end
 # State construction from spec
 # ═══════════════════════════════════════
 
+# Rebuild a dense covariance Matrix from the wire's vector-of-rows (the shape
+# `params(::MvGaussianPrevision)` emits — a bare matrix flattens on JSON).
+_cov_from_rows(rows) = mapreduce(r -> permutedims(collect(Float64, r)), vcat, rows)
+
 function build_prevision(spec)
     t = spec["type"]
     if t == "categorical"
@@ -175,6 +180,8 @@ function build_prevision(spec)
                             BetaPrevision(Float64(spec["alpha"]), Float64(spec["beta"])))
     elseif t == "gaussian"
         GaussianPrevision(Float64(spec["mu"]), Float64(spec["sigma"]))
+    elseif t == "mv_gaussian"
+        MvGaussianPrevision(collect(Float64, spec["mu"]), _cov_from_rows(spec["sigma"]))
     elseif t == "gamma"
         GammaPrevision(Float64(spec["alpha"]), Float64(spec["beta"]))
     elseif t == "dirichlet"
@@ -210,6 +217,10 @@ function build_measure(spec)
                           BetaMeasure(Float64(spec["alpha"]), Float64(spec["beta"])))
     elseif t == "gaussian"
         GaussianMeasure(Euclidean(1), Float64(spec["mu"]), Float64(spec["sigma"]))
+    elseif t == "mv_gaussian"
+        mu = collect(Float64, spec["mu"])
+        MvGaussianMeasure(Euclidean(length(mu)),
+                          MvGaussianPrevision(mu, _cov_from_rows(spec["sigma"])))
     elseif t == "gamma"
         GammaMeasure(Float64(spec["alpha"]), Float64(spec["beta"]))
     elseif t == "dirichlet"
@@ -255,6 +266,18 @@ function build_kernel(spec, state_id::Union{String, Nothing}=nothing)
             (μ, o) -> -0.5 * (o - μ)^2 / variance;
             params = Dict{Symbol, Any}(:sigma_obs => sqrt(variance)),
             likelihood_family = PushOnly())
+
+    elseif t == "linear_gaussian"
+        # y ~ N(aᵀw, σ²): joint linear-Gaussian observation of a multivariate
+        # Gaussian state. The conjugate update (exact Kalman) is keyed off the
+        # LinearGaussian family; log_density is the predictive at a concrete w.
+        coeffs = collect(Float64, spec["coeffs"])
+        variance = Float64(spec["variance"])
+        d = length(coeffs)
+        Kernel(Euclidean(d), Euclidean(1),
+            w -> error("generate not used"),
+            (w, o) -> -0.5 * (o - sum(coeffs[i] * w[i] for i in 1:d))^2 / variance;
+            likelihood_family = LinearGaussian(coeffs, sqrt(variance)))
 
     elseif t == "quality"
         # (θ, k) → Beta(θk, (1-θ)k) continuous quality observation
