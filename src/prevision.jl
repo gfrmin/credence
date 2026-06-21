@@ -30,7 +30,7 @@ module Previsions
 
 export Prevision, TestFunction, Indicator, apply, expect
 export Identity, Projection, NestedProjection, Tabular, LinearCombination, OpaqueClosure, FiringChoice
-export BetaPrevision, TaggedBetaPrevision, SparseStructurePrevision, GaussianPrevision, GammaPrevision, CategoricalPrevision, DirichletPrevision, NormalGammaPrevision, ProductPrevision, MixturePrevision
+export BetaPrevision, TaggedBetaPrevision, SparseStructurePrevision, GaussianPrevision, MvGaussianPrevision, GammaPrevision, CategoricalPrevision, DirichletPrevision, NormalGammaPrevision, ProductPrevision, MixturePrevision
 export ExchangeablePrevision, decompose
 export ParticlePrevision, QuadraturePrevision
 export ConditionalPrevision
@@ -325,6 +325,29 @@ The `GaussianMeasure` view wraps a `GaussianPrevision` and forwards
 struct GaussianPrevision <: Prevision
     mu::Float64
     sigma::Float64
+end
+
+"""
+    MvGaussianPrevision(mu::Vector{Float64}, Sigma::Matrix{Float64}) <: Prevision
+
+Prevision whose representing measure is a multivariate Gaussian N(μ, Σ) on
+Euclidean space, with a *dense* covariance Σ. Distinct from a product of scalar
+`GaussianPrevision`s (which is diagonal by construction and cannot carry the
+off-diagonal correlation a joint linear-Gaussian update induces). The conjugate
+pair `(MvGaussianPrevision, LinearGaussian)` realises the exact Bayesian-linear-
+regression / Kalman measurement update — see docs/linear-gaussian-conjugate.md.
+The `MvGaussianMeasure` view wraps it and forwards `m.mu`, `m.Sigma`.
+"""
+struct MvGaussianPrevision <: Prevision
+    mu::Vector{Float64}
+    Sigma::Matrix{Float64}
+
+    function MvGaussianPrevision(mu::Vector{Float64}, Sigma::Matrix{Float64})
+        d = length(mu)
+        size(Sigma) == (d, d) ||
+            error("MvGaussianPrevision: Sigma must be $d×$d to match mu (got $(size(Sigma)))")
+        new(mu, Sigma)
+    end
 end
 
 """
@@ -831,6 +854,11 @@ end
 # copied so the snapshot never aliases the shared-reference internal store.
 params(p::BetaPrevision)        = (type = :beta,        alpha = p.alpha, beta = p.beta)
 params(p::GaussianPrevision)    = (type = :gaussian,    mu = p.mu,       sigma = p.sigma)
+# Σ is emitted as a vector-of-rows so it round-trips through JSON; a bare Julia
+# matrix flattens column-major on the wire, losing shape. The skin reads the
+# nested arrays back into a Matrix (see build_prevision / build_measure).
+params(p::MvGaussianPrevision)  = (type = :mv_gaussian, mu = copy(p.mu),
+                                   sigma = [collect(Float64, r) for r in eachrow(p.Sigma)])
 params(p::GammaPrevision)       = (type = :gamma,       alpha = p.alpha, beta = p.beta)
 params(p::DirichletPrevision)   = (type = :dirichlet,   alpha = copy(p.alpha))
 params(p::CategoricalPrevision) = (type = :categorical, log_weights = copy(p.log_weights))
