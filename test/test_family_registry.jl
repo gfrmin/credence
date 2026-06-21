@@ -38,14 +38,16 @@ kn = mk(":family normal 0.3")
 check("normal → NormalNormal(σ)", kn isa NormalNormal && kn.sigma_obs == 0.3, "got $kn")  # credence-lint: allow — precedent:test-oracle — declared σ flows verbatim
 
 # ── the registry is the single source of truth ──
-check("registry holds all five", all(haskey(FAMILY_REGISTRY, k)
-    for k in (:bernoulli, :flat, :soft, :weighted, :normal)))
+check("registry holds the roster", all(haskey(FAMILY_REGISTRY, k)
+    for k in (:bernoulli, :flat, :soft, :weighted, :normal, Symbol("linear-gaussian"))))
 
 # ── errors are clear and list the roster ──
 throws_with(f, substr) =
     try; f(); false; catch e; occursin(substr, sprint(showerror, e)); end
 check("unknown family errors with roster", throws_with(() -> mk(":family bogus"), "unknown"))
-check(":normal without σ errors", throws_with(() -> mk(":family normal"), "numeric"))
+# `:family` args are now EVALUATED (not literal-numeric) so the linear-gaussian
+# coeffs vector is admissible; a missing arg still errors on arity.
+check(":normal without σ errors", throws_with(() -> mk(":family normal"), "argument"))
 
 # ── the exposed family actually drives its conjugate update (NormalNormal) ──
 # This is the wire path: build_prevision yields a raw GaussianPrevision, which
