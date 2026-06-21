@@ -280,7 +280,7 @@ function rank_articles(
             tbm = comp::TaggedBetaPrevision
             fires = state.compiled_kernels[j].evaluate(features, temporal_state) == :match
             p = mean(tbm.beta)
-            score += w[j] * (fires ? p : 0.5)  # credence-lint: allow — precedent:posterior-iteration — mixture EU requires per-component compiled-kernel dispatch
+            score += w[j] * (fires ? p : 0.5)  # credence-lint: allow — precedent:posterior-iteration — mixture EU requires per-component compiled-kernel dispatch — tracked in issue #39
         end
         scores[entry_id] = score
     end

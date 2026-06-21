@@ -138,7 +138,7 @@ function build_predictive(
         r_j = rec_cache[j]
         for a in action_space
             p = a == r_j ? θ_mean : (1.0 - θ_mean) / max(n_actions - 1, 1)
-            action_probs[a] += w[j] * p  # credence-lint: allow — precedent:posterior-iteration — mixture EU requires per-component compiled-kernel dispatch; no stdlib Functional covers this pattern
+            action_probs[a] += w[j] * p  # credence-lint: allow — precedent:posterior-iteration — mixture EU requires per-component compiled-kernel dispatch; no stdlib Functional covers this pattern — tracked in issue #39
         end
     end
 

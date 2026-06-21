@@ -114,7 +114,7 @@ function compute_eu_interact(
         mean_j = mean(comp.beta)
         # If program recommends :enemy and is correct (mean_j), entity is enemy
         # If program recommends :food and is correct (mean_j), entity is food → P(enemy) = 1-mean_j
-        p_enemy += w[j] * (rec == :enemy ? mean_j : 1.0 - mean_j)  # credence-lint: allow — precedent:posterior-iteration — mixture EU requires per-component compiled-kernel dispatch
+        p_enemy += w[j] * (rec == :enemy ? mean_j : 1.0 - mean_j)  # credence-lint: allow — precedent:posterior-iteration — mixture EU requires per-component compiled-kernel dispatch — tracked in issue #39
     end
     energy_enemy = -5.0
     energy_food = 5.0
@@ -394,7 +394,7 @@ function run_agent(;
                     ck = state.compiled_kernels[j]
                     rec = ck.evaluate(features, temporal_state)
                     mean_j = mean(comp.beta)
-                    p_enemy_val += w[j] * (rec == :enemy ? mean_j : 1.0 - mean_j)  # credence-lint: allow — precedent:posterior-iteration — mixture EU requires per-component compiled-kernel dispatch
+                    p_enemy_val += w[j] * (rec == :enemy ? mean_j : 1.0 - mean_j)  # credence-lint: allow — precedent:posterior-iteration — mixture EU requires per-component compiled-kernel dispatch — tracked in issue #39
                 end
                 p_obs = is_enemy ? p_enemy_val : (1.0 - p_enemy_val)
                 surprise = -log(max(p_obs, 1e-300))

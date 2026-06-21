@@ -1208,10 +1208,10 @@ function handle_eu_interact(params)
         # p(rec is correct) = mean_j, p(rec is wrong) = 1 - mean_j
         for (label, _) in rewards
             p_label = if rec == label
-                w[j] * mean_j  # credence-lint: allow — precedent:posterior-iteration — per-component compiled-kernel dispatch; reducible via per-component-dispatch Functional (post-Posture-4)
+                w[j] * mean_j  # credence-lint: allow — precedent:posterior-iteration — per-component compiled-kernel dispatch; reducible via per-component-dispatch Functional (post-Posture-4) — tracked in issue #39
             else
                 # If there are only 2 labels, the other gets 1-mean_j
-                w[j] * (1.0 - mean_j) / max(length(rewards) - 1, 1)  # credence-lint: allow — precedent:posterior-iteration — per-component compiled-kernel dispatch; reducible via per-component-dispatch Functional (post-Posture-4)
+                w[j] * (1.0 - mean_j) / max(length(rewards) - 1, 1)  # credence-lint: allow — precedent:posterior-iteration — per-component compiled-kernel dispatch; reducible via per-component-dispatch Functional (post-Posture-4) — tracked in issue #39
             end
             label_probs[label] = get(label_probs, label, 0.0) + p_label
         end
