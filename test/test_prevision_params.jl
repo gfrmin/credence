@@ -6,9 +6,9 @@
 
 push!(LOAD_PATH, "src")
 using Credence
-using Credence: BetaPrevision, GaussianPrevision, GammaPrevision, DirichletPrevision,
-                CategoricalPrevision
-using Credence: BetaMeasure, GaussianMeasure, GammaMeasure
+using Credence: BetaPrevision, GaussianPrevision, MvGaussianPrevision, GammaPrevision,
+                DirichletPrevision, CategoricalPrevision
+using Credence: BetaMeasure, GaussianMeasure, GammaMeasure, MvGaussianMeasure
 
 function check(name, cond, detail="")
     if cond
@@ -27,6 +27,10 @@ check("gaussian", params(GaussianPrevision(0.5, 1.5)) == (type=:gaussian, mu=0.5
 check("gamma", params(GammaPrevision(4.0, 0.5)) == (type=:gamma, alpha=4.0, beta=0.5))  # credence-lint: allow — precedent:test-oracle — sufficient statistics emitted verbatim
 check("dirichlet", params(DirichletPrevision([1.0, 2.0, 3.0])) == (type=:dirichlet, alpha=[1.0, 2.0, 3.0]))  # credence-lint: allow — precedent:test-oracle — sufficient statistics emitted verbatim
 check("categorical", params(CategoricalPrevision([0.0, -1.0])).type == :categorical)
+let nt = params(MvGaussianPrevision([0.5, -1.0], [2.0 0.3; 0.3 0.5]))
+    check("mv_gaussian", nt == (type=:mv_gaussian, mu=[0.5, -1.0],
+                                sigma=[[2.0, 0.3], [0.3, 0.5]]))  # credence-lint: allow — precedent:test-oracle — sufficient statistics emitted verbatim (Σ as rows)
+end
 
 # ── vectors are copied, not aliased (snapshot, not shared-reference) ──
 α = [1.0, 2.0]
@@ -42,10 +46,19 @@ check("beta round-trip", params(BetaPrevision(nt.alpha, nt.beta)) == nt)  # cred
 g = GaussianPrevision(0.25, 0.8)
 ntg = params(g)
 check("gaussian round-trip", params(GaussianPrevision(ntg.mu, ntg.sigma)) == ntg)  # credence-lint: allow — precedent:test-oracle — reconstruct∘serialize is identity
+# mv_gaussian round-trip: rebuild the Matrix from the vector-of-rows (the same
+# stacking the skin's build_prevision does).
+let mv = MvGaussianPrevision([0.5, -1.0], [2.0 0.3; 0.3 0.5]), ntm = params(mv)
+    Σ = mapreduce(r -> permutedims(collect(Float64, r)), vcat, ntm.sigma)
+    check("mv_gaussian round-trip", params(MvGaussianPrevision(ntm.mu, Σ)) == ntm)  # credence-lint: allow — precedent:test-oracle — reconstruct∘serialize is identity
+end
 
 # ── Measure facade forwards to its wrapped Prevision ──
 check("BetaMeasure forwards", params(BetaMeasure(2.0, 3.0)) == (type=:beta, alpha=2.0, beta=3.0))  # credence-lint: allow — precedent:test-oracle — facade serializes via its prevision
 check("GaussianMeasure forwards",
       params(GaussianMeasure(Credence.Euclidean(1), 0.5, 1.5)) == (type=:gaussian, mu=0.5, sigma=1.5))  # credence-lint: allow — precedent:test-oracle — facade serializes via its prevision
+check("MvGaussianMeasure forwards",
+      params(MvGaussianMeasure([0.5, -1.0], [2.0 0.3; 0.3 0.5])) ==
+          (type=:mv_gaussian, mu=[0.5, -1.0], sigma=[[2.0, 0.3], [0.3, 0.5]]))  # credence-lint: allow — precedent:test-oracle — facade serializes via its prevision
 
 println("test_prevision_params: all passed")
