@@ -42,7 +42,7 @@ export LikelihoodFamily, LeafFamily, PushOnly, BetaBernoulli, WeightedBernoulli,
 export NormalNormal, Categorical, NormalGammaLikelihood, Exponential, Poisson
 export Event, TagSet, FeatureEquals, FeatureInterval, Conjunction, Disjunction, Complement
 export indicator_kernel, feature_value, BOOLEAN_SPACE
-export Functional, Identity, Projection, NestedProjection, Tabular, LinearCombination, OpaqueClosure
+export Functional, Identity, Projection, NestedProjection, Tabular, LinearCombination, OpaqueClosure, FiringChoice
 export Prevision, TestFunction, Indicator, apply
 export params
 export CenteredPower, CenteredSquare, GeometricTail

@@ -29,7 +29,7 @@ See `docs/posture-3/master-plan.md` for the full branch plan.
 module Previsions
 
 export Prevision, TestFunction, Indicator, apply, expect
-export Identity, Projection, NestedProjection, Tabular, LinearCombination, OpaqueClosure
+export Identity, Projection, NestedProjection, Tabular, LinearCombination, OpaqueClosure, FiringChoice
 export BetaPrevision, TaggedBetaPrevision, SparseStructurePrevision, GaussianPrevision, GammaPrevision, CategoricalPrevision, DirichletPrevision, NormalGammaPrevision, ProductPrevision, MixturePrevision
 export ExchangeablePrevision, decompose
 export ParticlePrevision, QuadraturePrevision
@@ -218,6 +218,36 @@ ontology.jl, which reaches the fast path without quadrature.
 struct GeometricTail <: TestFunction end
 
 apply(::GeometricTail, ρ) = ρ / (1.0 - ρ)
+
+"""
+    FiringChoice(fired, when_fires, when_not) <: TestFunction
+
+Per-component dispatch over a mixture: applies `when_fires` to the components
+where `fired[i]` and `when_not` to the rest, recombining by mixture weight —
+`expect(mixture, fc) = Σ_i w_i · expect(component_i, fired[i] ? when_fires : when_not)`.
+
+The Functional-side dual of the kernel-side `FiringByTag` (`src/kernels.jl`):
+both name the dominant "some components fired, some didn't" pattern declaratively.
+The `fired` flags are precomputed by the caller (typically by evaluating each
+component's compiled kernel at the query features — a forward program evaluation,
+not weight arithmetic). `when_fires`/`when_not` are arbitrary `TestFunction`s, so
+the binary split expresses `1-θ` (`LinearCombination([(-1.0, Identity())], 1.0)`),
+`(1-θ)/(n-1)`, a constant (`LinearCombination(Tuple{Float64,TestFunction}[], c)`),
+or an affine EU contribution.
+
+Inherently mixture-level: `expect` is defined on `MixturePrevision`/`MixtureMeasure`
+(length of `fired` must match the component count, checked at dispatch like
+`Tabular`); there is no point-wise `apply`. See `docs/stdlib/per-component-functional.md`.
+"""
+struct FiringChoice <: TestFunction
+    fired::Vector{Bool}        # one flag per mixture component
+    when_fires::TestFunction   # applied where fired[i]
+    when_not::TestFunction     # applied to the rest
+    function FiringChoice(fired::Vector{Bool}, when_fires::TestFunction, when_not::TestFunction)
+        isempty(fired) && throw(ArgumentError("FiringChoice requires at least one component flag"))
+        new(fired, when_fires, when_not)
+    end
+end
 
 # ── Concrete Prevision subtypes (Move 3) ──────────────────────────────────
 

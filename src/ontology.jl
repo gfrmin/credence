@@ -21,7 +21,7 @@ using LinearAlgebra: SymTridiagonal, eigen
 # ── Move 2: unify Functional hierarchy onto Previsions.TestFunction ──
 import ..Previsions: Prevision
 import ..Previsions: TestFunction, Identity, Projection, NestedProjection,
-                     Tabular, LinearCombination, OpaqueClosure, expect
+                     Tabular, LinearCombination, OpaqueClosure, FiringChoice, expect
 import ..Previsions: BetaPrevision, TaggedBetaPrevision, SparseStructurePrevision, GaussianPrevision, GammaPrevision, CategoricalPrevision, DirichletPrevision, NormalGammaPrevision, ProductPrevision, MixturePrevision
 import ..Previsions: ExchangeablePrevision, decompose
 import ..Previsions: ParticlePrevision, QuadraturePrevision
@@ -713,6 +713,16 @@ function expect(m::MixtureMeasure, φ::Functional)
     sum(w[i] * expect(m.components[i], φ) for i in eachindex(w))
 end
 
+# Per-component dispatch (Measure side). Mirror of the MixturePrevision method;
+# more specific than the generic `(::MixtureMeasure, ::Functional)` above.
+function expect(m::MixtureMeasure, fc::FiringChoice)
+    length(fc.fired) == length(m.components) ||
+        error("FiringChoice has $(length(fc.fired)) flags but mixture has $(length(m.components)) components")
+    w = weights(m)
+    sum(w[i] * expect(m.components[i], fc.fired[i] ? fc.when_fires : fc.when_not)
+        for i in eachindex(w))
+end
+
 expect(m::Measure, o::OpaqueClosure; kwargs...) = expect(m, o.f; kwargs...)
 expect(m::MixtureMeasure, o::OpaqueClosure; kwargs...) = expect(m, o.f; kwargs...)
 
@@ -837,6 +847,36 @@ function expect(p::MixturePrevision, lc::LinearCombination)
     end
     total
 end
+
+# Evaluate one FiringChoice branch on a single mixture component. A
+# LinearCombination branch is expanded by linearity *here* (mirroring the
+# mixture-level LinearCombination method) so a leaf prevision/measure never
+# receives a LinearCombination directly — which would be ambiguous with the
+# leaf's generic `(::leaf, ::TestFunction)` apply-fallback.
+_firing_branch(p, f::TestFunction) = expect(p, f)
+_firing_branch(p, lc::LinearCombination) =
+    lc.offset + (isempty(lc.terms) ? 0.0 : sum(c * _firing_branch(p, f) for (c, f) in lc.terms))
+
+# Per-component dispatch over a mixture: apply `when_fires` to the components
+# where `fired[i]`, `when_not` to the rest, recombine by mixture weight. The
+# Functional-side dual of kernel-side FiringByTag. More specific than the
+# generic `expect(::MixturePrevision, ::TestFunction)`, so it wins dispatch.
+# Asserted by test/test_per_component_functional.jl.
+function expect(p::MixturePrevision, fc::FiringChoice)
+    length(fc.fired) == length(p.components) ||
+        error("FiringChoice has $(length(fc.fired)) flags but mixture has $(length(p.components)) components")
+    lw = p.log_weights
+    max_lw = maximum(lw)
+    w = exp.(lw .- max_lw)
+    w ./= sum(w)
+    sum(w[i] * _firing_branch(p.components[i], fc.fired[i] ? fc.when_fires : fc.when_not)
+        for i in eachindex(w))
+end
+
+# FiringChoice is inherently mixture-level (per-component dispatch). Calling it
+# on a non-mixture prevision is a usage error, not a fallback.
+expect(::Prevision, ::FiringChoice) =
+    error("FiringChoice requires a MixturePrevision (per-component dispatch over mixture components)")
 
 # Measure-level probability via indicator kernel. The generic path
 # integrates the indicator over the measure's support; specialised
