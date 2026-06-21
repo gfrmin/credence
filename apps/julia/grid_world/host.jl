@@ -106,19 +106,19 @@ function compute_eu_interact(
     features::Dict{Symbol, Float64},
     temporal_state::Dict{Symbol, Any}
 )
-    w = weights(belief)
-    p_enemy = 0.0
-    for (j, comp) in enumerate(belief.components)
-        ck = compiled_kernels[j]
-        rec = ck.evaluate(features, temporal_state)
-        mean_j = mean(comp.beta)
-        # If program recommends :enemy and is correct (mean_j), entity is enemy
-        # If program recommends :food and is correct (mean_j), entity is food → P(enemy) = 1-mean_j
-        p_enemy += w[j] * (rec == :enemy ? mean_j : 1.0 - mean_j)  # credence-lint: allow — precedent:posterior-iteration — mixture EU requires per-component compiled-kernel dispatch — tracked in issue #39
-    end
     energy_enemy = -5.0
     energy_food = 5.0
-    p_enemy * energy_enemy + (1.0 - p_enemy) * energy_food
+    # Per-component EU is affine in the Beta mean θ_j: a program recommending
+    # :enemy contributes energy_food + (energy_enemy-energy_food)·θ_j (it is right
+    # with prob θ_j → entity is enemy), one recommending :food contributes the
+    # complement, energy_enemy + (energy_food-energy_enemy)·θ_j. FiringChoice
+    # selects the branch per component and `expect` does the weighted mixture sum.
+    fired = [compiled_kernels[j].evaluate(features, temporal_state) == :enemy
+             for j in eachindex(compiled_kernels)]
+    d = energy_enemy - energy_food
+    expect(belief, FiringChoice(fired,
+        LinearCombination(Tuple{Float64, TestFunction}[( d, Identity())], energy_food),
+        LinearCombination(Tuple{Float64, TestFunction}[(-d, Identity())], energy_enemy)))
 end
 
 function select_action(eu_interact::Float64, nearest_dist::Float64)
@@ -388,14 +388,12 @@ function run_agent(;
             if nearest !== nothing
                 eid, entity = nearest
                 features = entity_features(entity, world.agent_pos, world.config.grid_size)
-                w = weights(state.belief)
-                p_enemy_val = 0.0
-                for (j, comp) in enumerate(state.belief.components)
-                    ck = state.compiled_kernels[j]
-                    rec = ck.evaluate(features, temporal_state)
-                    mean_j = mean(comp.beta)
-                    p_enemy_val += w[j] * (rec == :enemy ? mean_j : 1.0 - mean_j)  # credence-lint: allow — precedent:posterior-iteration — mixture EU requires per-component compiled-kernel dispatch — tracked in issue #39
-                end
+                # P(enemy) = Σ_j w_j·(rec_j == :enemy ? θ_j : 1-θ_j) — a per-component
+                # firing split over the mixture (the same shape compute_eu_interact uses).
+                fired = [state.compiled_kernels[j].evaluate(features, temporal_state) == :enemy
+                         for j in eachindex(state.compiled_kernels)]
+                p_enemy_val = expect(state.belief, FiringChoice(fired, Identity(),
+                    LinearCombination(Tuple{Float64, TestFunction}[(-1.0, Identity())], 1.0)))
                 p_obs = is_enemy ? p_enemy_val : (1.0 - p_enemy_val)
                 surprise = -log(max(p_obs, 1e-300))
             else

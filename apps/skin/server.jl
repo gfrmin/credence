@@ -1198,26 +1198,29 @@ function handle_eu_interact(params)
         "got $(length(rewards)) labels")
     temporal_state = Dict{Symbol, Any}()
 
-    w = weights(state.belief)
+    # Per-component recommendation (a forward program evaluation, not weight
+    # arithmetic), then one FiringChoice expect per outcome label:
+    #   P(label) = Σ_j w_j·(rec_j == label ? θ_j : (1-θ_j)/(n-1))
+    # The per-component dispatch and the weighted mixture sum live in `expect`.
+    recs = [state.compiled_kernels[j].evaluate(features, temporal_state)
+            for j in eachindex(state.compiled_kernels)]
+    inv = 1.0 / max(length(rewards) - 1, 1)
+    when_not = LinearCombination(Tuple{Float64, TestFunction}[(-inv, Identity())], inv)  # (1-θ)/(n-1)
     label_probs = Dict{Symbol, Float64}()
-
-    for (j, comp) in enumerate(state.belief.components)
-        ck = state.compiled_kernels[j]
-        rec = ck.evaluate(features, temporal_state)
-        mean_j = mean(comp)
-        # p(rec is correct) = mean_j, p(rec is wrong) = 1 - mean_j
-        for (label, _) in rewards
-            p_label = if rec == label
-                w[j] * mean_j  # credence-lint: allow — precedent:posterior-iteration — per-component compiled-kernel dispatch; reducible via per-component-dispatch Functional (post-Posture-4) — tracked in issue #39
-            else
-                # If there are only 2 labels, the other gets 1-mean_j
-                w[j] * (1.0 - mean_j) / max(length(rewards) - 1, 1)  # credence-lint: allow — precedent:posterior-iteration — per-component compiled-kernel dispatch; reducible via per-component-dispatch Functional (post-Posture-4) — tracked in issue #39
-            end
-            label_probs[label] = get(label_probs, label, 0.0) + p_label
-        end
+    for label in keys(rewards)
+        label_probs[label] = expect(state.belief,
+            FiringChoice(Bool[r == label for r in recs], Identity(), when_not))
     end
 
-    eu = sum(label_probs[l] * rewards[l] for l in keys(rewards))
+    # EU as a single canalised expectation. Binary outcome (asserted above): per
+    # component EU is affine in θ_j — a program recommending L1 scores r1·θ + r2·(1-θ),
+    # one recommending L2 scores r1·(1-θ) + r2·θ. FiringChoice picks the branch and
+    # `expect` does the weighted mixture sum, so no arithmetic on probabilities here.
+    labels = collect(keys(rewards)); L1, L2 = labels[1], labels[2]
+    r1, r2 = rewards[L1], rewards[L2]
+    eu = expect(state.belief, FiringChoice(Bool[r == L1 for r in recs],
+        LinearCombination(Tuple{Float64, TestFunction}[(r1 - r2, Identity())], r2),
+        LinearCombination(Tuple{Float64, TestFunction}[(r2 - r1, Identity())], r1)))
     Dict("eu" => eu, "p_labels" => Dict(string(l) => p for (l, p) in label_probs))
 end
 

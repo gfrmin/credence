@@ -133,6 +133,39 @@ let
     check("empty fired rejected at construction", threw)
 end
 
+# ── Site parity: skin handle_eu_interact label-probability split ──
+# handle_eu_interact has no app-level test, so pin its translation here. The
+# original computed, per component, `rec==L ? w·θ : w·(1-θ)/(n-1)` summed into
+# label_probs. Reproduce the old inline loop and the new FiringChoice form on a
+# 2-label scenario that includes an off-label recommendation (rec ∉ rewards),
+# the degenerate case the old code handled. n=2 ⇒ (1-θ)/(n-1) = 1-θ.
+let
+    p = prev_mix()                              # 3 components, means (0.4, 0.6, 0.2)
+    recs = [:correct, :wrong, :other]           # comp 3's rec is off-label
+    rewards = Dict(:correct => 1.0, :wrong => 0.0)
+    n = length(rewards)
+
+    # OLD inline loop (verbatim shape from the pre-refactor site).
+    w = [0.5, 0.3, 0.2]
+    old = Dict{Symbol, Float64}()
+    for (j, m) in enumerate(M)
+        for (label, _) in rewards
+            pl = recs[j] == label ? w[j] * m : w[j] * (1 - m) / max(n - 1, 1)
+            old[label] = get(old, label, 0.0) + pl
+        end
+    end
+
+    # NEW FiringChoice form.
+    inv = 1.0 / max(n - 1, 1)
+    wn = LinearCombination(Tuple{Float64, TestFunction}[(-inv, Identity())], inv)
+    new = Dict{Symbol, Float64}(
+        label => expect(p, FiringChoice(Bool[r == label for r in recs], Identity(), wn))
+        for label in keys(rewards))
+
+    check("skin parity: P(:correct) old==new", isapprox(old[:correct], new[:correct]; rtol=1e-12), "old $(old[:correct]) new $(new[:correct])")
+    check("skin parity: P(:wrong) old==new",   isapprox(old[:wrong],   new[:wrong];   rtol=1e-12), "old $(old[:wrong]) new $(new[:wrong])")
+end
+
 println("="^60)
 println("ALL FiringChoice TESTS PASSED")
 println("="^60)
