@@ -126,22 +126,23 @@ function build_predictive(
     rec_cache::Dict{Int, Symbol},
     action_space::Vector{Symbol}
 )::CategoricalMeasure
-    w = weights(state.belief)
     n_actions = length(action_space)
+    n_comp = length(state.belief.components)
+    # evaluate_programs! fills rec_cache for every component, so the FiringChoice
+    # flag vectors line up 1:1 with the mixture; assert rather than silently skip.
+    @assert all(j -> haskey(rec_cache, j), 1:n_comp) "rec_cache missing a component recommendation"
+    inv = 1.0 / max(n_actions - 1, 1)
+    # when_not = (1 - θ)/(|A|-1): the program is wrong (prob 1-θ_j), spread over the
+    # other actions. when_fires = Identity() = E[θ_j] (exact α/(α+β), closed form).
+    when_not = LinearCombination(Tuple{Float64, TestFunction}[(-inv, Identity())], inv)
+    # For each action a: P(user wants a) = Σ_j w_j·(rec_j == a ? θ_j : (1-θ_j)/(|A|-1)).
     action_probs = Dict{Symbol, Float64}(a => 0.0 for a in action_space)
-
-    for (j, comp) in enumerate(state.belief.components)
-        haskey(rec_cache, j) || continue
-        tbm = comp::TaggedBetaPrevision
-        # E[θ_j] via credence's expect on the Beta component
-        θ_mean = expect(tbm, identity)
-        r_j = rec_cache[j]
-        for a in action_space
-            p = a == r_j ? θ_mean : (1.0 - θ_mean) / max(n_actions - 1, 1)
-            action_probs[a] += w[j] * p  # credence-lint: allow — precedent:posterior-iteration — mixture EU requires per-component compiled-kernel dispatch; no stdlib Functional covers this pattern — tracked in issue #39
-        end
+    for a in action_space
+        action_probs[a] = expect(state.belief,
+            FiringChoice(Bool[rec_cache[j] == a for j in 1:n_comp], Identity(), when_not))
     end
 
+    # The predictive measure: log-weights from the per-action pushforward probs.
     logw = [log(max(action_probs[a], 1e-300)) for a in action_space]
     CategoricalMeasure(Finite(action_space), logw)
 end
