@@ -1695,4 +1695,15 @@ include("sparse_structure.jl")
 # ================================================================
 include("stdlib.jl")
 
+# ================================================================
+# Structure-BMA builder + observe + readout (lifted from the credence-pi app brain —
+# decouple Move 3). Compositions over the above (SparseStructurePrevision / condition /
+# with_components); no new frozen type, no new axiom-constrained function.
+# ================================================================
+include("structure_bma.jl")
+export StructureBMA, build_structure_model, build_structure_prior,
+       build_structure_prior_dense, structure_observe, structure_observe_soft,
+       belief_at_context, context_from_features, structure_firing_tags,
+       structure_decision_kernel
+
 end # module Ontology

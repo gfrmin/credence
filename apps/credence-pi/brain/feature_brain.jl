@@ -1,43 +1,26 @@
-# Role: brain
+# Role: brain (thin shim)
 """
-    feature_brain.jl — the credence-pi feature-conditioned brain (Pass 2, Move 3).
+    feature_brain.jl — credence-pi's thin domain shim over the engine's structure-BMA stdlib.
 
-Structure-BMA over Bayesian-network edges (feature → approval). Replaces the
-Pass-1 global `Beta(2,2)` with `P(approve | X)`, X = the declared features, so the
-governor can block a *repeated* wasteful call while still approving a *novel* one —
-impossible for one global Beta.
-
-ROUTE B (docs/credence-pi-pass-2/move-3-design.md). This is typed Julia
-brain-side code that DECLARES the structure family + readout Functionals and CALLS
-the Tier-1 axiom ops — the constitution's "applications declare data and call
-primitives" pattern. It reimplements NO axiom-constrained op: every belief change
-goes through `condition`; every decision through the typed stdlib `optimise`/`voi`.
-The `.bdsl` files keep the DECLARED DATA (feature spaces in features.bdsl, the
-capability manifest, the utility constants in utility.bdsl).
-
-Two representations, kept separate (Invariant 3):
-  * `top`         — the persistent belief: a `MixturePrevision` over the 2ⁿ edge
-                    structures, each a `ProductPrevision` of `TaggedBeta` cells.
-                    Learning conditions THIS (`observe`).
-  * `belief_at_X` — a transient per-decision view: a mixture of each structure's
-                    cell-for-X carrying the same structure weights. Decisions read
-                    THIS (`decide`). Equivalence lemma (design doc §"decision side"):
-                    conditioning the view reweights structures identically to
-                    conditioning `top`, so `voi`/`value` on the view are exact.
-
-No raw probability arithmetic lives here — the `credence-lint` brain/ rule
-enforces it. EU is closed-form via typed `LinearCombination` over `Identity`; the
-action argmax is the single canonical `optimise`.
+After decouple Move 3 the structure-BMA builder + observe + readout live in the engine
+(`src/structure_bma.jl`: `build_structure_model` / `build_structure_prior` /
+`structure_observe` / `belief_at_context` / …). This module re-exports them under the
+names credence-pi's daemon and tests use, and keeps the genuinely credence-pi-specific
+wiring: reading the declared feature env, the harm/tail/latency opt-in plumbing, the
+per-context EU decision (`decide`/`decide_multi`), the counts-JSON reconstruction, the
+effector policy, and `wire_brain!`. It reimplements NO axiom op — every belief change is
+`condition` (inside the lifted `structure_observe`); every decision is the canonical
+`optimise`. The `.bdsl` files keep the DECLARED DATA (feature spaces, capabilities,
+utility constants).
 """
 module FeatureBrain
 
-using Main.Credence: BetaPrevision, TaggedBetaPrevision, SparseStructurePrevision,
-    ProductPrevision, MixturePrevision, GammaPrevision,
-    Prevision, Kernel, Interval, Finite, BetaBernoulli, SoftBernoulli, Flat, FiringByTag, Identity,
-    Projection, LinearCombination, TestFunction, GeometricTail, mean, FeatureDecl, condition, expect,
-    cell_at, wrap_in_measure
-import Main.Credence.Ontology: optimise, value, voi, net_voi, with_components,
-    ProductMeasure, Measure
+using Main.Credence: StructureBMA, build_structure_model, build_structure_prior,
+    build_structure_prior_dense, structure_observe, structure_observe_soft,
+    structure_firing_tags, belief_at_context, context_from_features, structure_decision_kernel,
+    MixturePrevision, GammaPrevision, Identity, LinearCombination, TestFunction, Projection,
+    GeometricTail, FeatureDecl, Finite, expect, wrap_in_measure
+import Main.Credence.Ontology: optimise, net_voi, ProductMeasure, Measure
 using JSON3
 
 export StructureBMA, build_model, build_model_from_env, build_model_from_decls,
@@ -45,82 +28,24 @@ export StructureBMA, build_model, build_model_from_env, build_model_from_decls,
        belief_at_context, observe, observe_soft, decide, decide_multi,
        reconstruct_posterior, reconstruct_harm_posterior
 
-# ── The model: feature spec + structure enumeration + tag bookkeeping ──
-#
-# A `structure` is a subset of feature indices — the parents of the approval leaf
-# A (edges INTO A; feature-feature edges describe P(X) and cancel, design doc
-# §"The model"). Each structure has one cell per element of the cross-product of
-# its parents' value-sets; every cell carries a GLOBALLY-UNIQUE integer tag so a
-# single per-context `FiringByTag` kernel routes correctly through the whole nested
-# object (within each structure exactly one cell's tag fires).
+# ── The structure-BMA core now lives in the engine; alias the names this app's daemon
+#    and tests use to the lifted `Credence` functions (decouple Move 3). ──
+const build_model       = build_structure_model
+const build_prior       = build_structure_prior
+const build_prior_dense = build_structure_prior_dense
+const observe           = structure_observe
+const observe_soft      = structure_observe_soft
+const firing_tags       = structure_firing_tags
 
-struct StructureBMA
-    feature_names::Vector{String}
-    feature_values::Vector{Vector{String}}     # per feature, its value-set as strings
-    structures::Vector{Vector{Int}}            # the 2ⁿ parent-index subsets
-    cell_tag::Vector{Dict{Tuple, Int}}         # per structure: cell-key (parent values) -> tag
-    tag_lo::Vector{Int}                        # per structure: lowest cell tag (contiguous)
-    tag_hi::Vector{Int}                        # per structure: highest cell tag
-    n_features::Int
-    alpha0::Float64
-    beta0::Float64
-    p_edge::Float64
-end
-
-# The cell key for context X under a structure = the tuple of X's values at the
-# structure's parents, in parent order. Empty parents ⇒ `()` (the global cell).
-cell_key(parents::Vector{Int}, X::AbstractVector) = Tuple(X[f] for f in parents)
-
-# Enumerate the cell-context keys (tuples of parent values) for a structure, in a
-# deterministic order (matches `cell_key`'s parent ordering).
-function _cell_contexts(parents::Vector{Int}, feature_values::Vector{Vector{String}})
-    isempty(parents) && return Tuple[()]
-    keys = Tuple[()]
-    for f in parents
-        keys = Tuple[(k..., v) for k in keys for v in feature_values[f]]
-    end
-    keys
-end
-
-"""
-    build_model(feature_names, feature_values; alpha0, beta0, p_edge) -> StructureBMA
-
-Enumerate all 2ⁿ edge structures, allocate a globally-unique tag per cell. Pure
-construction of the declared structure family; no beliefs yet.
-"""
-function build_model(feature_names::Vector{String}, feature_values::Vector{Vector{String}};
-                     alpha0::Float64 = 2.0, beta0::Float64 = 2.0, p_edge::Float64 = 0.5)
-    n = length(feature_names)
-    length(feature_values) == n || error("build_model: names/values length mismatch")
-    structures = Vector{Int}[]
-    for mask in 0:(2^n - 1)
-        push!(structures, [i for i in 1:n if (mask >> (i - 1)) & 1 == 1])
-    end
-    cell_tag = Dict{Tuple, Int}[]
-    tag_lo = Int[]
-    tag_hi = Int[]
-    tag = 0
-    for parents in structures
-        d = Dict{Tuple, Int}()
-        lo = tag + 1                  # tags are contiguous per structure
-        for cell in _cell_contexts(parents, feature_values)
-            tag += 1
-            d[cell] = tag
-        end
-        push!(cell_tag, d)
-        push!(tag_lo, lo)
-        push!(tag_hi, tag)
-    end
-    StructureBMA(feature_names, feature_values, structures, cell_tag, tag_lo, tag_hi,
-                 n, alpha0, beta0, p_edge)
-end
+# ── Declared-feature → model construction (env/eval-layer plumbing — stays consumer-side:
+#    `FeatureDecl` is an eval-layer type included after the engine's Ontology module, and
+#    reading a BDSL env is body wiring, not engine machinery). ──
 
 """
     build_model_from_env(env; ...) -> StructureBMA
 
 Read the declared feature spaces from `env[:features]` (a `Vector{FeatureDecl}`
-populated by features.bdsl). The features are declared DATA; this turns them into
-the typed structure family.
+populated by features.bdsl) and build the typed structure family.
 """
 function build_model_from_env(env; alpha0::Float64 = 2.0, beta0::Float64 = 2.0,
                               p_edge::Float64 = 0.5)
@@ -156,164 +81,6 @@ end
 function _has_features(model::StructureBMA, features)
     fd = Dict{String, String}(string(k) => string(v) for (k, v) in features)
     all(haskey(fd, n) for n in model.feature_names)
-end
-
-# Structure-inclusion log-weights (independent edge-inclusion at p_edge; uniform
-# when p_edge = 0.5). Shared by the sparse and dense priors.
-_structure_logweights(model::StructureBMA) =
-    Float64[length(parents) * log(model.p_edge) +
-            (model.n_features - length(parents)) * log(1.0 - model.p_edge)
-            for parents in model.structures]
-
-"""
-    build_prior(model) -> MixturePrevision
-
-The structure-BMA prior: a mixture over structures, each a SPARSE product of
-`Beta(alpha0, beta0)` cells (`SparseStructurePrevision` — only observed cells are
-materialised). Bit-identical to `build_prior_dense` but O(structures) to build and
-to condition, so the brain scales to many features. This is the daemon `make-prior`.
-"""
-function build_prior(model::StructureBMA)
-    comps = Prevision[SparseStructurePrevision(model.alpha0, model.beta0,
-                                               model.tag_lo[s], model.tag_hi[s],
-                                               Dict{Int, BetaPrevision}())
-                      for s in eachindex(model.structures)]
-    MixturePrevision(comps, _structure_logweights(model))
-end
-
-"""
-    build_prior_dense(model) -> MixturePrevision
-
-The DENSE reference prior: each structure a full `ProductPrevision` of
-`TaggedBetaPrevision` cells. Materialises the entire cross-product (exponential),
-so it is used only as the exactness reference for `build_prior`
-(see test/test_sparse_structure_equivalence.jl) and by tests that inspect cell
-internals via `.factors`.
-"""
-function build_prior_dense(model::StructureBMA)
-    comps = Prevision[]
-    for (s, parents) in enumerate(model.structures)
-        factors = TaggedBetaPrevision[]
-        for cell in _cell_contexts(parents, model.feature_values)
-            push!(factors, TaggedBetaPrevision(model.cell_tag[s][cell],
-                                               BetaPrevision(model.alpha0, model.beta0)))
-        end
-        push!(comps, ProductPrevision(factors))
-    end
-    MixturePrevision(comps, _structure_logweights(model))
-end
-
-# ── Context plumbing ──
-
-"""
-    context_from_features(model, features) -> Vector{String}
-
-Map a body-sent feature dict (string→bucket-string) to X, indexed by the model's
-feature order. Validates each value is a declared bucket (a body/brain contract
-violation fails loud rather than `KeyError`-ing deep in routing).
-"""
-function context_from_features(model::StructureBMA, features)
-    fd = Dict{String, String}(string(k) => string(v) for (k, v) in features)
-    X = String[]
-    for (i, name) in enumerate(model.feature_names)
-        haskey(fd, name) || error("feature brain: event missing declared feature '$name'")
-        v = fd[name]
-        v in model.feature_values[i] ||
-            error("feature brain: feature '$name' value '$v' is not a declared bucket " *
-                  "($(model.feature_values[i])) — body/brain vocabulary drift")
-        push!(X, v)
-    end
-    X
-end
-
-# F(X): one matching cell-tag per structure (globally unique ⇒ a single Set routes
-# the whole nested object).
-firing_tags(model::StructureBMA, X::AbstractVector) =
-    Set{Int}(model.cell_tag[s][cell_key(parents, X)] for (s, parents) in enumerate(model.structures))
-
-# Measure-aware Bernoulli log-density (mirrors kernel.bdsl + the oracle test): takes
-# the cell MEASURE and returns the cell's marginal log-predictive.
-_approve_logdensity(m, o) = (a = mean(m.beta); o == 1 ? log(a) : log(1.0 - a))
-
-# Per-context LEARNING kernel: BetaBernoulli on the cells in F(X), Flat (no-op)
-# elsewhere. `condition(top, this, obs)` updates each structure's cell-for-X and
-# reweights structures by the firing cell's predictive = the chain-rule marginal
-# likelihood (Code-1; verified by test_product_bma_routing.jl).
-_learn_kernel(fires::Set{Int}) =
-    Kernel(Interval(0.0, 1.0), Finite([0, 1]), theta -> theta, _approve_logdensity;
-           likelihood_family = FiringByTag(fires, BetaBernoulli(), Flat()))
-
-# DECISION kernel: a plain BetaBernoulli (every component of `belief_at_X` IS the
-# relevant cell, so all fire). Used only inside `voi`.
-_decision_kernel() =
-    Kernel(Interval(0.0, 1.0), Finite([0, 1]), theta -> theta, _approve_logdensity;
-           likelihood_family = BetaBernoulli())
-
-"""
-    observe(model, top, X, obs) -> MixturePrevision
-
-Bayesian update of the persistent belief on one `(context, response)`: a single
-`condition` through the canalised path. `obs` is 1 (approve) or 0 (deny).
-"""
-observe(model::StructureBMA, top::MixturePrevision, X::AbstractVector, obs) =
-    condition(top, _learn_kernel(firing_tags(model, X)), obs)
-
-# Soft-evidence log-density: the firing cell's predictive marginal under virtual
-# evidence with likelihoods (r, w) = (P(S|label=1), P(S|label=0)) — the chain-rule
-# term the BMA reweights structures by. Generalises `_approve_logdensity`: the hard
-# label o=1 is (r,w)=(1,0) ⇒ log(mean), o=0 is (0,1) ⇒ log(1-mean).
-_soft_logdensity(m, obs) = (a = mean(m.beta); r = obs[1]; w = obs[2];
-                            log(max(r * a + w * (1.0 - a), 1e-300)))
-
-# Per-context SOFT-EVIDENCE learning kernel: SoftBernoulli on the cells in F(X),
-# Flat elsewhere. The cell update is the mean-exact ADF collapse (α += π, β += 1-π,
-# π = r·θ̄/(r·θ̄+w·(1-θ̄))); structures reweight by `_soft_logdensity`.
-_soft_learn_kernel(fires::Set{Int}) =
-    Kernel(Interval(0.0, 1.0), Finite([0, 1]), theta -> theta, _soft_logdensity;
-           likelihood_family = FiringByTag(fires, SoftBernoulli(), Flat()))
-
-"""
-    observe_soft(model, top, X, r, w) -> MixturePrevision
-
-Bayesian update on INDIRECT evidence about the (latent) label at context X: `r`
-and `w` are the likelihoods of the observed signal under label = 1 / label = 0
-(P(S|1), P(S|0)). A single `condition` through the canalised path with a
-`SoftBernoulli` kernel — the firing cell's mean-exact soft-count, the BMA
-structure-reweight by the signal's predictive marginal. Reduces EXACTLY to
-`observe(model, top, X, 1)` at (r,w)=(1,0) and `observe(…, 0)` at (0,1) — the
-hard label is the degenerate certain-signal corner.
-"""
-observe_soft(model::StructureBMA, top::MixturePrevision, X::AbstractVector,
-             r::Real, w::Real) =
-    condition(top, _soft_learn_kernel(firing_tags(model, X)), (Float64(r), Float64(w)))
-
-# Select a structure component's cell-for-X by tag. Two representations:
-# sparse (O(1) dict-backed cell_at) and dense (linear scan of factors). Both
-# return the same TaggedBetaPrevision, so the decision sees identical beliefs.
-_cell_for(comp::SparseStructurePrevision, tag::Int) = cell_at(comp, tag)
-function _cell_for(comp::ProductPrevision, tag::Int)
-    idx = findfirst(f -> f isa TaggedBetaPrevision && f.tag == tag, comp.factors)
-    idx === nothing && error("feature brain: cell tag $tag not found")
-    comp.factors[idx]
-end
-
-"""
-    belief_at_context(model, top, X) -> MixturePrevision
-
-The transient per-decision view: each structure's cell-for-X, carrying the
-structure posterior weights verbatim. Pure construction — selects sub-beliefs and
-copies weights; no arithmetic on probabilities.
-"""
-function belief_at_context(model::StructureBMA, top::MixturePrevision, X::AbstractVector)
-    cells = Prevision[]
-    for (s, parents) in enumerate(model.structures)
-        tag = model.cell_tag[s][cell_key(parents, X)]
-        push!(cells, _cell_for(top.components[s], tag))
-    end
-    # Carry the structure posterior verbatim onto the per-context cells (the
-    # weight-carry lives in the `with_components` stdlib op, not here — so the
-    # brain reads no private `log_weights`).
-    with_components(top, cells)
 end
 
 # ── Decision: per-context EU-max with the (tail-aware) linear-cost utility ──
@@ -369,7 +136,7 @@ function decide(model::StructureBMA, top::MixturePrevision, X::AbstractVector, c
     # cost subtraction lives in stdlib, not as host arithmetic here) and entered
     # into `optimise` as a constant Functional so all three actions compare
     # through the ONE argmax.
-    eu_ask = net_voi(bx, _decision_kernel(), [:proceed, :block], fpa_pb, [0, 1], interrupt_cost)
+    eu_ask = net_voi(bx, structure_decision_kernel(), [:proceed, :block], fpa_pb, [0, 1], interrupt_cost)
     fpa = Dict{Symbol, LinearCombination}(:proceed => _const(0.0),
                                           :block => block_fn,
                                           :ask => _const(eu_ask))
@@ -416,7 +183,7 @@ function decide_multi(waste_model::StructureBMA, top_waste::MixturePrevision,
     # EU(ask): VOI of the user resolving approve, against the SAME tail+time-aware block payoff so
     # asking about a likely-long loop inherits the (1+m)× value; a constant so all three
     # actions compare through one optimise.
-    eu_ask = net_voi(bxa, _decision_kernel(), [:proceed, :block],
+    eu_ask = net_voi(bxa, structure_decision_kernel(), [:proceed, :block],
                      Dict(:proceed => _const(0.0), :block => _lin(-cost * (tf + aversion), cost * tf + tcost)),
                      [0, 1], interrupt_cost)
     fpa = Dict(:proceed => _const(0.0), :block => block_fn, :ask => _const(eu_ask))
