@@ -58,6 +58,7 @@ export factor, replace_factor
 export condition, expect, push_measure, density, log_density_at, log_predictive, log_marginal, wrap_in_measure
 export ConjugatePrevision, maybe_conjugate, update
 export StructureBMA, build_structure_model, build_structure_prior, build_structure_prior_dense, structure_observe, structure_observe_soft, belief_at_context, context_from_features, structure_firing_tags, structure_decision_kernel
+export RoutingState, EmissionBelief, LatencyBelief, route, route_eu, escalation_next, posterior_accuracy, route_outcome!, decode_correctness, latency_at, route_decide, escalate_decide, reconstruct_latency_from_data, reconstruct_routing_tops_from_data, _ctx_key
 export draw
 export weights, mean, variance, probability, marginal, prune, truncate, logsumexp
 export WeightsDomainError
