@@ -297,6 +297,27 @@ function route_outcome!(rt::RoutingState, model_id::AbstractString, features::Ab
     rt
 end
 
+"""
+    routing_belief_readout(rt, model_id, features) -> Dict("theta"=>…, "rho_bar"=>…, "sigma_bar"=>…)
+
+Telemetry readout (NON-causal): the EM-learned E[θ|X] and the reliability means ρ̄/σ̄ at a
+(model_id, context). For calibration / shadow-mode / the wire parity test — the hot
+`route_decide` builds the per-context view internally and never reads this. Read-only: an
+unseen model id errors (no `extra_tops` cold-start). Lives engine-side (not the skin verb) so
+the parameter reads stay out of the consumer.
+"""
+function routing_belief_readout(rt::RoutingState, model_id::AbstractString, features::AbstractDict)
+    X = context_from_features(rt.model, features)
+    a = findfirst(==(String(model_id)), rt.model_ids)
+    top = a !== nothing ? rt.tops[a] : get(rt.extra_tops, String(model_id), nothing)
+    top === nothing && error("routing belief: unknown model id $(model_id)")
+    key = _ctx_key(X)
+    Dict{String, Any}(
+        "theta"     => posterior_accuracy(rt.model, top, X),
+        "rho_bar"   => mean(get(rt.emission.rho_cells, key, rt.emission.rho0)),
+        "sigma_bar" => mean(get(rt.emission.sigma_cells, key, rt.emission.sigma0)))
+end
+
 # Per-request profile override: the user's utility weights, shipped by the body per request.
 # Returns the override for `key` if present, else the wired default. Preference DATA only.
 _pget(profile, key::AbstractString, default::Float64)::Float64 =
