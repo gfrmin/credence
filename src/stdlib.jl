@@ -166,3 +166,56 @@ end
 # net-voi: VOI minus the cost of observing — the `ask`-gate EU.
 net_voi(belief, k::Kernel, actions, fpa::AbstractDict, possible_obs, cost) =
     voi(belief, k, actions, fpa, possible_obs) - cost
+
+# ── decide_with_voi: the proceed/block/ask EU decision template ──
+#
+# One typed decision primitive over the canonical three actions (proceed/block/ask),
+# parameterised by utility DATA. It is the engine-side home of the EU coefficient
+# assembly that used to live in the credence-pi app brain (`decide`/`decide_multi`);
+# lifting it here is what lets a non-embedding consumer drive the decision over the
+# wire (a wire client ships the scalars, the engine does all the arithmetic —
+# Invariant 1 by construction). The math:
+#
+#   tf = 1 + m   (expected calls a block prevents: this one + the look-ahead tail m)
+#   EU(proceed) = 0                                                  (the baseline)
+#   EU(block)   = c·tf − c·[tf+λ]·θ_a + w_time·E[time]·tf  [+ H·θ_u] (waste tail [+ harm])
+#   EU(ask)     = net_voi(θ_a) − q                       (EVPI of the user resolving θ_a)
+#
+# expressed as `LinearCombination` Functionals maximised by the ONE canonical
+# `optimise`. With no harm coordinate the block payoff is `Identity` over the approve
+# belief; with one, it is `Projection`s over the `ProductMeasure` joint (approve, unsafe).
+# `harm_belief === nothing` AND `expected_repeats == 0` AND `w_time == 0` reduce it
+# bit-for-bit to the single-outcome myopic decision (asserted in test_decide_with_voi.jl).
+# `decision_kernel` is the consumer's Bernoulli decision kernel (e.g. the structure-BMA
+# `structure_decision_kernel()`); the template carries no domain specifics.
+
+const _ID = Identity()
+_lin(coeff::Float64, off::Float64) = LinearCombination(Tuple{Float64, TestFunction}[(coeff, _ID)], off)
+_const(off::Float64) = LinearCombination(Tuple{Float64, TestFunction}[], off)
+
+function decide_with_voi(approve_belief, decision_kernel::Kernel;
+                         cost::Float64, aversion::Float64, interrupt_cost::Float64,
+                         expected_repeats::Float64 = 0.0,
+                         w_time::Float64 = 0.0, exp_time::Float64 = 0.0,
+                         harm_belief = nothing, harm_cost::Float64 = 0.0)
+    tf = 1.0 + expected_repeats                       # calls a block prevents: this one + the tail m
+    tcost = w_time * exp_time * tf                    # wall-clock a block saves (w_time $/sec × E[time]·tf)
+    # EU(ask) = net_voi − q against the SAME tail+time-aware block payoff, so resolving a
+    # likely-long loop inherits the (1+m)× value. The VOI is always over the approve belief
+    # alone — a harmful action is one-shot, so "should I let this through?" is the EVPI question.
+    ask_block = _lin(-cost * (tf + aversion), cost * tf + tcost)
+    eu_ask = net_voi(approve_belief, decision_kernel, [:proceed, :block],
+                     Dict(:proceed => _const(0.0), :block => ask_block), [0, 1], interrupt_cost)
+    if harm_belief === nothing
+        # Single-outcome: block payoff is the Identity-based ask_block over the approve belief.
+        fpa = Dict(:proceed => _const(0.0), :block => ask_block, :ask => _const(eu_ask))
+        return optimise(approve_belief, [:proceed, :block, :ask], fpa)
+    end
+    # Multi-outcome: one EU integrating waste AND harm in one currency, over the joint
+    # (approve, unsafe). The waste cutoff slides with the harm belief AND the detected tail.
+    joint = ProductMeasure(Measure[wrap_in_measure(approve_belief), wrap_in_measure(harm_belief)])
+    block_fn = LinearCombination(Tuple{Float64, TestFunction}[
+        (-cost * (tf + aversion), Projection(1)), (harm_cost, Projection(2))], cost * tf + tcost)
+    fpa = Dict(:proceed => _const(0.0), :block => block_fn, :ask => _const(eu_ask))
+    optimise(joint, [:proceed, :block, :ask], fpa)
+end
