@@ -5,7 +5,7 @@
 # exactly to the hard-label path at the certain-signal corners.
 #
 # Behaviour-preservation vs the pre-lift app brain is additionally pinned end-to-end by
-# apps/credence-pi/tests/julia/test_feature_brain.jl (unchanged, passes through the shim).
+# the credence-openclaw repo's tests/julia/test_feature_brain.jl (unchanged, passes through the shim).
 #
 # Run from repo root:
 #     julia --project=. test/test_structure_bma.jl

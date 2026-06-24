@@ -14,10 +14,12 @@
 
 push!(LOAD_PATH, "src")
 using Credence
-using Credence: Identity, weights, expect
+using Credence: Identity, weights, expect, belief_at_context,
+                build_structure_model, build_structure_prior, build_structure_prior_dense,
+                structure_observe
 using Random: MersenneTwister, rand
-include(joinpath(@__DIR__, "..", "apps", "credence-pi", "brain", "feature_brain.jl"))
-using .FeatureBrain
+# The structure-BMA substrate is engine-resident (src/structure_bma.jl, decouple Move 3); this
+# test pins its sparse≡dense exactness directly, with no dependency on the credence-openclaw app.
 
 function check(name, cond, detail="")
     cond ? println("PASSED: $name") :
@@ -40,17 +42,17 @@ end
 # One scenario: build both priors, replay an identical random observation
 # sequence, assert structure posteriors + per-context predictives match @1e-12.
 function run_scenario(name, names, vals; n_obs=400, seed=0)
-    model = build_model(names, vals; p_edge = 0.5)
-    sparse = build_prior(model)
-    dense  = build_prior_dense(model)
+    model = build_structure_model(names, vals; p_edge = 0.5)
+    sparse = build_structure_prior(model)
+    dense  = build_structure_prior_dense(model)
     ctxs = all_contexts(vals)
     rng = MersenneTwister(seed)
 
     for _ in 1:n_obs
         X = ctxs[rand(rng, 1:length(ctxs))]
         o = rand(rng, 0:1)
-        sparse = observe(model, sparse, X, o)
-        dense  = observe(model, dense,  X, o)
+        sparse = structure_observe(model, sparse, X, o)
+        dense  = structure_observe(model, dense,  X, o)
     end
 
     # Structure posteriors identical.

@@ -13,7 +13,7 @@
 #       property that justified a single template over two).
 #
 # End-to-end behaviour preservation through the credence-pi shim (`decide`/`decide_multi`
-# now delegate here) is additionally pinned by apps/credence-pi/tests/julia/test_feature_brain.jl
+# now delegate here) is additionally pinned by the credence-openclaw repo's tests/julia/test_feature_brain.jl
 # (unchanged, passes through the shim).
 #
 # Run from repo root:
