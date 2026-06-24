@@ -411,14 +411,21 @@ def test_v1_snapshot_fails_loudly():
         # Must be a loud failure — not silent corruption. The specific
         # code today is -32603 (generic internal error); the important
         # invariants are (a) it raises, (b) the raise names something
-        # informative pointing at the struct change / package mismatch.
-        # Julia's Serialization surfaces this as either TypeError (direct
-        # struct-new mismatch) or KeyError (package identity hash lookup
-        # failure); both are legitimate "loud failure" shapes.
+        # informative pointing at the incompatibility. WHICH incompatibility
+        # fires first depends on the reader's Julia vs the fixture's: on a
+        # Julia at/after the fixture's serialiser, the struct-layout mismatch
+        # surfaces (TypeError direct struct-new / KeyError package-hash); on an
+        # OLDER reader (CI pins Julia 1.11 while beta_v1.b64 was captured on a
+        # newer local Julia — see test_skin_fixtures/README.md) the
+        # Serialization format-version guard fires first ("Cannot read stream
+        # serialized with a newer version of Julia. Got data version N > …").
+        # Both are legitimate "loud failure" shapes; the contract is
+        # loud-not-silent, not a specific failure mode, so accept either.
         err_msg = str(info.value)
         informative_markers = [
             "BetaPrevision", "TypeError", "type", "KeyError",
             "Credence", "PkgId", "deserialize",
+            "version of Julia", "data version",   # older-reader format-version guard
         ]
         assert any(m in err_msg for m in informative_markers), \
             f"v1 snapshot failure didn't mention any expected shape marker: {err_msg}"
