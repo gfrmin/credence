@@ -115,6 +115,28 @@ function build_structure_prior(model::StructureBMA)
 end
 
 """
+    reconstruct_structure_prior_from_data(model, data) -> MixturePrevision
+
+Warm-seed a structure-BMA posterior from already-parsed per-context counts (the skin/shim
+parses the JSON; the engine never reads the host FS) by replaying `structure_observe`.
+Bayesian updating is order-independent ⇒ the posterior depends only on each context's
+(n1, n0) counts, so reconstruction is exact + version-stable. `data === nothing` ⇒ the cold
+prior. JSON shape: `{ "contexts": [ {"ctx":[…], "n1":N, "n0":M}, … ] }`. Symmetric with
+routing's `reconstruct_routing_tops_from_data` — lets a wire consumer warm-seed governance in
+ONE server-side call instead of N `structure_observe` round-trips.
+"""
+function reconstruct_structure_prior_from_data(model::StructureBMA, data)
+    top = build_structure_prior(model)
+    data === nothing && return top
+    for e in data["contexts"]
+        ctx = String[String(v) for v in e["ctx"]]
+        for _ in 1:Int(e["n1"]); top = structure_observe(model, top, ctx, 1); end
+        for _ in 1:Int(e["n0"]); top = structure_observe(model, top, ctx, 0); end
+    end
+    top
+end
+
+"""
     build_structure_prior_dense(model) -> MixturePrevision
 
 The DENSE reference prior: each structure a full `ProductPrevision` of

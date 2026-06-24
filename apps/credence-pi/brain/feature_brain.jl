@@ -20,6 +20,7 @@ module FeatureBrain
 using Main.Credence: StructureBMA, build_structure_model, build_structure_prior,
     build_structure_prior_dense, structure_observe, structure_observe_soft,
     structure_firing_tags, belief_at_context, context_from_features, structure_decision_kernel,
+    reconstruct_structure_prior_from_data,
     MixturePrevision, GammaPrevision, Identity,
     GeometricTail, FeatureDecl, Finite, expect
 # The EU-max template lives in the engine stdlib (decouple Move 3): the app ships utility
@@ -174,17 +175,8 @@ context's (n1, n0) counts — making this artifact version-stable (JSON), unlike
 over the StructureBMA: the harm posterior (P(unsafe|safety-features)) and the warm
 WASTE posterior (P(approve|waste-features)) both reconstruct through this one path.
 """
-function reconstruct_posterior(model::StructureBMA, counts_path::AbstractString)
-    data = JSON3.read(read(counts_path, String))
-    entries = data.contexts
-    top = build_prior(model)
-    for e in entries
-        ctx = String[String(v) for v in e.ctx]
-        for _ in 1:Int(e.n1); top = observe(model, top, ctx, 1); end
-        for _ in 1:Int(e.n0); top = observe(model, top, ctx, 0); end
-    end
-    top
-end
+reconstruct_posterior(model::StructureBMA, counts_path::AbstractString) =
+    reconstruct_structure_prior_from_data(model, JSON3.read(read(counts_path, String)))
 
 # Back-compat alias: the harm posterior was the first consumer of this path.
 const reconstruct_harm_posterior = reconstruct_posterior

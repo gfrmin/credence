@@ -1750,7 +1750,7 @@ include("structure_bma.jl")
 export StructureBMA, build_structure_model, build_structure_prior,
        build_structure_prior_dense, structure_observe, structure_observe_soft,
        belief_at_context, context_from_features, structure_firing_tags,
-       structure_decision_kernel
+       structure_decision_kernel, reconstruct_structure_prior_from_data
 
 include("routing.jl")
 export RoutingState, EmissionBelief, LatencyBelief, route, route_eu, escalation_next,

@@ -75,6 +75,24 @@ let X = ["bash", "rep3"]
           "got $(length(tags)) for $(length(model.structures)) structures")
 end
 
+# reconstruct_structure_prior_from_data (Move 5 prereq): warm-seeding from inline counts ≡
+# replaying structure_observe by hand, bit-for-bit (order-independent ⇒ exact). data=nothing
+# is the cold prior.
+let counts = Dict("contexts" => [
+        Dict("ctx" => ["bash", "rep3"], "n1" => 5, "n0" => 2),
+        Dict("ctx" => ["read", "rep0"], "n1" => 1, "n0" => 4)])
+    warm = reconstruct_structure_prior_from_data(model, counts)
+    manual = build_structure_prior(model)
+    for (X, n1, n0) in [(["bash", "rep3"], 5, 2), (["read", "rep0"], 1, 4)]
+        for _ in 1:n1; manual = structure_observe(model, manual, X, 1); end
+        for _ in 1:n0; manual = structure_observe(model, manual, X, 0); end
+    end
+    check("warm_counts reconstruction ≡ hand structure_observe replay (bit-exact)",
+          weights(warm) == weights(manual), "$(weights(warm)) vs $(weights(manual))")
+    check("warm_counts=nothing ≡ the cold prior",
+          weights(reconstruct_structure_prior_from_data(model, nothing)) == weights(build_structure_prior(model)))
+end
+
 println("="^64)
 println("ALL CHECKS PASSED — structure-BMA lift exact")
 println("="^64)

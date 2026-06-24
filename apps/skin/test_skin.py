@@ -1126,7 +1126,17 @@ def test_structure_bma_roundtrip():
         })["action"]
         assert a3 == "block", "high harm belief should flip proceed→block"
 
-        print("PASS: structure-BMA verbs roundtrip (build / observe / decide + harm)")
+        # Inline warm_counts (protocol 1.6): one structure_bma call warm-seeds the posterior
+        # server-side (vs N structure_observe round-trips). Refusal-heavy warm ⇒ θ<0.5 ⇒ block.
+        warm = skin._call("structure_bma", {
+            "feature_names": ["tool", "rep"], "feature_values": [["bash", "read"], ["rep0", "rep3"]],
+            "warm_counts": {"contexts": [{"ctx": ["bash", "rep3"], "n1": 1, "n0": 6}]}})
+        a_warm = skin._call("structure_decide", {
+            "model_id": warm["model_id"], "state_id": warm["state_id"], "features": ctx,
+            "cost": 1.0, "aversion": 1.0, "interrupt_cost": HUGE})["action"]
+        assert a_warm == "block", "warm_counts refusals should warm-seed to block in one call"
+
+        print("PASS: structure-BMA verbs roundtrip (build / observe / decide + harm + warm_counts)")
     finally:
         skin.shutdown()
 
@@ -1201,7 +1211,7 @@ def test_initialize_returns_contract():
     skin = SkinClient()
     try:
         result = skin.initialize()
-        assert result["protocol"] == "1.5", f"protocol: {result.get('protocol')}"
+        assert result["protocol"] == "1.6", f"protocol: {result.get('protocol')}"
         assert "version" in result, "engine version missing"
         methods = result["methods"]
         # Core canalised verbs + the Move-3 structure-BMA verbs must be advertised.
@@ -1247,7 +1257,7 @@ def test_dsl_sources_inline_equivalent_to_path():
         # a subsequent call_dsl against the loaded env resolves (the path-based
         # test_router_roundtrip already covers the path branch).
         result = skin.initialize(dsl_sources={"router": source})
-        assert result["protocol"] == "1.5"
+        assert result["protocol"] == "1.6"
         print("PASS: inline dsl_sources loads equivalently to a path load")
     finally:
         skin.shutdown()
