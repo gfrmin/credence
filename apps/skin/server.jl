@@ -332,6 +332,18 @@ function build_kernel(spec, state_id::Union{String, Nothing}=nothing)
             (h, o) -> error("group_noisy_channel routes via categorical_logdensity, not log_density");
             likelihood_family = DispatchByComponent(c -> GroupNoisyChannel(cov, c.label, A)))
 
+    elseif t == "logistic_reaction"
+        # A binary reaction to a latent x (e.g. a utility on a grid), under the choice model
+        # marginalised over a declared τ-prior. Conditions a categorical over the x-grid;
+        # the body ships (sign, threshold, τ-grid, τ-weights) as declared data.
+        fam = LogisticReaction(Float64(spec["sign"]), Float64(spec["threshold"]),
+                               collect(Float64, spec["tau_values"]),
+                               collect(Float64, spec["tau_weights"]))
+        Kernel(Euclidean(1), Finite([0.0, 1.0]),
+            x -> error("generate not used"),
+            (x, o) -> logistic_reaction_logdensity(fam, x, o);
+            likelihood_family = fam)
+
     elseif t == "quality"
         # (θ, k) → Beta(θk, (1-θ)k) continuous quality observation
         source = ProductSpace(Space[Interval(0.0, 1.0), PositiveReals()])
@@ -632,7 +644,7 @@ end
 # rides the `credence-skin` image tag). MAJOR bumps on a breaking protocol
 # change; MINOR on additive. Apps pin the major in code and `initialize`
 # rejects a mismatching major with -32010. See docs/decouple/master-plan.md.
-const PROTOCOL_VERSION = "1.3"
+const PROTOCOL_VERSION = "1.4"
 protocol_major(v) = String(first(split(String(v), ".")))
 
 # Advertised method set, returned by `initialize` for client capability
