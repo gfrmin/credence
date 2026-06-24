@@ -75,6 +75,10 @@ lr_indep = (1.0 + r_d * Float64(A) / (1.0 - r_d))^2   # the independent-docs LR
 check("group LR strictly below independent LR (the corroboration discount)",
       lr_group < lr_indep, "$lr_group vs $lr_indep")
 
+# ── (3) invalid model fails loud: r_d = ρ·covariate must be a probability ──
+check("r_d > 1 (covariate·ρ out of range) errors, not silently mis-handled",
+      try group_noisy_channel_logdensity(GroupNoisyChannel(2.0, 0.9, A), 1, [1]); false catch; true end)
+
 println("="^64)
 println("ALL CHECKS PASSED — group-noisy-channel exact")
 println("="^64)

@@ -86,6 +86,20 @@ check("optimise over the mixture picks the corroborated candidate",
       optimise(post, [:report1, :abstain],
                Dict(:report1 => u, :abstain => Tabular([0.4, 0.4, 0.4]))) === :report1)
 
+# ── (5) ρ is SHARED across documents: sequential conditioning accumulates ρ evidence ──
+# Two SEPARATE single-chunk documents both reporting candidate 1 (the s_mod scenario: one
+# extractor, correlated only via the shared ρ). Conditioning the SAME mixture twice must (a)
+# keep shifting ρ-mass toward the higher ρ, and (b) sharpen the corroborated candidate — doc 2
+# is interpreted under doc 1's updated ρ-posterior, the cross-document coupling tempering faked.
+let p0 = prior_mix, p1 = condition(prior_mix, gnc, [1]), p2 = condition(condition(prior_mix, gnc, [1]), gnc, [1])
+    check("ρ-mass on the high ρ accumulates across documents (prior < 1 doc < 2 docs)",
+          weights(p0)[2] < weights(p1)[2] < weights(p2)[2],
+          "$(weights(p0)[2]) < $(weights(p1)[2]) < $(weights(p2)[2])")
+    vm(p) = expect(p, u)                                      # P(V=1) marginalised over ρ
+    check("the corroborated candidate's V-posterior sharpens across documents",
+          vm(p0) < vm(p1) < vm(p2), "$(vm(p0)) < $(vm(p1)) < $(vm(p2))")
+end
+
 println("="^64)
 println("ALL CHECKS PASSED — ρ-latent exact")
 println("="^64)
