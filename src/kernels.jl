@@ -132,6 +132,27 @@ categorical_logdensity(fam::LikelihoodFamily, i::Int, obs) = error(
     "density (e.g. GroupNoisyChannel); got $(typeof(fam)). Check the routing kernel's " *
     "DispatchByComponent closure.")
 
+# Logistic-reaction likelihood: a binary reaction `react ∈ {0,1}` to a latent value `x`
+# (e.g. a utility on a grid), under the choice model marginalised over a declared τ-prior:
+#     P(react=1 | x) = Σ_t w_t · σ((sign·x − threshold)/t),  σ(z) = 1/(1+e^{−z})
+# The τ-grid IS the model (a declared mixture of logistic temperatures), NOT a quadrature
+# approximation of a continuum — so the engine evaluates it exactly. Replaces life-agent's
+# host-side `reaction_probability` (utility.py) shipped as a `tabular_log_density`: the body
+# now ships only (sign, threshold, τ-grid, τ-weights) as declared data. `condition`s a
+# categorical over the x-grid through the kernel's `log_density` (a plain leaf — no routing).
+struct LogisticReaction <: LeafFamily
+    sign::Float64
+    threshold::Float64
+    tau_values::Vector{Float64}
+    tau_weights::Vector{Float64}
+end
+
+function logistic_reaction_logdensity(fam::LogisticReaction, x, react)
+    p1 = sum(fam.tau_weights[k] / (1.0 + exp(-(fam.sign * x - fam.threshold) / fam.tau_values[k]))
+             for k in eachindex(fam.tau_values))
+    (react == 1 || react == 1.0) ? log(max(p1, 1e-300)) : log(max(1.0 - p1, 1e-300))
+end
+
 struct FiringByTag <: LikelihoodFamily
     fires::Set{Int}
     when_fires::LeafFamily
@@ -171,6 +192,12 @@ register_family!(Symbol("linear-gaussian"),
 register_family!(Symbol("group-noisy-channel"),
                  (covariate, rho, n_alt) ->
                      GroupNoisyChannel(Float64(covariate), Float64(rho), Int(round(n_alt))), 3)
+# Four args: sign, threshold (scalars) and the τ-grid + τ-weights (runtime vectors, via the
+# `:family` arg-evaluation generalisation that linear-gaussian uses).
+register_family!(Symbol("logistic-reaction"),
+                 (sign, threshold, tvals, twts) ->
+                     LogisticReaction(Float64(sign), Float64(threshold),
+                                      collect(Float64, tvals), collect(Float64, twts)), 4)
 
 struct Kernel
     source::Space

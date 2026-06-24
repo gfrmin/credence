@@ -952,7 +952,33 @@ def test_replace_factor_identity_pin():
         skin.shutdown()
 
 
-# ── Carried-latent specs (decouple Move 1, protocol 1.3) ──
+# ── Carried-latent + reaction specs (decouple Move 1, protocol 1.3/1.4) ──
+
+
+def test_logistic_reaction_kernel():
+    """Drive the τ-marginalised reaction model over the wire: condition a categorical over an
+    x-grid (a latent utility) by a binary reaction via the `logistic_reaction` kernel. react=1
+    (sign>0) must favour higher x, react=0 the mirror — zero arithmetic client-side."""
+    skin = SkinClient()
+    try:
+        skin.initialize()
+        grid = [-2.0, -1.0, 0.0, 1.0, 2.0]
+        space = {"type": "finite", "values": grid}
+        kernel = {"type": "logistic_reaction", "sign": 1.0, "threshold": 0.0,
+                  "tau_values": [0.5, 2.0], "tau_weights": [0.5, 0.5]}
+        s1 = skin.create_state(type="categorical", space=space)   # uniform prior
+        skin.condition(s1, kernel=kernel, observation=1.0)
+        w1 = skin.weights(s1)
+        # credence-lint: allow — precedent:test-oracle — asserts the reaction reweights the latent; non-causal w.r.t. any agent
+        assert w1[4] > w1[0], f"react=1 should favour higher x: {w1}"
+        s0 = skin.create_state(type="categorical", space=space)
+        skin.condition(s0, kernel=kernel, observation=0.0)
+        w0 = skin.weights(s0)
+        # credence-lint: allow — precedent:test-oracle — asserts the mirror reweight; non-causal w.r.t. any agent
+        assert w0[0] > w0[4], f"react=0 should favour lower x: {w0}"
+        print("PASS: logistic_reaction kernel roundtrip")
+    finally:
+        skin.shutdown()
 
 
 def test_labelled_mixture_rho_latent():
@@ -1084,7 +1110,7 @@ def test_initialize_returns_contract():
     skin = SkinClient()
     try:
         result = skin.initialize()
-        assert result["protocol"] == "1.3", f"protocol: {result.get('protocol')}"
+        assert result["protocol"] == "1.4", f"protocol: {result.get('protocol')}"
         assert "version" in result, "engine version missing"
         methods = result["methods"]
         # Core canalised verbs + the Move-3 structure-BMA verbs must be advertised.
@@ -1130,7 +1156,7 @@ def test_dsl_sources_inline_equivalent_to_path():
         # a subsequent call_dsl against the loaded env resolves (the path-based
         # test_router_roundtrip already covers the path branch).
         result = skin.initialize(dsl_sources={"router": source})
-        assert result["protocol"] == "1.3"
+        assert result["protocol"] == "1.4"
         print("PASS: inline dsl_sources loads equivalently to a path load")
     finally:
         skin.shutdown()
@@ -1238,5 +1264,7 @@ if __name__ == "__main__":
     test_structure_bma_roundtrip()
     print()
     test_labelled_mixture_rho_latent()
+    print()
+    test_logistic_reaction_kernel()
     print()
     print("All tests passed!")
