@@ -38,6 +38,8 @@ using Credence: log_density_at
 using Credence: StructureBMA, build_structure_model, build_structure_prior, structure_observe,
                 belief_at_context, context_from_features, structure_decision_kernel
 using Credence.Ontology: decide_with_voi
+using Credence: RoutingState, EmissionBelief, route_decide, escalate_decide, route_outcome!,
+    routing_belief_readout, reconstruct_routing_tops_from_data, reconstruct_latency_from_data
 
 using JSON3
 using Serialization
@@ -86,6 +88,30 @@ end
 function get_model(id::String)
     haskey(MODEL_REGISTRY, id) || throw(StateNotFound(id))
     MODEL_REGISTRY[id]
+end
+
+# Routing state (decouple Move 4) — a MUTABLE, growing bundle: route_outcome! mutates `tops`
+# + emission cells in place, and `extra_tops`/ρ/σ cells grow with unseen models/contexts. So
+# it gets its OWN `rt_*` registry, NOT MODEL_REGISTRY (which holds IMMUTABLE descriptors —
+# putting a mutated, growing bundle there would void that invariant) and NOT STATE_REGISTRY
+# (so the generic Prevision verbs give a clean StateNotFound on a routing handle).
+const ROUTING_REGISTRY = Dict{String, Any}()
+let counter = Ref(0)
+    global function next_routing_id()
+        counter[] += 1
+        "rt_$(counter[])"
+    end
+end
+
+function register_routing(rt)
+    id = next_routing_id()
+    ROUTING_REGISTRY[id] = rt
+    id
+end
+
+function get_routing(id::String)
+    haskey(ROUTING_REGISTRY, id) || throw(StateNotFound(id))
+    ROUTING_REGISTRY[id]
 end
 
 # ═══════════════════════════════════════
@@ -652,7 +678,7 @@ end
 # rides the `credence-skin` image tag). MAJOR bumps on a breaking protocol
 # change; MINOR on additive. Apps pin the major in code and `initialize`
 # rejects a mismatching major with -32010. See docs/decouple/master-plan.md.
-const PROTOCOL_VERSION = "1.4"
+const PROTOCOL_VERSION = "1.5"
 protocol_major(v) = String(first(split(String(v), ".")))
 
 # Advertised method set, returned by `initialize` for client capability
@@ -666,6 +692,8 @@ const SKIN_METHODS = [
     "top_grammars", "belief_summary", "condition_and_prune", "eu_interact",
     "call_dsl", "factor", "replace_factor", "n_factors",
     "structure_bma", "structure_observe", "structure_decide",
+    "routing_init", "routing_decide", "routing_escalate", "routing_outcome",
+    "routing_belief", "destroy_routing",
 ]
 
 function handle_request(method::String, params, id)
@@ -701,6 +729,18 @@ function handle_request(method::String, params, id)
         handle_structure_observe(params)
     elseif method == "structure_decide"
         handle_structure_decide(params)
+    elseif method == "routing_init"
+        handle_routing_init(params)
+    elseif method == "routing_decide"
+        handle_routing_decide(params)
+    elseif method == "routing_escalate"
+        handle_routing_escalate(params)
+    elseif method == "routing_outcome"
+        handle_routing_outcome(params)
+    elseif method == "routing_belief"
+        handle_routing_belief(params)
+    elseif method == "destroy_routing"
+        handle_destroy_routing(params)
     elseif method == "draw"
         handle_draw(params)
     elseif method == "enumerate"
@@ -1213,6 +1253,112 @@ function handle_structure_decide(params)
         _wrap_inf("decide_with_voi failed")(e)
     end
     Dict{String, Any}("action" => string(action))
+end
+
+# ═══════════════════════════════════════
+# Routing verbs (decouple Move 4)
+#
+# A non-embedding consumer drives EU-max model routing over the wire: build the per-model
+# StructureBMA belief + emission/latency latents server-side (`routing_init`, from declared
+# DATA — roster, costs, reward, and the warm/latency counts INLINE), choose the EU-max model
+# (`routing_decide`) or the next escalation rung (`routing_escalate`), learn from a turn's
+# exec signal (`routing_outcome` — the coupled-EM confound step), and read the learned belief
+# (`routing_belief`, telemetry). The whole RoutingState is ONE opaque `rt_*` handle; ALL
+# arithmetic (the ProductMeasure join, the optimise argmax, the decode + EM) is engine-side
+# (src/routing.jl), so Invariant 1 holds across the wire by construction.
+# ═══════════════════════════════════════
+
+# Wire dicts use string-or-symbol keys depending on the JSON reader; normalise to a plain
+# String=>String features dict (as the structure verbs do) and a String=>Any profile dict.
+_features(f) = Dict(string(k) => string(v) for (k, v) in pairs(f))
+_profile(p) = p === nothing ? nothing : Dict(string(k) => v for (k, v) in pairs(p))
+
+function handle_routing_init(params)
+    names = String[string(n) for n in params["feature_names"]]
+    values = Vector{String}[String[string(v) for v in vs] for vs in params["feature_values"]]
+    roster = params["roster"]                       # [[name, provider, model_id, cost], …]
+    rnames = String[]; rproviders = String[]; rids = String[]; rcosts = Float64[]
+    for m in roster
+        push!(rnames, string(m[1])); push!(rproviders, string(m[2]))
+        push!(rids, string(m[3])); push!(rcosts, Float64(m[4]))
+    end
+    K = length(rids)
+    rt = try
+        model = build_structure_model(names, values;
+                                      alpha0 = Float64(get(params, "alpha0", 2.0)),
+                                      beta0 = Float64(get(params, "beta0", 2.0)),
+                                      p_edge = Float64(get(params, "p_edge", 0.5)))
+        tops = reconstruct_routing_tops_from_data(model, K, get(params, "warm_counts", nothing))
+        emp = get(params, "emission_prior", nothing)
+        emission = (emp !== nothing && length(emp) == 4) ?
+            EmissionBelief((Float64(emp[1]), Float64(emp[2]), Float64(emp[3]), Float64(emp[4]))) :
+            EmissionBelief()
+        lat = get(params, "latency_counts", nothing)
+        latency = lat === nothing ? nothing : reconstruct_latency_from_data(lat)
+        RoutingState(model, tops, Dict{String, MixturePrevision}(), emission,
+                     rnames, rproviders, rids, rcosts,
+                     Float64(get(params, "reward", 0.02)), Float64(get(params, "w_time", 0.0)),
+                     latency)
+    catch e
+        _wrap_dsl("routing_init failed")(e)
+    end
+    Dict{String, Any}("routing_state_id" => register_routing(rt), "n_models" => K)
+end
+
+function handle_routing_decide(params)
+    rt = get_routing(string(params["routing_state_id"]))
+    res = try
+        route_decide(rt, _features(params["features"]),
+                     get(params, "roster", nothing), _profile(get(params, "profile", nothing)))
+    catch e
+        _wrap_inf("routing_decide failed")(e)
+    end
+    res === nothing ? Dict{String, Any}("model" => nothing) : res   # <2 candidates ⇒ inert
+end
+
+function handle_routing_escalate(params)
+    rt = get_routing(string(params["routing_state_id"]))
+    rew = get(params, "reward", nothing)
+    res = try
+        escalate_decide(rt, _features(params["features"]), get(params, "roster", nothing),
+                        [Int(t) for t in get(params, "tried", Int[])],
+                        rew === nothing ? rt.reward : Float64(rew),
+                        _profile(get(params, "profile", nothing)))
+    catch e
+        _wrap_inf("routing_escalate failed")(e)
+    end
+    res === nothing ? Dict{String, Any}("model" => nothing) : res   # no positive-EU rung ⇒ STOP
+end
+
+function handle_routing_outcome(params)
+    id = string(params["routing_state_id"])
+    rt = get_routing(id)
+    human = get(params, "human", nothing)
+    try
+        route_outcome!(rt, string(params["model_id"]), _features(params["features"]),
+                       Bool(params["success"]); human = human === nothing ? nothing : Bool(human))
+    catch e
+        _wrap_inf("routing_outcome failed")(e)
+    end
+    Dict{String, Any}("routing_state_id" => id)              # mutated in place; no log_marginal
+end
+
+# Telemetry read-back (the routing analogue of belief_at_context-as-verb): the EM-learned
+# θ/ρ̄/σ̄ at a (model, context), for calibration/shadow-mode + the wire parity test. The hot
+# routing_decide builds the per-context view server-side and never round-trips this. The
+# actual reads live in the engine (`routing_belief_readout`); the verb only marshals.
+function handle_routing_belief(params)
+    rt = get_routing(string(params["routing_state_id"]))
+    try
+        routing_belief_readout(rt, string(params["model_id"]), _features(params["features"]))
+    catch e
+        _wrap_inf("routing_belief failed")(e)
+    end
+end
+
+function handle_destroy_routing(params)
+    delete!(ROUTING_REGISTRY, string(params["routing_state_id"]))
+    Dict{String, Any}("ok" => true)
 end
 
 function handle_draw(params)

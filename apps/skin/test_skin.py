@@ -1131,6 +1131,68 @@ def test_structure_bma_roundtrip():
         skin.shutdown()
 
 
+def test_routing_verbs_roundtrip():
+    """A non-embedding consumer drives EU-max model routing over the wire only: build the
+    session (`routing_init`, warm counts inline), pick the EU-max model (`routing_decide`),
+    learn from a turn (`routing_outcome`), read the learned belief (`routing_belief`), and
+    walk the escalation ladder (`routing_escalate`) — ZERO probability arithmetic client-side.
+    Asserts the Wald flip over the wire (cost-hawk → cheap, quality-hawk → best-believed),
+    that learning raises θ, and the cheapest-first escalation ladder."""
+    skin = SkinClient()
+    try:
+        skin.initialize()
+        roster = [["haiku", "anthropic", "claude-haiku-4-5", 0.01],
+                  ["sonnet", "anthropic", "claude-sonnet-4-6", 0.05],
+                  ["opus", "anthropic", "claude-opus-4-8", 0.20]]
+        # Warm so sonnet is best-believed, haiku worst (and cheapest) — sets up the Wald flip.
+        warm = {"per_model": [
+            {"contexts": [{"ctx": ["short"], "n1": 35, "n0": 15}]},   # haiku
+            {"contexts": [{"ctx": ["short"], "n1": 45, "n0": 5}]},    # sonnet
+            {"contexts": [{"ctx": ["short"], "n1": 40, "n0": 10}]},   # opus
+        ]}
+        init = skin._call("routing_init", {
+            "feature_names": ["prompt-length"], "feature_values": [["short", "long"]],
+            "roster": roster, "reward": 0.02, "warm_counts": warm})
+        rt = init["routing_state_id"]
+        assert rt.startswith("rt_") and init["n_models"] == 3, init
+
+        feats = {"prompt-length": "short"}
+        cheap = skin._call("routing_decide", {"routing_state_id": rt, "features": feats,
+                                              "profile": {"reward": 0.01}})
+        best = skin._call("routing_decide", {"routing_state_id": rt, "features": feats,
+                                             "profile": {"reward": 1.0}})
+        # credence-lint: allow — precedent:test-oracle — asserts the Wald flip over the wire; non-causal w.r.t. any agent
+        assert cheap["model"] == "claude-haiku-4-5", f"cost-hawk should route cheap: {cheap}"
+        # credence-lint: allow — precedent:test-oracle — asserts the Wald flip over the wire; non-causal w.r.t. any agent
+        assert best["model"] == "claude-sonnet-4-6", f"quality-hawk should route best-believed: {best}"
+
+        # Learning over the wire raises the routed model's θ (routing_belief makes the EM observable).
+        before = skin._call("routing_belief", {"routing_state_id": rt,
+                                               "model_id": "claude-haiku-4-5", "features": feats})["theta"]
+        for _ in range(20):
+            r = skin._call("routing_outcome", {"routing_state_id": rt, "model_id": "claude-haiku-4-5",
+                                               "features": feats, "success": True})
+            assert r["routing_state_id"] == rt, r
+        after = skin._call("routing_belief", {"routing_state_id": rt,
+                                              "model_id": "claude-haiku-4-5", "features": feats})["theta"]
+        # credence-lint: allow — precedent:test-oracle — asserts online learning raised θ; non-causal w.r.t. any agent
+        assert after > before, f"successes should raise θ over the wire: {before} → {after}"
+
+        # Escalation ladder (reward high so every rung is positive-EU): cheapest-first 1→2→3→null.
+        def rung(tried):
+            return skin._call("routing_escalate", {"routing_state_id": rt, "features": feats,
+                                                   "tried": tried, "reward": 1.0})
+        # credence-lint: allow — precedent:test-oracle — asserts the cheapest-first escalation ladder; non-causal
+        assert rung([])["tier_index"] == 1 and rung([1])["tier_index"] == 2, "ladder should climb cheapest-first"
+        # credence-lint: allow — precedent:test-oracle — asserts the ladder STOPs once all rungs are tried; non-causal
+        assert rung([1, 2])["tier_index"] == 3 and rung([1, 2, 3])["model"] is None, "ladder should STOP when exhausted"
+
+        assert skin._call("destroy_routing", {"routing_state_id": rt})["ok"] is True
+        print("PASS: routing verbs roundtrip (init / decide Wald-flip / outcome / belief / escalate)")
+    finally:
+        skin.shutdown()
+
+
 # ── Wire-contract tests (decouple Move 0) ──
 
 
@@ -1139,7 +1201,7 @@ def test_initialize_returns_contract():
     skin = SkinClient()
     try:
         result = skin.initialize()
-        assert result["protocol"] == "1.4", f"protocol: {result.get('protocol')}"
+        assert result["protocol"] == "1.5", f"protocol: {result.get('protocol')}"
         assert "version" in result, "engine version missing"
         methods = result["methods"]
         # Core canalised verbs + the Move-3 structure-BMA verbs must be advertised.
@@ -1185,7 +1247,7 @@ def test_dsl_sources_inline_equivalent_to_path():
         # a subsequent call_dsl against the loaded env resolves (the path-based
         # test_router_roundtrip already covers the path branch).
         result = skin.initialize(dsl_sources={"router": source})
-        assert result["protocol"] == "1.4"
+        assert result["protocol"] == "1.5"
         print("PASS: inline dsl_sources loads equivalently to a path load")
     finally:
         skin.shutdown()
@@ -1291,6 +1353,8 @@ if __name__ == "__main__":
     test_call_dsl_belief_roundtrip()
     print()
     test_structure_bma_roundtrip()
+    print()
+    test_routing_verbs_roundtrip()
     print()
     test_labelled_mixture_rho_latent()
     print()

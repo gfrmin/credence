@@ -1755,7 +1755,7 @@ export StructureBMA, build_structure_model, build_structure_prior,
 include("routing.jl")
 export RoutingState, EmissionBelief, LatencyBelief, route, route_eu, escalation_next,
        posterior_accuracy, route_outcome!, decode_correctness, latency_at,
-       route_decide, escalate_decide, reconstruct_latency_from_data,
+       route_decide, escalate_decide, routing_belief_readout, reconstruct_latency_from_data,
        reconstruct_routing_tops_from_data, _ctx_key
 
 end # module Ontology

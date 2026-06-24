@@ -1,6 +1,6 @@
 # Credence Skin Protocol
 
-Protocol-Version: 1.4
+Protocol-Version: 1.5
 
 JSON-RPC 2.0 over stdio. Skin reads newline-delimited JSON from stdin,
 writes newline-delimited JSON to stdout, logs to stderr.
@@ -13,6 +13,15 @@ truth, asserted in CI to equal `PROTOCOL_VERSION` in `server.jl`.
 
 ### Changelog
 
+- **1.5** — routing verbs (decouple Move 4, additive): `routing_init` (build the per-model
+  StructureBMA belief + ρ/σ emission + Gamma latency latents server-side from declared data —
+  roster, costs, reward, and the warm/latency counts INLINE — returning one opaque `rt_*`
+  handle), `routing_decide` (the EU-max model choice), `routing_escalate` (the cheapest-first
+  observe-then-escalate gate), `routing_outcome` (the coupled-EM confound-learning step from a
+  turn's exec signal), `routing_belief` (telemetry: the learned θ/ρ̄/σ̄), and `destroy_routing`.
+  All arithmetic — the ProductMeasure join, the `optimise` argmax, the decode + EM — stays
+  engine-side (`src/routing.jl`); the client ships only data. Additive; no existing verb
+  changes shape. See the `Routing` section below.
 - **1.4** — Move 1 commit-3 specs (additive): a `logistic_reaction` kernel-spec — a binary
   reaction to a latent x under a τ-marginalised choice model, conditioning a categorical over
   the x-grid (replaces life-agent's host-side `reaction_probability`); and a
@@ -421,6 +430,127 @@ tail), `w_time`/`exp_time` (the wall-clock saving), and `harm` are optional; omi
 of them gives the myopic single-outcome decision. `belief_at_context` is intentionally not
 a verb — `structure_decide` consumes the per-context view internally and no consumer reads
 it across the wire.
+
+## Routing (protocol 1.5)
+
+A non-embedding consumer drives EU-max model routing over the wire — no probability
+arithmetic client-side. Unlike the structure-BMA descriptor/belief split, the whole routing
+session is **one opaque `rt_*` handle** (a `RoutingState`: the per-model `StructureBMA`
+beliefs `tops`, the shared ρ/σ emission latents, the Gamma latency belief, the roster +
+utility data). It is a *mutable, growing* bundle — `routing_outcome` mutates it in place and
+it cold-starts beliefs for unseen models/contexts — so the consumer addresses neither
+internal belief; it ships data and reads back a model id. The warm/latency counts are shipped
+**inline** in `routing_init` (the skin reads no host filesystem) and reconstructed
+server-side (order-independent ⇒ exact).
+
+### routing_init
+
+Build the routing session from declared data. `roster` is `[[name, provider, model_id,
+cost], …]`; `warm_counts` (optional) is the per-model correct/incorrect counts replayed to
+warm-seed each model's belief; `latency_counts` (optional) the Gamma turns sufficient
+statistics for the time coordinate. `feature_names`/`feature_values`/`alpha0`/`beta0`/`p_edge`
+mirror `structure_bma`.
+
+```json
+{"method": "routing_init", "params": {
+  "feature_names": ["prompt-length"], "feature_values": [["short", "long"]],
+  "roster": [["haiku", "anthropic", "claude-haiku-4-5", 0.01],
+             ["sonnet", "anthropic", "claude-sonnet-4-6", 0.05],
+             ["opus", "anthropic", "claude-opus-4-8", 0.20]],
+  "reward": 0.02, "w_time": 0.0,
+  "warm_counts": {"per_model": [{"contexts": [{"ctx": ["short"], "n1": 44, "n0": 6}]}, ...]},
+  "latency_counts": {"turns_prior": [2.0, 1.0], "per_model": [{"model_id": "...", "rate_s": 1.4, "contexts": [...]}]},
+  "emission_prior": [2.0, 1.0, 1.0, 2.0]
+}}
+```
+
+```json
+{"result": {"routing_state_id": "rt_1", "n_models": 3}}
+```
+
+`warm_counts.per_model` must have one entry per roster model (positional) or `routing_init`
+fails loud. All of `warm_counts`/`latency_counts`/`emission_prior`/`w_time` are optional
+(cold beliefs / time-blind / directional default).
+
+### routing_decide
+
+The EU-max model for a request (`reward·E[θ_a|X] − cost_a`, the single canonical `optimise`).
+`roster` (optional) is the per-request LIVE roster (the user's actual models, same shape as
+`routing_init`'s); `profile` (optional) per-request `{reward, w_time}` overrides.
+
+```json
+{"method": "routing_decide", "params": {
+  "routing_state_id": "rt_1", "features": {"prompt-length": "short"},
+  "profile": {"reward": 1.0}
+}}
+```
+
+```json
+{"result": {"model": "claude-sonnet-4-6", "provider": "anthropic", "name": "sonnet"}}
+```
+
+Returns `{"model": null}` when fewer than 2 candidates exist (inert — the body keeps its
+model).
+
+### routing_escalate
+
+One observe-then-escalate step: the cheapest not-yet-`tried` rung whose myopic try-EU clears
+the stop gate, else STOP. `tried` is the cost-ascending indices the host accumulated from
+observed failures; the returned `tier_index` is in that same space (push it straight back
+into `tried` on a failure).
+
+```json
+{"method": "routing_escalate", "params": {
+  "routing_state_id": "rt_1", "features": {"prompt-length": "short"}, "tried": [0]
+}}
+```
+
+```json
+{"result": {"model": "claude-sonnet-4-6", "provider": "anthropic", "name": "sonnet", "tier_index": 1}}
+```
+
+Returns `{"model": null}` when no positive-EU rung remains (STOP).
+
+### routing_outcome
+
+Learn from one routed turn's exec signal — the coupled-EM confound step (decode the latent
+correctness from `success`, soft-count the routing belief, M-step the shared ρ/σ emission
+latents). With `human` (optional `true`/`false`), the correctness is known (the gold anchor).
+Mutates the session in place.
+
+```json
+{"method": "routing_outcome", "params": {
+  "routing_state_id": "rt_1", "model_id": "claude-haiku-4-5",
+  "features": {"prompt-length": "short"}, "success": true
+}}
+```
+
+```json
+{"result": {"routing_state_id": "rt_1"}}
+```
+
+No `log_marginal` (the step is a coupled multi-`condition`, not a single update).
+
+### routing_belief
+
+Telemetry: the EM-learned `theta` (E[θ|X]) and the reliability means `rho_bar`/`sigma_bar` at
+a `(model, context)`. For calibration/shadow-mode; the hot `routing_decide` never round-trips
+this. Read-only (an unseen model id is an error, not a silent cold-start).
+
+```json
+{"method": "routing_belief", "params": {
+  "routing_state_id": "rt_1", "model_id": "claude-haiku-4-5", "features": {"prompt-length": "short"}
+}}
+```
+
+```json
+{"result": {"theta": 0.41, "rho_bar": 0.78, "sigma_bar": 0.33}}
+```
+
+### destroy_routing
+
+Free a routing session (`{routing_state_id}` → `{ok: true}`). Matters for long-lived daemons
+— a session's emission/`extra_tops` cells grow with distinct contexts/models.
 
 ## Program-Space Operations (Tier 2)
 
