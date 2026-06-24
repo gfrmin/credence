@@ -15,8 +15,10 @@ truth, asserted in CI to equal `PROTOCOL_VERSION` in `server.jl`.
 
 - **1.4** — Move 1 commit-3 specs (additive): a `logistic_reaction` kernel-spec — a binary
   reaction to a latent x under a τ-marginalised choice model, conditioning a categorical over
-  the x-grid (replaces life-agent's host-side `reaction_probability`). [+ quadrature belief-spec,
-  quadratic functional, and the `marginalise` verb as the remaining commit-3 pieces land.]
+  the x-grid (replaces life-agent's host-side `reaction_probability`); and a
+  `discretised_gaussian` belief-spec — a Gaussian discretised onto a grid (replaces host-side
+  `gaussian_weights`). [+ a quadratic narrative functional and the `marginalise` verb as the
+  remaining commit-3 pieces land — both coupled to utility.py/narrative.py representations.]
 - **1.3** — carried-latent specs (no new verb): a `labelled_mixture` belief-spec
   (`build_prevision`) — a `MixturePrevision` over a label-grid of `LabelledCategoricalPrevision`
   components sharing one categorical prior (a shared discrete latent, e.g. extractor
@@ -683,6 +685,7 @@ Example with state references (the stateful mode, for long-lived agents):
 | `mixture` | `components, log_weights` | `MixtureMeasure` |
 | `tagged_beta` | `tag, alpha, beta` | `TaggedBetaMeasure` |
 | `labelled_mixture` | `labels: [...]`, `component_log_weights: [...]`, optional `label_log_weights` | `MixturePrevision` of `LabelledCategoricalPrevision` — a shared discrete latent (label-grid) over one categorical prior. Routed by `group_noisy_channel`. (protocol 1.3) |
+| `discretised_gaussian` | `grid: [...]`, `mu`, `sigma` | A Gaussian discretised onto the grid (≡ utility.py `gaussian_weights`), as a `CategoricalMeasure`. (protocol 1.4) |
 
 ### Kernel specs
 

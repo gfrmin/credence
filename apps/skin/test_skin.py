@@ -981,6 +981,28 @@ def test_logistic_reaction_kernel():
         skin.shutdown()
 
 
+def test_discretised_gaussian_prior():
+    """The engine builds the Gaussian-on-grid prior the body assembled host-side
+    (utility.py `gaussian_weights`). `discretised_gaussian` must match exp(-½((x-µ)/σ)²)/Z."""
+    import math
+    skin = SkinClient()
+    try:
+        skin.initialize()
+        grid = [-2.0, -1.0, 0.0, 1.0, 2.0]
+        sid = skin.create_state(type="discretised_gaussian", grid=grid, mu=0.0, sigma=1.0)
+        w = skin.weights(sid)
+        raw = [math.exp(-0.5 * ((x - 0.0) / 1.0) ** 2) for x in grid]
+        z = sum(raw)
+        ref = [r / z for r in raw]
+        # credence-lint: allow — precedent:test-oracle — engine grid-prior vs the host gaussian_weights formula; non-causal
+        assert all(abs(a - b) < 1e-12 for a, b in zip(w, ref)), f"{w} vs {ref}"
+        # credence-lint: allow — precedent:test-oracle — asserts the prior is a normalised distribution; non-causal
+        assert abs(sum(w) - 1.0) < 1e-12, f"not normalised: {sum(w)}"
+        print("PASS: discretised_gaussian ≡ gaussian_weights")
+    finally:
+        skin.shutdown()
+
+
 def test_labelled_mixture_rho_latent():
     """A non-embedding consumer drives the carried ρ-latent over the wire: build a
     `labelled_mixture` (a ρ-grid of categoricals over V), condition it with a
@@ -1266,5 +1288,7 @@ if __name__ == "__main__":
     test_labelled_mixture_rho_latent()
     print()
     test_logistic_reaction_kernel()
+    print()
+    test_discretised_gaussian_prior()
     print()
     print("All tests passed!")
