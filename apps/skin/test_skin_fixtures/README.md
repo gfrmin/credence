@@ -25,6 +25,17 @@ for that older shape). A post-Move-3 change to the `BetaMeasure` struct
 does *not* invalidate this fixture — the point is to verify v1→v2
 behaviour.
 
+**Reader Julia version:** this blob was serialised on the capture-date
+local Julia, whose `Serialization` format version is newer than the
+CI-pinned Julia (1.11). On the older reader the format-version guard
+("Cannot read stream serialized with a newer version of Julia") fires
+*before* the struct-layout mismatch. That is still a loud, informative
+failure, so `test_v1_snapshot_fails_loudly` accepts it as a valid marker
+alongside the struct-mismatch shapes — the contract is loud-not-silent,
+not a specific failure mode. Per the rules below the fixture is *not*
+regenerated to align serialiser versions; the test (load code) tolerates
+the version axis instead.
+
 ## Loading in the smoke test
 
 `apps/skin/test_skin.py` includes `test_v1_snapshot_restore` which:
