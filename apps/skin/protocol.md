@@ -1,6 +1,6 @@
 # Credence Skin Protocol
 
-Protocol-Version: 1.5
+Protocol-Version: 1.6
 
 JSON-RPC 2.0 over stdio. Skin reads newline-delimited JSON from stdin,
 writes newline-delimited JSON to stdout, logs to stderr.
@@ -13,6 +13,11 @@ truth, asserted in CI to equal `PROTOCOL_VERSION` in `server.jl`.
 
 ### Changelog
 
+- **1.6** — `structure_bma` gains an optional inline `warm_counts` (decouple Move 5
+  prerequisite, additive): `{contexts: [{ctx, n1, n0}]}` reconstructs the warm governance
+  posterior server-side in one call (symmetric with `routing_init`'s `warm_counts`), so a wire
+  consumer warm-seeds governance without N `structure_observe` round-trips. Omitting it gives
+  the cold prior (unchanged). Backward-compatible.
 - **1.5** — routing verbs (decouple Move 4, additive): `routing_init` (build the per-model
   StructureBMA belief + ρ/σ emission + Gamma latency latents server-side from declared data —
   roster, costs, reward, and the warm/latency counts INLINE — returning one opaque `rt_*`
@@ -382,7 +387,10 @@ cells). Returns the descriptor handle and the prior belief handle.
 {"result": {"model_id": "m_1", "state_id": "s_1"}}
 ```
 
-`alpha0`/`beta0`/`p_edge` are optional (default `2.0`/`2.0`/`0.5`).
+`alpha0`/`beta0`/`p_edge` are optional (default `2.0`/`2.0`/`0.5`). An optional inline
+`warm_counts` (`{"contexts": [{"ctx": [...], "n1": N, "n0": M}, ...]}`, protocol 1.6)
+reconstructs the warm posterior server-side (replaying `structure_observe`, order-independent
+⇒ exact) instead of the cold prior — so a wire consumer warm-seeds governance in one call.
 
 ### structure_observe
 

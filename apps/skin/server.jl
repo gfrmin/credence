@@ -678,7 +678,7 @@ end
 # rides the `credence-skin` image tag). MAJOR bumps on a breaking protocol
 # change; MINOR on additive. Apps pin the major in code and `initialize`
 # rejects a mismatching major with -32010. See docs/decouple/master-plan.md.
-const PROTOCOL_VERSION = "1.5"
+const PROTOCOL_VERSION = "1.6"
 protocol_major(v) = String(first(split(String(v), ".")))
 
 # Advertised method set, returned by `initialize` for client capability
@@ -1198,8 +1198,16 @@ function handle_structure_bma(params)
     catch e
         _wrap_dsl("build_structure_model failed")(e)
     end
+    # Optional inline warm_counts ({contexts:[{ctx,n1,n0}]}) reconstructs the warm posterior
+    # server-side in one call (symmetric with routing_init) — else the cold prior. Lets a wire
+    # consumer warm-seed governance without N structure_observe round-trips.
+    prior = try
+        reconstruct_structure_prior_from_data(model, get(params, "warm_counts", nothing))
+    catch e
+        _wrap_inf("structure warm reconstruction failed")(e)
+    end
     Dict{String, Any}("model_id" => register_model(model),
-                      "state_id" => register_state(build_structure_prior(model)))
+                      "state_id" => register_state(prior))
 end
 
 function handle_structure_observe(params)
