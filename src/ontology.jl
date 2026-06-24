@@ -38,6 +38,7 @@ export Kernel, FactorSelector, kernel_source, kernel_target, kernel_params
 export LikelihoodFamily, LeafFamily, PushOnly, BetaBernoulli, WeightedBernoulli, SoftBernoulli, Flat, FiringByTag, DispatchByComponent, DepthCapExceeded
 export FAMILY_REGISTRY, register_family!
 export NormalNormal, LinearGaussian, Categorical, NormalGammaLikelihood, Exponential, Poisson
+export GroupNoisyChannel, group_noisy_channel_logdensity
 export Event, TagSet, FeatureEquals, FeatureInterval, Conjunction, Disjunction, Complement
 export indicator_kernel, feature_value, BOOLEAN_SPACE
 export Functional, Identity, Projection, NestedProjection, Tabular, LinearCombination, OpaqueClosure

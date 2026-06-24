@@ -73,6 +73,46 @@ struct Exponential <: LeafFamily end
 # (which models positive-real durations); Poisson models the integer counts.
 struct Poisson <: LeafFamily end
 
+# Group-noisy-channel likelihood: a DOCUMENT of `m` correlated chunk-extractions of one
+# source, read as evidence about a categorical hypothesis `V` (which candidate is the truth,
+# or NONE). The m chunks share the document's content via a binary document latent
+# `D_d ∈ {reliable, noise}` with `P(reliable) = r_d = ρ·covariate`; given `D_d` the chunks are
+# conditionally independent. Marginalising `D_d` analytically (no hypothesis growth) gives the
+# exact per-document group-likelihood
+#     P(reports | V=j) = r_d·1{all m chunks reported j} + (1−r_d)·(1/A)^m
+# — a reliable document reports the truth in every chunk; a noise document reports each chunk
+# uniformly over the `A` alternatives. This is the EXACT correlated-evidence model the §4.2
+# "tempering" (raising each chunk's log-likelihood to a power) crudely approximated:
+# corroborating chunks of ONE document move the posterior LESS than the same number of
+# INDEPENDENT documents (likelihood-ratio `1 + r_d·Aᵐ/(1−r_d)` ≪ the independent
+# `[1 + r_d·A/(1−r_d)]ᵐ`), with no β-knob. At `m=1` it reduces bit-for-bit to the single-obs
+# noisy channel (match `r_d+(1−r_d)/A`, miss `(1−r_d)/A`). NONE and any non-reported candidate
+# are explained only by the noise channel (all_match false ⇒ reliable term vanishes),
+# recovering the "the truth is not among the retrieved ⇒ every report is a misread" semantics.
+#
+# `covariate` is the document's ρ-free reliability factor (authority·subject·time); `rho` is
+# the shared extractor reliability ρ (a scalar here; carried + marginalised as a latent across
+# documents in the ρ-mixture — the ρ-latent commit); `n_alternatives` is A. The chunk reports
+# are the OBSERVATION (a vector of reported candidate atoms), not family data.
+struct GroupNoisyChannel <: LeafFamily
+    covariate::Float64
+    rho::Float64
+    n_alternatives::Int
+end
+
+# Per-hypothesis group log-likelihood: hypothesis `v` (a candidate atom, or the NONE atom)
+# against an observed document `reports` (a vector of reported candidate atoms). This is the
+# `log_density` a group-noisy-channel Kernel forwards to; `condition(::CategoricalMeasure, …)`
+# sums it into each candidate's log-weight.
+function group_noisy_channel_logdensity(fam::GroupNoisyChannel, v, reports)
+    r_d = fam.rho * fam.covariate
+    A = fam.n_alternatives
+    m = length(reports)
+    reliable = all(==(v), reports) ? r_d : 0.0       # a reliable doc reports the truth in every chunk
+    noise = (1.0 - r_d) / Float64(A)^m               # a noise doc reports each chunk uniform over A
+    log(max(reliable + noise, 1e-300))               # m=1 ⇒ (1−r_d)/A, the single-obs miss exactly
+end
+
 struct FiringByTag <: LikelihoodFamily
     fires::Set{Int}
     when_fires::LeafFamily
@@ -107,6 +147,11 @@ register_family!(:normal,    (sigma) -> NormalNormal(Float64(sigma)), 1)
 # the `:family` arg-evaluation generalisation) and `sigma` (observation noise).
 register_family!(Symbol("linear-gaussian"),
                  (xs, sigma) -> LinearGaussian(collect(Float64, xs), Float64(sigma)), 2)
+# Three scalar args: the document's ρ-free covariate, the extractor reliability ρ, and the
+# alternative count A. The chunk reports are the observation, supplied at `condition` time.
+register_family!(Symbol("group-noisy-channel"),
+                 (covariate, rho, n_alt) ->
+                     GroupNoisyChannel(Float64(covariate), Float64(rho), Int(round(n_alt))), 3)
 
 struct Kernel
     source::Space
