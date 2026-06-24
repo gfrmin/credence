@@ -221,6 +221,20 @@ function build_prevision(spec)
         components = [build_prevision(c) for c in spec["components"]]
         lw = collect(Float64, spec["log_weights"])
         MixturePrevision(components, lw)
+    elseif t == "labelled_mixture"
+        # A carried, shared discrete latent (decouple Move 1): a mixture over `labels`
+        # (e.g. a ρ-grid), each component a LabelledCategoricalPrevision sharing one
+        # categorical V-prior (`component_log_weights`). A per-component-routing kernel
+        # (group_noisy_channel) reads each label at condition time, so conditioning learns
+        # the latent jointly with V and shares it across observations. `label_log_weights`
+        # is the latent prior (default uniform).
+        labels = collect(Float64, spec["labels"])
+        comp_lw = collect(Float64, spec["component_log_weights"])
+        label_lw = haskey(spec, "label_log_weights") ?
+            collect(Float64, spec["label_log_weights"]) : zeros(Float64, length(labels))
+        comps = LabelledCategoricalPrevision[
+            LabelledCategoricalPrevision(ℓ, CategoricalPrevision(copy(comp_lw))) for ℓ in labels]
+        MixturePrevision(comps, label_lw)
     else
         error("unknown type: $t")
     end
@@ -303,6 +317,20 @@ function build_kernel(spec, state_id::Union{String, Nothing}=nothing)
             w -> error("generate not used"),
             (w, o) -> -0.5 * (o - sum(coeffs[i] * w[i] for i in 1:d))^2 / variance;
             likelihood_family = LinearGaussian(coeffs, sqrt(variance)))
+
+    elseif t == "group_noisy_channel"
+        # A document of correlated chunk-extractions, read as evidence about a categorical
+        # V carried in a `labelled_mixture` (label = ρ). DispatchByComponent reads each
+        # component's label to set r_d = ρ·covariate; the chunk reports (1-based candidate
+        # positions) are the `condition` observation (a JSON array). Routing is per
+        # component, so log_density is never called — the labelled categorical reaches the
+        # resolved family through `categorical_logdensity`.
+        cov = Float64(spec["covariate"])
+        A = Int(spec["n_alternatives"])
+        Kernel(Finite([0.0]), Finite([0.0]),
+            h -> error("generate not used"),
+            (h, o) -> error("group_noisy_channel routes via categorical_logdensity, not log_density");
+            likelihood_family = DispatchByComponent(c -> GroupNoisyChannel(cov, c.label, A)))
 
     elseif t == "quality"
         # (θ, k) → Beta(θk, (1-θ)k) continuous quality observation
@@ -604,7 +632,7 @@ end
 # rides the `credence-skin` image tag). MAJOR bumps on a breaking protocol
 # change; MINOR on additive. Apps pin the major in code and `initialize`
 # rejects a mismatching major with -32010. See docs/decouple/master-plan.md.
-const PROTOCOL_VERSION = "1.2"
+const PROTOCOL_VERSION = "1.3"
 protocol_major(v) = String(first(split(String(v), ".")))
 
 # Advertised method set, returned by `initialize` for client capability

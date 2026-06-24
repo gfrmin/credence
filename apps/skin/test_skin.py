@@ -952,6 +952,49 @@ def test_replace_factor_identity_pin():
         skin.shutdown()
 
 
+# ── Carried-latent specs (decouple Move 1, protocol 1.3) ──
+
+
+def test_labelled_mixture_rho_latent():
+    """A non-embedding consumer drives the carried ρ-latent over the wire: build a
+    `labelled_mixture` (a ρ-grid of categoricals over V), condition it with a
+    `group_noisy_channel` kernel on corroborating reports, and optimise over V — all with
+    ZERO probability arithmetic client-side. Asserts ρ learns over the wire (mass shifts to
+    the higher ρ) and the ρ-integrated V decision picks the corroborated candidate."""
+    skin = SkinClient()
+    try:
+        skin.initialize()
+        # ρ-grid {0.5, 0.9}; uniform V prior over 3 positions (2 candidates + NONE).
+        sid = skin.create_state(
+            type="labelled_mixture",
+            labels=[0.5, 0.9],
+            component_log_weights=[0.0, 0.0, 0.0],
+        )
+        kernel = {"type": "group_noisy_channel", "covariate": 0.8, "n_alternatives": 5}
+        # Two corroborating chunks of one document both report candidate position 1.
+        res = skin.condition(sid, kernel=kernel, observation=[1, 1])
+        assert res["state_id"] == sid and "log_marginal" in res, res
+
+        # `weights` returns the ρ-mixture weights — corroboration should favour the higher ρ.
+        w_rho = skin.weights(sid)
+        # credence-lint: allow — precedent:test-oracle — asserts ρ-learning on the conditioned belief; non-causal w.r.t. any agent
+        assert len(w_rho) == 2 and w_rho[1] > w_rho[0], f"ρ should shift high: {w_rho}"
+
+        # optimise over V integrates ρ (expect collapses the mixture): report-1 beats abstain.
+        action, _ = skin.optimise(
+            sid,
+            actions={"type": "finite", "values": [0.0, 1.0]},  # ignored by functional_per_action
+            preference={"type": "functional_per_action", "actions": {
+                "report1": {"type": "tabular", "values": [1.0, 0.0, 0.0]},
+                "abstain": {"type": "tabular", "values": [0.4, 0.4, 0.4]},
+            }},
+        )
+        assert action == "report1", f"ρ-integrated V decision should report the corroborated candidate, got {action}"
+        print("PASS: labelled_mixture + group_noisy_channel ρ-latent roundtrip")
+    finally:
+        skin.shutdown()
+
+
 # ── Structure-BMA verbs (decouple Move 3) ──
 
 
@@ -1041,7 +1084,7 @@ def test_initialize_returns_contract():
     skin = SkinClient()
     try:
         result = skin.initialize()
-        assert result["protocol"] == "1.2", f"protocol: {result.get('protocol')}"
+        assert result["protocol"] == "1.3", f"protocol: {result.get('protocol')}"
         assert "version" in result, "engine version missing"
         methods = result["methods"]
         # Core canalised verbs + the Move-3 structure-BMA verbs must be advertised.
@@ -1087,7 +1130,7 @@ def test_dsl_sources_inline_equivalent_to_path():
         # a subsequent call_dsl against the loaded env resolves (the path-based
         # test_router_roundtrip already covers the path branch).
         result = skin.initialize(dsl_sources={"router": source})
-        assert result["protocol"] == "1.2"
+        assert result["protocol"] == "1.3"
         print("PASS: inline dsl_sources loads equivalently to a path load")
     finally:
         skin.shutdown()
@@ -1193,5 +1236,7 @@ if __name__ == "__main__":
     test_call_dsl_belief_roundtrip()
     print()
     test_structure_bma_roundtrip()
+    print()
+    test_labelled_mixture_rho_latent()
     print()
     print("All tests passed!")

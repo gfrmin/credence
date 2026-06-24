@@ -30,7 +30,7 @@ module Previsions
 
 export Prevision, TestFunction, Indicator, apply, expect
 export Identity, Projection, NestedProjection, Tabular, LinearCombination, OpaqueClosure, FiringChoice
-export BetaPrevision, TaggedBetaPrevision, SparseStructurePrevision, GaussianPrevision, MvGaussianPrevision, GammaPrevision, CategoricalPrevision, DirichletPrevision, NormalGammaPrevision, ProductPrevision, MixturePrevision
+export BetaPrevision, TaggedBetaPrevision, SparseStructurePrevision, GaussianPrevision, MvGaussianPrevision, GammaPrevision, CategoricalPrevision, DirichletPrevision, NormalGammaPrevision, ProductPrevision, MixturePrevision, LabelledCategoricalPrevision
 export ExchangeablePrevision, decompose
 export ParticlePrevision, QuadraturePrevision
 export ConditionalPrevision
@@ -405,6 +405,29 @@ struct CategoricalPrevision <: Prevision
         log_total = max_lw + log(sum(exp.(log_weights .- max_lw)))
         new(log_weights .- log_total)
     end
+end
+
+"""
+    LabelledCategoricalPrevision(label::Float64, categorical::CategoricalPrevision) <: Prevision
+
+A `CategoricalPrevision` over a finite hypothesis space, carrying an opaque `Float64`
+`label`. The engine never interprets `label`; a per-component routing closure
+(`DispatchByComponent`) reads it to select a per-component `LikelihoodFamily`. A
+`MixturePrevision` of these THEREFORE realises a *shared discrete latent*: each component is
+one value of the latent (its `label`), the mixture weights are the latent's prior, and
+`condition` routes each component's likelihood by its own label — so conditioning learns the
+latent jointly with the categorical, across observations (a carried, shared latent, not a
+per-observation marginalisation).
+
+Parallels `TaggedBetaPrevision` (an `Int` tag for `FiringByTag`); the `Float64` label suits a
+continuous-valued latent grid read by a `DispatchByComponent` closure. The de-couple Move-1
+ρ-latent uses it as a mixture over an extractor-reliability grid (label = ρ): the
+group-noisy-channel's `r_d = ρ·covariate` is routed per component, so corroborating documents
+sharpen ρ once (the shared-instrument coupling), not per document.
+"""
+struct LabelledCategoricalPrevision <: Prevision
+    label::Float64
+    categorical::CategoricalPrevision
 end
 
 """

@@ -113,6 +113,15 @@ function group_noisy_channel_logdensity(fam::GroupNoisyChannel, v, reports)
     log(max(reliable + noise, 1e-300))               # m=1 ⇒ (1−r_d)/A, the single-obs miss exactly
 end
 
+# Per-position categorical log-density of a LEAF FAMILY — the routing target a
+# `LabelledCategoricalPrevision` calls after `_resolve_likelihood_family` picks the
+# per-component family. Position `i` is the 1-based hypothesis index; `obs` is the
+# observation. Keeps `LabelledCategoricalPrevision` domain-agnostic: it dispatches here on
+# whatever leaf the routing closure returns, and each family that emits a categorical
+# likelihood (today: GroupNoisyChannel) provides one method.
+categorical_logdensity(fam::GroupNoisyChannel, i::Int, obs) =
+    group_noisy_channel_logdensity(fam, i, obs)
+
 struct FiringByTag <: LikelihoodFamily
     fires::Set{Int}
     when_fires::LeafFamily
