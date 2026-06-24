@@ -1,6 +1,6 @@
 # Credence Skin Protocol
 
-Protocol-Version: 1.2
+Protocol-Version: 1.3
 
 JSON-RPC 2.0 over stdio. Skin reads newline-delimited JSON from stdin,
 writes newline-delimited JSON to stdout, logs to stderr.
@@ -13,6 +13,13 @@ truth, asserted in CI to equal `PROTOCOL_VERSION` in `server.jl`.
 
 ### Changelog
 
+- **1.3** — carried-latent specs (no new verb): a `labelled_mixture` belief-spec
+  (`build_prevision`) — a `MixturePrevision` over a label-grid of `LabelledCategoricalPrevision`
+  components sharing one categorical prior (a shared discrete latent, e.g. extractor
+  reliability ρ); and a `group_noisy_channel` kernel-spec (`build_kernel`) — a per-component
+  router (`DispatchByComponent`) reading each component's label, for the exact
+  correlated-evidence document model. `condition`/`log_predictive` route per component.
+  Additive; existing verbs unchanged. See the spec sections below.
 - **1.2** — structure-BMA verbs: `structure_bma` (build the 2ⁿ-edge model + prior,
   returning a separate `model_id` descriptor handle and a belief `state_id`),
   `structure_observe` (learn per (context, response), in-place), and `structure_decide`
@@ -671,12 +678,14 @@ Example with state references (the stateful mode, for long-lived agents):
 | `product` | `factors: [measure, ...]` | `ProductMeasure` |
 | `mixture` | `components, log_weights` | `MixtureMeasure` |
 | `tagged_beta` | `tag, alpha, beta` | `TaggedBetaMeasure` |
+| `labelled_mixture` | `labels: [...]`, `component_log_weights: [...]`, optional `label_log_weights` | `MixturePrevision` of `LabelledCategoricalPrevision` — a shared discrete latent (label-grid) over one categorical prior. Routed by `group_noisy_channel`. (protocol 1.3) |
 
 ### Kernel specs
 
 | Type | Params | Description |
 |------|--------|-------------|
 | `bernoulli` | -- | theta -> Bernoulli(theta). Beta-Bernoulli conjugate. |
+| `group_noisy_channel` | `covariate`, `n_alternatives` | Per-component (`DispatchByComponent`) correlated-document model: `r_d = ρ·covariate` per `labelled_mixture` component; reports (1-based positions) are the `condition` observation. (protocol 1.3) |
 | `gaussian_known_var` | `variance` | mu -> N(mu, var). Gaussian conjugate. |
 | `gaussian_unknown_var` | -- | (mu, tau) -> N(mu, 1/tau). Normal-Gamma conjugate. |
 | `program_observation` | `features`, `true_label` | Per-component CompiledKernel dispatch. |

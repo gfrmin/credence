@@ -48,7 +48,7 @@ export Prevision, TestFunction, Indicator, apply
 export params
 export CenteredPower, CenteredSquare, GeometricTail
 export BetaPrevision, TaggedBetaPrevision, GaussianPrevision, GammaPrevision
-export CategoricalPrevision, DirichletPrevision, NormalGammaPrevision
+export CategoricalPrevision, DirichletPrevision, NormalGammaPrevision, LabelledCategoricalPrevision
 export ProductPrevision, MixturePrevision, ExchangeablePrevision, decompose
 export ParticlePrevision, QuadraturePrevision
 export ConditionalPrevision

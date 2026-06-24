@@ -48,6 +48,9 @@ function weights(p::CategoricalPrevision)
     w ./ sum(w)
 end
 
+# A labelled categorical's probabilities are its inner categorical's — the label is opaque.
+weights(p::LabelledCategoricalPrevision) = weights(p.categorical)
+
 function weights(p::MixturePrevision)
     lw = p.log_weights
     max_lw = maximum(lw)

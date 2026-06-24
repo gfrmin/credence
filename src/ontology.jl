@@ -22,7 +22,7 @@ using LinearAlgebra: SymTridiagonal, eigen, dot, cholesky, Symmetric
 import ..Previsions: Prevision
 import ..Previsions: TestFunction, Identity, Projection, NestedProjection,
                      Tabular, LinearCombination, OpaqueClosure, FiringChoice, expect
-import ..Previsions: BetaPrevision, TaggedBetaPrevision, SparseStructurePrevision, GaussianPrevision, MvGaussianPrevision, GammaPrevision, CategoricalPrevision, DirichletPrevision, NormalGammaPrevision, ProductPrevision, MixturePrevision
+import ..Previsions: BetaPrevision, TaggedBetaPrevision, SparseStructurePrevision, GaussianPrevision, MvGaussianPrevision, GammaPrevision, CategoricalPrevision, DirichletPrevision, NormalGammaPrevision, ProductPrevision, MixturePrevision, LabelledCategoricalPrevision
 import ..Previsions: ExchangeablePrevision, decompose
 import ..Previsions: ParticlePrevision, QuadraturePrevision
 import ..Previsions: ConditionalPrevision
@@ -765,6 +765,15 @@ expect(m::MixtureMeasure, o::OpaqueClosure; kwargs...) = expect(m, o.f; kwargs..
 expect(p::BetaPrevision, ::Identity) = p.alpha / (p.alpha + p.beta)
 expect(p::TaggedBetaPrevision, ::Identity) = expect(p.beta, Identity())
 
+# A labelled categorical integrates a POSITIONAL functional against its inner categorical
+# (the label is opaque to the functional). `Tabular` — the per-action utility vector lookup
+# ships — is positional, so `optimise`/`expect` over a MixturePrevision of these integrates
+# the latent for free: Σ_label w_label · Σ_i P(i|label)·u[i] = Σ_i P(i)·u[i] (the V-marginal EU,
+# no explicit collapse). Non-positional functionals (Identity, by-value Function) need the
+# carrier space and are read at the CategoricalMeasure level, not here.
+expect(p::LabelledCategoricalPrevision, t::Tabular) =
+    sum(weights(p.categorical)[i] * t.values[i] for i in eachindex(t.values))
+
 # Exact geometric-tail mean on Prevision leaves (mirrors the BetaMeasure form):
 # E_Beta[ρ/(1−ρ)] = α/(β−1). This is the closed form the brain's continuation
 # belief reaches (MixturePrevision → TaggedBetaPrevision forwarder → here),
@@ -1060,6 +1069,20 @@ function condition(p::TaggedBetaPrevision, k::Kernel, observation)
     TaggedBetaPrevision(p.tag, new_beta)
 end
 
+# Group-likelihood reweight of a labelled categorical: resolve the per-component leaf family
+# (a `DispatchByComponent` closure reads `p.label`), then add its per-position categorical
+# log-density to each V-position's log-weight. The new `CategoricalPrevision` re-normalises —
+# the component-conditional posterior P(V | label); the mixture's reweight by this component's
+# document marginal likelihood is `_predictive_ll` below. `_resolve_likelihood_family` reaching
+# a non-leaf (a routing family with no leaf) throws, which is correct: a labelled categorical
+# is only conditioned through a per-component router.
+function condition(p::LabelledCategoricalPrevision, k::Kernel, observation)
+    fam = _resolve_likelihood_family(k.likelihood_family, p)
+    lw = p.categorical.log_weights
+    new_lw = [lw[i] + categorical_logdensity(fam, i, observation) for i in eachindex(lw)]
+    LabelledCategoricalPrevision(p.label, CategoricalPrevision(new_lw))
+end
+
 function condition(p::GaussianPrevision, k::Kernel, observation)
     cp = maybe_conjugate(p, k)
     if cp !== nothing
@@ -1242,6 +1265,16 @@ _predictive_ll(p::BetaPrevision, k::Kernel, obs) =
 _predictive_ll(p::TaggedBetaPrevision, k::Kernel, obs) =
     k.log_density(p, obs)
 
+# Document marginal likelihood of a labelled categorical at its own label:
+# log Σ_V P(V | label) · exp(per-position density). The `log_weights` are normalised at
+# construction, so this is exactly log P(obs | label) — the term `condition(::MixturePrevision)`
+# uses to reweight the latent (the ρ-learning across documents).
+function _predictive_ll(p::LabelledCategoricalPrevision, k::Kernel, obs)
+    fam = _resolve_likelihood_family(k.likelihood_family, p)
+    lw = p.categorical.log_weights
+    logsumexp([lw[i] + categorical_logdensity(fam, i, obs) for i in eachindex(lw)])
+end
+
 _predictive_ll(p::GaussianPrevision, k::Kernel, obs) =
     _predictive_ll(wrap_in_measure(p), k, obs)
 
@@ -1261,6 +1294,17 @@ end
 
 function log_predictive(p::Prevision, k::Kernel, obs)
     log_predictive(wrap_in_measure(p), k, obs)
+end
+
+# A mixture's marginal likelihood = logsumexp_i(log_weight_i + _predictive_ll(comp_i, k, obs)),
+# routing per-component (each component resolves its own LikelihoodFamily — e.g. a
+# `DispatchByComponent` group kernel reads each `LabelledCategoricalPrevision`'s label). The
+# generic `Prevision` fallback above would `wrap_in_measure` and call the kernel's
+# component-agnostic `log_density`, which a per-component router leaves as a stub — so this
+# specific method is what makes `condition`/`log_predictive` work on a routed mixture.
+function log_predictive(p::MixturePrevision, k::Kernel, obs)
+    lw = p.log_weights
+    logsumexp([lw[i] + _predictive_ll(p.components[i], k, obs) for i in eachindex(lw)])
 end
 
 function log_predictive(p::DirichletPrevision, k::Kernel, obs)
