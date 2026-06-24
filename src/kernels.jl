@@ -106,6 +106,9 @@ end
 # sums it into each candidate's log-weight.
 function group_noisy_channel_logdensity(fam::GroupNoisyChannel, v, reports)
     r_d = fam.rho * fam.covariate
+    (0.0 <= r_d <= 1.0) ||
+        error("group-noisy-channel: r_d = ρ·covariate = $r_d ∉ [0,1] (ρ=$(fam.rho), " *
+              "covariate=$(fam.covariate)) — the consumer must keep ρ·authority·subject·time ≤ 1")
     A = fam.n_alternatives
     m = length(reports)
     reliable = all(==(v), reports) ? r_d : 0.0       # a reliable doc reports the truth in every chunk
@@ -121,6 +124,13 @@ end
 # likelihood (today: GroupNoisyChannel) provides one method.
 categorical_logdensity(fam::GroupNoisyChannel, i::Int, obs) =
     group_noisy_channel_logdensity(fam, i, obs)
+
+# Fail loud (with remediation) if a routing closure yields a family with no per-position
+# categorical density — a misconfigured kernel, caught at condition rather than mis-routed.
+categorical_logdensity(fam::LikelihoodFamily, i::Int, obs) = error(
+    "LabelledCategoricalPrevision needs a per-component family with a categorical per-position " *
+    "density (e.g. GroupNoisyChannel); got $(typeof(fam)). Check the routing kernel's " *
+    "DispatchByComponent closure.")
 
 struct FiringByTag <: LikelihoodFamily
     fires::Set{Int}
