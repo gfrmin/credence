@@ -7,20 +7,26 @@ After decouple Move 3 the structure-BMA builder + observe + readout live in the 
 `structure_observe` / `belief_at_context` / …). This module re-exports them under the
 names credence-pi's daemon and tests use, and keeps the genuinely credence-pi-specific
 wiring: reading the declared feature env, the harm/tail/latency opt-in plumbing, the
-per-context EU decision (`decide`/`decide_multi`), the counts-JSON reconstruction, the
-effector policy, and `wire_brain!`. It reimplements NO axiom op — every belief change is
-`condition` (inside the lifted `structure_observe`); every decision is the canonical
-`optimise`. The `.bdsl` files keep the DECLARED DATA (feature spaces, capabilities,
-utility constants).
+per-context EU decision (`decide`/`decide_multi`, which select belief views and delegate
+the EU math to the engine's `decide_with_voi`), the counts-JSON reconstruction, the
+effector policy, and `wire_brain!`. It reimplements NO axiom op and assembles NO EU
+coefficients — every belief change is `condition` (inside the lifted `structure_observe`);
+every decision delegates to the engine's `decide_with_voi` (which maximises through the
+canonical typed `optimise`). The `.bdsl` files keep the DECLARED DATA (feature spaces,
+capabilities, utility constants).
 """
 module FeatureBrain
 
 using Main.Credence: StructureBMA, build_structure_model, build_structure_prior,
     build_structure_prior_dense, structure_observe, structure_observe_soft,
     structure_firing_tags, belief_at_context, context_from_features, structure_decision_kernel,
-    MixturePrevision, GammaPrevision, Identity, LinearCombination, TestFunction, Projection,
-    GeometricTail, FeatureDecl, Finite, expect, wrap_in_measure
-import Main.Credence.Ontology: optimise, net_voi, ProductMeasure, Measure
+    MixturePrevision, GammaPrevision, Identity,
+    GeometricTail, FeatureDecl, Finite, expect
+# The EU-max template lives in the engine stdlib (decouple Move 3): the app ships utility
+# scalars and SELECTS belief views, it does not assemble coefficients. No `optimise`/
+# `net_voi`/`LinearCombination`/`Projection`/`ProductMeasure` import remains — a grep of
+# this shim for those primitives is now empty, the leak-closed witness.
+import Main.Credence.Ontology: decide_with_voi
 using JSON3
 
 export StructureBMA, build_model, build_model_from_env, build_model_from_decls,
@@ -83,28 +89,16 @@ function _has_features(model::StructureBMA, features)
     all(haskey(fd, n) for n in model.feature_names)
 end
 
-# ── Decision: per-context EU-max with the (tail-aware) linear-cost utility ──
+# ── Decision: per-context EU-max via the engine's `decide_with_voi` template ──
 #
-# With θ = P(approve|X), per-call cost c (dollars), false-block aversion λ
-# (unitless: how many wrongly-blocked wanted-calls equal one allowed wasteful
-# call), interruption cost q (dollars), and m = `expected_repeats` (the posterior-
-# expected number of FURTHER identical calls a block prevents — the multi-turn
-# look-ahead; m=0 ⇒ the myopic per-call form), against a proceed baseline:
-#     EU(proceed) = 0
-#     EU(block)   = c·(1+m)·(1−θ) − λ·c·θ = c·(1+m) − c·[(1+m)+λ]·θ   (LinearCombination/Identity)
-#     EU(ask)     = voi − q                              (constant Functional)
-# Blocking a WASTE call saves the whole expected tail — (1+m) calls: this one plus m
-# more — whereas a wrongly-blocked WANTED call is not a loop, so its penalty stays λ·c
-# (one call's friction). Block wins iff θ < (1+m)/((1+m)+λ): m=0 recovers the λ-only
-# threshold 1/(1+λ) (c only scales the stakes); a large detected tail drives the cutoff
-# toward 1. The `ask` VOI is computed against the SAME tail-aware block payoff, so
-# resolving a likely-long loop is worth (1+m)× — an attention-precious (high-q) profile
-# asks about a loop it would myopically wave through. m enters ONLY as a Functional
-# coefficient; all three actions compare through the ONE canonical `optimise` (Invariant 1).
-
-const _ID = Identity()
-_lin(coeff::Float64, off::Float64) = LinearCombination(Tuple{Float64, TestFunction}[(coeff, _ID)], off)
-_const(off::Float64) = LinearCombination(Tuple{Float64, TestFunction}[], off)
+# The proceed/block/ask EU math — tail-aware linear-cost waste utility, optional harm
+# coordinate, VOI ask-gate — lives in the engine stdlib (`decide_with_voi`, src/stdlib.jl)
+# so it is byte-identical in-process and over the skin wire. The app's job here is only to
+# SELECT the per-context belief view(s) and pass the utility scalars; it assembles no
+# coefficients and calls no `optimise`/`net_voi` itself (the decouple Move-3 leak-close).
+# θ = P(approve|X); c = per-call cost; λ = false-block aversion; q = interrupt cost;
+# m = expected_repeats (the multi-turn look-ahead, `expect(continuation, GeometricTail())`,
+# m=0 ⇒ myopic). The coefficient algebra and its block-cutoff proof now live with the math.
 
 # Per-request profile override (the user's utility weights, shipped by the body PER REQUEST so a
 # user switches their trade-off with no daemon restart): the value for `key` if present, else the
@@ -114,57 +108,41 @@ _pget(profile, key::AbstractString, default::Float64)::Float64 =
         Float64(profile[key]) : default
 
 """
-    decide(model, top, X, cost; aversion, interrupt_cost, expected_repeats=0.0) -> Symbol
+    decide(model, top, X, cost; aversion, interrupt_cost, expected_repeats=0.0,
+           w_time=0.0, exp_time=0.0) -> Symbol
 
-Return `:proceed`, `:block`, or `:ask`. `cost` is the per-call USD estimate;
-`aversion` is λ (false-block aversion, unitless); `interrupt_cost` is q (dollars);
-`expected_repeats` is m — the posterior-expected number of further identical calls a
-block prevents (0 ⇒ the myopic per-call decision; supplied by the tail brain as
-`expect(continuation_belief, GeometricTail())`).
+Return `:proceed`, `:block`, or `:ask`. Selects the structure-BMA per-context belief
+view and delegates the EU-max to the engine's single-outcome `decide_with_voi` (no harm
+coordinate). `cost` is the per-call USD estimate; `aversion` is λ; `interrupt_cost` is q;
+`expected_repeats` is m — the tail a block prevents (0 ⇒ myopic; supplied by the tail
+brain as `expect(continuation_belief, GeometricTail())`).
 """
 function decide(model::StructureBMA, top::MixturePrevision, X::AbstractVector, cost::Float64;
                 aversion::Float64, interrupt_cost::Float64, expected_repeats::Float64 = 0.0,
                 w_time::Float64 = 0.0, exp_time::Float64 = 0.0)
     bx = belief_at_context(model, top, X)
-    tf = 1.0 + expected_repeats                       # expected calls a block prevents: this one + the tail
-    # TIME coordinate: a block also SAVES the call's wall-clock (E[time]·tf seconds), valued at
-    # w_time $/sec. Folds into the block offset next to the money saving c·tf. 0 ⇒ bit-identical.
-    tcost = w_time * exp_time * tf
-    block_fn = _lin(-cost * (tf + aversion), cost * tf + tcost)   # c·(1+m) + w_time·E[time]·(1+m) − c·[(1+m)+λ]·θ
-    fpa_pb = Dict{Symbol, LinearCombination}(:proceed => _const(0.0), :block => block_fn)
-    # EU(ask) = voi − q, computed through the canonical `net_voi` stdlib op (the
-    # cost subtraction lives in stdlib, not as host arithmetic here) and entered
-    # into `optimise` as a constant Functional so all three actions compare
-    # through the ONE argmax.
-    eu_ask = net_voi(bx, structure_decision_kernel(), [:proceed, :block], fpa_pb, [0, 1], interrupt_cost)
-    fpa = Dict{Symbol, LinearCombination}(:proceed => _const(0.0),
-                                          :block => block_fn,
-                                          :ask => _const(eu_ask))
-    optimise(bx, [:proceed, :block, :ask], fpa)
+    decide_with_voi(bx, structure_decision_kernel(); cost = cost, aversion = aversion,
+                    interrupt_cost = interrupt_cost, expected_repeats = expected_repeats,
+                    w_time = w_time, exp_time = exp_time)
 end
 
 # ── Multi-outcome decision: one EU integrating waste AND harm in one currency ──
 #
 # Two posteriors at decision time: θ_a = P(approve|Xw) (waste brain, live-learned) and
-# θ_u = P(unsafe|Xh) (harm brain, warm-frozen). With m = `expected_repeats` (the tail-aware
-# look-ahead — waste only; a harmful action is one-shot, not a repeated loop), proceed = 0
-# baseline (harm_cost H=0 AND m=0 recovers the single-outcome `decide` exactly):
-#     EU(proceed) = 0
-#     EU(block)   = c·(1+m)·[1 − θ_a] − cλθ_a + H·θ_u   (block avoids the waste TAIL and the harm)
-#     EU(ask)     = voi − q                              (VOI of the user resolving approve)
-# expressed as a LinearCombination over Projections of the JOINT belief (the constitution-
-# clean "one expect over the joint"; ProductMeasure + Projection are existing Tier-1 ops),
-# maximised by the ONE canonical `optimise`. Block beats proceed iff
-#     θ_a < (1+m)/((1+m)+λ) + H·θ_u/(c·[(1+m)+λ]) — the waste cutoff SLIDES with BOTH the harm
-# belief and the detected tail; no OR-of-thresholds can express it (eval/multi_outcome.jl +
-# REGEX_IMPOSSIBLE.md).
+# θ_u = P(unsafe|Xh) (harm brain, warm-frozen). A block avoids the waste TAIL ((1+m) calls)
+# and the harm (H·θ_u, one-shot). The waste cutoff θ_a < (1+m)/((1+m)+λ) + H·θ_u/(c·[(1+m)+λ])
+# SLIDES with BOTH the harm belief and the detected tail — no OR-of-thresholds can express it
+# (eval/multi_outcome.jl + REGEX_IMPOSSIBLE.md). The joint-belief EU assembly lives in the
+# engine's `decide_with_voi` (harm coordinate); here we only select the two views and pass H.
 """
     decide_multi(waste_model, top_waste, harm_model, harm_top, Xw, Xh, cost;
-                 aversion, interrupt_cost, harm_cost, expected_repeats=0.0) -> Symbol
+                 aversion, interrupt_cost, harm_cost, expected_repeats=0.0,
+                 w_time=0.0, exp_time=0.0) -> Symbol
 
-Multi-outcome EU decision over the joint of the approve-belief and the unsafe-belief, via
-the single canonical `optimise`. `harm_cost = 0` AND `expected_repeats = 0` reduce it to
-the single-outcome myopic `decide`. `expected_repeats` (m) scales only the waste tail.
+Multi-outcome EU decision over the joint of the approve-belief and the unsafe-belief.
+Delegates to the engine's `decide_with_voi` with the harm coordinate (`harm_belief`,
+`harm_cost = H`). `harm_cost = 0` AND `expected_repeats = 0` reduce it to the
+single-outcome `decide`. `expected_repeats` (m) scales only the waste tail.
 """
 function decide_multi(waste_model::StructureBMA, top_waste::MixturePrevision,
                       harm_model::StructureBMA, harm_top::MixturePrevision,
@@ -174,20 +152,9 @@ function decide_multi(waste_model::StructureBMA, top_waste::MixturePrevision,
                       w_time::Float64 = 0.0, exp_time::Float64 = 0.0)
     bxa = belief_at_context(waste_model, top_waste, Xw)   # P(approve|Xw)
     bxu = belief_at_context(harm_model, harm_top, Xh)     # P(unsafe|Xh)
-    joint = ProductMeasure(Measure[wrap_in_measure(bxa), wrap_in_measure(bxu)])
-    tf = 1.0 + expected_repeats        # expected calls a block prevents (waste tail; harm is one-shot)
-    tcost = w_time * exp_time * tf      # time a block saves (w_time $/sec × E[time]·tf); 0 ⇒ bit-identical
-    # EU(block) = c·(1+m)·[1−θ_a] + w_time·E[time]·(1+m) − cλθ_a + H·θ_u over the joint
-    block_fn = LinearCombination(Tuple{Float64, TestFunction}[
-        (-cost * (tf + aversion), Projection(1)), (harm_cost, Projection(2))], cost * tf + tcost)
-    # EU(ask): VOI of the user resolving approve, against the SAME tail+time-aware block payoff so
-    # asking about a likely-long loop inherits the (1+m)× value; a constant so all three
-    # actions compare through one optimise.
-    eu_ask = net_voi(bxa, structure_decision_kernel(), [:proceed, :block],
-                     Dict(:proceed => _const(0.0), :block => _lin(-cost * (tf + aversion), cost * tf + tcost)),
-                     [0, 1], interrupt_cost)
-    fpa = Dict(:proceed => _const(0.0), :block => block_fn, :ask => _const(eu_ask))
-    optimise(joint, [:proceed, :block, :ask], fpa)
+    decide_with_voi(bxa, structure_decision_kernel(); cost = cost, aversion = aversion,
+                    interrupt_cost = interrupt_cost, expected_repeats = expected_repeats,
+                    w_time = w_time, exp_time = exp_time, harm_belief = bxu, harm_cost = harm_cost)
 end
 
 # ── harm posterior persistence: version-stable per-context COUNTS ──
