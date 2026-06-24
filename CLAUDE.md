@@ -299,8 +299,8 @@ Python workspace (uv):
 real provider APIs); run manually when changing live paths.
 
 Skin server (JSON-RPC wire layer):
-    julia apps/skin/server.jl
-    python -m skin.test_skin                        # smoke tests from repo root
+    julia --project=. apps/skin/server.jl
+    JULIA_PROJECT=. uv run python apps/skin/test_skin.py   # wire smoke; CI-gated in unit-tests
 
 credence-proxy (production gateway):
     PYTHON_JULIACALL_HANDLE_SIGNALS=yes credence-router serve
@@ -310,8 +310,10 @@ CI (`.github/workflows/publish-image.yml`) runs three jobs.
 **unit-tests** instantiates the Julia project (`Pkg.instantiate` +
 `Pkg.precompile` — no `julia test/…`), runs `uv sync --extra server --extra
 search --no-dev`, then the credence-lint corpus self-test and `check
-apps/` pass, then `credence_router` + `credence_agents` pytest (excluding
-test_live.py).
+apps/` pass, the skin protocol-version invariant (header == `PROTOCOL_VERSION`)
+and the **skin wire smoke** (`test_skin.py` driving every verb over stdio —
+the decouple consumption surface), then `credence_router` + `credence_agents`
+pytest (excluding test_live.py).
 **smoke-build** builds amd64 and curls `/ready` against a running container
 before anything ships.
 **publish** (master + version-tag) builds multi-arch and pushes to GHCR.
