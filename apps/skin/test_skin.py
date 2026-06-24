@@ -952,6 +952,87 @@ def test_replace_factor_identity_pin():
         skin.shutdown()
 
 
+# ── Structure-BMA verbs (decouple Move 3) ──
+
+
+def test_structure_bma_roundtrip():
+    """A non-embedding consumer drives structure-BMA inference over the wire only:
+    build model+prior (`structure_bma` → separate model_id/state_id), learn per
+    (context, response) (`structure_observe`, in-place), and decide proceed/block/ask
+    (`structure_decide`). Asserts the EU decision flips with the evidence, the ask-gate
+    responds to the interrupt cost, and the optional harm coordinate flips proceed→block —
+    all with ZERO probability arithmetic client-side (Invariant 1 across the wire)."""
+    skin = SkinClient()
+    try:
+        skin.initialize()
+
+        # 2 features (tool, rep) ⇒ 4 edge structures; Beta(2,2) cells ⇒ prior mean 0.5.
+        bma = skin._call("structure_bma", {
+            "feature_names": ["tool", "rep"],
+            "feature_values": [["bash", "read"], ["rep0", "rep3"]],
+            "alpha0": 2.0, "beta0": 2.0, "p_edge": 0.5,
+        })
+        mid, sid = bma["model_id"], bma["state_id"]
+        assert mid.startswith("m_") and sid.startswith("s_"), bma  # separate handles (Q1)
+
+        ctx = {"tool": "bash", "rep": "rep3"}
+        HUGE = 1.0e9   # interrupt cost that removes :ask from contention
+
+        def decide(state, c=1.0, lam=1.0, q=HUGE, harm=None):
+            p = {"model_id": mid, "state_id": state, "features": ctx,
+                 "cost": c, "aversion": lam, "interrupt_cost": q}
+            if harm is not None:
+                p["harm"] = harm
+            return skin._call("structure_decide", p)["action"]
+
+        # Fresh prior: θ = 0.5 ⇒ EU(block)=EU(proceed)=0 ⇒ :proceed wins the tie (first action).
+        assert decide(sid) == "proceed", "fresh prior should proceed at the tie"
+        # Free ask gate on the same uncertain belief ⇒ VOI > 0 ⇒ :ask.
+        assert decide(sid, q=0.0) == "ask", "uncertain belief + free gate should ask"
+
+        # Learn three refusals at this context ⇒ θ drops below 0.5 ⇒ :block. In-place: same sid.
+        for _ in range(3):
+            r = skin._call("structure_observe",
+                           {"model_id": mid, "state_id": sid, "features": ctx, "observation": 0})
+            assert r["state_id"] == sid, "structure_observe is in-place"
+        assert decide(sid) == "block", "after refusals θ < 0.5 should block"
+
+        # A FRESH model learning three approvals ⇒ θ > 0.5 ⇒ :proceed.
+        bma2 = skin._call("structure_bma", {
+            "feature_names": ["tool", "rep"],
+            "feature_values": [["bash", "read"], ["rep0", "rep3"]],
+        })
+        mid2, sid2 = bma2["model_id"], bma2["state_id"]
+        for _ in range(3):
+            skin._call("structure_observe",
+                       {"model_id": mid2, "state_id": sid2, "features": ctx, "observation": 1})
+        a2 = skin._call("structure_decide", {
+            "model_id": mid2, "state_id": sid2, "features": ctx,
+            "cost": 1.0, "aversion": 1.0, "interrupt_cost": HUGE})["action"]
+        assert a2 == "proceed", "after approvals θ > 0.5 should proceed"
+
+        # Optional harm coordinate: a separate harm model whose context is likely-unsafe
+        # (three "unsafe" labels ⇒ θ_u > 0.5) flips the would-be :proceed to :block.
+        harm = skin._call("structure_bma", {
+            "feature_names": ["tool", "rep"],
+            "feature_values": [["bash", "read"], ["rep0", "rep3"]],
+        })
+        hmid, hsid = harm["model_id"], harm["state_id"]
+        for _ in range(3):
+            skin._call("structure_observe",
+                       {"model_id": hmid, "state_id": hsid, "features": ctx, "observation": 1})
+        a3 = skin._call("structure_decide", {
+            "model_id": mid2, "state_id": sid2, "features": ctx,
+            "cost": 1.0, "aversion": 1.0, "interrupt_cost": HUGE,
+            "harm": {"model_id": hmid, "state_id": hsid, "features": ctx, "harm_cost": 5.0},
+        })["action"]
+        assert a3 == "block", "high harm belief should flip proceed→block"
+
+        print("PASS: structure-BMA verbs roundtrip (build / observe / decide + harm)")
+    finally:
+        skin.shutdown()
+
+
 # ── Wire-contract tests (decouple Move 0) ──
 
 
@@ -960,11 +1041,12 @@ def test_initialize_returns_contract():
     skin = SkinClient()
     try:
         result = skin.initialize()
-        assert result["protocol"] == "1.1", f"protocol: {result.get('protocol')}"
+        assert result["protocol"] == "1.2", f"protocol: {result.get('protocol')}"
         assert "version" in result, "engine version missing"
         methods = result["methods"]
-        # Core canalised verbs must be advertised for client capability discovery.
-        for verb in ("create_state", "condition", "expect", "optimise", "draw"):
+        # Core canalised verbs + the Move-3 structure-BMA verbs must be advertised.
+        for verb in ("create_state", "condition", "expect", "optimise", "draw",
+                     "structure_bma", "structure_observe", "structure_decide"):
             assert verb in methods, f"{verb} missing from advertised methods"
         print("PASS: initialize returns {protocol, version, methods}")
     finally:
@@ -1005,7 +1087,7 @@ def test_dsl_sources_inline_equivalent_to_path():
         # a subsequent call_dsl against the loaded env resolves (the path-based
         # test_router_roundtrip already covers the path branch).
         result = skin.initialize(dsl_sources={"router": source})
-        assert result["protocol"] == "1.1"
+        assert result["protocol"] == "1.2"
         print("PASS: inline dsl_sources loads equivalently to a path load")
     finally:
         skin.shutdown()
@@ -1109,5 +1191,7 @@ if __name__ == "__main__":
     test_dsl_sources_inline_equivalent_to_path()
     print()
     test_call_dsl_belief_roundtrip()
+    print()
+    test_structure_bma_roundtrip()
     print()
     print("All tests passed!")

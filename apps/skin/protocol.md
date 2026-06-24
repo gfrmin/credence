@@ -1,6 +1,6 @@
 # Credence Skin Protocol
 
-Protocol-Version: 1.1
+Protocol-Version: 1.2
 
 JSON-RPC 2.0 over stdio. Skin reads newline-delimited JSON from stdin,
 writes newline-delimited JSON to stdout, logs to stderr.
@@ -13,6 +13,13 @@ truth, asserted in CI to equal `PROTOCOL_VERSION` in `server.jl`.
 
 ### Changelog
 
+- **1.2** — structure-BMA verbs: `structure_bma` (build the 2ⁿ-edge model + prior,
+  returning a separate `model_id` descriptor handle and a belief `state_id`),
+  `structure_observe` (learn per (context, response), in-place), and `structure_decide`
+  (the proceed/block/ask EU decision with an optional harm coordinate). All coefficient
+  arithmetic stays engine-side; the client ships only feature buckets and utility scalars.
+  Additive; no existing verb changes shape. See `structure_bma`/`structure_observe`/
+  `structure_decide` below.
 - **1.1** — `call_dsl` becomes a pure belief-function evaluator: a belief crosses
   the wire as a declarative `{type, params}` spec — reconstructed from a `call_dsl`
   arg (never registered) and emitted as a `call_dsl` return (no `state_id`). See
@@ -326,6 +333,81 @@ Sample from the measure. The only source of randomness.
 ```json
 {"result": {"value": 2}}
 ```
+
+## Structure-BMA (protocol 1.2)
+
+A non-embedding consumer drives Bayesian-model-averaged structure inference over
+feature→Bernoulli edges entirely through these verbs — no probability arithmetic
+client-side. The descriptor (feature vocabulary + the 2ⁿ structure enumeration) gets a
+**separate `model_id` handle** from the belief `state_id`: the descriptor carries no
+beliefs (Invariant 3). Contexts are sent as feature dicts `{name: bucket}`, validated
+against the declared buckets server-side (vocabulary drift fails loud).
+
+### structure_bma
+
+Build the 2ⁿ-edge model and its prior (a mixture over structures of `Beta(alpha0, beta0)`
+cells). Returns the descriptor handle and the prior belief handle.
+
+```json
+{"method": "structure_bma", "params": {
+  "feature_names": ["tool", "rep"],
+  "feature_values": [["bash", "read"], ["rep0", "rep3"]],
+  "alpha0": 2.0, "beta0": 2.0, "p_edge": 0.5
+}}
+```
+
+```json
+{"result": {"model_id": "m_1", "state_id": "s_1"}}
+```
+
+`alpha0`/`beta0`/`p_edge` are optional (default `2.0`/`2.0`/`0.5`).
+
+### structure_observe
+
+Learn one `(context, response)`: a single `condition` through the canalised path that
+reweights structures by the firing cell's chain-rule marginal likelihood. In-place — the
+belief `state_id` is unchanged.
+
+```json
+{"method": "structure_observe", "params": {
+  "model_id": "m_1", "state_id": "s_1",
+  "features": {"tool": "bash", "rep": "rep3"}, "observation": 1
+}}
+```
+
+```json
+{"result": {"state_id": "s_1"}}
+```
+
+`observation` is `1` (approve) or `0` (refuse).
+
+### structure_decide
+
+The proceed/block/ask EU decision at a context (engine stdlib `decide_with_voi`). The
+client ships only utility scalars; the engine assembles all coefficients, the VOI ask-gate,
+and the argmax. An optional `harm` object adds a second outcome (a separate harm model +
+belief + context) integrated in one EU.
+
+```json
+{"method": "structure_decide", "params": {
+  "model_id": "m_1", "state_id": "s_1",
+  "features": {"tool": "bash", "rep": "rep3"},
+  "cost": 1.0, "aversion": 1.0, "interrupt_cost": 0.5,
+  "expected_repeats": 0.0, "w_time": 0.0, "exp_time": 0.0,
+  "harm": {"model_id": "m_2", "state_id": "s_2",
+           "features": {"tool": "bash", "rep": "rep3"}, "harm_cost": 2.0}
+}}
+```
+
+```json
+{"result": {"action": "proceed"}}
+```
+
+`action` is `"proceed"`, `"block"`, or `"ask"`. `expected_repeats` (m, the multi-turn
+tail), `w_time`/`exp_time` (the wall-clock saving), and `harm` are optional; omitting all
+of them gives the myopic single-outcome decision. `belief_at_context` is intentionally not
+a verb — `structure_decide` consumes the per-context view internally and no consumer reads
+it across the wire.
 
 ## Program-Space Operations (Tier 2)
 

@@ -35,6 +35,9 @@ using Credence: aggregate_grammar_weights, top_k_grammar_ids, add_programs_to_st
 using Credence: next_grammar_id, reset_grammar_counter!
 using Credence: show_expr
 using Credence: log_density_at
+using Credence: StructureBMA, build_structure_model, build_structure_prior, structure_observe,
+                belief_at_context, context_from_features, structure_decision_kernel
+using Credence.Ontology: decide_with_voi
 
 using JSON3
 using Serialization
@@ -61,6 +64,28 @@ end
 function get_state(id::String)
     haskey(STATE_REGISTRY, id) || throw(StateNotFound(id))
     STATE_REGISTRY[id]
+end
+
+# Model registry: structural-analysis DESCRIPTORS (e.g. a `StructureBMA`) held under a
+# SEPARATE `m_*` handle from the `s_*` belief states (Invariant 3 / decouple Move-3 Q1 —
+# a descriptor carries no beliefs; conflating the two would let one mutate the other).
+const MODEL_REGISTRY = Dict{String, Any}()
+let counter = Ref(0)
+    global function next_model_id()
+        counter[] += 1
+        "m_$(counter[])"
+    end
+end
+
+function register_model(obj)
+    id = next_model_id()
+    MODEL_REGISTRY[id] = obj
+    id
+end
+
+function get_model(id::String)
+    haskey(MODEL_REGISTRY, id) || throw(StateNotFound(id))
+    MODEL_REGISTRY[id]
 end
 
 # ═══════════════════════════════════════
@@ -579,7 +604,7 @@ end
 # rides the `credence-skin` image tag). MAJOR bumps on a breaking protocol
 # change; MINOR on additive. Apps pin the major in code and `initialize`
 # rejects a mismatching major with -32010. See docs/decouple/master-plan.md.
-const PROTOCOL_VERSION = "1.1"
+const PROTOCOL_VERSION = "1.2"
 protocol_major(v) = String(first(split(String(v), ".")))
 
 # Advertised method set, returned by `initialize` for client capability
@@ -592,6 +617,7 @@ const SKIN_METHODS = [
     "perturb_grammar", "add_programs", "sync_prune", "sync_truncate",
     "top_grammars", "belief_summary", "condition_and_prune", "eu_interact",
     "call_dsl", "factor", "replace_factor", "n_factors",
+    "structure_bma", "structure_observe", "structure_decide",
 ]
 
 function handle_request(method::String, params, id)
@@ -621,6 +647,12 @@ function handle_request(method::String, params, id)
         handle_optimise(params)
     elseif method == "value"
         handle_value(params)
+    elseif method == "structure_bma"
+        handle_structure_bma(params)
+    elseif method == "structure_observe"
+        handle_structure_observe(params)
+    elseif method == "structure_decide"
+        handle_structure_decide(params)
     elseif method == "draw"
         handle_draw(params)
     elseif method == "enumerate"
@@ -1047,6 +1079,92 @@ function handle_value(params)
         best_eu = max(best_eu, eu)
     end
     Dict("value" => best_eu)
+end
+
+# ═══════════════════════════════════════
+# Structure-BMA verbs (decouple Move 3)
+#
+# A non-embedding consumer drives structure-BMA inference over the wire: build the
+# 2ⁿ-edge model + prior (`structure_bma`), learn per (context, response)
+# (`structure_observe`), and take the proceed/block/ask EU decision (`structure_decide`).
+# The descriptor gets a SEPARATE `model_id` handle from the belief `state_id` (Move-3 Q1).
+# ALL arithmetic — the chain-rule reweight, the EU coefficient assembly — is engine-side
+# (src/structure_bma.jl, src/stdlib.jl `decide_with_voi`); the verbs only marshal JSON,
+# so Invariant 1 holds across the wire by construction. `belief_at_context` is deliberately
+# NOT a verb: no consumer reads the per-context belief across the wire (Move-3 Q2).
+# ═══════════════════════════════════════
+
+# A features dict {name: bucket} → X (positional, validated against the model's declared
+# buckets; vocabulary drift fails loud rather than mis-routing).
+_structure_X(model, features) =
+    context_from_features(model, Dict(string(k) => string(v) for (k, v) in pairs(features)))
+
+function handle_structure_bma(params)
+    names = String[string(n) for n in params["feature_names"]]
+    values = Vector{String}[String[string(v) for v in vs] for vs in params["feature_values"]]
+    model = try
+        build_structure_model(names, values;
+                              alpha0 = Float64(get(params, "alpha0", 2.0)),
+                              beta0 = Float64(get(params, "beta0", 2.0)),
+                              p_edge = Float64(get(params, "p_edge", 0.5)))
+    catch e
+        _wrap_dsl("build_structure_model failed")(e)
+    end
+    Dict{String, Any}("model_id" => register_model(model),
+                      "state_id" => register_state(build_structure_prior(model)))
+end
+
+function handle_structure_observe(params)
+    model = get_model(string(params["model_id"]))
+    sid = string(params["state_id"])
+    top = get_state(sid)
+    X = try
+        _structure_X(model, params["features"])
+    catch e
+        _wrap_dsl("structure context build failed")(e)
+    end
+    obs = Int(params["observation"])
+    new_top = try
+        structure_observe(model, top, X, obs)
+    catch e
+        _wrap_inf("structure_observe failed")(e)
+    end
+    STATE_REGISTRY[sid] = new_top
+    Dict{String, Any}("state_id" => sid)
+end
+
+function handle_structure_decide(params)
+    model = get_model(string(params["model_id"]))
+    top = get_state(string(params["state_id"]))
+    # Belief view + optional harm coordinate (a second model+belief+context for the unsafe
+    # outcome). Context build is a protocol concern (vocabulary), so wrap as DSLError.
+    bx, harm_belief, harm_cost = try
+        bx0 = belief_at_context(model, top, _structure_X(model, params["features"]))
+        hb, hc = nothing, 0.0
+        if get(params, "harm", nothing) !== nothing
+            h = params["harm"]
+            hmodel = get_model(string(h["model_id"]))
+            htop = get_state(string(h["state_id"]))
+            hb = belief_at_context(hmodel, htop, _structure_X(hmodel, h["features"]))
+            hc = Float64(get(h, "harm_cost", 0.0))
+        end
+        (bx0, hb, hc)
+    catch e
+        _wrap_dsl("structure decision context build failed")(e)
+    end
+    action = try
+        decide_with_voi(bx, structure_decision_kernel();
+                        cost = Float64(params["cost"]),
+                        aversion = Float64(params["aversion"]),
+                        interrupt_cost = Float64(params["interrupt_cost"]),
+                        expected_repeats = Float64(get(params, "expected_repeats", 0.0)),
+                        w_time = Float64(get(params, "w_time", 0.0)),
+                        exp_time = Float64(get(params, "exp_time", 0.0)),
+                        harm_belief = harm_belief, harm_cost = harm_cost)
+    catch e
+        _wrap_inf("decide_with_voi failed")(e)
+    end
+    Dict{String, Any}("action" => string(action))
 end
 
 function handle_draw(params)
