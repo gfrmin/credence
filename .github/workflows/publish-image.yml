@@ -53,6 +53,20 @@ jobs:
           test -n "$hdr" && test "$hdr" = "$cnst" \
             || { echo "Protocol-Version header must equal PROTOCOL_VERSION in server.jl"; exit 1; }
 
+      # Functional gate on the wire — the decouple consumption surface. The
+      # skin-smoke-build job only asserts the `initialize` handshake (liveness);
+      # this drives every build_prevision / build_kernel / condition / optimise
+      # verb over stdio (test_skin.py's manual runner), so a verb-behaviour
+      # regression fails CI rather than only a hand-run dev smoke. The client
+      # spawns `julia server.jl` with no --project, so JULIA_PROJECT points it at
+      # the instantiated repo project (JSON3/HTTP); `python apps/skin/test_skin.py`
+      # puts apps/skin on sys.path[0], resolving its flat `from client import`.
+      - name: Skin wire smoke (test_skin.py — verb behaviour over stdio)
+        env:
+          PYTHON_JULIACALL_HANDLE_SIGNALS: "yes"
+          JULIA_PROJECT: ${{ github.workspace }}
+        run: uv run python apps/skin/test_skin.py
+
       - name: Run credence_router + credence_agents pytest
         env:
           ANTHROPIC_API_KEY: sk-ant-test-smoke
