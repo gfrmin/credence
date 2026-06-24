@@ -447,9 +447,11 @@ Two-tier architecture. See SPEC.md for details.
   inline BDSL **data** (`dsl_sources`) and carry no probabilistic Julia. In-process
   `juliacall` embedding (`credence`/`credence-agents`) *is* a brain and is demoted to
   engine-repo-internal (`Private :: Do Not Upload`); the sole exception is code
-  **co-released inside an engine-repo image** (credence-proxy, credence-pi-daemon), which
+  **co-released inside an engine-repo image** (credence-proxy), which
   may embed because the brain is versioned with the engine. credence must not enable an
-  external app to host its own brain. See `docs/decouple/master-plan.md`.
+  external app to host its own brain. (The former credence-pi-daemon was extracted to its own
+  repo, `credence-openclaw`, by the decouple Move 5 — now a pure wire consumer, not an
+  embedding image.) See `docs/decouple/master-plan.md`.
 
     ┌──────────────────────────────────┐
     │  Four types                      │  FROZEN

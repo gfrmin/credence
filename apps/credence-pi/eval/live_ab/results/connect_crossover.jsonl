@@ -1,3 +1,0 @@
-{"task": "connect", "arm": "haiku", "rep": 1, "success": true, "duration_s": 144.2, "turns": 70, "input": 82, "output": 60916, "cacheRead": 4374897, "cacheWrite": 166061, "usd": 0.75978, "models_used": {"claude-haiku-4-5-20251001": 70}}
-{"task": "connect", "arm": "sonnet", "rep": 1, "success": true, "duration_s": 41.8, "turns": 5, "input": 6, "output": 1469, "cacheRead": 114210, "cacheWrite": 29807, "usd": 0.16809, "models_used": {"claude-sonnet-4-6": 5}}
-{"task": "connect", "arm": "opus", "rep": 1, "success": true, "duration_s": 43.2, "turns": 5, "input": 9, "output": 1398, "cacheRead": 156311, "cacheWrite": 40138, "usd": 1.09204, "models_used": {"claude-opus-4-8": 5}}

@@ -1,9 +1,0 @@
-# Regenerable heavy artifacts — never commit
-# (cloned upstream repos, per-(repo,version) uv venvs, terminal-bench downloads/runs)
-swebench/repos/
-swebench/venvs/
-tb/
-__pycache__/
-*.pyc
-results/tb_matrix_smoke.jsonl
-results/tb_matrix_pilot.jsonl

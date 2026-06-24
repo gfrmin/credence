@@ -1,7 +1,7 @@
 # test_routing.jl — the engine routing stdlib (decouple Move 4, src/routing.jl). Self-contained
 # (no apps/ dependency): builds a tiny inline routing fixture and pins the lifted ops directly
 # through the engine's public names. The end-to-end behavioural oracle is
-# apps/credence-pi/tests/julia/test_routing.jl (passes unmodified through the shim); this file
+# the credence-openclaw repo's tests/julia/test_routing.jl (passes unmodified through the shim); this file
 # pins the engine primitives. Asserts:
 #   (1) Wald flip — route's EU-max model changes with `reward` ALONE (cost-hawk → cheap,
 #       quality-hawk → best-believed), exact index;
