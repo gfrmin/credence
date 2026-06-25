@@ -1,6 +1,7 @@
 # Decouple — master plan
 
-> Branch family: `decouple/*`. Opened 2026-06-20.
+> Branch family: `decouple/*`. Opened 2026-06-20; engine side **closed 2026-06-25**
+> at protocol 1.12 (see "Moves" — all landed; remaining tail is cross-repo).
 >
 > Separate the Credence engine (DSL core + skin wire) from the apps that consume
 > it, so each app pins a versioned engine artifact and talks the protocol-versioned
@@ -51,22 +52,37 @@ session isolation and is deferred until a real single-tenant-remote consumer nee
 it. Public consumption surface = GHCR images + `credence-skin-client`. Zero
 embedding packages.
 
-## Moves
+## Moves — ALL LANDED ✅ (engine side closed 2026-06-25)
 
-| Move | Branch | Deliverable |
-|------|--------|-------------|
-| **0 — Contract** ✅ | `decouple/contract` | **DONE (PR #140, merged).** `credence-skin` image (stdio); `PROTOCOL_VERSION` split from engine semver + handshake (`-32010`); inline-BDSL `dsl_sources` (`.jl` plugin injection demoted to co-released-image-only); extracted `credence-skin-client`; demoted `credence`/`credence-agents`/`credence-router` from public PyPI; co-released-image exception in SPEC §6.9 + CLAUDE.md. (`serve_http` *not* built — stdio only.) |
-| **2 — rssfeed** (next, reprioritized ahead of Move 1) | `decouple/rssfeed` | MAUT ranker enablement, **wire-only over stdio**. Two protocol-shaped engine additions: a uniform prevision-serialization protocol (`params(p)` + `read_params` verb) and a family registry the BDSL `:family` surface reflects (`:normal/:soft/:weighted`). Domain-neutral `examples/maut_demo.bdsl` + end-to-end example + `/load/observe/score`→skin-verb mapping (rssfeed-side adapter). `apps/julia/rss/` → reference-only (program-space/PlackettLuce superseded; read-order is noise for a swipe-reader). See `move-2-design.md`. |
-| **1 — life-agent pilot** (after rssfeed) | `decouple/life-agent` | Repoint `brain.py` off `$CREDENCE_REPO` onto the pinned `credence-skin` image (`docker run -i` stdio, reusing `SubprocessTransport`); move life-agent BDSL in-repo, passed inline as `dsl_sources`; audit for host-side probability arithmetic. Thin brain — no stdlib promotion. |
-| **3 — credence-pi refit** | `decouple/credence-pi` | Lift StructureBMA builder into `src/structure_bma.jl`; add `structure_bma` / `structure_observe` / `belief_at_context` skin verbs (body never transcribes the 2ⁿ prior); credence-pi BDSL stays as data; TS wire client; bless the daemon as a co-released product image. |
+Execution order was reprioritized to 0 → 2 → 1 → 3 → 4 → 5 (rssfeed pulled ahead of
+the life-agent pilot); listed below by move number.
+
+| Move | Deliverable | Status |
+|------|-------------|--------|
+| **0 — Contract** | `credence-skin` image (stdio); `PROTOCOL_VERSION` split from engine semver + handshake (`-32010`); inline-BDSL `dsl_sources` (`.jl` plugin injection demoted to co-released-image-only); extracted `credence-skin-client`; demoted `credence`/`credence-agents`/`credence-router` from public PyPI; co-released-image exception in SPEC §6.9 + CLAUDE.md. (`serve_http` *not* built — stdio only.) See `move-0-design.md`. | ✅ PR #140 |
+| **2 — rssfeed / MAUT** | Pure-functional MAUT ranker, wire-only over stdio. Uniform prevision-serialization (`params(p)` + `read_params` verb) + a family registry the BDSL `:family` surface reflects (`:normal/:soft/:weighted`); `examples/maut_demo.bdsl`. `apps/julia/rss/` → reference-only (program-space/PlackettLuce superseded). See `move-2-design.md`. | ✅ |
+| **1 — life-agent pilot** | Repoint `brain.py` off `$CREDENCE_REPO` onto the pinned `credence-skin` image (`docker run -i` stdio, reusing `SubprocessTransport`); life-agent BDSL in-repo, inline via `dsl_sources`; host-side arithmetic-leak audit. Thin brain — no stdlib promotion. See `move-1-design.md`. | ✅ |
+| **3 — credence-pi refit** | StructureBMA builder lifted into `src/structure_bma.jl`; `structure_bma` / `structure_observe` / `belief_at_context` skin verbs (protocol 1.2; body never transcribes the 2ⁿ prior); credence-pi BDSL stays data; TS wire client. See `move-3-design.md`. | ✅ |
+| **4 — routing-brain lift** | Routing brain lifted into engine stdlib (`src/routing.jl`) + routing skin verbs (protocol 1.5); self-contained routing-stdlib oracle. See `move-4-design.md`. | ✅ |
+| **5 — credence-pi extract** | credence-pi removed from `apps/`; rehomed to the standalone **credence-openclaw** repo as a pure TS wire consumer (own CI + production daemon image). See `move-5-design.md`. | ✅ |
+| **engine-owns-grid (Phases A/B/C)** | Dispose the discretisation antipattern in the last consumer (life-agent body): the body declares CONTINUOUS beliefs + likelihood kernels, the engine owns ALL discretisation. **A** — continuous-τ reaction + `truncated_gaussian` support + sequential `QuadraturePrevision` conditioning, `discretised_gaussian` deleted (protocol 1.9/1.10); **B** — `MvQuadraturePrevision` + `margin_reaction` + `marginal` verb, metareasoned grid fidelity (no hard cap), `marginalise(shape)` retired (protocol 1.11); **C** — exact closed-form `RhoCategoricalPrevision` ρ-latent (Beta-moment sum, no grid), `label_prior`/`_RHO_GRID` disposed (protocol 1.12). Engine oracles: `test/test_quadrature_sequential_condition.jl`, `test/test_mv_quadrature.jl`, `test/test_rho_conjugate.jl`. | ✅ |
 
 Each move = design-doc PR then code PR, per `docs/posture-4/DESIGN-DOC-TEMPLATE.md`.
 
-## Residual risks (decided per move, not plan-gating)
+**Arc status (2026-06-25): engine side COMPLETE at protocol 1.12.** All consumption is over
+the versioned `credence-skin` wire; `credence-openclaw` is a pure wire consumer; the
+`credence-skin` 1.12 image is published (CI-green on master `4b98c14`). The remaining tail is
+**cross-repo**: land the life-agent `decouple/body` branch (the Phase A/B/C strict-body rewrite)
+and pin the published 1.12 image digest in life-agent's `brain.py`.
 
-Three control-flow spots where "no app Julia" forces either thin multi-call wire
-choreography or a small stdlib decision template. Default to a stdlib template if
-the body would otherwise do utility/probability arithmetic:
+## Residual risks (RESOLVED in the moves that hit them)
+
+Three control-flow spots where "no app Julia" forced either thin multi-call wire
+choreography or a small stdlib decision template — all settled in Moves 3–5 (the
+credence-pi refit + routing-brain lift + extraction; credence-pi now lives in
+`credence-openclaw` as a pure wire consumer, so these are exercised over the wire).
+The rule that drove each decision: default to a stdlib template if the body would
+otherwise do utility/probability arithmetic.
 
 1. **Utility-coefficient assembly** (credence-pi `EU(block)=c·(1+m)(1−θ)−cλθ+H·θ_u`)
    — lean to a `linear_block_eu` decision template.
