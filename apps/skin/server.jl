@@ -216,6 +216,23 @@ end
 # `params(::MvGaussianPrevision)` emits — a bare matrix flattens on JSON).
 _cov_from_rows(rows) = mapreduce(r -> permutedims(collect(Float64, r)), vcat, rows)
 
+# Discretise a continuous prior onto a label grid (the labelled_mixture latent prior): the
+# unnormalised log-density at each label; MixturePrevision normalises. Keeps a ρ~Beta carried
+# EXACTLY in shape with no host density arithmetic (mirrors discretised_gaussian's grid prior).
+# Labels must be interior to the support (β-kernel diverges at {0,1} for α<1 or β<1).
+function _discretise_label_prior(spec, labels::Vector{Float64})
+    t = spec["type"]
+    if t == "beta"
+        a = Float64(spec["alpha"]); b = Float64(spec["beta"])
+        [(a - 1.0) * log(ℓ) + (b - 1.0) * log(1.0 - ℓ) for ℓ in labels]
+    elseif t == "gaussian"
+        mu = Float64(spec["mu"]); sigma = Float64(spec["sigma"])
+        [-0.5 * ((ℓ - mu) / sigma)^2 for ℓ in labels]
+    else
+        error("unknown label_prior type: $t (expected beta or gaussian)")
+    end
+end
+
 function build_prevision(spec)
     t = spec["type"]
     if t == "categorical"
@@ -253,12 +270,19 @@ function build_prevision(spec)
         # (e.g. a ρ-grid), each component a LabelledCategoricalPrevision sharing one
         # categorical V-prior (`component_log_weights`). A per-component-routing kernel
         # (group_noisy_channel) reads each label at condition time, so conditioning learns
-        # the latent jointly with V and shares it across observations. `label_log_weights`
-        # is the latent prior (default uniform).
+        # the latent jointly with V and shares it across observations. The latent prior over
+        # `labels` is `label_prior` (a belief-spec the engine discretises onto the grid —
+        # e.g. `{type:beta, alpha, beta}` for a ρ~Beta carried exactly, no host density
+        # arithmetic) OR explicit `label_log_weights`; default uniform.
         labels = collect(Float64, spec["labels"])
         comp_lw = collect(Float64, spec["component_log_weights"])
-        label_lw = haskey(spec, "label_log_weights") ?
-            collect(Float64, spec["label_log_weights"]) : zeros(Float64, length(labels))
+        label_lw = if haskey(spec, "label_prior")
+            _discretise_label_prior(spec["label_prior"], labels)
+        elseif haskey(spec, "label_log_weights")
+            collect(Float64, spec["label_log_weights"])
+        else
+            zeros(Float64, length(labels))
+        end
         comps = LabelledCategoricalPrevision[
             LabelledCategoricalPrevision(ℓ, CategoricalPrevision(copy(comp_lw))) for ℓ in labels]
         MixturePrevision(comps, label_lw)
@@ -685,7 +709,7 @@ end
 # rides the `credence-skin` image tag). MAJOR bumps on a breaking protocol
 # change; MINOR on additive. Apps pin the major in code and `initialize`
 # rejects a mismatching major with -32010. See docs/decouple/master-plan.md.
-const PROTOCOL_VERSION = "1.7"
+const PROTOCOL_VERSION = "1.8"
 protocol_major(v) = String(first(split(String(v), ".")))
 
 # Advertised method set, returned by `initialize` for client capability
