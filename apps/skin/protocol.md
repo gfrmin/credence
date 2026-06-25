@@ -1,6 +1,6 @@
 # Credence Skin Protocol
 
-Protocol-Version: 1.11
+Protocol-Version: 1.12
 
 JSON-RPC 2.0 over stdio. Skin reads newline-delimited JSON from stdin,
 writes newline-delimited JSON to stdout, logs to stderr.
@@ -13,6 +13,18 @@ truth, asserted in CI to equal `PROTOCOL_VERSION` in `server.jl`.
 
 ### Changelog
 
+- **1.12** — the lookup ρ-latent goes EXACT (discretisation-antipattern disposal, Phase C). One
+  addition, one removal, one reshaped kernel: (a) `reliability_categorical` belief-spec — a
+  categorical V (`v_log_weights`, the candidate atoms + NONE, 1-based) with a Beta(`alpha`,`beta`)
+  reliability latent ρ. The `group_noisy_channel` likelihood is LINEAR in ρ, so a Beta prior stays a
+  polynomial-in-ρ × Beta under conditioning and the V-marginal is an EXACT sum of Beta moments — the
+  engine integrates ρ analytically, no grid. (b) the `group_noisy_channel` kernel-spec is reshaped:
+  ρ is no longer a per-component label (the retired DispatchByComponent-over-a-grid path) — the kernel
+  ships only `{covariate, n_alternatives}` and `condition`s a `reliability_categorical`. (c) **Removed:**
+  the `labelled_mixture` `label_prior` option (the continuous-prior-onto-ρ-grid discretisation). The
+  `labelled_mixture` spec itself stays (explicit `label_log_weights`, used by the router). Sole
+  consumer of the removed surface — the life-agent lookup — migrated in lockstep; minor bump during
+  the active decouple flux.
 - **1.11** — coupled latents move engine-side (discretisation-antipattern disposal, Phase B). Three
   additions and one removal: (a) `truncated_mv_gaussian` belief-spec — independent continuous
   N(μᵢ,σᵢ²) latents each on a SUPPORT `[loᵢ,hiᵢ]`, the multivariate analogue of `truncated_gaussian`,
@@ -420,8 +432,8 @@ done.
 
 A registered belief's declarative `{type, params...}` spec (protocol 1.8) — the `params`
 protocol, the same shape `create_state` consumes, so it round-trips. Routes a wire-conditioned
-conjugate posterior back into another spec (e.g. a ρ Beta → a `labelled_mixture` `label_prior`)
-with no host conjugacy: the consumer conditions over the wire, then reads the exact posterior.
+conjugate posterior back into another spec (e.g. a ρ Beta read back to seed a `reliability_categorical`
+ρ prior) with no host conjugacy: the consumer conditions over the wire, then reads the exact posterior.
 
 ```json
 {"method": "read_params", "params": {"state_id": "s_rho"}}
@@ -906,14 +918,15 @@ Example with state references (the stateful mode, for long-lived agents):
 | `product` | `factors: [measure, ...]` | `ProductMeasure` |
 | `mixture` | `components, log_weights` | `MixtureMeasure` |
 | `tagged_beta` | `tag, alpha, beta` | `TaggedBetaMeasure` |
-| `labelled_mixture` | `labels: [...]`, `component_log_weights: [...]`, optional `label_prior` (`{type:beta,alpha,beta}` / `{type:gaussian,mu,sigma}`) or `label_log_weights` | `MixturePrevision` of `LabelledCategoricalPrevision` — a shared discrete latent (label-grid) over one categorical prior. `label_prior` discretises a continuous prior onto the labels engine-side (e.g. ρ~Beta exactly); else uniform / explicit weights. Routed by `group_noisy_channel`. (protocol 1.3; `label_prior` 1.8) |
+| `labelled_mixture` | `labels: [...]`, `component_log_weights: [...]`, optional `label_log_weights` | `MixturePrevision` of `LabelledCategoricalPrevision` — a shared discrete latent (label-grid) over one categorical prior; uniform or explicit `label_log_weights`. Routed by a `DispatchByComponent` kernel. (protocol 1.3; the `label_prior` continuous-onto-grid discretisation was removed in 1.12 — a continuous latent is carried exactly by `reliability_categorical`.) |
+| `reliability_categorical` | `v_log_weights: [...]`, `alpha`, `beta` | The EXACT continuous-ρ join (protocol 1.12): a categorical V (`v_log_weights` — the candidate atoms + NONE, 1-based) with a Beta(`alpha`,`beta`) reliability latent ρ. Conditioned by `group_noisy_channel`; the engine integrates ρ analytically (a polynomial-in-ρ × Beta → an exact Beta-moment V-marginal, no grid). `weights`/`expect`/`optimise` read the ρ-integrated V-marginal. Replaces the ρ-grid `labelled_mixture`. |
 
 ### Kernel specs
 
 | Type | Params | Description |
 |------|--------|-------------|
 | `bernoulli` | -- | theta -> Bernoulli(theta). Beta-Bernoulli conjugate. |
-| `group_noisy_channel` | `covariate`, `n_alternatives` | Per-component (`DispatchByComponent`) correlated-document model: `r_d = ρ·covariate` per `labelled_mixture` component; reports (1-based positions) are the `condition` observation. (protocol 1.3) |
+| `group_noisy_channel` | `covariate`, `n_alternatives` | Correlated-document model with a CONTINUOUS reliability ρ: `P(reports\|v,ρ) = a + ρ·covariate·(1{all match v} − a)`, `a = 1/Aᵐ` — LINEAR in ρ, so the engine integrates ρ analytically. Conditions a `reliability_categorical`; reports (1-based positions) are the `condition` observation. ρ is NOT a kernel parameter. (protocol 1.3; continuous-ρ 1.12) |
 | `logistic_reaction` | `sign`, `threshold`, `tau_mu`, `tau_sigma`, `tau_lo`, `tau_hi` | Binary reaction to a CONTINUOUS latent x: `P(react=1\|x) = ∫ σ((sign·x−threshold)/τ)·N(τ;μ,σ) dτ` over τ∈[lo,hi] — a continuous truncated-Gaussian temperature, integrated engine-internally (no τ-grid). Condition a `gaussian` x-prior; the engine quadratures x via its non-conjugate fallback; `observation` is 0/1. (protocol 1.4; continuous-τ 1.9) |
 | `margin_reaction` | `coeffs: [...]`, `offset`, `sign`, `threshold`, `tau_mu`, `tau_sigma`, `tau_lo`, `tau_hi` | Binary reaction to a CONTINUOUS MULTIVARIATE latent x, same τ-marginalised logistic over a linear functional `margin = coeffsᵀx − offset`: `P(react=1\|x) = ∫ σ((sign·margin−threshold)/τ)·N(τ;μ,σ) dτ`. Couples latents in a joint fold (`coeffs = eⱼ` recovers a single-latent reaction). Condition a `truncated_mv_gaussian`; `observation` is 0/1. (protocol 1.11) |
 | `gaussian_known_var` | `variance` | mu -> N(mu, var). Gaussian conjugate. |

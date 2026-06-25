@@ -22,7 +22,7 @@ using LinearAlgebra: SymTridiagonal, eigen, dot, cholesky, Symmetric
 import ..Previsions: Prevision
 import ..Previsions: TestFunction, Identity, Projection, NestedProjection,
                      Tabular, LinearCombination, OpaqueClosure, FiringChoice, expect
-import ..Previsions: BetaPrevision, TaggedBetaPrevision, SparseStructurePrevision, GaussianPrevision, TruncatedGaussianPrevision, MvGaussianPrevision, GammaPrevision, CategoricalPrevision, DirichletPrevision, NormalGammaPrevision, ProductPrevision, MixturePrevision, LabelledCategoricalPrevision
+import ..Previsions: BetaPrevision, TaggedBetaPrevision, SparseStructurePrevision, GaussianPrevision, TruncatedGaussianPrevision, MvGaussianPrevision, GammaPrevision, CategoricalPrevision, DirichletPrevision, NormalGammaPrevision, ProductPrevision, MixturePrevision, LabelledCategoricalPrevision, RhoCategoricalPrevision
 import ..Previsions: ExchangeablePrevision, decompose
 import ..Previsions: ParticlePrevision, QuadraturePrevision, MvQuadraturePrevision, _mv_points
 import ..Previsions: ConditionalPrevision
@@ -38,7 +38,7 @@ export Kernel, FactorSelector, kernel_source, kernel_target, kernel_params
 export LikelihoodFamily, LeafFamily, PushOnly, BetaBernoulli, WeightedBernoulli, SoftBernoulli, Flat, FiringByTag, DispatchByComponent, DepthCapExceeded
 export FAMILY_REGISTRY, register_family!
 export NormalNormal, LinearGaussian, Categorical, NormalGammaLikelihood, Exponential, Poisson
-export GroupNoisyChannel, group_noisy_channel_logdensity
+export GroupNoisyChannel, group_noisy_channel_logdensity, RhoGroupChannel, rho_group_channel_factor
 export LogisticReaction, logistic_reaction_logdensity
 export MarginReaction, margin_reaction_logdensity
 export Event, TagSet, FeatureEquals, FeatureInterval, Conjunction, Disjunction, Complement
@@ -1180,6 +1180,106 @@ function condition(p::LabelledCategoricalPrevision, k::Kernel, observation)
     lw = p.categorical.log_weights
     new_lw = [lw[i] + categorical_logdensity(fam, i, observation) for i in eachindex(lw)]
     LabelledCategoricalPrevision(p.label, CategoricalPrevision(new_lw))
+end
+
+# ── RhoCategoricalPrevision: the EXACT continuous-ρ group-channel join (Phase C) ──
+# The k-th raw moment of Beta(α,β): E[ρ^k] = ∏_{j=0}^{k-1} (α+j)/(α+β+j) (rising-factorial ratio).
+function _beta_raw_moment(alpha::Float64, beta::Float64, k::Int)
+    m = 1.0
+    for j in 0:(k - 1)
+        m *= (alpha + j) / (alpha + beta + j)
+    end
+    m
+end
+
+# Polynomial multiply (coefficient convolution), ascending degree: (Σ pᵢρⁱ)(Σ qⱼρʲ).
+function _polymul(p::Vector{Float64}, q::Vector{Float64})
+    r = zeros(Float64, length(p) + length(q) - 1)
+    for i in eachindex(p), j in eachindex(q)
+        r[i + j - 1] += p[i] * q[j]
+    end
+    r
+end
+
+# Condition on one document group: multiply each atom's ρ-polynomial by the group-channel's
+# linear-in-ρ factor (a_d + ρ·b_{d,v}). The atom VALUE is its 1-based position (matching the report
+# values); ρ stays integrated — the polynomial degree grows by one per group, the V-marginal is read
+# in closed form. Corroborating documents sharpen ρ exactly, once (the shared-instrument coupling).
+function condition(p::RhoCategoricalPrevision, k::Kernel, reports)
+    fam = k.likelihood_family
+    fam isa RhoGroupChannel ||
+        error("condition(::RhoCategoricalPrevision, …) needs a RhoGroupChannel kernel (the " *
+              "continuous-ρ group-noisy-channel); got likelihood_family $(typeof(fam)).")
+    obs = reports isa AbstractVector ? collect(Float64, reports) : Float64[Float64(reports)]
+    new_poly = Vector{Vector{Float64}}(undef, length(p.poly))
+    for i in eachindex(p.poly)
+        a, b = rho_group_channel_factor(fam, Float64(i), obs)   # atom value = 1-based position i
+        new_poly[i] = _polymul(p.poly[i], [a, b])
+    end
+    RhoCategoricalPrevision(p.v_log_prior, p.alpha, p.beta, new_poly)
+end
+
+# The EXACT V-marginal (log-unnormalised, then softmax in `weights`): for each atom v,
+#   weight_v ∝ exp(v_log_prior[v]) · ∫₀¹ Beta(ρ;α,β) ∏_d(a_d+ρ b_{d,v}) dρ
+#           = exp(v_log_prior[v]) · Σ_k poly[v][k] · E_Beta[ρ^k].
+# The ρ-integral is ≥ 0 (it integrates a probability over ρ); a zero integral ⇒ an impossible atom
+# (log -Inf ⇒ weight 0).
+function _rho_v_logweights(p::RhoCategoricalPrevision)
+    logw = Vector{Float64}(undef, length(p.poly))
+    for i in eachindex(p.poly)
+        integral = 0.0
+        for kk in eachindex(p.poly[i])
+            integral += p.poly[i][kk] * _beta_raw_moment(p.alpha, p.beta, kk - 1)
+        end
+        logw[i] = p.v_log_prior[i] + (integral > 0.0 ? log(integral) : -Inf)
+    end
+    logw
+end
+
+# The exact V-marginal probabilities — the ρ-integrated categorical (softmax of the closed-form
+# log-weights). This is what `_v_marginal` reads and what `optimise`/`expect` integrate against.
+function weights(p::RhoCategoricalPrevision)
+    lw = _rho_v_logweights(p)
+    mx = maximum(lw)
+    w = exp.(lw .- mx)
+    w ./ sum(w)
+end
+
+# A positional Tabular reads the V-marginal EU directly: Σ_v P(V=v)·u[v] — the ρ-integrated decision
+# value, no explicit collapse (mirrors `expect(::LabelledCategoricalPrevision, ::Tabular)`).
+expect(p::RhoCategoricalPrevision, t::Tabular) =
+    sum(weights(p)[i] * t.values[i] for i in eachindex(t.values))
+# A by-value function reads against the atom VALUES (1-based positions).
+expect(p::RhoCategoricalPrevision, f::Function) =
+    (w = weights(p); sum(w[i] * f(Float64(i)) for i in eachindex(w)))
+expect(p::RhoCategoricalPrevision, o::OpaqueClosure) = expect(p, o.f)
+
+# The integrated mass Σ_v exp(v_log_prior[v]) · ∫₀¹ Beta·poly[v] dρ of an (unnormalised) joint.
+function _rho_integrated_mass(v_log_prior::Vector{Float64}, alpha, beta, poly)
+    s = 0.0
+    for i in eachindex(poly)
+        integ = 0.0
+        for kk in eachindex(poly[i])
+            integ += poly[i][kk] * _beta_raw_moment(alpha, beta, kk - 1)
+        end
+        s += exp(v_log_prior[i]) * integ
+    end
+    s
+end
+
+# The condition verb's log_marginal: log P(reports | data so far) = log(mass_after / mass_before),
+# the ratio of integrated joint mass with vs. without the new group factor — the exact predictive.
+function log_predictive(p::RhoCategoricalPrevision, k::Kernel, reports)
+    fam = k.likelihood_family
+    fam isa RhoGroupChannel ||
+        error("log_predictive(::RhoCategoricalPrevision, …) needs a RhoGroupChannel kernel; " *
+              "got $(typeof(fam)).")
+    obs = reports isa AbstractVector ? collect(Float64, reports) : Float64[Float64(reports)]
+    after_poly = [_polymul(p.poly[i], collect(rho_group_channel_factor(fam, Float64(i), obs)))
+                  for i in eachindex(p.poly)]
+    before = _rho_integrated_mass(p.v_log_prior, p.alpha, p.beta, p.poly)
+    after = _rho_integrated_mass(p.v_log_prior, p.alpha, p.beta, after_poly)
+    log(max(after / before, 1e-300))
 end
 
 function condition(p::GaussianPrevision, k::Kernel, observation)

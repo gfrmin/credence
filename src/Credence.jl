@@ -40,7 +40,7 @@ export Measure, CategoricalMeasure, BetaMeasure, TaggedBetaMeasure, GaussianMeas
 export Kernel, FactorSelector, kernel_source, kernel_target
 export LikelihoodFamily, LeafFamily, PushOnly, BetaBernoulli, WeightedBernoulli, SoftBernoulli, Flat, FiringByTag, DispatchByComponent, DepthCapExceeded
 export NormalNormal, Categorical, NormalGammaLikelihood, Exponential, Poisson
-export GroupNoisyChannel, group_noisy_channel_logdensity
+export GroupNoisyChannel, group_noisy_channel_logdensity, RhoGroupChannel, rho_group_channel_factor
 export LogisticReaction, logistic_reaction_logdensity
 export MarginReaction, margin_reaction_logdensity
 export Event, TagSet, FeatureEquals, FeatureInterval, Conjunction, Disjunction, Complement
@@ -50,7 +50,7 @@ export Prevision, TestFunction, Indicator, apply
 export params
 export CenteredPower, CenteredSquare, GeometricTail
 export BetaPrevision, TaggedBetaPrevision, GaussianPrevision, TruncatedGaussianPrevision, GammaPrevision
-export CategoricalPrevision, DirichletPrevision, NormalGammaPrevision, LabelledCategoricalPrevision
+export CategoricalPrevision, DirichletPrevision, NormalGammaPrevision, LabelledCategoricalPrevision, RhoCategoricalPrevision
 export ProductPrevision, MixturePrevision, ExchangeablePrevision, decompose
 export ParticlePrevision, QuadraturePrevision, MvQuadraturePrevision
 export ConditionalPrevision

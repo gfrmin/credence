@@ -116,6 +116,29 @@ function group_noisy_channel_logdensity(fam::GroupNoisyChannel, v, reports)
     log(max(reliable + noise, 1e-300))               # m=1 ⇒ (1−r_d)/A, the single-obs miss exactly
 end
 
+# The group-noisy-channel as a CONTINUOUS-ρ likelihood: ρ is the INTEGRATED reliability latent
+# (a Beta), NOT a kernel parameter. P(reports | v, ρ) is LINEAR in ρ — `a + ρ·b` with a v-independent
+# noise floor a = 1/Aᵐ and a slope b = covariate·(1{all reports == v} − 1/Aᵐ). The engine carries ρ
+# analytically: a Beta prior × this linear factor stays a polynomial-in-ρ × Beta, so the V-marginal
+# is an exact sum of Beta moments (no ρ-grid). This is the family the `RhoCategoricalPrevision`
+# condition path dispatches on; the old `GroupNoisyChannel(covariate, ρ, A)` baked ρ into the kernel
+# (the discretisation antipattern — ρ then had to be a label grid).
+struct RhoGroupChannel <: LeafFamily
+    covariate::Float64
+    n_alternatives::Int
+end
+
+# The linear-in-ρ factor (a, b) of P(reports | v, ρ) = a + ρ·b for the candidate atom value `v`
+# against an observed document `reports` (a vector of reported candidate atoms; all chunks of one
+# document share the reliability ρ, so they correlate). `a` is the noise floor (v-independent);
+# `b` is positive iff the document corroborates `v` in EVERY chunk.
+function rho_group_channel_factor(fam::RhoGroupChannel, v, reports)
+    m = length(reports)
+    a = 1.0 / Float64(fam.n_alternatives)^m
+    b = fam.covariate * ((all(==(v), reports) ? 1.0 : 0.0) - a)
+    (a, b)
+end
+
 # Per-position categorical log-density of a LEAF FAMILY — the routing target a
 # `LabelledCategoricalPrevision` calls after `_resolve_likelihood_family` picks the
 # per-component family. Position `i` is the 1-based hypothesis index; `obs` is the
