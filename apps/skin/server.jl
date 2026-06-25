@@ -718,7 +718,7 @@ protocol_major(v) = String(first(split(String(v), ".")))
 const SKIN_METHODS = [
     "initialize", "shutdown", "create_state", "destroy_state",
     "snapshot_state", "restore_state", "condition", "condition_on_event",
-    "weights", "mean", "expect", "optimise", "value", "marginalise", "draw", "enumerate",
+    "weights", "mean", "expect", "optimise", "value", "marginalise", "read_params", "draw", "enumerate",
     "perturb_grammar", "add_programs", "sync_prune", "sync_truncate",
     "top_grammars", "belief_summary", "condition_and_prune", "eu_interact",
     "call_dsl", "factor", "replace_factor", "n_factors",
@@ -756,6 +756,8 @@ function handle_request(method::String, params, id)
         handle_value(params)
     elseif method == "marginalise"
         handle_marginalise(params)
+    elseif method == "read_params"
+        handle_read_params(params)
     elseif method == "structure_bma"
         handle_structure_bma(params)
     elseif method == "structure_observe"
@@ -1088,6 +1090,16 @@ function handle_marginalise(params)
     shape = Int[Int(x) for x in params["shape"]]
     axis = Int(params["axis"])
     Dict("weights" => collect(Float64, marginalise(state, shape, axis)))
+end
+
+# read_params: serialise a registered belief to its declarative `{type, params...}` spec
+# (the `params` protocol, same shape `create_state` consumes). Lets a consumer route a
+# wire-CONDITIONED conjugate posterior back into another spec (e.g. an extractor-reliability
+# ρ Beta → a `labelled_mixture` `label_prior`) WITHOUT host conjugacy — the body never folds
+# `a += 1`, it conditions over the wire then reads the exact posterior params here.
+function handle_read_params(params)
+    id = string(params["state_id"])
+    _belief_spec(get_state(id))
 end
 
 function handle_mean(params)
