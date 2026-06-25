@@ -126,6 +126,19 @@ end
 struct RhoGroupChannel <: LeafFamily
     covariate::Float64
     n_alternatives::Int
+
+    function RhoGroupChannel(covariate::Float64, n_alternatives::Int)
+        # covariate ≤ 1 keeps the linear-in-ρ factor a + ρ·b ≥ 0 over the WHOLE integrated range
+        # ρ ∈ [0,1]: a non-corroborated atom's factor is a·(1 − ρ·covariate), negative for ρ > 1/covariate
+        # when covariate > 1. (The retired GroupNoisyChannel guarded the equivalent r_d = ρ·covariate ∈
+        # [0,1] per ρ-grid point; here ρ is integrated, so the binding case is ρ=1 ⇒ covariate ≤ 1.)
+        (0.0 <= covariate <= 1.0) ||
+            error("RhoGroupChannel: covariate = $covariate ∉ [0,1] — the consumer must keep " *
+                  "authority·subject·time ≤ 1 so the likelihood a + ρ·b stays ≥ 0 over ρ ∈ [0,1].")
+        n_alternatives >= 1 ||
+            error("RhoGroupChannel: n_alternatives must be ≥ 1, got $n_alternatives")
+        new(covariate, n_alternatives)
+    end
 end
 
 # The linear-in-ρ factor (a, b) of P(reports | v, ρ) = a + ρ·b for the candidate atom value `v`

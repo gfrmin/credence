@@ -1241,6 +1241,13 @@ end
 function weights(p::RhoCategoricalPrevision)
     lw = _rho_v_logweights(p)
     mx = maximum(lw)
+    # Every atom has zero integrated mass (all -Inf) ⇒ the V posterior is empty. Fail loud rather than
+    # return NaN (exp(-Inf - -Inf)) that would silently propagate through expect/optimise — mirrors the
+    # constructor's zero-prior-mass guard. Reachable only via an out-of-domain input the kernel guards.
+    mx > -Inf ||
+        error("RhoCategoricalPrevision: every atom has zero integrated mass — the V posterior is " *
+              "empty (a report matching no atom under a degenerate ρ posterior). Check the " *
+              "group-channel observations and the V prior.")
     w = exp.(lw .- mx)
     w ./ sum(w)
 end

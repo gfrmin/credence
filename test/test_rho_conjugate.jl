@@ -106,6 +106,16 @@ p0 = RhoCategoricalPrevision(log.([0.5, 0.5, 0.0] .+ [0.0, 0.0, 1e-300]), alpha,
 check("a zero-prior atom keeps weight ≈ 0", weights(condition(p0, mk(0.8), [1.0]))[3] < 1e-200,
       string(weights(condition(p0, mk(0.8), [1.0]))[3]))
 
+# ── (6) guards (wire-surface hardening): covariate must keep the likelihood ≥ 0, and an all-impossible
+#        V posterior fails loud (never a silent NaN through expect/optimise). ──
+check("covariate > 1 is rejected (likelihood a+ρb would go negative for high ρ)",
+      try; RhoGroupChannel(1.5, A); false; catch e; occursin("covariate", sprint(showerror, e)); end)
+check("covariate = 1 (the boundary) is allowed", RhoGroupChannel(1.0, A) isa RhoGroupChannel)
+check("n_alternatives < 1 is rejected", try; RhoGroupChannel(0.5, 0); false; catch; true; end)
+bad = RhoCategoricalPrevision(log.([0.5, 0.5]), 4.0, 4.0, [[-1.0], [-1.0]])  # negative integrals
+check("an all-zero-mass V posterior → loud error (not a silent NaN)",
+      try; weights(bad); false; catch e; occursin("zero integrated mass", sprint(showerror, e)); end)
+
 println("="^64)
 println("ALL PASSED")
 println("="^64)
