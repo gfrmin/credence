@@ -389,6 +389,20 @@ class SkinClient:
         })
         return result["value"]
 
+    def marginalise(self, state_id: str, shape: list[int], axis: int) -> list[float]:
+        """Marginal of a flat product-grid categorical along ``axis`` (0-based).
+
+        ``shape`` is the per-axis grid sizes in row-major order (last axis fastest,
+        matching ``itertools.product``); the engine sums out the other axes and
+        returns the length-``shape[axis]`` marginal. A terminal readout — the
+        marginalisation stays engine-side, so the consumer ships only data."""
+        result = self._call("marginalise", {
+            "state_id": state_id,
+            "shape": shape,
+            "axis": axis,
+        })
+        return result["weights"]
+
     def draw(self, state_id: str) -> Any:
         """Sample from the measure."""
         result = self._call("draw", {"state_id": state_id})

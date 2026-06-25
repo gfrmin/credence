@@ -50,7 +50,7 @@ export ConjugatePrevision, maybe_conjugate, update
 export draw
 export weights, mean, variance, log_density_at, prune, truncate, logsumexp
 export FrozenVectorView
-export WeightsDomainError, probability, marginal, CenteredPower, CenteredSquare, GeometricTail
+export WeightsDomainError, probability, marginal, marginalise, CenteredPower, CenteredSquare, GeometricTail
 
 # ================================================================
 # FrozenVectorView{T}
@@ -690,6 +690,28 @@ function expect(m::BetaMeasure, ::GeometricTail)
     m.alpha / (m.beta - 1.0)
 end
 expect(m::TaggedBetaMeasure, ::GeometricTail) = expect(m.beta, GeometricTail())
+
+# Exact Beta moment E_Beta[(θ−μ)^n], closed form via binomial expansion into raw
+# moments m_j = E[θ^j] = ∏_{i=0}^{j-1}(α+i)/(α+β+i). μ=0 gives the raw moment E[θ^n]
+# (the integrated claim-EU needs E[θ²] = CenteredPower{2}(0.0)); μ=mean gives the
+# central moment (variance at n=2). Reaches the fast path with no quadrature, so the
+# integrated decision is exact, not the generic `expect(::Beta, ::TestFunction)` MC.
+function _beta_central_moment(α::Float64, β::Float64, n::Int, μ::Float64)
+    n >= 0 || error("CenteredPower exponent must be ≥ 0, got $n")
+    raw = Vector{Float64}(undef, n + 1)          # raw[j+1] = E[θ^j]
+    raw[1] = 1.0
+    for j in 1:n
+        raw[j+1] = raw[j] * (α + (j - 1)) / (α + β + (j - 1))
+    end
+    s = 0.0
+    for j in 0:n
+        s += binomial(n, j) * (-μ)^(n - j) * raw[j+1]
+    end
+    s
+end
+expect(m::BetaMeasure, cp::CenteredPower{n}) where n = _beta_central_moment(m.alpha, m.beta, n, cp.μ)
+expect(m::TaggedBetaMeasure, cp::CenteredPower) = expect(m.beta, cp)
+
 expect(m::GammaMeasure, ::Identity)    = m.alpha / m.beta
 expect(m::GaussianMeasure, ::Identity) = m.mu
 
@@ -783,6 +805,11 @@ function expect(p::BetaPrevision, ::GeometricTail)
     p.beta > 1.0 || error("GeometricTail diverges for β ≤ 1 (got β=$(p.beta)); the continuation posterior must have β > 1")
     p.alpha / (p.beta - 1.0)
 end
+
+# Exact Beta moment on Prevision leaves (mirrors the BetaMeasure form): the integrated
+# claim-EU `optimise{include,withhold}` reaches this through a `beta` create_state.
+expect(p::BetaPrevision, cp::CenteredPower{n}) where n = _beta_central_moment(p.alpha, p.beta, n, cp.μ)
+expect(p::TaggedBetaPrevision, cp::CenteredPower) = expect(p.beta, cp)
 expect(p::GaussianPrevision, ::Identity) = p.mu
 expect(p::MvGaussianPrevision, ::Identity) = copy(p.mu)
 expect(p::GammaPrevision, ::Identity) = p.alpha / p.beta
@@ -879,6 +906,15 @@ function expect(p::Prevision, lc::LinearCombination)
     end
     total
 end
+
+# Disambiguate LinearCombination on the scalar leaf Previsions that also carry a generic
+# `expect(::X, ::TestFunction)` quadrature fallback: both that and the decomposition above
+# match `(BetaPrevision, LinearCombination)` equally. Route to the decomposition so each
+# term reaches its closed form (the integrated claim-EU stays exact, not quadrature).
+expect(p::BetaPrevision, lc::LinearCombination)      = invoke(expect, Tuple{Prevision, LinearCombination}, p, lc)
+expect(p::TaggedBetaPrevision, lc::LinearCombination) = invoke(expect, Tuple{Prevision, LinearCombination}, p, lc)
+expect(p::GaussianPrevision, lc::LinearCombination)  = invoke(expect, Tuple{Prevision, LinearCombination}, p, lc)
+expect(p::GammaPrevision, lc::LinearCombination)     = invoke(expect, Tuple{Prevision, LinearCombination}, p, lc)
 
 # Disambiguate MixturePrevision × LinearCombination — both `expect(::MixturePrevision,
 # ::TestFunction)` and `expect(::Prevision, ::LinearCombination)` match. Expand by

@@ -226,3 +226,33 @@ on beliefs remains in `src/life_agent/core/` (eval-only `gate.py` excepted).
 - [ ] New kernels carry exact-oracle tests incl. degenerate reductions.
 - [ ] §8 yes-or-justified on all four.
 - [ ] The body ends with zero belief arithmetic (the grep gate in §7).
+
+---
+
+## 9. Landed — the deferred commit-3 finish (3c/3d, protocol 1.7)
+
+The §2.3/§2.4 pieces deferred at first pass landed together once the body rewire pinned
+their shapes, with two refinements over the original sketch:
+
+- **§2.4 claim functional → reuse `CenteredPower{n}`, not a new type.** The integrated
+  claim-inclusion EU is `E_θ[θ·u_assert(θ)] − κ = (u_c−u_w)·E[θ²] + u_w·E[θ] − κ`, a
+  `LinearCombination([(u_c−u_w, centered_power n=2), (u_w, identity)], offset=−κ)`. The
+  existing `CenteredPower{n}` (the central/raw moment test function) gains an exact
+  closed-form `expect(::Beta{Measure,Prevision}, ::CenteredPower)` (raw moment via rising
+  factorials), so the claim decision is `optimise{include,withhold}` over the cell Beta —
+  integrated **exactly**, keeping the `Var(θ)·(u_c−u_w)` term the body's point-estimate `p̄²`
+  dropped. No new functional type; composes with the existing `linear_combination` spec.
+  This is the [[feedback_decouple_express_proper_model_not_port]] principle in practice — the
+  decoupled model is the *proper* integral, not a port of the host's plug-at-the-mean.
+- **§2.3 `marginalise` verb shape → `{state_id, shape, axis}`, not `keep:[...]`.** The body
+  builds one flat row-major (C-order) product-grid categorical; `shape` (per-axis sizes) +
+  `axis` names the coordinate projection unambiguously and the engine sums out the rest —
+  the pushforward through π_axis, server-side. One axis per call (the fold reads each latent's
+  marginal in turn). `marginalise` lives in `src/stdlib.jl` (the canalised `push` path); the
+  skin verb only marshals (lint-clean, no apps/ arithmetic).
+
+Verification: `test/test_centered_moment.jl` (exact moments + integrated claim-EU Wald
+flip + marginalise row-major folds + guards); `apps/skin/test_skin.py`
+`test_centered_power_claim_eu` + `test_marginalise_joint_grid` (both over the wire,
+zero client arithmetic); engine regression (routing/structure-BMA/typed-decision/core)
+green; `check apps/` clean (180 files); header==const(1.7).

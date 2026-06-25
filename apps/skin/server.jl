@@ -26,6 +26,7 @@ using Credence: ProductPrevision, MixturePrevision, CategoricalPrevision
 using Credence: Finite, Interval, ProductSpace, Euclidean, PositiveReals, Simplex
 using Credence: Kernel, FactorSelector, support
 using Credence: Functional, Identity, Projection, NestedProjection, Tabular, LinearCombination, OpaqueClosure
+using Credence: CenteredPower, CenteredSquare, marginalise
 using Credence: factor, replace_factor
 using Credence: AgentState, sync_prune!, sync_truncate!
 using Credence: Grammar, Program, CompiledKernel, ProductionRule
@@ -539,6 +540,12 @@ function build_function(spec)::Functional
         NestedProjection(Int[Int(i) + 1 for i in spec["indices"]])
     elseif t == "tabular"
         Tabular(collect(Float64, spec["values"]))
+    elseif t == "centered_power" || t == "centered_square"
+        # E[(θ−μ)^n] over a scalar belief; μ=0 (default) is the raw moment E[θ^n].
+        # The integrated claim-EU ships LinearCombination([(u_c−u_w, centered_power n=2),
+        # (u_w, identity)], offset=−κ) — exact via the closed-form Beta moment.
+        deg = t == "centered_square" ? 2 : Int(spec["n"])
+        CenteredPower{deg}(Float64(get(spec, "mu", 0.0)))
     elseif t == "linear_combination"
         terms = Tuple{Float64, Functional}[
             (Float64(pair[1]), build_function(pair[2]))
@@ -678,7 +685,7 @@ end
 # rides the `credence-skin` image tag). MAJOR bumps on a breaking protocol
 # change; MINOR on additive. Apps pin the major in code and `initialize`
 # rejects a mismatching major with -32010. See docs/decouple/master-plan.md.
-const PROTOCOL_VERSION = "1.6"
+const PROTOCOL_VERSION = "1.7"
 protocol_major(v) = String(first(split(String(v), ".")))
 
 # Advertised method set, returned by `initialize` for client capability
@@ -687,7 +694,7 @@ protocol_major(v) = String(first(split(String(v), ".")))
 const SKIN_METHODS = [
     "initialize", "shutdown", "create_state", "destroy_state",
     "snapshot_state", "restore_state", "condition", "condition_on_event",
-    "weights", "mean", "expect", "optimise", "value", "draw", "enumerate",
+    "weights", "mean", "expect", "optimise", "value", "marginalise", "draw", "enumerate",
     "perturb_grammar", "add_programs", "sync_prune", "sync_truncate",
     "top_grammars", "belief_summary", "condition_and_prune", "eu_interact",
     "call_dsl", "factor", "replace_factor", "n_factors",
@@ -723,6 +730,8 @@ function handle_request(method::String, params, id)
         handle_optimise(params)
     elseif method == "value"
         handle_value(params)
+    elseif method == "marginalise"
+        handle_marginalise(params)
     elseif method == "structure_bma"
         handle_structure_bma(params)
     elseif method == "structure_observe"
@@ -1042,6 +1051,19 @@ function handle_weights(params)
     id = string(params["state_id"])
     state = get_state(id)
     Dict("weights" => collect(Float64, weights(state)))
+end
+
+# marginalise: marginal of a flat product-grid categorical along `axis` (0-based).
+# A terminal readout (the consumer never re-conditions the marginal) — the engine
+# sums out the other axes so the consumer ships only `{shape, axis}` data, doing no
+# belief arithmetic of its own (Invariant 1). `shape` is the per-axis grid sizes in
+# row-major order (last axis fastest, matching the consumer's product enumeration).
+function handle_marginalise(params)
+    id = string(params["state_id"])
+    state = get_state(id)
+    shape = Int[Int(x) for x in params["shape"]]
+    axis = Int(params["axis"])
+    Dict("weights" => collect(Float64, marginalise(state, shape, axis)))
 end
 
 function handle_mean(params)
