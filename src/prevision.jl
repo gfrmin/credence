@@ -30,7 +30,7 @@ module Previsions
 
 export Prevision, TestFunction, Indicator, apply, expect
 export Identity, Projection, NestedProjection, Tabular, LinearCombination, OpaqueClosure, FiringChoice
-export BetaPrevision, TaggedBetaPrevision, SparseStructurePrevision, GaussianPrevision, MvGaussianPrevision, GammaPrevision, CategoricalPrevision, DirichletPrevision, NormalGammaPrevision, ProductPrevision, MixturePrevision, LabelledCategoricalPrevision
+export BetaPrevision, TaggedBetaPrevision, SparseStructurePrevision, GaussianPrevision, TruncatedGaussianPrevision, MvGaussianPrevision, GammaPrevision, CategoricalPrevision, DirichletPrevision, NormalGammaPrevision, ProductPrevision, MixturePrevision, LabelledCategoricalPrevision
 export ExchangeablePrevision, decompose
 export ParticlePrevision, QuadraturePrevision
 export ConditionalPrevision
@@ -329,6 +329,27 @@ The `GaussianMeasure` view wraps a `GaussianPrevision` and forwards
 struct GaussianPrevision <: Prevision
     mu::Float64
     sigma::Float64
+end
+
+"""
+    TruncatedGaussianPrevision(mu, sigma, lo, hi) <: Prevision
+
+A Gaussian N(μ, σ²) restricted to the support `[lo, hi]` — a CONTINUOUS bounded prior, NOT a
+discretisation grid. `[lo, hi]` are the model's *support bounds* (e.g. a sign-constrained utility
+`u_wrong ≤ 0`); the engine integrates over them by an internal quadrature when conditioning or
+taking expectations. Conditioning is always non-conjugate (the truncation breaks Normal-Normal),
+so it yields a `QuadraturePrevision` over `[lo, hi]`. Replaces a host-side Gaussian-on-a-grid.
+"""
+struct TruncatedGaussianPrevision <: Prevision
+    mu::Float64
+    sigma::Float64
+    lo::Float64
+    hi::Float64
+    function TruncatedGaussianPrevision(mu::Float64, sigma::Float64, lo::Float64, hi::Float64)
+        sigma > 0 || throw(ArgumentError("TruncatedGaussianPrevision: sigma > 0, got $sigma"))
+        lo < hi || throw(ArgumentError("TruncatedGaussianPrevision: lo < hi, got [$lo, $hi]"))
+        new(mu, sigma, lo, hi)
+    end
 end
 
 """

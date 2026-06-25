@@ -22,7 +22,7 @@ using LinearAlgebra: SymTridiagonal, eigen, dot, cholesky, Symmetric
 import ..Previsions: Prevision
 import ..Previsions: TestFunction, Identity, Projection, NestedProjection,
                      Tabular, LinearCombination, OpaqueClosure, FiringChoice, expect
-import ..Previsions: BetaPrevision, TaggedBetaPrevision, SparseStructurePrevision, GaussianPrevision, MvGaussianPrevision, GammaPrevision, CategoricalPrevision, DirichletPrevision, NormalGammaPrevision, ProductPrevision, MixturePrevision, LabelledCategoricalPrevision
+import ..Previsions: BetaPrevision, TaggedBetaPrevision, SparseStructurePrevision, GaussianPrevision, TruncatedGaussianPrevision, MvGaussianPrevision, GammaPrevision, CategoricalPrevision, DirichletPrevision, NormalGammaPrevision, ProductPrevision, MixturePrevision, LabelledCategoricalPrevision
 import ..Previsions: ExchangeablePrevision, decompose
 import ..Previsions: ParticlePrevision, QuadraturePrevision
 import ..Previsions: ConditionalPrevision
@@ -1205,6 +1205,45 @@ log_density_at(m::BetaMeasure, x) = (m.alpha - 1) * log(x) + (m.beta - 1) * log(
 log_density_at(m::GammaMeasure, x) = (m.alpha - 1) * log(x) - m.beta * x
 log_density_at(m::TaggedBetaMeasure, x) = log_density_at(m.beta, x)
 log_density_at(m::GaussianMeasure, x) = -0.5 * ((x - m.mu) / m.sigma)^2
+
+# ── TruncatedGaussianPrevision: a continuous bounded prior, integrated over [lo,hi] engine-side ──
+# The truncation is the model's SUPPORT (not a grid); the engine chooses the quadrature internally.
+log_density_at(p::TruncatedGaussianPrevision, x) = -0.5 * ((x - p.mu) / p.sigma)^2
+
+# The engine's quadrature grid over the support [lo,hi] — the MIDPOINT rule (O(h²), no endpoint
+# over-counting). This grid is the engine's internal computation, invisible to the declared model.
+_trunc_grid(p::TruncatedGaussianPrevision, n::Int) =
+    [p.lo + (k - 0.5) * (p.hi - p.lo) / n for k in 1:n]
+
+# Conditioning is always non-conjugate (truncation breaks Normal-Normal) → quadrature over [lo,hi].
+function condition(p::TruncatedGaussianPrevision, k::Kernel, observation; n::Int = 64)
+    grid = _trunc_grid(p, n)
+    logw = Float64[]
+    for h in grid
+        ll = density(k, h, observation)
+        !isnan(ll) || error("density returned NaN conditioning a TruncatedGaussianPrevision")
+        push!(logw, log_density_at(p, h) + ll)
+    end
+    QuadraturePrevision(grid, logw)
+end
+
+# Expectations over the (unconditioned) truncated prior: quadrature on [lo,hi].
+function expect(p::TruncatedGaussianPrevision, f::Function; n::Int = 64)
+    grid = _trunc_grid(p, n)
+    lw = [log_density_at(p, x) for x in grid]
+    mx = maximum(lw)
+    w = exp.(lw .- mx)
+    w ./= sum(w)
+    sum(w[i] * f(grid[i]) for i in eachindex(grid))
+end
+expect(p::TruncatedGaussianPrevision, tf::TestFunction; kwargs...) = expect(p, x -> apply(tf, x); kwargs...)
+
+# Marginal likelihood ∫ p(x)·P(obs|x) dx over [lo,hi] (the `condition` verb's log_marginal) — a
+# direct quadrature, mirroring `_predictive_ll(::BetaMeasure)`; no wrap-in-measure needed.
+function log_predictive(p::TruncatedGaussianPrevision, k::Kernel, obs)
+    val = expect(p, h -> exp(density(k, h, obs)))
+    log(max(val, 1e-300))
+end
 log_density_at(m::DirichletMeasure, x) = sum((m.alpha[i] - 1) * log(x[i]) for i in eachindex(m.alpha))
 
 function log_density_at(m::NormalGammaMeasure, x)

@@ -48,7 +48,7 @@ export Functional, Identity, Projection, NestedProjection, Tabular, LinearCombin
 export Prevision, TestFunction, Indicator, apply
 export params
 export CenteredPower, CenteredSquare, GeometricTail
-export BetaPrevision, TaggedBetaPrevision, GaussianPrevision, GammaPrevision
+export BetaPrevision, TaggedBetaPrevision, GaussianPrevision, TruncatedGaussianPrevision, GammaPrevision
 export CategoricalPrevision, DirichletPrevision, NormalGammaPrevision, LabelledCategoricalPrevision
 export ProductPrevision, MixturePrevision, ExchangeablePrevision, decompose
 export ParticlePrevision, QuadraturePrevision

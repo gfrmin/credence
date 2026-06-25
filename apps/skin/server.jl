@@ -19,7 +19,7 @@ using Credence: _dispatch_path
 using Credence: weights, mean, variance, prune, truncate, logsumexp
 using Credence: CategoricalMeasure, ProductMeasure, MixtureMeasure
 using Credence: Prevision, Measure, params
-using Credence: BetaPrevision, TaggedBetaPrevision, GaussianPrevision
+using Credence: BetaPrevision, TaggedBetaPrevision, GaussianPrevision, TruncatedGaussianPrevision
 using Credence: MvGaussianPrevision, MvGaussianMeasure, LinearGaussian, GaussianMeasure
 using Credence: GammaPrevision, DirichletPrevision, NormalGammaPrevision
 using Credence: ProductPrevision, MixturePrevision, CategoricalPrevision
@@ -249,6 +249,12 @@ function build_prevision(spec)
                             BetaPrevision(Float64(spec["alpha"]), Float64(spec["beta"])))
     elseif t == "gaussian"
         GaussianPrevision(Float64(spec["mu"]), Float64(spec["sigma"]))
+    elseif t == "truncated_gaussian"
+        # A continuous N(μ,σ) on the SUPPORT [lo,hi] (a stated bound, e.g. a sign-constrained
+        # utility). The engine integrates over [lo,hi] internally — the bounds are model support,
+        # NOT a discretisation grid.
+        TruncatedGaussianPrevision(Float64(spec["mu"]), Float64(spec["sigma"]),
+                                   Float64(spec["lo"]), Float64(spec["hi"]))
     elseif t == "mv_gaussian"
         MvGaussianPrevision(collect(Float64, spec["mu"]), _cov_from_rows(spec["sigma"]))
     elseif t == "gamma"
@@ -703,7 +709,7 @@ end
 # rides the `credence-skin` image tag). MAJOR bumps on a breaking protocol
 # change; MINOR on additive. Apps pin the major in code and `initialize`
 # rejects a mismatching major with -32010. See docs/decouple/master-plan.md.
-const PROTOCOL_VERSION = "1.9"
+const PROTOCOL_VERSION = "1.10"
 protocol_major(v) = String(first(split(String(v), ".")))
 
 # Advertised method set, returned by `initialize` for client capability
