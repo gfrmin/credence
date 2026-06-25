@@ -1,6 +1,6 @@
 # Credence Skin Protocol
 
-Protocol-Version: 1.6
+Protocol-Version: 1.7
 
 JSON-RPC 2.0 over stdio. Skin reads newline-delimited JSON from stdin,
 writes newline-delimited JSON to stdout, logs to stderr.
@@ -13,6 +13,13 @@ truth, asserted in CI to equal `PROTOCOL_VERSION` in `server.jl`.
 
 ### Changelog
 
+- **1.7** — the deferred Move-1 commit-3 pieces (additive), completing the life-agent body
+  decouple: a `centered_power` function spec — `(θ−mu)^n` with the exact closed-form Beta
+  moment, so the integrated claim-inclusion EU rides `optimise{include,withhold}` over the cell
+  Beta (`E_θ[θ·u_assert(θ)]−κ`, exact — replaces narrative.py's point-estimate `p̄²`); and a
+  `marginalise` verb — the marginal of a flat product-grid categorical along an axis (replaces
+  utility.py's host-side joint-grid fold). Both keep the arithmetic engine-side. Additive; no
+  existing verb or spec changes shape.
 - **1.6** — `structure_bma` gains an optional inline `warm_counts` (decouple Move 5
   prerequisite, additive): `{contexts: [{ctx, n1, n0}]}` reconstructs the warm governance
   posterior server-side in one call (symmetric with `routing_init`'s `warm_counts`), so a wire
@@ -31,8 +38,8 @@ truth, asserted in CI to equal `PROTOCOL_VERSION` in `server.jl`.
   reaction to a latent x under a τ-marginalised choice model, conditioning a categorical over
   the x-grid (replaces life-agent's host-side `reaction_probability`); and a
   `discretised_gaussian` belief-spec — a Gaussian discretised onto a grid (replaces host-side
-  `gaussian_weights`). [+ a quadratic narrative functional and the `marginalise` verb as the
-  remaining commit-3 pieces land — both coupled to utility.py/narrative.py representations.]
+  `gaussian_weights`). [The remaining commit-3 pieces — the `centered_power` claim functional
+  and the `marginalise` verb — landed in 1.7, once coupled to the narrative.py/utility.py rewire.]
 - **1.3** — carried-latent specs (no new verb): a `labelled_mixture` belief-spec
   (`build_prevision`) — a `MixturePrevision` over a label-grid of `LabelledCategoricalPrevision`
   components sharing one categorical prior (a shared discrete latent, e.g. extractor
@@ -347,6 +354,27 @@ Maximum expected utility (without returning the action).
 
 ```json
 {"result": {"value": 0.85}}
+```
+
+### marginalise
+
+Marginal of a flat product-grid categorical along one axis (protocol 1.7). The
+state's `weights` index a row-major product grid (last axis varies fastest, matching
+`itertools.product`) with per-axis sizes `shape`; the verb sums out every other axis
+and returns the length-`shape[axis]` marginal. `axis` is 0-based. A terminal readout
+(the consumer never re-conditions the marginal) that keeps the joint-grid fold's
+marginalisation engine-side — the consumer ships `{shape, axis}` data, not arithmetic.
+
+```json
+{"method": "marginalise", "params": {
+  "state_id": "s_joint",
+  "shape": [3, 4],
+  "axis": 0
+}}
+```
+
+```json
+{"result": {"weights": [0.21, 0.34, 0.45]}}
 ```
 
 ### draw
@@ -856,6 +884,7 @@ for `opaque_bdsl` depending on the measure). Structure enables fast paths
 | `projection` | `index` (0-based) | `f(x) = x[index]`. Decomposes on ProductMeasure. `project` accepted as alias. |
 | `nested_projection` | `indices: [Int]` (0-based) | Recursive navigation through nested ProductMeasures. |
 | `tabular` | `values: [Float]` | Weighted sum over CategoricalMeasure atoms. |
+| `centered_power` | `n` (Int ≥ 0), `mu?` (default 0.0) | `f(θ) = (θ − mu)^n`. Closed-form moment on Beta leaves (raw moment `E[θ^n]` at `mu=0`, central moment / variance at `mu=mean`); quadrature on others. `centered_square` is the alias for `n=2`. |
 | `linear_combination` | `terms: [[coeff, sub_fn_spec]]`, `offset?` | Linearity of expectation: sum of (coeff · sub-functional expectations) + offset. Sub-specs are recursive function specs. |
 | `opaque_bdsl` | `env_id`, `expr` | DSL lambda; delegates to the bare-function `expect` method for the measure type (closed-form / quadrature / Monte Carlo depending on measure). `bdsl` accepted as alias. |
 

@@ -60,7 +60,7 @@ export ConjugatePrevision, maybe_conjugate, update
 export StructureBMA, build_structure_model, build_structure_prior, build_structure_prior_dense, structure_observe, structure_observe_soft, belief_at_context, context_from_features, structure_firing_tags, structure_decision_kernel, reconstruct_structure_prior_from_data
 export RoutingState, EmissionBelief, LatencyBelief, route, route_eu, escalation_next, posterior_accuracy, route_outcome!, decode_correctness, latency_at, route_decide, escalate_decide, routing_belief_readout, reconstruct_latency_from_data, reconstruct_routing_tops_from_data, _ctx_key
 export draw
-export weights, mean, variance, probability, marginal, prune, truncate, logsumexp
+export weights, mean, variance, probability, marginal, marginalise, prune, truncate, logsumexp
 export WeightsDomainError
 export save_state, load_state, MigrationError
 export initial_rel_state, initial_cov_state, marginalize_betas, update_beta_state

@@ -90,6 +90,39 @@ function marginal(p::MixturePrevision, indices::Vector{Int})
 end
 
 """
+    marginalise(state, shape::Vector{Int}, axis::Int) -> Vector{Float64}
+
+Marginal of a flat product-grid categorical along `axis` (0-based, wire
+convention). The state's `weights` index a row-major (C-order — last axis varies
+fastest, matching Python `itertools.product`) product grid with per-axis sizes
+`shape`; this returns the length-`shape[axis]` marginal — the pushforward of the
+belief through the coordinate projection π_axis, summing out every other axis.
+
+The joint stays a single flat categorical (conditioning on a coupling event
+correlates the axes, so it is not a `ProductMeasure`); the marginal is a terminal
+readout, never fed back. Keeping the sum here rather than in the consumer holds
+Invariant 1 — the consumer ships `{shape, axis}` data and receives weights, doing
+no belief arithmetic of its own.
+"""
+function marginalise(state, shape::Vector{Int}, axis::Int)
+    0 <= axis < length(shape) || error("marginalise: axis $axis out of range for shape $shape")
+    all(>(0), shape) || error("marginalise: shape dims must be ≥ 1, got $shape")
+    w = weights(state)
+    n = prod(shape)
+    length(w) == n || error("marginalise: state has $(length(w)) atoms but shape $shape implies $n")
+    dim = shape[axis + 1]
+    stride = 1                                   # ∏ of axis sizes strictly AFTER `axis`
+    for d in (axis + 2):length(shape)
+        stride *= shape[d]
+    end
+    out = zeros(Float64, dim)
+    for k in 0:(n - 1)
+        out[(k ÷ stride) % dim + 1] += w[k + 1]
+    end
+    out
+end
+
+"""
     with_components(p::MixturePrevision, components) -> MixturePrevision
 
 Re-key a mixture: keep `p`'s weights verbatim, replace its per-component beliefs.

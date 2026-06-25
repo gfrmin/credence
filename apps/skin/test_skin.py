@@ -1050,6 +1050,76 @@ def test_labelled_mixture_rho_latent():
         skin.shutdown()
 
 
+def test_centered_power_claim_eu():
+    """The integrated claim-inclusion EU over the wire (decouple Move 1 finish, 1.7): a cell
+    belief is a Beta over reliability θ; the include action's EU is E_θ[θ·u_assert(θ)]−κ —
+    a LinearCombination of the closed-form moments [(u_c−u_w)·E[θ²] + u_w·E[θ] − κ], shipped
+    as a `centered_power` functional. `optimise{include,withhold}` integrates the Beta exactly
+    (the engine, not the client). Asserts a low-reliability cell withholds, a high-reliability
+    cell includes, and the include EU equals the closed form — NO client probability arithmetic,
+    and NOT the old body's point-estimate p̄² (the variance term is kept)."""
+    u_c, u_w, kappa = 1.0, -1.0, 0.05
+    include_fn = {"type": "linear_combination",
+                  "terms": [[u_c - u_w, {"type": "centered_power", "n": 2}],
+                            [u_w, {"type": "identity"}]],
+                  "offset": -kappa}
+    withhold_fn = {"type": "linear_combination", "terms": [], "offset": 0.0}
+    pref = {"type": "functional_per_action", "actions": {"0": withhold_fn, "1": include_fn}}
+    actions = {"type": "finite", "values": [0.0, 1.0]}
+
+    def include_eu_closed(a, b):
+        e2 = a * (a + 1) / ((a + b) * (a + b + 1))
+        e1 = a / (a + b)
+        return (u_c - u_w) * e2 + u_w * e1 - kappa
+
+    skin = SkinClient()
+    try:
+        skin.initialize()
+        # Low-reliability cell Beta(2,3): include EU < 0 → withhold.
+        lo = skin.create_state(type="beta", alpha=2.0, beta=3.0)
+        a_lo, eu_lo = skin.optimise(lo, actions=actions, preference=pref)
+        # credence-lint: allow — precedent:test-oracle — engine include-EU vs the closed-form moment; non-causal
+        assert abs(eu_lo - max(include_eu_closed(2.0, 3.0), 0.0)) < 1e-12, eu_lo
+        assert a_lo == 0, f"low-reliability cell should withhold, got action {a_lo}"
+
+        # High-reliability cell Beta(20,2): include EU > 0 → include.
+        hi = skin.create_state(type="beta", alpha=20.0, beta=2.0)
+        a_hi, eu_hi = skin.optimise(hi, actions=actions, preference=pref)
+        # credence-lint: allow — precedent:test-oracle — engine include-EU vs the closed-form moment; non-causal
+        assert abs(eu_hi - include_eu_closed(20.0, 2.0)) < 1e-12, eu_hi
+        assert a_hi == 1, f"high-reliability cell should include, got action {a_hi}"
+        print("PASS: centered_power integrated claim-EU over the wire (exact, Wald include/withhold)")
+    finally:
+        skin.shutdown()
+
+
+def test_marginalise_joint_grid():
+    """The joint-grid fold's marginalisation over the wire (decouple Move 1 finish, 1.7):
+    condition a flat product-grid categorical, then `marginalise` to each axis. The engine
+    sums out the other axes (replacing utility.py's host-side `marg[ix[j]] += joint[k]`),
+    so the consumer ships only `{shape, axis}` — no belief arithmetic client-side."""
+    import math
+    skin = SkinClient()
+    try:
+        skin.initialize()
+        # 2×3 grid, row-major (axis-1 fastest): flat [w00,w01,w02, w10,w11,w12].
+        w = [0.05, 0.10, 0.15, 0.20, 0.18, 0.32]
+        sid = skin.create_state(
+            type="categorical",
+            space={"type": "finite", "values": [float(i) for i in range(6)]},
+            log_weights=[math.log(x) for x in w],
+        )
+        m0 = skin.marginalise(sid, shape=[2, 3], axis=0)
+        m1 = skin.marginalise(sid, shape=[2, 3], axis=1)
+        # credence-lint: allow — precedent:test-oracle — engine marginal vs hand-summed grid axes; non-causal
+        assert abs(m0[0] - 0.30) < 1e-12 and abs(m0[1] - 0.70) < 1e-12, m0
+        # credence-lint: allow — precedent:test-oracle — engine marginal vs hand-summed grid axes; non-causal
+        assert abs(m1[0] - 0.25) < 1e-12 and abs(m1[1] - 0.28) < 1e-12 and abs(m1[2] - 0.47) < 1e-12, m1
+        print("PASS: marginalise joint-grid fold over the wire")
+    finally:
+        skin.shutdown()
+
+
 # ── Structure-BMA verbs (decouple Move 3) ──
 
 
@@ -1211,7 +1281,7 @@ def test_initialize_returns_contract():
     skin = SkinClient()
     try:
         result = skin.initialize()
-        assert result["protocol"] == "1.6", f"protocol: {result.get('protocol')}"
+        assert result["protocol"] == "1.7", f"protocol: {result.get('protocol')}"
         assert "version" in result, "engine version missing"
         methods = result["methods"]
         # Core canalised verbs + the Move-3 structure-BMA verbs must be advertised.
@@ -1257,7 +1327,7 @@ def test_dsl_sources_inline_equivalent_to_path():
         # a subsequent call_dsl against the loaded env resolves (the path-based
         # test_router_roundtrip already covers the path branch).
         result = skin.initialize(dsl_sources={"router": source})
-        assert result["protocol"] == "1.6"
+        assert result["protocol"] == "1.7"
         print("PASS: inline dsl_sources loads equivalently to a path load")
     finally:
         skin.shutdown()
@@ -1371,5 +1441,9 @@ if __name__ == "__main__":
     test_logistic_reaction_kernel()
     print()
     test_discretised_gaussian_prior()
+    print()
+    test_centered_power_claim_eu()
+    print()
+    test_marginalise_joint_grid()
     print()
     print("All tests passed!")
