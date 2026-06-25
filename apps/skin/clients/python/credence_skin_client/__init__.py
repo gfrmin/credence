@@ -389,19 +389,18 @@ class SkinClient:
         })
         return result["value"]
 
-    def marginalise(self, state_id: str, shape: list[int], axis: int) -> list[float]:
-        """Marginal of a flat product-grid categorical along ``axis`` (0-based).
-
-        ``shape`` is the per-axis grid sizes in row-major order (last axis fastest,
-        matching ``itertools.product``); the engine sums out the other axes and
-        returns the length-``shape[axis]`` marginal. A terminal readout — the
-        marginalisation stays engine-side, so the consumer ships only data."""
-        result = self._call("marginalise", {
+    def marginal(self, state_id: str, axis: int) -> str:
+        """The ``axis``-th coordinate marginal of a product-grid posterior (an
+        ``MvQuadraturePrevision``, 0-based), registered as a NEW scalar state whose id is
+        returned — read it with ``mean``/``expect`` like any 1-D fold. The engine sums out the
+        other coordinates over its OWN grid, so the consumer ships only ``{state_id, axis}`` (no
+        grid ``shape``) and does no belief arithmetic. The joint stays registered for the next
+        coordinate read; destroy the returned marginal state when done."""
+        result = self._call("marginal", {
             "state_id": state_id,
-            "shape": shape,
             "axis": axis,
         })
-        return result["weights"]
+        return result["state_id"]
 
     def read_params(self, state_id: str) -> dict:
         """The registered belief's declarative ``{type, params...}`` spec (the `params`

@@ -39,6 +39,33 @@ variance(p::MvGaussianPrevision) = [p.Sigma[i, i] for i in 1:length(p.mu)]
 marginal(p::MvGaussianPrevision, i::Int) =
     GaussianPrevision(p.mu[i], sqrt(p.Sigma[i, i]))
 
+# The i-th coordinate marginal of a product-grid posterior: sum the (normalised) product weights
+# over every OTHER axis, returning a scalar `QuadraturePrevision` on axis i so the usual scalar
+# readouts (`mean`, `variance`, `expect`) apply. The engine integrates the other coordinates over
+# ITS OWN grid — the consumer ships only the axis index, never a grid `shape` (this is what retires
+# the grid-coupled `marginalise(state, shape, axis)` verb). Cross-coordinate structure stays on `p`.
+function _axis_index(flat0::Int, dims::Vector{Int}, i::Int)
+    stride = 1
+    for j in (i + 1):length(dims)
+        stride *= dims[j]
+    end
+    (flat0 ÷ stride) % dims[i]   # row-major: last axis fastest (matches `_mv_points`)
+end
+
+function marginal(p::MvQuadraturePrevision, i::Int)
+    1 <= i <= length(p.axes) || error("marginal: axis $i out of range for $(length(p.axes)) dims")
+    lw = p.log_weights
+    mx = maximum(lw)
+    w = exp.(lw .- mx)
+    w ./= sum(w)
+    dims = length.(p.axes)
+    marg = zeros(length(p.axes[i]))
+    for k in eachindex(w)
+        marg[_axis_index(k - 1, dims, i) + 1] += w[k]
+    end
+    QuadraturePrevision(copy(p.axes[i]), log.(max.(marg, 1e-300)))
+end
+
 probability(p::Prevision, e::Event) = expect(p, Indicator(e))
 
 function weights(p::CategoricalPrevision)
@@ -89,38 +116,10 @@ function marginal(p::MixturePrevision, indices::Vector{Int})
     MixturePrevision([p.components[i] for i in indices], marginal_logw)
 end
 
-"""
-    marginalise(state, shape::Vector{Int}, axis::Int) -> Vector{Float64}
-
-Marginal of a flat product-grid categorical along `axis` (0-based, wire
-convention). The state's `weights` index a row-major (C-order — last axis varies
-fastest, matching Python `itertools.product`) product grid with per-axis sizes
-`shape`; this returns the length-`shape[axis]` marginal — the pushforward of the
-belief through the coordinate projection π_axis, summing out every other axis.
-
-The joint stays a single flat categorical (conditioning on a coupling event
-correlates the axes, so it is not a `ProductMeasure`); the marginal is a terminal
-readout, never fed back. Keeping the sum here rather than in the consumer holds
-Invariant 1 — the consumer ships `{shape, axis}` data and receives weights, doing
-no belief arithmetic of its own.
-"""
-function marginalise(state, shape::Vector{Int}, axis::Int)
-    0 <= axis < length(shape) || error("marginalise: axis $axis out of range for shape $shape")
-    all(>(0), shape) || error("marginalise: shape dims must be ≥ 1, got $shape")
-    w = weights(state)
-    n = prod(shape)
-    length(w) == n || error("marginalise: state has $(length(w)) atoms but shape $shape implies $n")
-    dim = shape[axis + 1]
-    stride = 1                                   # ∏ of axis sizes strictly AFTER `axis`
-    for d in (axis + 2):length(shape)
-        stride *= shape[d]
-    end
-    out = zeros(Float64, dim)
-    for k in 0:(n - 1)
-        out[(k ÷ stride) % dim + 1] += w[k + 1]
-    end
-    out
-end
+# NOTE: the grid-coupled `marginalise(state, shape, axis)` verb was retired when the coupled
+# utility fold moved engine-side (Phase B). The consumer no longer constructs a product grid or
+# ships a `shape`; it declares a continuous `truncated_mv_gaussian`, and `marginal(p, i)` reads a
+# coordinate marginal off the engine's OWN product grid (see `marginal(::MvQuadraturePrevision, i)`).
 
 """
     with_components(p::MixturePrevision, components) -> MixturePrevision

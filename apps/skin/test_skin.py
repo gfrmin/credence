@@ -1148,29 +1148,31 @@ def test_centered_power_claim_eu():
         skin.shutdown()
 
 
-def test_marginalise_joint_grid():
-    """The joint-grid fold's marginalisation over the wire (decouple Move 1 finish, 1.7):
-    condition a flat product-grid categorical, then `marginalise` to each axis. The engine
-    sums out the other axes (replacing utility.py's host-side `marg[ix[j]] += joint[k]`),
-    so the consumer ships only `{shape, axis}` — no belief arithmetic client-side."""
-    import math
+def test_mv_quadrature_coupled_fold():
+    """Coupled continuous latents over the wire (Phase B): declare a `truncated_mv_gaussian`
+    (independent box prior), couple them with a `margin_reaction`, and read coordinate marginals
+    with `marginal` — all with ZERO grid `shape` and ZERO belief arithmetic client-side (replacing
+    utility.py's host product grid + `marginalise`). A "good-on-abstain" margin (−x₂ + 0.36·x₁ −
+    0.36, sign −1) pushes x₁ (u_wrong-like, ≤0) DOWN and x₂ (κ_att-like) UP off their priors."""
     skin = SkinClient()
     try:
         skin.initialize()
-        # 2×3 grid, row-major (axis-1 fastest): flat [w00,w01,w02, w10,w11,w12].
-        w = [0.05, 0.10, 0.15, 0.20, 0.18, 0.32]
-        sid = skin.create_state(
-            type="categorical",
-            space={"type": "finite", "values": [float(i) for i in range(6)]},
-            log_weights=[math.log(x) for x in w],
-        )
-        m0 = skin.marginalise(sid, shape=[2, 3], axis=0)
-        m1 = skin.marginalise(sid, shape=[2, 3], axis=1)
-        # credence-lint: allow — precedent:test-oracle — engine marginal vs hand-summed grid axes; non-causal
-        assert abs(m0[0] - 0.30) < 1e-12 and abs(m0[1] - 0.70) < 1e-12, m0
-        # credence-lint: allow — precedent:test-oracle — engine marginal vs hand-summed grid axes; non-causal
-        assert abs(m1[0] - 0.25) < 1e-12 and abs(m1[1] - 0.28) < 1e-12 and abs(m1[2] - 0.47) < 1e-12, m1
-        print("PASS: marginalise joint-grid fold over the wire")
+        sid = skin.create_state(type="truncated_mv_gaussian", mu=[-3.0, 0.05],
+                                sigma=[4.0, 0.3], lo=[-10.0, -0.2], hi=[0.0, 1.0])
+        # prior coordinate means (a NEW state per axis; read with mean, then destroy)
+        mp0 = skin.marginal(sid, axis=0); pm0 = skin.mean(mp0); skin.destroy_state(mp0)
+        mp1 = skin.marginal(sid, axis=1); pm1 = skin.mean(mp1); skin.destroy_state(mp1)
+        skin.condition(sid, kernel={"type": "margin_reaction", "coeffs": [0.36, -1.0],
+                                    "offset": 0.36, "sign": -1.0, "threshold": 0.0,
+                                    "tau_mu": 1.0, "tau_sigma": 0.5, "tau_lo": 0.5, "tau_hi": 2.0},
+                       observation=1.0)
+        mq0 = skin.marginal(sid, axis=0); qm0 = skin.mean(mq0); skin.destroy_state(mq0)
+        mq1 = skin.marginal(sid, axis=1); qm1 = skin.mean(mq1); skin.destroy_state(mq1)
+        # credence-lint: allow — precedent:test-oracle — coupling margin moves both coords; non-causal
+        assert qm0 < pm0, f"x1 should move down: {qm0} vs prior {pm0}"
+        # credence-lint: allow — precedent:test-oracle — coupling margin moves both coords; non-causal
+        assert qm1 > pm1, f"x2 should move up: {qm1} vs prior {pm1}"
+        print("PASS: mv-quadrature coupled fold over the wire (engine owns the joint grid)")
     finally:
         skin.shutdown()
 
@@ -1336,7 +1338,7 @@ def test_initialize_returns_contract():
     skin = SkinClient()
     try:
         result = skin.initialize()
-        assert result["protocol"] == "1.10", f"protocol: {result.get('protocol')}"
+        assert result["protocol"] == "1.11", f"protocol: {result.get('protocol')}"
         assert "version" in result, "engine version missing"
         methods = result["methods"]
         # Core canalised verbs + the Move-3 structure-BMA verbs must be advertised.
@@ -1382,7 +1384,7 @@ def test_dsl_sources_inline_equivalent_to_path():
         # a subsequent call_dsl against the loaded env resolves (the path-based
         # test_router_roundtrip already covers the path branch).
         result = skin.initialize(dsl_sources={"router": source})
-        assert result["protocol"] == "1.10"
+        assert result["protocol"] == "1.11"
         print("PASS: inline dsl_sources loads equivalently to a path load")
     finally:
         skin.shutdown()
@@ -1503,6 +1505,6 @@ if __name__ == "__main__":
     print()
     test_centered_power_claim_eu()
     print()
-    test_marginalise_joint_grid()
+    test_mv_quadrature_coupled_fold()
     print()
     print("All tests passed!")

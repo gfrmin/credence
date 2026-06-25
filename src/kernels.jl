@@ -151,20 +151,54 @@ struct LogisticReaction <: LeafFamily
     tau_hi::Float64
 end
 
-function logistic_reaction_logdensity(fam::LogisticReaction, x, react; n_tau::Int = 32)
-    # Engine-internal quadrature of τ ~ TruncatedNormal(μ, σ; [lo,hi]): midpoint rule, weights
-    # re-normalised over the truncation so the mixture is a proper marginal.
-    step = (fam.tau_hi - fam.tau_lo) / n_tau
+# Engine-internal quadrature of τ ~ TruncatedNormal(μ, σ; [lo,hi]) for the logistic choice model:
+# P(react = 1) = E_τ[ 1 / (1 + exp(-g/τ)) ] over the feature g = sign·(latent feature) - threshold.
+# Midpoint rule, weights re-normalised over the truncation so the mixture is a proper marginal.
+# Shared by LogisticReaction (g over a scalar latent) and MarginReaction (g over a linear functional
+# of a multivariate latent) — one choice model, two feature maps.
+function _tau_marginal_p1(g::Float64, tau_mu, tau_sigma, tau_lo, tau_hi; n_tau::Int = 32)
+    step = (tau_hi - tau_lo) / n_tau
     p1 = 0.0
     z = 0.0
     for k in 1:n_tau
-        τ = fam.tau_lo + (k - 0.5) * step
-        w = exp(-0.5 * ((τ - fam.tau_mu) / fam.tau_sigma)^2)
+        τ = tau_lo + (k - 0.5) * step
+        w = exp(-0.5 * ((τ - tau_mu) / tau_sigma)^2)
         z += w
-        p1 += w / (1.0 + exp(-(fam.sign * x - fam.threshold) / τ))
+        p1 += w / (1.0 + exp(-g / τ))
     end
-    p1 /= z
+    p1 / z
+end
+
+_react_logdensity(p1::Float64, react) =
     (react == 1 || react == 1.0) ? log(max(p1, 1e-300)) : log(max(1.0 - p1, 1e-300))
+
+function logistic_reaction_logdensity(fam::LogisticReaction, x, react; n_tau::Int = 32)
+    g = fam.sign * x - fam.threshold
+    p1 = _tau_marginal_p1(g, fam.tau_mu, fam.tau_sigma, fam.tau_lo, fam.tau_hi; n_tau = n_tau)
+    _react_logdensity(p1, react)
+end
+
+# A binary reaction to a CONTINUOUS MULTIVARIATE latent x, under the same τ-marginalised logistic
+# choice model applied to a LINEAR FUNCTIONAL of the latent: margin = coeffsᵀx - offset. This is the
+# kernel that couples utility latents in a joint fold (§7.1) — coeffs = eⱼ recovers a single-latent
+# reaction; a multi-term coeffs is a narrative margin reaction. The engine integrates τ internally;
+# the declared model carries only (coeffs, offset, sign, threshold, τ-prior) — no grid.
+struct MarginReaction <: LeafFamily
+    coeffs::Vector{Float64}
+    offset::Float64
+    sign::Float64
+    threshold::Float64
+    tau_mu::Float64
+    tau_sigma::Float64
+    tau_lo::Float64
+    tau_hi::Float64
+end
+
+function margin_reaction_logdensity(fam::MarginReaction, x, react; n_tau::Int = 32)
+    margin = sum(fam.coeffs[i] * x[i] for i in eachindex(fam.coeffs)) - fam.offset
+    g = fam.sign * margin - fam.threshold
+    p1 = _tau_marginal_p1(g, fam.tau_mu, fam.tau_sigma, fam.tau_lo, fam.tau_hi; n_tau = n_tau)
+    _react_logdensity(p1, react)
 end
 
 struct FiringByTag <: LikelihoodFamily
@@ -212,6 +246,14 @@ register_family!(Symbol("logistic-reaction"),
                  (sign, threshold, tmu, tsig, tlo, thi) ->
                      LogisticReaction(Float64(sign), Float64(threshold), Float64(tmu),
                                       Float64(tsig), Float64(tlo), Float64(thi)), 6)
+# Eight args: `coeffs` (the linear-functional vector over the multivariate latent — a runtime list,
+# like linear-gaussian's `xs`), offset, sign, threshold, and the continuous-τ truncated-Gaussian
+# (μ, σ, lo, hi). The margin coeffsᵀx - offset couples the latents; the engine integrates τ.
+register_family!(Symbol("margin-reaction"),
+                 (coeffs, offset, sign, threshold, tmu, tsig, tlo, thi) ->
+                     MarginReaction(collect(Float64, coeffs), Float64(offset), Float64(sign),
+                                    Float64(threshold), Float64(tmu), Float64(tsig),
+                                    Float64(tlo), Float64(thi)), 8)
 
 struct Kernel
     source::Space

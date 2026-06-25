@@ -32,7 +32,7 @@ export Prevision, TestFunction, Indicator, apply, expect
 export Identity, Projection, NestedProjection, Tabular, LinearCombination, OpaqueClosure, FiringChoice
 export BetaPrevision, TaggedBetaPrevision, SparseStructurePrevision, GaussianPrevision, TruncatedGaussianPrevision, MvGaussianPrevision, GammaPrevision, CategoricalPrevision, DirichletPrevision, NormalGammaPrevision, ProductPrevision, MixturePrevision, LabelledCategoricalPrevision
 export ExchangeablePrevision, decompose
-export ParticlePrevision, QuadraturePrevision
+export ParticlePrevision, QuadraturePrevision, MvQuadraturePrevision, _mv_points
 export ConditionalPrevision
 export ConjugatePrevision, maybe_conjugate, update, _dispatch_path
 export push_component!, replace_component!
@@ -630,6 +630,63 @@ struct QuadraturePrevision <: Prevision
         log_total = max_lw + log(sum(exp.(log_weights .- max_lw)))
         new(grid, log_weights .- log_total)
     end
+end
+
+"""
+    MvQuadraturePrevision(axes::Vector{Vector{Float64}}, log_weights::Vector{Float64}) <: Prevision
+
+The multivariate analogue of `QuadraturePrevision`: a deterministic product-grid posterior over a
+box ∏[loᵢ,hiᵢ]. `axes[i]` is the per-dimension quadrature grid (midpoints over the iᵗʰ support);
+`log_weights` are the per-product-point log weights over the **row-major** product (last axis
+fastest — matching `Iterators.product(reverse(axes)...)` enumerated outer-to-inner, i.e. the
+natural nested-loop order used by `_mv_points`), normalised at construction via logsumexp.
+
+Used for coupled continuous latents whose joint prior is an independent product of truncated
+Gaussians and whose likelihood (a margin reaction) couples the coordinates — the engine owns the
+grid, the declared model stays continuous. Coordinate marginals are read with `marginal(p, i)`;
+the grid is the engine's invisible computation, never a declared belief.
+"""
+struct MvQuadraturePrevision <: Prevision
+    axes::Vector{Vector{Float64}}
+    log_weights::Vector{Float64}
+
+    function MvQuadraturePrevision(axes::Vector{Vector{Float64}}, log_weights::Vector{Float64})
+        length(axes) > 0 || error("MvQuadraturePrevision needs ≥ 1 axis")
+        all(a -> length(a) > 0, axes) || error("every axis must be non-empty")
+        n = prod(length.(axes))
+        length(log_weights) == n ||
+            error("log_weights has $(length(log_weights)) entries but axes imply $n product points")
+        if all(lw -> lw == -Inf, log_weights)
+            error("mv-quadrature posterior has zero total mass")
+        end
+        max_lw = maximum(log_weights)
+        log_total = max_lw + log(sum(exp.(log_weights .- max_lw)))
+        new(axes, log_weights .- log_total)
+    end
+end
+
+"""
+    _mv_points(axes) -> generator of Vector{Float64}
+
+The product points of `axes` in ROW-MAJOR order — last axis fastest — the canonical flat enumeration
+the `log_weights` of an `MvQuadraturePrevision` index. The flat index `k` (0-based) decodes to a
+multi-index by stripping the last axis first; `_axis_index` (stdlib) is the matching inverse. A flat
+generator (not an `Iterators.product`, whose multidimensional shape would make comprehensions build a
+matrix), so `[f(x) for x in _mv_points(axes)]` is a `Vector` in this exact order.
+"""
+function _mv_points(axes::Vector{Vector{Float64}})
+    dims = length.(axes)
+    d = length(axes)
+    n = prod(dims)
+    return (begin
+                x = Vector{Float64}(undef, d)
+                rem = flat
+                for k in d:-1:1            # last axis fastest
+                    x[k] = axes[k][rem % dims[k] + 1]
+                    rem ÷= dims[k]
+                end
+                x
+            end for flat in 0:(n - 1))
 end
 
 

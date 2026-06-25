@@ -26,7 +26,7 @@ using Credence: ProductPrevision, MixturePrevision, CategoricalPrevision
 using Credence: Finite, Interval, ProductSpace, Euclidean, PositiveReals, Simplex
 using Credence: Kernel, FactorSelector, support
 using Credence: Functional, Identity, Projection, NestedProjection, Tabular, LinearCombination, OpaqueClosure
-using Credence: CenteredPower, CenteredSquare, marginalise
+using Credence: CenteredPower, CenteredSquare
 using Credence: factor, replace_factor
 using Credence: AgentState, sync_prune!, sync_truncate!
 using Credence: Grammar, Program, CompiledKernel, ProductionRule
@@ -257,6 +257,14 @@ function build_prevision(spec)
                                    Float64(spec["lo"]), Float64(spec["hi"]))
     elseif t == "mv_gaussian"
         MvGaussianPrevision(collect(Float64, spec["mu"]), _cov_from_rows(spec["sigma"]))
+    elseif t == "truncated_mv_gaussian"
+        # The multivariate continuous analogue of truncated_gaussian: independent N(μᵢ,σᵢ) latents
+        # each on a SUPPORT [loᵢ,hiᵢ] (a stated bound, e.g. a sign-constrained utility). Used for
+        # COUPLED latents whose joint prior is independent and whose likelihood (a margin reaction)
+        # correlates them. The engine integrates over the box ∏[loᵢ,hiᵢ] by an internal product-grid
+        # quadrature — the bounds are model support, NOT a discretisation grid.
+        truncated_mv_quadrature(collect(Float64, spec["mu"]), collect(Float64, spec["sigma"]),
+                                collect(Float64, spec["lo"]), collect(Float64, spec["hi"]))
     elseif t == "gamma"
         GammaPrevision(Float64(spec["alpha"]), Float64(spec["beta"]))
     elseif t == "dirichlet"
@@ -401,6 +409,21 @@ function build_kernel(spec, state_id::Union{String, Nothing}=nothing)
         Kernel(Euclidean(1), Finite([0.0, 1.0]),
             x -> error("generate not used"),
             (x, o) -> logistic_reaction_logdensity(fam, x, o);
+            likelihood_family = fam)
+
+    elseif t == "margin_reaction"
+        # A binary reaction to a CONTINUOUS MULTIVARIATE latent under the same τ-marginalised
+        # logistic choice model, applied to a linear functional margin = coeffsᵀx - offset. This is
+        # the kernel that couples utility latents in a joint fold (§7.1) — coeffs = eⱼ recovers a
+        # single-latent reaction, a multi-term coeffs is a narrative margin. The body ships only
+        # (coeffs, offset, sign, threshold, τ-prior); the engine quadratures the joint box and τ.
+        fam = MarginReaction(collect(Float64, spec["coeffs"]), Float64(spec["offset"]),
+                             Float64(spec["sign"]), Float64(spec["threshold"]),
+                             Float64(spec["tau_mu"]), Float64(spec["tau_sigma"]),
+                             Float64(spec["tau_lo"]), Float64(spec["tau_hi"]))
+        Kernel(Euclidean(length(fam.coeffs)), Finite([0.0, 1.0]),
+            x -> error("generate not used"),
+            (x, o) -> margin_reaction_logdensity(fam, x, o);
             likelihood_family = fam)
 
     elseif t == "quality"
@@ -709,7 +732,7 @@ end
 # rides the `credence-skin` image tag). MAJOR bumps on a breaking protocol
 # change; MINOR on additive. Apps pin the major in code and `initialize`
 # rejects a mismatching major with -32010. See docs/decouple/master-plan.md.
-const PROTOCOL_VERSION = "1.10"
+const PROTOCOL_VERSION = "1.11"
 protocol_major(v) = String(first(split(String(v), ".")))
 
 # Advertised method set, returned by `initialize` for client capability
@@ -718,7 +741,7 @@ protocol_major(v) = String(first(split(String(v), ".")))
 const SKIN_METHODS = [
     "initialize", "shutdown", "create_state", "destroy_state",
     "snapshot_state", "restore_state", "condition", "condition_on_event",
-    "weights", "mean", "expect", "optimise", "value", "marginalise", "read_params", "draw", "enumerate",
+    "weights", "mean", "expect", "optimise", "value", "marginal", "read_params", "draw", "enumerate",
     "perturb_grammar", "add_programs", "sync_prune", "sync_truncate",
     "top_grammars", "belief_summary", "condition_and_prune", "eu_interact",
     "call_dsl", "factor", "replace_factor", "n_factors",
@@ -754,8 +777,8 @@ function handle_request(method::String, params, id)
         handle_optimise(params)
     elseif method == "value"
         handle_value(params)
-    elseif method == "marginalise"
-        handle_marginalise(params)
+    elseif method == "marginal"
+        handle_marginal(params)
     elseif method == "read_params"
         handle_read_params(params)
     elseif method == "structure_bma"
@@ -1079,17 +1102,18 @@ function handle_weights(params)
     Dict("weights" => collect(Float64, weights(state)))
 end
 
-# marginalise: marginal of a flat product-grid categorical along `axis` (0-based).
-# A terminal readout (the consumer never re-conditions the marginal) — the engine
-# sums out the other axes so the consumer ships only `{shape, axis}` data, doing no
-# belief arithmetic of its own (Invariant 1). `shape` is the per-axis grid sizes in
-# row-major order (last axis fastest, matching the consumer's product enumeration).
-function handle_marginalise(params)
+# marginal: the `axis`-th coordinate marginal of an MvQuadraturePrevision (0-based, wire
+# convention), registered as a NEW scalar state the consumer reads with `mean`/`expect` — exactly
+# like a 1-D fold. The engine sums out the other coordinates over ITS OWN product grid, so the
+# consumer ships only `{state_id, axis}` (no grid `shape`), doing no belief arithmetic (Invariant 1).
+# The joint stays registered under its own id — the next coordinate read reuses it (the marginal is
+# a terminal readout, never fed back into the joint).
+function handle_marginal(params)
     id = string(params["state_id"])
     state = get_state(id)
-    shape = Int[Int(x) for x in params["shape"]]
     axis = Int(params["axis"])
-    Dict("weights" => collect(Float64, marginalise(state, shape, axis)))
+    new_id = register_state(marginal(state, axis + 1))   # wire axis is 0-based; Julia is 1-based
+    Dict("state_id" => new_id)
 end
 
 # read_params: serialise a registered belief to its declarative `{type, params...}` spec
