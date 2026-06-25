@@ -987,6 +987,28 @@ def test_logistic_reaction_kernel():
         skin.shutdown()
 
 
+def test_truncated_gaussian_prior():
+    """A continuous bounded latent over the wire (Phase A): `truncated_gaussian` declares N(μ,σ) on
+    the SUPPORT [lo,hi] (a sign-constrained utility) — the bounds are model support, NOT a grid; the
+    engine integrates over [lo,hi]. The truncated prior mean sits below the untruncated μ (upper tail
+    cut), and a Gaussian elicitation pulls the mean toward the observation but stays in [lo,hi]."""
+    skin = SkinClient()
+    try:
+        skin.initialize()
+        sid = skin.create_state(type="truncated_gaussian", mu=-4.0, sigma=3.0, lo=-10.0, hi=0.0)
+        m_prior = skin.mean(sid)
+        # credence-lint: allow — precedent:test-oracle — truncation to [-10,0] cuts the upper tail; non-causal
+        assert -10.0 < m_prior < -4.0, f"truncated prior mean should sit below μ=-4 in (-10,0): {m_prior}"
+        # condition on an elicitation (gaussian_known_var → non-conjugate under truncation → quadrature)
+        skin.condition(sid, kernel={"type": "gaussian_known_var", "variance": 4.0}, observation=-6.0)
+        m_post = skin.mean(sid)
+        # credence-lint: allow — precedent:test-oracle — elicitation pulls toward -6, stays bounded; non-causal
+        assert m_prior > m_post > -6.0, f"elicitation should pull toward -6, bounded: {m_post}"
+        print("PASS: truncated_gaussian continuous bounded latent (engine integrates [lo,hi])")
+    finally:
+        skin.shutdown()
+
+
 def test_labelled_mixture_rho_latent():
     """A non-embedding consumer drives the carried ρ-latent over the wire: build a
     `labelled_mixture` (a ρ-grid of categoricals over V), condition it with a
@@ -1314,7 +1336,7 @@ def test_initialize_returns_contract():
     skin = SkinClient()
     try:
         result = skin.initialize()
-        assert result["protocol"] == "1.9", f"protocol: {result.get('protocol')}"
+        assert result["protocol"] == "1.10", f"protocol: {result.get('protocol')}"
         assert "version" in result, "engine version missing"
         methods = result["methods"]
         # Core canalised verbs + the Move-3 structure-BMA verbs must be advertised.
@@ -1360,7 +1382,7 @@ def test_dsl_sources_inline_equivalent_to_path():
         # a subsequent call_dsl against the loaded env resolves (the path-based
         # test_router_roundtrip already covers the path branch).
         result = skin.initialize(dsl_sources={"router": source})
-        assert result["protocol"] == "1.9"
+        assert result["protocol"] == "1.10"
         print("PASS: inline dsl_sources loads equivalently to a path load")
     finally:
         skin.shutdown()
@@ -1476,6 +1498,8 @@ if __name__ == "__main__":
     test_read_params_conjugate_readback()
     print()
     test_logistic_reaction_kernel()
+    print()
+    test_truncated_gaussian_prior()
     print()
     test_centered_power_claim_eu()
     print()

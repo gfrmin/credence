@@ -1,6 +1,6 @@
 # Credence Skin Protocol
 
-Protocol-Version: 1.9
+Protocol-Version: 1.10
 
 JSON-RPC 2.0 over stdio. Skin reads newline-delimited JSON from stdin,
 writes newline-delimited JSON to stdout, logs to stderr.
@@ -13,6 +13,12 @@ truth, asserted in CI to equal `PROTOCOL_VERSION` in `server.jl`.
 
 ### Changelog
 
+- **1.10** — `truncated_gaussian` belief-spec (additive, Phase A cont'd): a continuous N(μ,σ²) on a
+  stated SUPPORT `[lo, hi]` — the proper continuous form for a sign/range-constrained latent (e.g.
+  a utility `u_wrong ≤ 0`). The bounds are model support, not a discretisation grid; the engine
+  integrates over `[lo,hi]` by an internal midpoint quadrature. Conditioning is non-conjugate → a
+  quadrature posterior. Lets the body declare continuous bounded utility latents instead of the
+  host Gaussian-on-a-grid.
 - **1.9** — "the engine owns the grid" (discretisation-antipattern disposal, Phase A). A
   discretisation grid is a computation strategy and must not appear in a declared belief/kernel.
   (1) `discretised_gaussian` belief-spec is **REMOVED** — declare a `gaussian` prior; the engine
@@ -877,6 +883,7 @@ Example with state references (the stateful mode, for long-lived agents):
 | `categorical` | `space`, optional `log_weights` | `CategoricalMeasure` |
 | `beta` | `alpha, beta` | `BetaMeasure` |
 | `gaussian` | `mu, sigma` | `GaussianMeasure` |
+| `truncated_gaussian` | `mu, sigma, lo, hi` | A continuous N(μ,σ²) on the SUPPORT [lo,hi] (a stated bound, e.g. a sign-constrained utility). The bounds are model support, NOT a grid; the engine integrates over [lo,hi] internally. Conditioning is non-conjugate → a quadrature posterior. (protocol 1.10) |
 | `gamma` | `alpha, beta` | `GammaMeasure` |
 | `dirichlet` | `alpha: [...]` | `DirichletMeasure` |
 | `normal_gamma` | `kappa, mu, alpha, beta` | `NormalGammaMeasure` |
