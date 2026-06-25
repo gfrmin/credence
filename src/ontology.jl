@@ -869,6 +869,32 @@ function expect(p::QuadraturePrevision, f::Function)
     sum(w[i] * f(p.grid[i]) for i in eachindex(w))
 end
 
+# Sequential conditioning on a quadrature posterior. The support is already fixed by the FIRST
+# (continuous → quadrature) condition; a further observation only reweights mass WITHIN that
+# support, so we multiply the new kernel's likelihood into the existing grid — no re-gridding.
+# This is what lets a continuous latent absorb MULTIPLE non-conjugate observations (e.g. a
+# Gaussian elicitation THEN a logistic reaction) and stay on the engine's one grid. Conjugate
+# latents never reach here — they update in closed form and stay parametric; quadrature is the
+# fallback, and once a latent is on a grid it stays on that grid for subsequent evidence.
+function condition(p::QuadraturePrevision, k::Kernel, observation)
+    logw = similar(p.log_weights)
+    for i in eachindex(p.grid)
+        ll = density(k, p.grid[i], observation)
+        !isnan(ll) || error("density returned NaN conditioning a QuadraturePrevision")
+        logw[i] = p.log_weights[i] + ll
+    end
+    QuadraturePrevision(copy(p.grid), logw)
+end
+
+# Marginal likelihood ∫ p(x)·P(obs|x) dx over the quadrature grid — the `condition` verb's
+# log_marginal for the SECOND (and later) observation. A direct quadrature on the existing grid,
+# mirroring `log_predictive(::TruncatedGaussianPrevision, …)`; the generic `Prevision` fallback
+# routes through `wrap_in_measure`, which a QuadraturePrevision (no carrier Space) has no method for.
+function log_predictive(p::QuadraturePrevision, k::Kernel, obs)
+    val = expect(p, h -> exp(density(k, h, obs)))
+    log(max(val, 1e-300))
+end
+
 # MixturePrevision: linearity of expectation.
 function expect(p::MixturePrevision, f::Function)
     lw = p.log_weights
