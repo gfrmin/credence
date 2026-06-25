@@ -132,24 +132,38 @@ categorical_logdensity(fam::LikelihoodFamily, i::Int, obs) = error(
     "density (e.g. GroupNoisyChannel); got $(typeof(fam)). Check the routing kernel's " *
     "DispatchByComponent closure.")
 
-# Logistic-reaction likelihood: a binary reaction `react ∈ {0,1}` to a latent value `x`
-# (e.g. a utility on a grid), under the choice model marginalised over a declared τ-prior:
-#     P(react=1 | x) = Σ_t w_t · σ((sign·x − threshold)/t),  σ(z) = 1/(1+e^{−z})
-# The τ-grid IS the model (a declared mixture of logistic temperatures), NOT a quadrature
-# approximation of a continuum — so the engine evaluates it exactly. Replaces life-agent's
-# host-side `reaction_probability` (utility.py) shipped as a `tabular_log_density`: the body
-# now ships only (sign, threshold, τ-grid, τ-weights) as declared data. `condition`s a
-# categorical over the x-grid through the kernel's `log_density` (a plain leaf — no routing).
+# Logistic-reaction likelihood: a binary reaction `react ∈ {0,1}` to a latent value `x`, under a
+# choice model with a CONTINUOUS temperature τ marginalised out:
+#     P(react=1 | x) = ∫ σ((sign·x − threshold)/τ) · N(τ; μ, σ) dτ over τ∈[lo,hi],  σ(z)=1/(1+e^{−z})
+# τ is a continuous noise scale (a truncated Gaussian on [lo,hi]); the model declares only its
+# parameters (μ, σ, lo, hi). The τ-integral has no closed form, so the engine integrates it by an
+# INTERNAL quadrature (the grid is the engine's, invisible to the model — "write the model strictly,
+# compute it approximately"). The latent `x` itself is then conditioned through the engine's own
+# non-conjugate quadrature (`_condition_by_grid` on a GaussianPrevision); the body declares a
+# continuous `gaussian` x-prior, never a grid. Replaces the old τ-grid form (a discretisation baked
+# into the declared kernel).
 struct LogisticReaction <: LeafFamily
     sign::Float64
     threshold::Float64
-    tau_values::Vector{Float64}
-    tau_weights::Vector{Float64}
+    tau_mu::Float64
+    tau_sigma::Float64
+    tau_lo::Float64
+    tau_hi::Float64
 end
 
-function logistic_reaction_logdensity(fam::LogisticReaction, x, react)
-    p1 = sum(fam.tau_weights[k] / (1.0 + exp(-(fam.sign * x - fam.threshold) / fam.tau_values[k]))
-             for k in eachindex(fam.tau_values))
+function logistic_reaction_logdensity(fam::LogisticReaction, x, react; n_tau::Int = 32)
+    # Engine-internal quadrature of τ ~ TruncatedNormal(μ, σ; [lo,hi]): midpoint rule, weights
+    # re-normalised over the truncation so the mixture is a proper marginal.
+    step = (fam.tau_hi - fam.tau_lo) / n_tau
+    p1 = 0.0
+    z = 0.0
+    for k in 1:n_tau
+        τ = fam.tau_lo + (k - 0.5) * step
+        w = exp(-0.5 * ((τ - fam.tau_mu) / fam.tau_sigma)^2)
+        z += w
+        p1 += w / (1.0 + exp(-(fam.sign * x - fam.threshold) / τ))
+    end
+    p1 /= z
     (react == 1 || react == 1.0) ? log(max(p1, 1e-300)) : log(max(1.0 - p1, 1e-300))
 end
 
@@ -192,12 +206,12 @@ register_family!(Symbol("linear-gaussian"),
 register_family!(Symbol("group-noisy-channel"),
                  (covariate, rho, n_alt) ->
                      GroupNoisyChannel(Float64(covariate), Float64(rho), Int(round(n_alt))), 3)
-# Four args: sign, threshold (scalars) and the τ-grid + τ-weights (runtime vectors, via the
-# `:family` arg-evaluation generalisation that linear-gaussian uses).
+# Six scalar args: sign, threshold, and the continuous-τ truncated-Gaussian (μ, σ, lo, hi). The
+# engine integrates τ internally — no τ-grid in the declared model.
 register_family!(Symbol("logistic-reaction"),
-                 (sign, threshold, tvals, twts) ->
-                     LogisticReaction(Float64(sign), Float64(threshold),
-                                      collect(Float64, tvals), collect(Float64, twts)), 4)
+                 (sign, threshold, tmu, tsig, tlo, thi) ->
+                     LogisticReaction(Float64(sign), Float64(threshold), Float64(tmu),
+                                      Float64(tsig), Float64(tlo), Float64(thi)), 6)
 
 struct Kernel
     source::Space

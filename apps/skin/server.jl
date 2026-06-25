@@ -286,14 +286,6 @@ function build_prevision(spec)
         comps = LabelledCategoricalPrevision[
             LabelledCategoricalPrevision(ℓ, CategoricalPrevision(copy(comp_lw))) for ℓ in labels]
         MixturePrevision(comps, label_lw)
-    elseif t == "discretised_gaussian"
-        # A Gaussian discretised onto a grid (a stated prior shape, decouple Move 1) — the
-        # engine builds the grid prior the body assembled host-side (utility.py gaussian_weights).
-        # Log-weights are the unnormalised Gaussian; CategoricalMeasure normalises (≡ exp/Σ up to
-        # ULP). The grid is a stated truncation; widen it, never renormalise (utility.py §4.4).
-        grid = collect(Float64, spec["grid"])
-        mu = Float64(spec["mu"]); sigma = Float64(spec["sigma"])
-        CategoricalMeasure(Finite(grid), [-0.5 * ((x - mu) / sigma)^2 for x in grid])
     else
         error("unknown type: $t")
     end
@@ -392,12 +384,14 @@ function build_kernel(spec, state_id::Union{String, Nothing}=nothing)
             likelihood_family = DispatchByComponent(c -> GroupNoisyChannel(cov, c.label, A)))
 
     elseif t == "logistic_reaction"
-        # A binary reaction to a latent x (e.g. a utility on a grid), under the choice model
-        # marginalised over a declared τ-prior. Conditions a categorical over the x-grid;
-        # the body ships (sign, threshold, τ-grid, τ-weights) as declared data.
+        # A binary reaction to a CONTINUOUS latent x, under a choice model marginalising a
+        # continuous temperature τ ~ TruncatedNormal(μ,σ;[lo,hi]). The body ships only (sign,
+        # threshold, tau_mu, tau_sigma, tau_lo, tau_hi) — no τ-grid; the engine integrates τ
+        # internally. Conditioning the GaussianPrevision x-prior falls to the engine's own
+        # non-conjugate quadrature (`_condition_by_grid`) — the x-grid is the engine's too.
         fam = LogisticReaction(Float64(spec["sign"]), Float64(spec["threshold"]),
-                               collect(Float64, spec["tau_values"]),
-                               collect(Float64, spec["tau_weights"]))
+                               Float64(spec["tau_mu"]), Float64(spec["tau_sigma"]),
+                               Float64(spec["tau_lo"]), Float64(spec["tau_hi"]))
         Kernel(Euclidean(1), Finite([0.0, 1.0]),
             x -> error("generate not used"),
             (x, o) -> logistic_reaction_logdensity(fam, x, o);
@@ -709,7 +703,7 @@ end
 # rides the `credence-skin` image tag). MAJOR bumps on a breaking protocol
 # change; MINOR on additive. Apps pin the major in code and `initialize`
 # rejects a mismatching major with -32010. See docs/decouple/master-plan.md.
-const PROTOCOL_VERSION = "1.8"
+const PROTOCOL_VERSION = "1.9"
 protocol_major(v) = String(first(split(String(v), ".")))
 
 # Advertised method set, returned by `initialize` for client capability

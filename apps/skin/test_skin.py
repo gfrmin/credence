@@ -963,49 +963,26 @@ def test_replace_factor_identity_pin():
 
 
 def test_logistic_reaction_kernel():
-    """Drive the τ-marginalised reaction model over the wire: condition a categorical over an
-    x-grid (a latent utility) by a binary reaction via the `logistic_reaction` kernel. react=1
-    (sign>0) must favour higher x, react=0 the mirror — zero arithmetic client-side."""
+    """The proper pattern (engine owns the grid): condition a CONTINUOUS Gaussian latent on a
+    binary reaction via `logistic_reaction` (continuous-τ, integrated engine-side; x quadratured
+    by the engine's non-conjugate fallback). react=1 (sign>0) shifts the latent mean positive,
+    react=0 the mirror — NO grid declared, zero client arithmetic."""
     skin = SkinClient()
     try:
         skin.initialize()
-        grid = [-2.0, -1.0, 0.0, 1.0, 2.0]
-        space = {"type": "finite", "values": grid}
         kernel = {"type": "logistic_reaction", "sign": 1.0, "threshold": 0.0,
-                  "tau_values": [0.5, 2.0], "tau_weights": [0.5, 0.5]}
-        s1 = skin.create_state(type="categorical", space=space)   # uniform prior
+                  "tau_mu": 1.0, "tau_sigma": 0.5, "tau_lo": 0.5, "tau_hi": 2.0}
+        s1 = skin.create_state(type="gaussian", mu=0.0, sigma=1.0)   # continuous latent prior
         skin.condition(s1, kernel=kernel, observation=1.0)
-        w1 = skin.weights(s1)
-        # credence-lint: allow — precedent:test-oracle — asserts the reaction reweights the latent; non-causal w.r.t. any agent
-        assert w1[4] > w1[0], f"react=1 should favour higher x: {w1}"
-        s0 = skin.create_state(type="categorical", space=space)
+        m1 = skin.mean(s1)
+        # credence-lint: allow — precedent:test-oracle — reaction shifts the continuous latent; non-causal
+        assert m1 > 0.0, f"react=1 should shift the latent positive: {m1}"
+        s0 = skin.create_state(type="gaussian", mu=0.0, sigma=1.0)
         skin.condition(s0, kernel=kernel, observation=0.0)
-        w0 = skin.weights(s0)
-        # credence-lint: allow — precedent:test-oracle — asserts the mirror reweight; non-causal w.r.t. any agent
-        assert w0[0] > w0[4], f"react=0 should favour lower x: {w0}"
-        print("PASS: logistic_reaction kernel roundtrip")
-    finally:
-        skin.shutdown()
-
-
-def test_discretised_gaussian_prior():
-    """The engine builds the Gaussian-on-grid prior the body assembled host-side
-    (utility.py `gaussian_weights`). `discretised_gaussian` must match exp(-½((x-µ)/σ)²)/Z."""
-    import math
-    skin = SkinClient()
-    try:
-        skin.initialize()
-        grid = [-2.0, -1.0, 0.0, 1.0, 2.0]
-        sid = skin.create_state(type="discretised_gaussian", grid=grid, mu=0.0, sigma=1.0)
-        w = skin.weights(sid)
-        raw = [math.exp(-0.5 * ((x - 0.0) / 1.0) ** 2) for x in grid]
-        z = sum(raw)
-        ref = [r / z for r in raw]
-        # credence-lint: allow — precedent:test-oracle — engine grid-prior vs the host gaussian_weights formula; non-causal
-        assert all(abs(a - b) < 1e-12 for a, b in zip(w, ref)), f"{w} vs {ref}"
-        # credence-lint: allow — precedent:test-oracle — asserts the prior is a normalised distribution; non-causal
-        assert abs(sum(w) - 1.0) < 1e-12, f"not normalised: {sum(w)}"
-        print("PASS: discretised_gaussian ≡ gaussian_weights")
+        m0 = skin.mean(s0)
+        # credence-lint: allow — precedent:test-oracle — the mirror shift (threshold 0); non-causal
+        assert m0 < 0.0 and abs(m1 + m0) < 1e-9, f"react=0 should mirror react=1: {m0} vs {m1}"
+        print("PASS: logistic_reaction over a continuous latent (engine quadratures x and τ)")
     finally:
         skin.shutdown()
 
@@ -1337,7 +1314,7 @@ def test_initialize_returns_contract():
     skin = SkinClient()
     try:
         result = skin.initialize()
-        assert result["protocol"] == "1.8", f"protocol: {result.get('protocol')}"
+        assert result["protocol"] == "1.9", f"protocol: {result.get('protocol')}"
         assert "version" in result, "engine version missing"
         methods = result["methods"]
         # Core canalised verbs + the Move-3 structure-BMA verbs must be advertised.
@@ -1383,7 +1360,7 @@ def test_dsl_sources_inline_equivalent_to_path():
         # a subsequent call_dsl against the loaded env resolves (the path-based
         # test_router_roundtrip already covers the path branch).
         result = skin.initialize(dsl_sources={"router": source})
-        assert result["protocol"] == "1.8"
+        assert result["protocol"] == "1.9"
         print("PASS: inline dsl_sources loads equivalently to a path load")
     finally:
         skin.shutdown()
@@ -1499,8 +1476,6 @@ if __name__ == "__main__":
     test_read_params_conjugate_readback()
     print()
     test_logistic_reaction_kernel()
-    print()
-    test_discretised_gaussian_prior()
     print()
     test_centered_power_claim_eu()
     print()

@@ -1,6 +1,6 @@
 # Credence Skin Protocol
 
-Protocol-Version: 1.8
+Protocol-Version: 1.9
 
 JSON-RPC 2.0 over stdio. Skin reads newline-delimited JSON from stdin,
 writes newline-delimited JSON to stdout, logs to stderr.
@@ -13,6 +13,15 @@ truth, asserted in CI to equal `PROTOCOL_VERSION` in `server.jl`.
 
 ### Changelog
 
+- **1.9** — "the engine owns the grid" (discretisation-antipattern disposal, Phase A). A
+  discretisation grid is a computation strategy and must not appear in a declared belief/kernel.
+  (1) `discretised_gaussian` belief-spec is **REMOVED** — declare a `gaussian` prior; the engine
+  auto-quadratures any non-conjugate conditioning (`_condition_by_grid`, 64-pt, invisible). (2)
+  `logistic_reaction` now declares a **continuous** truncated-Gaussian temperature (`tau_mu,
+  tau_sigma, tau_lo, tau_hi`) integrated engine-internally, replacing the `tau_values`/`tau_weights`
+  grid, and conditions a continuous `gaussian` x-prior (not a categorical x-grid). Breaking only to
+  unreleased surface (no published consumer used either spec); protocol MAJOR unchanged. The
+  Gaussian elicitation uses the existing `gaussian_known_var` → NormalNormal (exact).
 - **1.8** — two additive prerequisites for the life-agent body rewire. (1) `labelled_mixture`
   gains an optional `label_prior` belief-spec: the engine discretises a continuous prior
   (`{type:beta, alpha, beta}` or `{type:gaussian, mu, sigma}`) onto the label grid to set the
@@ -875,7 +884,6 @@ Example with state references (the stateful mode, for long-lived agents):
 | `mixture` | `components, log_weights` | `MixtureMeasure` |
 | `tagged_beta` | `tag, alpha, beta` | `TaggedBetaMeasure` |
 | `labelled_mixture` | `labels: [...]`, `component_log_weights: [...]`, optional `label_prior` (`{type:beta,alpha,beta}` / `{type:gaussian,mu,sigma}`) or `label_log_weights` | `MixturePrevision` of `LabelledCategoricalPrevision` — a shared discrete latent (label-grid) over one categorical prior. `label_prior` discretises a continuous prior onto the labels engine-side (e.g. ρ~Beta exactly); else uniform / explicit weights. Routed by `group_noisy_channel`. (protocol 1.3; `label_prior` 1.8) |
-| `discretised_gaussian` | `grid: [...]`, `mu`, `sigma` | A Gaussian discretised onto the grid (≡ utility.py `gaussian_weights`), as a `CategoricalMeasure`. (protocol 1.4) |
 
 ### Kernel specs
 
@@ -883,7 +891,7 @@ Example with state references (the stateful mode, for long-lived agents):
 |------|--------|-------------|
 | `bernoulli` | -- | theta -> Bernoulli(theta). Beta-Bernoulli conjugate. |
 | `group_noisy_channel` | `covariate`, `n_alternatives` | Per-component (`DispatchByComponent`) correlated-document model: `r_d = ρ·covariate` per `labelled_mixture` component; reports (1-based positions) are the `condition` observation. (protocol 1.3) |
-| `logistic_reaction` | `sign`, `threshold`, `tau_values: [...]`, `tau_weights: [...]` | Binary reaction to a latent x: `P(react=1\|x) = Σ_t w_t·σ((sign·x−threshold)/t)`. Conditions a categorical over the x-grid; `observation` is 0/1. (protocol 1.4) |
+| `logistic_reaction` | `sign`, `threshold`, `tau_mu`, `tau_sigma`, `tau_lo`, `tau_hi` | Binary reaction to a CONTINUOUS latent x: `P(react=1\|x) = ∫ σ((sign·x−threshold)/τ)·N(τ;μ,σ) dτ` over τ∈[lo,hi] — a continuous truncated-Gaussian temperature, integrated engine-internally (no τ-grid). Condition a `gaussian` x-prior; the engine quadratures x via its non-conjugate fallback; `observation` is 0/1. (protocol 1.4; continuous-τ 1.9) |
 | `gaussian_known_var` | `variance` | mu -> N(mu, var). Gaussian conjugate. |
 | `gaussian_unknown_var` | -- | (mu, tau) -> N(mu, 1/tau). Normal-Gamma conjugate. |
 | `program_observation` | `features`, `true_label` | Per-component CompiledKernel dispatch. |

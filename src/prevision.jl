@@ -96,6 +96,10 @@ Used to compute the mean of a scalar-valued prevision.
 """
 struct Identity <: TestFunction end
 
+# Scalar previsions integrate Identity via closed forms; the generic grid/particle path
+# (QuadraturePrevision, ParticlePrevision) reaches it through `apply` — `E[x]` on the grid.
+apply(::Identity, s) = s
+
 """
     Projection(index::Int) <: TestFunction
 
