@@ -1,6 +1,6 @@
 # Credence Skin Protocol
 
-Protocol-Version: 1.10
+Protocol-Version: 1.11
 
 JSON-RPC 2.0 over stdio. Skin reads newline-delimited JSON from stdin,
 writes newline-delimited JSON to stdout, logs to stderr.
@@ -13,6 +13,20 @@ truth, asserted in CI to equal `PROTOCOL_VERSION` in `server.jl`.
 
 ### Changelog
 
+- **1.11** — coupled latents move engine-side (discretisation-antipattern disposal, Phase B). Three
+  additions and one removal: (a) `truncated_mv_gaussian` belief-spec — independent continuous
+  N(μᵢ,σᵢ²) latents each on a SUPPORT `[loᵢ,hiᵢ]`, the multivariate analogue of `truncated_gaussian`,
+  for COUPLED latents whose joint prior is independent and whose likelihood correlates them; the
+  engine integrates the box `∏[loᵢ,hiᵢ]` by an internal product-grid quadrature. (b) `margin_reaction`
+  kernel-spec — the τ-marginalised logistic choice model over a linear functional `margin = coeffsᵀx −
+  offset` of a multivariate latent (coupling utility latents in a joint fold; `coeffs = eⱼ` recovers a
+  single-latent reaction). (c) `marginal` verb — the `axis`-th coordinate marginal of a product-grid
+  posterior, registered as a NEW scalar state read with `mean`/`expect`; the engine sums out the other
+  coordinates over its own grid, so the consumer ships only `{state_id, axis}`. **Removed:** the
+  grid-coupled `marginalise(state, shape, axis)` verb — the caller no longer constructs a product grid
+  or ships a `shape`; it declares `truncated_mv_gaussian` and reads `marginal`. (The retired verb had a
+  single consumer — the life-agent body — migrated in lockstep; the protocol is in active flux during
+  decouple, so the removal rides a minor bump rather than fragmenting the 1.x line.)
 - **1.10** — `truncated_gaussian` belief-spec (additive, Phase A cont'd): a continuous N(μ,σ²) on a
   stated SUPPORT `[lo, hi]` — the proper continuous form for a sign/range-constrained latent (e.g.
   a utility `u_wrong ≤ 0`). The bounds are model support, not a discretisation grid; the engine
@@ -380,25 +394,26 @@ Maximum expected utility (without returning the action).
 {"result": {"value": 0.85}}
 ```
 
-### marginalise
+### marginal
 
-Marginal of a flat product-grid categorical along one axis (protocol 1.7). The
-state's `weights` index a row-major product grid (last axis varies fastest, matching
-`itertools.product`) with per-axis sizes `shape`; the verb sums out every other axis
-and returns the length-`shape[axis]` marginal. `axis` is 0-based. A terminal readout
-(the consumer never re-conditions the marginal) that keeps the joint-grid fold's
-marginalisation engine-side — the consumer ships `{shape, axis}` data, not arithmetic.
+The `axis`-th coordinate marginal of a product-grid posterior — an `MvQuadraturePrevision`
+built from a `truncated_mv_gaussian` and conditioned by coupling kernels (protocol 1.11,
+replaces the removed `marginalise`). The engine sums out the other coordinates over its OWN
+product grid and registers the result as a NEW scalar state, returning its `state_id`; read it
+with `mean`/`expect` exactly like a 1-D fold. `axis` is 0-based. The consumer ships only
+`{state_id, axis}` — no grid `shape` — and does no belief arithmetic. The joint stays registered
+under its own id (the next coordinate read reuses it); destroy the returned marginal state when
+done.
 
 ```json
-{"method": "marginalise", "params": {
+{"method": "marginal", "params": {
   "state_id": "s_joint",
-  "shape": [3, 4],
   "axis": 0
 }}
 ```
 
 ```json
-{"result": {"weights": [0.21, 0.34, 0.45]}}
+{"result": {"state_id": "s_marg_0"}}
 ```
 
 ### read_params
@@ -884,6 +899,7 @@ Example with state references (the stateful mode, for long-lived agents):
 | `beta` | `alpha, beta` | `BetaMeasure` |
 | `gaussian` | `mu, sigma` | `GaussianMeasure` |
 | `truncated_gaussian` | `mu, sigma, lo, hi` | A continuous N(μ,σ²) on the SUPPORT [lo,hi] (a stated bound, e.g. a sign-constrained utility). The bounds are model support, NOT a grid; the engine integrates over [lo,hi] internally. Conditioning is non-conjugate → a quadrature posterior. (protocol 1.10) |
+| `truncated_mv_gaussian` | `mu: [...]`, `sigma: [...]`, `lo: [...]`, `hi: [...]` | The multivariate analogue: independent continuous N(μᵢ,σᵢ²) latents each on a SUPPORT [loᵢ,hiᵢ]. The joint prior is independent (diagonal — no invented correlation); coupling enters only through the likelihood (a `margin_reaction`). The engine integrates the box ∏[loᵢ,hiᵢ] by an internal product-grid quadrature → an `MvQuadraturePrevision`; read coordinate marginals with `marginal`. (protocol 1.11) |
 | `gamma` | `alpha, beta` | `GammaMeasure` |
 | `dirichlet` | `alpha: [...]` | `DirichletMeasure` |
 | `normal_gamma` | `kappa, mu, alpha, beta` | `NormalGammaMeasure` |
@@ -899,6 +915,7 @@ Example with state references (the stateful mode, for long-lived agents):
 | `bernoulli` | -- | theta -> Bernoulli(theta). Beta-Bernoulli conjugate. |
 | `group_noisy_channel` | `covariate`, `n_alternatives` | Per-component (`DispatchByComponent`) correlated-document model: `r_d = ρ·covariate` per `labelled_mixture` component; reports (1-based positions) are the `condition` observation. (protocol 1.3) |
 | `logistic_reaction` | `sign`, `threshold`, `tau_mu`, `tau_sigma`, `tau_lo`, `tau_hi` | Binary reaction to a CONTINUOUS latent x: `P(react=1\|x) = ∫ σ((sign·x−threshold)/τ)·N(τ;μ,σ) dτ` over τ∈[lo,hi] — a continuous truncated-Gaussian temperature, integrated engine-internally (no τ-grid). Condition a `gaussian` x-prior; the engine quadratures x via its non-conjugate fallback; `observation` is 0/1. (protocol 1.4; continuous-τ 1.9) |
+| `margin_reaction` | `coeffs: [...]`, `offset`, `sign`, `threshold`, `tau_mu`, `tau_sigma`, `tau_lo`, `tau_hi` | Binary reaction to a CONTINUOUS MULTIVARIATE latent x, same τ-marginalised logistic over a linear functional `margin = coeffsᵀx − offset`: `P(react=1\|x) = ∫ σ((sign·margin−threshold)/τ)·N(τ;μ,σ) dτ`. Couples latents in a joint fold (`coeffs = eⱼ` recovers a single-latent reaction). Condition a `truncated_mv_gaussian`; `observation` is 0/1. (protocol 1.11) |
 | `gaussian_known_var` | `variance` | mu -> N(mu, var). Gaussian conjugate. |
 | `gaussian_unknown_var` | -- | (mu, tau) -> N(mu, 1/tau). Normal-Gamma conjugate. |
 | `program_observation` | `features`, `true_label` | Per-component CompiledKernel dispatch. |

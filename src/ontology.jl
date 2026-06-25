@@ -24,7 +24,7 @@ import ..Previsions: TestFunction, Identity, Projection, NestedProjection,
                      Tabular, LinearCombination, OpaqueClosure, FiringChoice, expect
 import ..Previsions: BetaPrevision, TaggedBetaPrevision, SparseStructurePrevision, GaussianPrevision, TruncatedGaussianPrevision, MvGaussianPrevision, GammaPrevision, CategoricalPrevision, DirichletPrevision, NormalGammaPrevision, ProductPrevision, MixturePrevision, LabelledCategoricalPrevision
 import ..Previsions: ExchangeablePrevision, decompose
-import ..Previsions: ParticlePrevision, QuadraturePrevision
+import ..Previsions: ParticlePrevision, QuadraturePrevision, MvQuadraturePrevision, _mv_points
 import ..Previsions: ConditionalPrevision
 import ..Previsions: condition
 import ..Previsions: params
@@ -40,6 +40,7 @@ export FAMILY_REGISTRY, register_family!
 export NormalNormal, LinearGaussian, Categorical, NormalGammaLikelihood, Exponential, Poisson
 export GroupNoisyChannel, group_noisy_channel_logdensity
 export LogisticReaction, logistic_reaction_logdensity
+export MarginReaction, margin_reaction_logdensity
 export Event, TagSet, FeatureEquals, FeatureInterval, Conjunction, Disjunction, Complement
 export indicator_kernel, feature_value, BOOLEAN_SPACE
 export Functional, Identity, Projection, NestedProjection, Tabular, LinearCombination, OpaqueClosure
@@ -50,7 +51,7 @@ export ConjugatePrevision, maybe_conjugate, update
 export draw
 export weights, mean, variance, log_density_at, prune, truncate, logsumexp
 export FrozenVectorView
-export WeightsDomainError, probability, marginal, marginalise, CenteredPower, CenteredSquare, GeometricTail
+export WeightsDomainError, probability, marginal, truncated_mv_quadrature, CenteredPower, CenteredSquare, GeometricTail
 
 # ================================================================
 # FrozenVectorView{T}
@@ -895,6 +896,41 @@ function log_predictive(p::QuadraturePrevision, k::Kernel, obs)
     log(max(val, 1e-300))
 end
 
+# ── MvQuadraturePrevision: the multivariate product-grid analogue of QuadraturePrevision ──
+# expect integrates a function of the latent VECTOR over the product grid; condition multiplies a
+# new likelihood into the existing grid (sequential, no re-gridding); marginal reads a coordinate.
+function expect(p::MvQuadraturePrevision, f::Function)
+    lw = p.log_weights
+    max_lw = maximum(lw)
+    w = exp.(lw .- max_lw)
+    w ./= sum(w)
+    acc = 0.0
+    for (i, x) in enumerate(_mv_points(p.axes))
+        acc += w[i] * f(x)
+    end
+    acc
+end
+expect(p::MvQuadraturePrevision, tf::TestFunction) = expect(p, x -> apply(tf, x))
+
+# Sequential conditioning: the support is fixed by the prior grid, a further observation only
+# reweights mass within it — multiply the kernel's likelihood at each product point. The likelihood
+# may couple the coordinates (a margin reaction) or touch one (a coordinate elicitation/reaction).
+function condition(p::MvQuadraturePrevision, k::Kernel, observation)
+    logw = copy(p.log_weights)
+    for (i, x) in enumerate(_mv_points(p.axes))
+        ll = density(k, x, observation)
+        !isnan(ll) || error("density returned NaN conditioning an MvQuadraturePrevision")
+        logw[i] += ll
+    end
+    MvQuadraturePrevision(deepcopy(p.axes), logw)
+end
+
+# Marginal likelihood ∫ p(x)·P(obs|x) dx over the product grid — the `condition` verb's log_marginal.
+function log_predictive(p::MvQuadraturePrevision, k::Kernel, obs)
+    val = expect(p, x -> exp(density(k, x, obs)))
+    log(max(val, 1e-300))
+end
+
 # MixturePrevision: linearity of expectation.
 function expect(p::MixturePrevision, f::Function)
     lw = p.log_weights
@@ -1269,6 +1305,43 @@ expect(p::TruncatedGaussianPrevision, tf::TestFunction; kwargs...) = expect(p, x
 function log_predictive(p::TruncatedGaussianPrevision, k::Kernel, obs)
     val = expect(p, h -> exp(density(k, h, obs)))
     log(max(val, 1e-300))
+end
+
+# The product-grid compute budget — the total likelihood-evaluation count the engine will spend on a
+# coupled fold. The grid RESOLUTION is metareasoned against it (see `_mv_n_per_dim`): this is not a
+# hard wall that errors, it is the compute allowance the fidelity-vs-accuracy tradeoff is solved
+# against. (On metareasoning, SPEC: "the choice of how much to compute is itself a decision problem".)
+const _MV_POINT_BUDGET = 65536
+
+# Points per dimension for a product-grid prior — the metareasoned inference FIDELITY. Cost is ~npᵈ
+# likelihood evals; quadrature accuracy improves ~1/np² with diminishing returns. The EU-optimal np
+# under a fixed compute budget is the FINEST grid whose total npᵈ fits the budget: np = ⌊budget^(1/d)⌋,
+# capped at 64 (the 1-D path's resolution — finer is wasted) and ≥1. So fidelity falls out of the
+# budget and degrades SMOOTHLY with coupling depth (no cliff, no error): d=2→64/dim (4096), d=5→9/dim
+# (59049), d=8→3/dim (6561), d=12→2/dim (4096). This is the resource-rational (Russell–Wefald,
+# Lieder–Griffiths) fidelity choice — an approximate strategy with higher EU than the exact dense grid
+# once compute enters the utility is the OPTIMAL strategy, not a silent degradation (SPEC §metareasoning).
+# d=2 (the dominant consumer — a margin coupling two utility latents) is EXACT at 64/dim, unchanged.
+_mv_n_per_dim(d::Int) = clamp(Int(floor(_MV_POINT_BUDGET^(1 / d))), 1, 64)
+
+# The independent-truncated-Gaussian product-grid prior — the multivariate analogue of conditioning
+# a TruncatedGaussianPrevision onto its grid. The coupled latents' joint prior is independent (no
+# invented correlation), so each axis is a midpoint grid over [loᵢ,hiᵢ] and the prior log-weight at
+# a product point is the sum of per-dimension truncated-Gaussian log-densities. Coupling enters only
+# through the likelihood at `condition`. The support box [lo,hi] is the model (sign/range
+# constraints), the grid resolution is the engine's metareasoned compute choice (`_mv_n_per_dim`).
+function truncated_mv_quadrature(mu::Vector{Float64}, sigma::Vector{Float64},
+                                 lo::Vector{Float64}, hi::Vector{Float64}; n_per::Int = 0)
+    d = length(mu)
+    (length(sigma) == d && length(lo) == d && length(hi) == d) ||
+        error("truncated_mv_quadrature: mu/sigma/lo/hi must share length (got " *
+              "$(length(mu))/$(length(sigma))/$(length(lo))/$(length(hi)))")
+    all(sigma .> 0) || error("truncated_mv_quadrature: every sigma must be > 0")
+    all(lo .< hi) || error("truncated_mv_quadrature: every lo must be < hi")
+    np = n_per > 0 ? n_per : _mv_n_per_dim(d)
+    axes = [[lo[i] + (k - 0.5) * (hi[i] - lo[i]) / np for k in 1:np] for i in 1:d]
+    logw = [sum(-0.5 * ((x[i] - mu[i]) / sigma[i])^2 for i in 1:d) for x in _mv_points(axes)]
+    MvQuadraturePrevision(axes, logw)
 end
 log_density_at(m::DirichletMeasure, x) = sum((m.alpha[i] - 1) * log(x[i]) for i in eachindex(m.alpha))
 
