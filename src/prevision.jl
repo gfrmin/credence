@@ -30,7 +30,7 @@ module Previsions
 
 export Prevision, TestFunction, Indicator, apply, expect
 export Identity, Projection, NestedProjection, Tabular, LinearCombination, OpaqueClosure, FiringChoice
-export BetaPrevision, TaggedBetaPrevision, SparseStructurePrevision, GaussianPrevision, TruncatedGaussianPrevision, MvGaussianPrevision, GammaPrevision, CategoricalPrevision, DirichletPrevision, NormalGammaPrevision, ProductPrevision, MixturePrevision, LabelledCategoricalPrevision
+export BetaPrevision, TaggedBetaPrevision, SparseStructurePrevision, GaussianPrevision, TruncatedGaussianPrevision, MvGaussianPrevision, GammaPrevision, CategoricalPrevision, DirichletPrevision, NormalGammaPrevision, ProductPrevision, MixturePrevision, LabelledCategoricalPrevision, RhoCategoricalPrevision
 export ExchangeablePrevision, decompose
 export ParticlePrevision, QuadraturePrevision, MvQuadraturePrevision, _mv_points
 export ConditionalPrevision
@@ -453,6 +453,42 @@ sharpen ρ once (the shared-instrument coupling), not per document.
 struct LabelledCategoricalPrevision <: Prevision
     label::Float64
     categorical::CategoricalPrevision
+end
+
+"""
+    RhoCategoricalPrevision(v_log_prior, alpha, beta, poly) <: Prevision
+
+The EXACT continuous-ρ joint over a categorical V and a Beta reliability ρ — the de-couple Phase C
+disposal of the `labelled_mixture` ρ-grid. The group-noisy-channel likelihood is LINEAR in ρ
+(`P(reports|v,ρ) = a + ρ·b`), so a Beta prior on ρ stays a **polynomial-in-ρ × Beta** under
+conditioning: `P(V=v, ρ) ∝ exp(v_log_prior[v]) · Beta(ρ;α,β) · ∏_d (a_d + ρ·b_{d,v})`. The product
+over conditioned document groups is accumulated as the per-atom coefficient vector `poly[v]` (a
+conjugate-style sufficient statistic; `poly[v] = [1.0]` for the prior). The V-marginal is then the
+EXACT closed form `weights[v] ∝ exp(v_log_prior[v]) · Σ_k poly[v][k] · E_Beta[ρ^k]` — a sum of Beta
+moments, no grid, no quadrature. `condition` multiplies each `poly[v]` by the degree-1 factor
+`(a_d, b_{d,v})` a `RhoGroupChannel` kernel supplies (so corroborating documents sharpen ρ exactly,
+once, the shared-instrument coupling). The V atoms are the 1-based positions `1:length(v_log_prior)`
+(the candidate atoms + NONE), matching the report values and the positional `Tabular` readout.
+"""
+struct RhoCategoricalPrevision <: Prevision
+    v_log_prior::Vector{Float64}
+    alpha::Float64
+    beta::Float64
+    poly::Vector{Vector{Float64}}
+
+    function RhoCategoricalPrevision(v_log_prior::Vector{Float64}, alpha::Float64, beta::Float64,
+                                     poly::Vector{Vector{Float64}})
+        (alpha > 0 && beta > 0) || error("RhoCategoricalPrevision: ρ Beta needs α,β > 0 (got $alpha, $beta)")
+        length(poly) == length(v_log_prior) ||
+            error("RhoCategoricalPrevision: poly has $(length(poly)) atoms, v_log_prior $(length(v_log_prior))")
+        all(p -> length(p) > 0, poly) || error("RhoCategoricalPrevision: every poly[v] must be non-empty")
+        if all(lw -> lw == -Inf, v_log_prior)
+            error("RhoCategoricalPrevision: V prior has zero total mass")
+        end
+        max_lw = maximum(v_log_prior)
+        log_total = max_lw + log(sum(exp.(v_log_prior .- max_lw)))
+        new(v_log_prior .- log_total, alpha, beta, poly)
+    end
 end
 
 """

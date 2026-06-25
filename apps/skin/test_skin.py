@@ -1009,32 +1009,35 @@ def test_truncated_gaussian_prior():
         skin.shutdown()
 
 
-def test_labelled_mixture_rho_latent():
-    """A non-embedding consumer drives the carried ρ-latent over the wire: build a
-    `labelled_mixture` (a ρ-grid of categoricals over V), condition it with a
-    `group_noisy_channel` kernel on corroborating reports, and optimise over V — all with
-    ZERO probability arithmetic client-side. Asserts ρ learns over the wire (mass shifts to
-    the higher ρ) and the ρ-integrated V decision picks the corroborated candidate."""
+def test_reliability_categorical_rho_latent():
+    """A non-embedding consumer drives the EXACT continuous-ρ latent over the wire (Phase C): build a
+    `reliability_categorical` (a categorical V with a Beta reliability ρ), condition it with a
+    `group_noisy_channel` kernel on corroborating reports, and optimise over V — all with ZERO
+    probability arithmetic client-side and NO ρ-grid (the engine integrates ρ analytically). Asserts
+    corroboration sharpens the V-marginal toward the reported candidate and the decision picks it.
+    (Replaces the retired `labelled_mixture` ρ-grid + `label_prior` discretisation.)"""
     skin = SkinClient()
     try:
         skin.initialize()
-        # ρ-grid {0.5, 0.9}; uniform V prior over 3 positions (2 candidates + NONE).
+        # V prior uniform over 3 positions (2 candidates + NONE); ρ ~ Beta(4,4) (the wide prior).
         sid = skin.create_state(
-            type="labelled_mixture",
-            labels=[0.5, 0.9],
-            component_log_weights=[0.0, 0.0, 0.0],
+            type="reliability_categorical",
+            v_log_weights=[0.0, 0.0, 0.0],
+            alpha=4.0, beta=4.0,
         )
+        w0 = skin.weights(sid)
         kernel = {"type": "group_noisy_channel", "covariate": 0.8, "n_alternatives": 5}
         # Two corroborating chunks of one document both report candidate position 1.
         res = skin.condition(sid, kernel=kernel, observation=[1, 1])
         assert res["state_id"] == sid and "log_marginal" in res, res
 
-        # `weights` returns the ρ-mixture weights — corroboration should favour the higher ρ.
-        w_rho = skin.weights(sid)
-        # credence-lint: allow — precedent:test-oracle — asserts ρ-learning on the conditioned belief; non-causal w.r.t. any agent
-        assert len(w_rho) == 2 and w_rho[1] > w_rho[0], f"ρ should shift high: {w_rho}"
+        # `weights` is now the exact ρ-integrated V-marginal (3 atoms) — corroboration of candidate 1
+        # raises its posterior above the uniform prior and above the other atoms.
+        w = skin.weights(sid)
+        # credence-lint: allow — precedent:test-oracle — asserts ρ-integrated V-learning; non-causal w.r.t. any agent
+        assert len(w) == 3 and w[0] > w0[0] and w[0] > w[1] and w[0] > w[2], f"V should favour 1: {w}"
 
-        # optimise over V integrates ρ (expect collapses the mixture): report-1 beats abstain.
+        # optimise over V integrates ρ exactly (expect on the V-marginal): report-1 beats abstain.
         action, _ = skin.optimise(
             sid,
             actions={"type": "finite", "values": [0.0, 1.0]},  # ignored by functional_per_action
@@ -1044,38 +1047,7 @@ def test_labelled_mixture_rho_latent():
             }},
         )
         assert action == "report1", f"ρ-integrated V decision should report the corroborated candidate, got {action}"
-        print("PASS: labelled_mixture + group_noisy_channel ρ-latent roundtrip")
-    finally:
-        skin.shutdown()
-
-
-def test_labelled_mixture_beta_label_prior():
-    """The ρ-grid latent prior carried EXACTLY in shape over the wire (decouple Move 1 finish,
-    1.8): a `labelled_mixture` with `label_prior={beta}` discretises the Beta density onto the
-    ρ-grid engine-side, so the body ships only {alpha, beta} — no host density arithmetic. The
-    returned mixture weights must equal the normalised Beta kernel at the labels."""
-    import math
-    a, b = 4.0, 4.0
-    labels = [0.1, 0.3, 0.5, 0.7, 0.9]
-    skin = SkinClient()
-    try:
-        skin.initialize()
-        sid = skin.create_state(
-            type="labelled_mixture",
-            labels=labels,
-            component_log_weights=[0.0, 0.0, 0.0],
-            label_prior={"type": "beta", "alpha": a, "beta": b},
-        )
-        w = skin.weights(sid)  # the ρ-mixture (latent) weights
-        raw = [x ** (a - 1.0) * (1.0 - x) ** (b - 1.0) for x in labels]
-        z = sum(raw)
-        ref = [r / z for r in raw]
-        # credence-lint: allow — precedent:test-oracle — engine ρ-grid prior vs the Beta-kernel formula; non-causal
-        assert all(abs(p - q) < 1e-12 for p, q in zip(w, ref)), f"{w} vs {ref}"
-        # Beta(4,4) is symmetric around 0.5 → the centre label carries the most mass.
-        # credence-lint: allow — precedent:test-oracle — asserts the discretised prior is peaked at the Beta mode; non-causal
-        assert w[2] == max(w), f"symmetric Beta should peak at 0.5: {w}"
-        print("PASS: labelled_mixture beta label_prior (exact ρ-grid prior over the wire)")
+        print("PASS: reliability_categorical + group_noisy_channel exact-ρ roundtrip")
     finally:
         skin.shutdown()
 
@@ -1083,7 +1055,7 @@ def test_labelled_mixture_beta_label_prior():
 def test_read_params_conjugate_readback():
     """A wire-CONDITIONED Beta posterior read back as a spec (decouple Move 1 finish, 1.8): the
     body conditions a ρ Beta over the wire on audit outcomes (NO host `a += 1`), then reads the
-    exact posterior params to feed another spec (a `labelled_mixture` `label_prior`). Beta(4,4)
+    exact posterior params to feed another spec (e.g. a `reliability_categorical` ρ prior). Beta(4,4)
     + 3 successes + 1 failure → Beta(7,5), read back exactly."""
     skin = SkinClient()
     try:
@@ -1338,7 +1310,7 @@ def test_initialize_returns_contract():
     skin = SkinClient()
     try:
         result = skin.initialize()
-        assert result["protocol"] == "1.11", f"protocol: {result.get('protocol')}"
+        assert result["protocol"] == "1.12", f"protocol: {result.get('protocol')}"
         assert "version" in result, "engine version missing"
         methods = result["methods"]
         # Core canalised verbs + the Move-3 structure-BMA verbs must be advertised.
@@ -1384,7 +1356,7 @@ def test_dsl_sources_inline_equivalent_to_path():
         # a subsequent call_dsl against the loaded env resolves (the path-based
         # test_router_roundtrip already covers the path branch).
         result = skin.initialize(dsl_sources={"router": source})
-        assert result["protocol"] == "1.11"
+        assert result["protocol"] == "1.12"
         print("PASS: inline dsl_sources loads equivalently to a path load")
     finally:
         skin.shutdown()
@@ -1493,9 +1465,7 @@ if __name__ == "__main__":
     print()
     test_routing_verbs_roundtrip()
     print()
-    test_labelled_mixture_rho_latent()
-    print()
-    test_labelled_mixture_beta_label_prior()
+    test_reliability_categorical_rho_latent()
     print()
     test_read_params_conjugate_readback()
     print()

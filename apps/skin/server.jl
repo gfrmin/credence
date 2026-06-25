@@ -216,23 +216,6 @@ end
 # `params(::MvGaussianPrevision)` emits — a bare matrix flattens on JSON).
 _cov_from_rows(rows) = mapreduce(r -> permutedims(collect(Float64, r)), vcat, rows)
 
-# Discretise a continuous prior onto a label grid (the labelled_mixture latent prior): the
-# unnormalised log-density at each label; MixturePrevision normalises. Keeps a ρ~Beta carried
-# EXACTLY in shape with no host density arithmetic (mirrors discretised_gaussian's grid prior).
-# Labels must be interior to the support (β-kernel diverges at {0,1} for α<1 or β<1).
-function _discretise_label_prior(spec, labels::Vector{Float64})
-    t = spec["type"]
-    if t == "beta"
-        a = Float64(spec["alpha"]); b = Float64(spec["beta"])
-        [(a - 1.0) * log(ℓ) + (b - 1.0) * log(1.0 - ℓ) for ℓ in labels]
-    elseif t == "gaussian"
-        mu = Float64(spec["mu"]); sigma = Float64(spec["sigma"])
-        [-0.5 * ((ℓ - mu) / sigma)^2 for ℓ in labels]
-    else
-        error("unknown label_prior type: $t (expected beta or gaussian)")
-    end
-end
-
 function build_prevision(spec)
     t = spec["type"]
     if t == "categorical"
@@ -280,26 +263,29 @@ function build_prevision(spec)
         lw = collect(Float64, spec["log_weights"])
         MixturePrevision(components, lw)
     elseif t == "labelled_mixture"
-        # A carried, shared discrete latent (decouple Move 1): a mixture over `labels`
-        # (e.g. a ρ-grid), each component a LabelledCategoricalPrevision sharing one
-        # categorical V-prior (`component_log_weights`). A per-component-routing kernel
-        # (group_noisy_channel) reads each label at condition time, so conditioning learns
-        # the latent jointly with V and shares it across observations. The latent prior over
-        # `labels` is `label_prior` (a belief-spec the engine discretises onto the grid —
-        # e.g. `{type:beta, alpha, beta}` for a ρ~Beta carried exactly, no host density
-        # arithmetic) OR explicit `label_log_weights`; default uniform.
+        # A carried, shared discrete latent: a mixture over `labels`, each component a
+        # LabelledCategoricalPrevision sharing one categorical prior (`component_log_weights`).
+        # A per-component-routing kernel reads each label at condition time, so conditioning learns
+        # the latent jointly with the categorical and shares it across observations. The latent
+        # prior over `labels` is explicit `label_log_weights` (default uniform). [The `label_prior`
+        # continuous-onto-grid discretisation — the ρ-grid antipattern — was retired in Phase C; a
+        # continuous ρ is now carried EXACTLY by `reliability_categorical`, no grid.]
         labels = collect(Float64, spec["labels"])
         comp_lw = collect(Float64, spec["component_log_weights"])
-        label_lw = if haskey(spec, "label_prior")
-            _discretise_label_prior(spec["label_prior"], labels)
-        elseif haskey(spec, "label_log_weights")
-            collect(Float64, spec["label_log_weights"])
-        else
-            zeros(Float64, length(labels))
-        end
+        label_lw = haskey(spec, "label_log_weights") ?
+            collect(Float64, spec["label_log_weights"]) : zeros(Float64, length(labels))
         comps = LabelledCategoricalPrevision[
             LabelledCategoricalPrevision(ℓ, CategoricalPrevision(copy(comp_lw))) for ℓ in labels]
         MixturePrevision(comps, label_lw)
+    elseif t == "reliability_categorical"
+        # The EXACT continuous-ρ join (Phase C): a categorical V (`v_log_weights`, the K candidate
+        # atoms + NONE, 1-based) with a Beta(alpha,beta) reliability latent ρ. Conditioned by
+        # `group_noisy_channel` (continuous-ρ) observations; the engine integrates ρ analytically
+        # (a polynomial-in-ρ × Beta → an exact Beta-moment V-marginal), replacing the ρ-grid
+        # `labelled_mixture`. The V atoms are the 1-based report positions; ρ is never discretised.
+        v_lw = collect(Float64, spec["v_log_weights"])
+        RhoCategoricalPrevision(v_lw, Float64(spec["alpha"]), Float64(spec["beta"]),
+                                [[1.0] for _ in eachindex(v_lw)])
     else
         error("unknown type: $t")
     end
@@ -384,18 +370,18 @@ function build_kernel(spec, state_id::Union{String, Nothing}=nothing)
             likelihood_family = LinearGaussian(coeffs, sqrt(variance)))
 
     elseif t == "group_noisy_channel"
-        # A document of correlated chunk-extractions, read as evidence about a categorical
-        # V carried in a `labelled_mixture` (label = ρ). DispatchByComponent reads each
-        # component's label to set r_d = ρ·covariate; the chunk reports (1-based candidate
-        # positions) are the `condition` observation (a JSON array). Routing is per
-        # component, so log_density is never called — the labelled categorical reaches the
-        # resolved family through `categorical_logdensity`.
+        # A document of correlated chunk-extractions, read as evidence about a categorical V with a
+        # CONTINUOUS Beta reliability ρ (a `reliability_categorical` state). The likelihood is linear
+        # in ρ — P(reports|v,ρ) = a + ρ·covariate·(1{all match v} − a) — so the engine integrates ρ
+        # analytically (Phase C). The kernel ships only (covariate, n_alternatives); the chunk reports
+        # (1-based candidate positions) are the `condition` observation (a JSON array). ρ is NOT a
+        # kernel parameter (the retired DispatchByComponent path baked it in as a label grid).
         cov = Float64(spec["covariate"])
         A = Int(spec["n_alternatives"])
         Kernel(Finite([0.0]), Finite([0.0]),
             h -> error("generate not used"),
-            (h, o) -> error("group_noisy_channel routes via categorical_logdensity, not log_density");
-            likelihood_family = DispatchByComponent(c -> GroupNoisyChannel(cov, c.label, A)))
+            (h, o) -> error("group_noisy_channel routes via the RhoCategoricalPrevision condition");
+            likelihood_family = RhoGroupChannel(cov, A))
 
     elseif t == "logistic_reaction"
         # A binary reaction to a CONTINUOUS latent x, under a choice model marginalising a
@@ -732,7 +718,7 @@ end
 # rides the `credence-skin` image tag). MAJOR bumps on a breaking protocol
 # change; MINOR on additive. Apps pin the major in code and `initialize`
 # rejects a mismatching major with -32010. See docs/decouple/master-plan.md.
-const PROTOCOL_VERSION = "1.11"
+const PROTOCOL_VERSION = "1.12"
 protocol_major(v) = String(first(split(String(v), ".")))
 
 # Advertised method set, returned by `initialize` for client capability
@@ -1119,8 +1105,8 @@ end
 # read_params: serialise a registered belief to its declarative `{type, params...}` spec
 # (the `params` protocol, same shape `create_state` consumes). Lets a consumer route a
 # wire-CONDITIONED conjugate posterior back into another spec (e.g. an extractor-reliability
-# ρ Beta → a `labelled_mixture` `label_prior`) WITHOUT host conjugacy — the body never folds
-# `a += 1`, it conditions over the wire then reads the exact posterior params here.
+# ρ Beta read back to seed a `reliability_categorical` ρ prior) WITHOUT host conjugacy — the body
+# never folds `a += 1`, it conditions over the wire then reads the exact posterior params here.
 function handle_read_params(params)
     id = string(params["state_id"])
     _belief_spec(get_state(id))

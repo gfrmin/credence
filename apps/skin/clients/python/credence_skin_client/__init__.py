@@ -405,7 +405,7 @@ class SkinClient:
     def read_params(self, state_id: str) -> dict:
         """The registered belief's declarative ``{type, params...}`` spec (the `params`
         protocol). Routes a wire-conditioned conjugate posterior back into another spec
-        (e.g. a ρ Beta → a `labelled_mixture` `label_prior`) with no host conjugacy."""
+        (e.g. a ρ Beta read back to seed a `reliability_categorical` ρ prior) with no host conjugacy."""
         return self._call("read_params", {"state_id": state_id})
 
     def draw(self, state_id: str) -> Any:
