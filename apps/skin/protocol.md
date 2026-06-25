@@ -1,6 +1,6 @@
 # Credence Skin Protocol
 
-Protocol-Version: 1.7
+Protocol-Version: 1.8
 
 JSON-RPC 2.0 over stdio. Skin reads newline-delimited JSON from stdin,
 writes newline-delimited JSON to stdout, logs to stderr.
@@ -13,6 +13,11 @@ truth, asserted in CI to equal `PROTOCOL_VERSION` in `server.jl`.
 
 ### Changelog
 
+- **1.8** — `labelled_mixture` gains an optional `label_prior` belief-spec (additive): the
+  engine discretises a continuous prior (`{type:beta, alpha, beta}` or `{type:gaussian, mu,
+  sigma}`) onto the label grid to set the mixture (latent) weights, so a ρ~Beta latent is
+  carried EXACTLY in shape without host density arithmetic. Omitting it keeps the prior
+  uniform / `label_log_weights` (unchanged). The life-agent lookup ρ-latent uses it.
 - **1.7** — the deferred Move-1 commit-3 pieces (additive), completing the life-agent body
   decouple: a `centered_power` function spec — `(θ−mu)^n` with the exact closed-form Beta
   moment, so the integrated claim-inclusion EU rides `optimise{include,withhold}` over the cell
@@ -850,7 +855,7 @@ Example with state references (the stateful mode, for long-lived agents):
 | `product` | `factors: [measure, ...]` | `ProductMeasure` |
 | `mixture` | `components, log_weights` | `MixtureMeasure` |
 | `tagged_beta` | `tag, alpha, beta` | `TaggedBetaMeasure` |
-| `labelled_mixture` | `labels: [...]`, `component_log_weights: [...]`, optional `label_log_weights` | `MixturePrevision` of `LabelledCategoricalPrevision` — a shared discrete latent (label-grid) over one categorical prior. Routed by `group_noisy_channel`. (protocol 1.3) |
+| `labelled_mixture` | `labels: [...]`, `component_log_weights: [...]`, optional `label_prior` (`{type:beta,alpha,beta}` / `{type:gaussian,mu,sigma}`) or `label_log_weights` | `MixturePrevision` of `LabelledCategoricalPrevision` — a shared discrete latent (label-grid) over one categorical prior. `label_prior` discretises a continuous prior onto the labels engine-side (e.g. ρ~Beta exactly); else uniform / explicit weights. Routed by `group_noisy_channel`. (protocol 1.3; `label_prior` 1.8) |
 | `discretised_gaussian` | `grid: [...]`, `mu`, `sigma` | A Gaussian discretised onto the grid (≡ utility.py `gaussian_weights`), as a `CategoricalMeasure`. (protocol 1.4) |
 
 ### Kernel specs

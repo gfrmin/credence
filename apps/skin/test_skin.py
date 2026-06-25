@@ -1050,6 +1050,37 @@ def test_labelled_mixture_rho_latent():
         skin.shutdown()
 
 
+def test_labelled_mixture_beta_label_prior():
+    """The ρ-grid latent prior carried EXACTLY in shape over the wire (decouple Move 1 finish,
+    1.8): a `labelled_mixture` with `label_prior={beta}` discretises the Beta density onto the
+    ρ-grid engine-side, so the body ships only {alpha, beta} — no host density arithmetic. The
+    returned mixture weights must equal the normalised Beta kernel at the labels."""
+    import math
+    a, b = 4.0, 4.0
+    labels = [0.1, 0.3, 0.5, 0.7, 0.9]
+    skin = SkinClient()
+    try:
+        skin.initialize()
+        sid = skin.create_state(
+            type="labelled_mixture",
+            labels=labels,
+            component_log_weights=[0.0, 0.0, 0.0],
+            label_prior={"type": "beta", "alpha": a, "beta": b},
+        )
+        w = skin.weights(sid)  # the ρ-mixture (latent) weights
+        raw = [x ** (a - 1.0) * (1.0 - x) ** (b - 1.0) for x in labels]
+        z = sum(raw)
+        ref = [r / z for r in raw]
+        # credence-lint: allow — precedent:test-oracle — engine ρ-grid prior vs the Beta-kernel formula; non-causal
+        assert all(abs(p - q) < 1e-12 for p, q in zip(w, ref)), f"{w} vs {ref}"
+        # Beta(4,4) is symmetric around 0.5 → the centre label carries the most mass.
+        # credence-lint: allow — precedent:test-oracle — asserts the discretised prior is peaked at the Beta mode; non-causal
+        assert w[2] == max(w), f"symmetric Beta should peak at 0.5: {w}"
+        print("PASS: labelled_mixture beta label_prior (exact ρ-grid prior over the wire)")
+    finally:
+        skin.shutdown()
+
+
 def test_centered_power_claim_eu():
     """The integrated claim-inclusion EU over the wire (decouple Move 1 finish, 1.7): a cell
     belief is a Beta over reliability θ; the include action's EU is E_θ[θ·u_assert(θ)]−κ —
@@ -1281,7 +1312,7 @@ def test_initialize_returns_contract():
     skin = SkinClient()
     try:
         result = skin.initialize()
-        assert result["protocol"] == "1.7", f"protocol: {result.get('protocol')}"
+        assert result["protocol"] == "1.8", f"protocol: {result.get('protocol')}"
         assert "version" in result, "engine version missing"
         methods = result["methods"]
         # Core canalised verbs + the Move-3 structure-BMA verbs must be advertised.
@@ -1327,7 +1358,7 @@ def test_dsl_sources_inline_equivalent_to_path():
         # a subsequent call_dsl against the loaded env resolves (the path-based
         # test_router_roundtrip already covers the path branch).
         result = skin.initialize(dsl_sources={"router": source})
-        assert result["protocol"] == "1.7"
+        assert result["protocol"] == "1.8"
         print("PASS: inline dsl_sources loads equivalently to a path load")
     finally:
         skin.shutdown()
@@ -1437,6 +1468,8 @@ if __name__ == "__main__":
     test_routing_verbs_roundtrip()
     print()
     test_labelled_mixture_rho_latent()
+    print()
+    test_labelled_mixture_beta_label_prior()
     print()
     test_logistic_reaction_kernel()
     print()
