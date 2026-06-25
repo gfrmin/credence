@@ -13,11 +13,15 @@ truth, asserted in CI to equal `PROTOCOL_VERSION` in `server.jl`.
 
 ### Changelog
 
-- **1.8** — `labelled_mixture` gains an optional `label_prior` belief-spec (additive): the
-  engine discretises a continuous prior (`{type:beta, alpha, beta}` or `{type:gaussian, mu,
-  sigma}`) onto the label grid to set the mixture (latent) weights, so a ρ~Beta latent is
-  carried EXACTLY in shape without host density arithmetic. Omitting it keeps the prior
-  uniform / `label_log_weights` (unchanged). The life-agent lookup ρ-latent uses it.
+- **1.8** — two additive prerequisites for the life-agent body rewire. (1) `labelled_mixture`
+  gains an optional `label_prior` belief-spec: the engine discretises a continuous prior
+  (`{type:beta, alpha, beta}` or `{type:gaussian, mu, sigma}`) onto the label grid to set the
+  mixture (latent) weights, so a ρ~Beta latent is carried EXACTLY in shape without host density
+  arithmetic. Omitting it keeps the prior uniform / `label_log_weights` (unchanged). (2) a
+  `read_params` verb returns a registered belief's declarative `{type, params...}` spec (the
+  `params` protocol), so a wire-CONDITIONED conjugate posterior routes back into another spec
+  (a ρ Beta → `labelled_mixture` `label_prior`) with no host conjugacy — the body conditions
+  over the wire then reads the exact posterior, never folding `a += 1`.
 - **1.7** — the deferred Move-1 commit-3 pieces (additive), completing the life-agent body
   decouple: a `centered_power` function spec — `(θ−mu)^n` with the exact closed-form Beta
   moment, so the integrated claim-inclusion EU rides `optimise{include,withhold}` over the cell
@@ -380,6 +384,21 @@ marginalisation engine-side — the consumer ships `{shape, axis}` data, not ari
 
 ```json
 {"result": {"weights": [0.21, 0.34, 0.45]}}
+```
+
+### read_params
+
+A registered belief's declarative `{type, params...}` spec (protocol 1.8) — the `params`
+protocol, the same shape `create_state` consumes, so it round-trips. Routes a wire-conditioned
+conjugate posterior back into another spec (e.g. a ρ Beta → a `labelled_mixture` `label_prior`)
+with no host conjugacy: the consumer conditions over the wire, then reads the exact posterior.
+
+```json
+{"method": "read_params", "params": {"state_id": "s_rho"}}
+```
+
+```json
+{"result": {"type": "beta", "alpha": 7.0, "beta": 5.0}}
 ```
 
 ### draw

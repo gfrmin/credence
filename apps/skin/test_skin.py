@@ -1081,6 +1081,31 @@ def test_labelled_mixture_beta_label_prior():
         skin.shutdown()
 
 
+def test_read_params_conjugate_readback():
+    """A wire-CONDITIONED Beta posterior read back as a spec (decouple Move 1 finish, 1.8): the
+    body conditions a ρ Beta over the wire on audit outcomes (NO host `a += 1`), then reads the
+    exact posterior params to feed another spec (a `labelled_mixture` `label_prior`). Beta(4,4)
+    + 3 successes + 1 failure → Beta(7,5), read back exactly."""
+    skin = SkinClient()
+    try:
+        skin.initialize()
+        sid = skin.create_state(type="beta", alpha=4.0, beta=4.0)
+        for obs in (1.0, 1.0, 1.0, 0.0):  # 3 successes, 1 failure
+            skin.condition(sid, kernel={"type": "bernoulli"}, observation=obs)
+        spec = skin.read_params(sid)
+        # credence-lint: allow — precedent:test-oracle — engine conjugate posterior params vs Beta(4+3, 4+1); non-causal
+        assert spec["type"] == "beta", spec
+        # credence-lint: allow — precedent:test-oracle — Beta-Bernoulli conjugacy α=4+3, β=4+1; non-causal
+        assert abs(spec["alpha"] - 7.0) < 1e-12 and abs(spec["beta"] - 5.0) < 1e-12, spec
+        # And it round-trips: the spec rebuilds an identical Beta state.
+        sid2 = skin.create_state(**spec)
+        # credence-lint: allow — precedent:test-oracle — rebuilt-state mean vs Beta(7,5) mean 7/12; non-causal
+        assert abs(skin.mean(sid2) - 7.0 / 12.0) < 1e-12, skin.mean(sid2)
+        print("PASS: read_params conjugate readback (wire-conditioned Beta → spec, no host conjugacy)")
+    finally:
+        skin.shutdown()
+
+
 def test_centered_power_claim_eu():
     """The integrated claim-inclusion EU over the wire (decouple Move 1 finish, 1.7): a cell
     belief is a Beta over reliability θ; the include action's EU is E_θ[θ·u_assert(θ)]−κ —
@@ -1470,6 +1495,8 @@ if __name__ == "__main__":
     test_labelled_mixture_rho_latent()
     print()
     test_labelled_mixture_beta_label_prior()
+    print()
+    test_read_params_conjugate_readback()
     print()
     test_logistic_reaction_kernel()
     print()
