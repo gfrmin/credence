@@ -233,15 +233,21 @@ function decide_with_voi(approve_belief, decision_kernel::Kernel;
                          cost::Float64, aversion::Float64, interrupt_cost::Float64,
                          expected_repeats::Float64 = 0.0,
                          w_time::Float64 = 0.0, exp_time::Float64 = 0.0,
-                         harm_belief = nothing, harm_cost::Float64 = 0.0)
+                         harm_belief = nothing, harm_cost::Float64 = 0.0,
+                         compute_cost::Float64 = 0.0)
     tf = 1.0 + expected_repeats                       # calls a block prevents: this one + the tail m
     tcost = w_time * exp_time * tf                    # wall-clock a block saves (w_time $/sec × E[time]·tf)
     # EU(ask) = net_voi − q against the SAME tail+time-aware block payoff, so resolving a
     # likely-long loop inherits the (1+m)× value. The VOI is always over the approve belief
     # alone — a harmful action is one-shot, so "should I let this through?" is the EVPI question.
     ask_block = _lin(-cost * (tf + aversion), cost * tf + tcost)
+    # `compute_cost`: the agent's FORWARD inference spend that :ask commits to (interrupt → await →
+    # condition → re-decide); :proceed/:block terminate the episode, so it is differential to :ask. A
+    # distinct currency from `interrupt_cost` (the user's attention, inside `net_voi`) — the two SUM. A
+    # known scalar at decision time ⇒ a constant subtraction (collapse-towers Phase 4; the object-level
+    # half of Phase 5's `net_voc`, which prices a meta-action's compute the same forward way).
     eu_ask = net_voi(approve_belief, decision_kernel, [:proceed, :block],
-                     Dict(:proceed => _const(0.0), :block => ask_block), [0, 1], interrupt_cost)
+                     Dict(:proceed => _const(0.0), :block => ask_block), [0, 1], interrupt_cost) - compute_cost
     if harm_belief === nothing
         # Single-outcome: block payoff is the Identity-based ask_block over the approve belief.
         fpa = Dict(:proceed => _const(0.0), :block => ask_block, :ask => _const(eu_ask))
