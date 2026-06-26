@@ -89,11 +89,19 @@ no-op, the Bayesian evidence does all the Occam work, so the unification is stru
 there, not load-bearing). `average-not-collapse` binding: deliverable is the *posterior over families*
 — no "select the family" step; a test asserts mixture-not-`argmax`; pragma at the carrying site.
 
-## Phase 3 — Extract the net-value functional (refactor)
+## Phase 3 — Extract the net-value functional (refactor) — **LANDED** (suite 41/41 green)
 
-`src/net_value.jl`: `net_value(delta_value, cost) = delta_value - cost`. Re-express `net_voi =
-net_value(voi(...), cost)` (bit-identical). Document routing EU (`routing.jl:54`) and the
-`decide_with_voi` ask-gate as the same shape — **referenced, not merged** this arc.
+`src/net_value.jl`: `net_value(delta_value, cost) = delta_value - cost`. `net_voi =
+net_value(voi(...), cost)` (bit-identical). **Reframed in review (the headline-protecting insight):**
+the net-value *semantics* `E[value] − cost` is **already unified across all four** — the routing EU
+(`_eu_functional`, `routing.jl`) and the `decide_with_voi` block payoff are the **general
+Functional-offset representation** (value integrated over the joint by `expect`, cost in the offset);
+the scalar `net_value` is its **reduction** for already-scalar value (`net_voi`, `net_voc`). Two
+representations of one semantics — not "one unification split in two," and forcing routing through the
+scalar would be a regression. So when Phase 5 lands, "does EU subsume every lever?" answers "yes, in one
+of two representations." A **paired-comment guardrail** at `net_value.jl` + `_eu_functional` states the
+invariant both hold: pure linear `value − cost`, no clamp/nonlinearity — if either gains a nonlinearity
+the unification breaks and must be revisited.
 
 ## Phase 4 — Compute-cost coordinate (additive, degenerate-reducing)
 
