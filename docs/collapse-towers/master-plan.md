@@ -103,13 +103,24 @@ of two representations." A **paired-comment guardrail** at `net_value.jl` + `_eu
 invariant both hold: pure linear `value − cost`, no clamp/nonlinearity — if either gains a nonlinearity
 the unification breaks and must be revisited.
 
-## Phase 4 — Compute-cost coordinate (additive, degenerate-reducing)
+## Phase 4 — Compute-cost coordinate (additive, degenerate-reducing) — **LANDED** (suite 42/42 green)
 
-Add `compute_cost::Float64 = 0.0` to `decide_with_voi`, riding in the **offset** (a known scalar, like
-`tcost`/`time_cost`), in the one currency with `cost`/`harm_cost`/`time_cost`. **Confirm distinct
-currencies:** `compute_cost` (agent inference spend) and `interrupt_cost` (user attention spend) must
-**sum**, not double-count. Tests: `compute_cost=0` bit-for-bit any belief; positive shifts argmax to
-the cheaper action.
+`compute_cost::Float64 = 0.0` added to `decide_with_voi`; `eu_ask = net_voi(…, interrupt_cost) -
+compute_cost`. A known scalar ⇒ a constant subtraction (like `tcost`/`time_cost`), **not** a
+belief-weighted coefficient (the master plan's "additively, like harm_cost" was loose — `harm_cost` is a
+coefficient on `Projection(2)` *because* harm is uncertain; this means "additive in the one currency").
+`compute_cost` (agent inference) and `interrupt_cost` (user attention) are distinct currencies that
+**sum** (two separate subtractions; the decision depends only on their total — tested split-invariant).
+
+**Rationale corrected in review (load-bearing for Phase 5): `compute_cost` prices FORWARD, not sunk,
+inference.** `:ask` bears it because `:ask` is the only action that commits to *further* inference
+(interrupt → await → condition → re-decide); `:proceed`/`:block` terminate. It is **NOT** the EVPI
+look-ahead (`net_voi`/`eu_ask` is computed unconditionally before `optimise`, so that is *sunk and common
+to all three* — and pricing "is it worth computing the VOI?" is the meta-decision *above*
+`decide_with_voi`, i.e. Phase 5's `net_voc` territory). The forward reading is what makes the directional
+test sound (a sunk common cost cancels in the argmax) and what makes Phase 4 genuinely "the object-level
+half of `net_voc`" — both price forward, not-yet-incurred inference. Skin wire unchanged (kwarg defaults
+to 0.0; `server.jl:1320` caller untouched — no protocol bump).
 
 ## Phase 5 — VOC gate: retire the `rand` breach in `perturb_grammar`
 
