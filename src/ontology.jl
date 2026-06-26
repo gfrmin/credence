@@ -2023,6 +2023,15 @@ include("sparse_structure.jl")
 include("stdlib.jl")
 
 # ================================================================
+# The single structural complexity log-prior (SPEC §1.3) — collapse-towers Phase 1.
+# Instanced by the structure-BMA edge prior (below) and the program node-count prior
+# (program_space/enumeration.jl + agent_state.jl, which run in module Credence and reach it
+# via this export). Must be included before structure_bma.jl, which calls it.
+# ================================================================
+include("complexity.jl")
+export complexity_logprior
+
+# ================================================================
 # Structure-BMA builder + observe + readout (lifted from the credence-pi app brain —
 # decouple Move 3). Compositions over the above (SparseStructurePrevision / condition /
 # with_components); no new frozen type, no new axiom-constrained function.
