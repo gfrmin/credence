@@ -122,7 +122,6 @@ apps/                       Everything built on top of the DSL (three sub-layers
     grid_world/             Research environment
     email_agent/            Email triage with JMAP
     qa_benchmark/           QA benchmark harness
-    rss/                    RSS article ranking
     pomdp_agent/            POMDP agent (Thompson MCTS, state abstraction)
   skin/                     JSON-RPC translation layer (opaque Measure handles)
   python/                   body — user-facing surfaces (uv workspace)

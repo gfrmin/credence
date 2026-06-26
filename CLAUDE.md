@@ -436,7 +436,7 @@ Two-tier architecture. See SPEC.md for details.
   not as a separate tier.
 - Tier 2 (apps/): Applications, in three explicit sub-layers relative to the wire:
   - **Brain-side applications** (`apps/julia/*`) — in-process DSL callers; domains
-    (grid_world, email_agent, rss, qa_benchmark) and the pomdp_agent package.
+    (grid_world, email_agent, qa_benchmark) and the pomdp_agent package.
     See `apps/julia/DOMAIN_INTERFACE.md`.
   - **Skin** (`apps/skin/`) — JSON-RPC translation layer. The `SkinClient`
     Python handle talks to `server.jl`; Measures stay server-side as opaque IDs.
