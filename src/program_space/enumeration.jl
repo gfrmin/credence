@@ -167,6 +167,11 @@ function enumerate_programs_as_measure(g::Grammar, max_depth::Int;
                                    include_temporal=include_temporal,
                                    min_log_prior=min_log_prior,
                                    action_space=action_space)
-    log_weights = Float64[-g.complexity * log(2) - p.complexity * log(2) for p in programs]
+    # Program node-count prior: the SPEC §1.3 complexity log-prior (`complexity.jl`) as the
+    # two-part MDL code — `g.complexity` defines the dictionary, `p.complexity` describes the
+    # program given it (each nonterminal ref costs 1). λ = log(2), pinned by §1.3. The two-call
+    # sum is bit-identical to `-g.complexity*log(2) - p.complexity*log(2)` (test_complexity.jl).
+    log_weights = Float64[complexity_logprior(g.complexity; λ = log(2)) +
+                          complexity_logprior(p.complexity; λ = log(2)) for p in programs]
     Ontology.EnumerationMeasure{Program}(CategoricalPrevision(log_weights), programs, Finite(programs))
 end

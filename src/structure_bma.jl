@@ -91,11 +91,16 @@ end
 # credence-pi shim: `FeatureDecl` is an eval-layer type included after this module, and
 # reading a BDSL env is consumer wiring, not engine machinery.)
 
-# Structure-inclusion log-weights (independent edge-inclusion at p_edge; uniform when
-# p_edge = 0.5). Shared by the sparse and dense priors.
+# Structure-inclusion log-weights: the edge-inclusion instance of the SPEC §1.3 complexity
+# log-prior (`complexity.jl`). L = |parents|, λ = log((1−p_edge)/p_edge), offset =
+# n_features·log(1−p_edge); independent edge-inclusion at p_edge, uniform (λ=0) at p_edge=0.5.
+# The offset is shared across structures, so it cancels under the mixture renormalisation
+# (only differences-between-structures are observable — see test/test_complexity.jl). Shared by
+# the sparse and dense priors. Algebraically: k·log(p)+(n−k)·log(1−p) = −k·log((1−p)/p)+n·log(1−p).
 _structure_logweights(model::StructureBMA) =
-    Float64[length(parents) * log(model.p_edge) +
-            (model.n_features - length(parents)) * log(1.0 - model.p_edge)
+    Float64[complexity_logprior(length(parents);
+                                λ = log((1.0 - model.p_edge) / model.p_edge),
+                                offset = model.n_features * log(1.0 - model.p_edge))
             for parents in model.structures]
 
 """

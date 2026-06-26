@@ -128,7 +128,10 @@ function add_programs_to_state!(
         base_idx += 1
         push!(new_components, Ontology.TaggedBetaPrevision(
             base_idx, Ontology.BetaPrevision(1.0, 1.0)))
-        lw = -grammar.complexity * log(2) - p.complexity * log(2)
+        # Program node-count prior (two-part MDL): the SPEC §1.3 complexity log-prior
+        # (`complexity.jl`), λ = log(2). Bit-identical to the old literal (test_complexity.jl).
+        lw = complexity_logprior(grammar.complexity; λ = log(2)) +
+             complexity_logprior(p.complexity; λ = log(2))
         push!(new_lw, lw)
         push!(new_meta, (grammar.id, pi))
         push!(new_ck, compile_kernel(p, grammar, pi))
