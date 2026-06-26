@@ -57,6 +57,8 @@ modify beliefs, the implementation can disagree with itself
 level. A4 is the invariant that prevents the theorems from
 being violated in code.
 
+> **The two framings — read SPEC §1 before adding any capability that grows the hypothesis space or prices computation.** A1–A4 above are the DSL/code-discipline axioms: what it takes to implement Bayesian decision theory without internal incoherence. The *architectural* axioms live in `SPEC.md §1` under a five-axiom framing — the same coherence/EU/conditioning core, plus two commitments not restated here: **the complexity prior** (`SPEC.md §1.3` — the Occam/Solomonoff weighting that truncates both towers, model-of-models and reasoning-about-reasoning, so neither regresses) and **the CIRL alignment commitment** (`SPEC.md §1.4`). The boundary that governs autonomy is also there (search "meta-action"): **meta-actions modify the hypothesis space; the Bayesian machinery underneath is immutable; "think more or act now" is one `argmax EU`.** These bind the agent's *behaviour* as firmly as A1–A4 bind the *code*. A consequence worth stating because it is the reflex error when inferring over models: see the `average-not-collapse` precedent.
+
 ## The frozen layer: four types
 
 The DSL has exactly four kinds of object. These are the
@@ -258,6 +260,8 @@ The slug index below is the lint's source of truth for valid slugs (regex `^\*\*
 **Slug:** `declarative-construction` — Struct constructors that build declarative data (`Problem`, `Kernel(..., likelihood_family=…)`, `CategoricalMeasure(Finite(vals))`) are legal. Documentation-only. (Invariant 2)
 
 **Slug:** `posterior-iteration` — Looping over a mixture's support to do weighted arithmetic is almost always wrong; rewrite as a `Functional` + `expect`, or as event-conditioning. Last-resort escape requires a tracking issue for the rewrite. (Invariants 1 + 2)
+
+**Slug:** `average-not-collapse` — A posterior over models/families/programs (a BMA mixture) is *carried*; decisions marginalise over it (`argmax_a expect(mixture, u_a)`), the `argmax` ranging only over actions. Collapsing to the max-posterior component (`argmax_m weights`) to drive a decision is a parallel decision mechanism — "pick the best family / the winning program" is this error. Legitimate collapse (single-model deployment) is itself an `optimise` under a carrying-cost utility, never `argmax P(m|data)`. No escape hatch for the illegal form. (Invariant 1; A2/A3/A4)
 
 **Slug:** `event-conditioning` — `condition(m, e::Event)` is the preferred form when the conditioning object is a declared predicate. Provably equivalent to `condition(m, indicator_kernel(e), true)` on deterministic events (DLRS Prop. 4.9). No escape hatch; this is the legal path. (Invariants 1 + 2)
 

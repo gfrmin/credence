@@ -420,7 +420,7 @@ This matters because Sutton et al. proved that the polling execution mode — re
     (done))
 ```
 
-Programs P₁, P₂, P₃ are separate options. Each is simple (depth 2). Together they produce the sequence: label → move → notify → done. But no single program encodes the sequence — it emerges from the mixture selecting the best option at each step. A monolithic program encoding the entire triage policy would also exist in the mixture, at higher complexity cost. The complexity prior determines which approach wins.
+Programs P₁, P₂, P₃ are separate options. Each is simple (depth 2). Together they produce the sequence: label → move → notify → done. But no single program encodes the sequence — it emerges from the mixture selecting the best option at each step. A monolithic program encoding the entire triage policy would also exist in the mixture, at higher complexity cost. The complexity prior determines which approach wins. "Wins" means *carries the most posterior mass*, not *is selected to the exclusion of the rest*: the mixture is retained and each step's decision marginalises over the competing programs (the EU is averaged over them, per the alignment objective in §1.4). Collapsing to a single program is a separate decision under utility — warranted only when carrying the mixture has a cost — and is then an `optimise` over programs, never an `argmax` of posterior probability. See the `average-not-collapse` precedent.
 
 The host loop for multi-step processing:
 
