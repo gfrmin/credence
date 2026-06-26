@@ -51,6 +51,12 @@ latency_at(::Nothing, ::AbstractString, ::AbstractVector) = 0.0
 # LinearCombination coefficients is coefficient construction, not probability arithmetic.
 # `time_cost` = w_time·E[time|a,X] folds into the SAME offset as −cost (E[time] is a known
 # scalar at decision time, not co-varying with θ). time_cost=0 ⇒ −(cost+0)==−cost.
+#
+# This is the GENERAL (Functional-offset) representation of `net_value` (E[value] − cost): value
+# integrated over the joint by `expect`, cost in the offset. The scalar `net_value` (net_value.jl) is
+# its reduction. INVARIANT both sites hold (collapse-towers Phase 3 §5.1): pure linear value − cost —
+# no clamp, no nonlinearity. If a nonlinearity is added here or in net_value.jl, the unification
+# breaks and must be revisited. (Paired comment in net_value.jl.)
 _eu_functional(a::Int, reward::Float64, cost::Float64, time_cost::Float64 = 0.0) =
     LinearCombination(Tuple{Float64, TestFunction}[(reward, Projection(a))], -(cost + time_cost))
 
