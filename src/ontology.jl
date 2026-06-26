@@ -2074,6 +2074,12 @@ end
 include("sparse_structure.jl")
 
 # ================================================================
+# The single net-expected-value shape (E[value] − cost) — collapse-towers Phase 3.
+# Helper before its consumer: stdlib.jl's `net_voi` is the action=observe instance.
+# ================================================================
+include("net_value.jl")
+
+# ================================================================
 # Stdlib (extracted to stdlib.jl)
 # ================================================================
 include("stdlib.jl")

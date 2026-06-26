@@ -198,9 +198,10 @@ function voi(belief, k::Kernel, actions, fpa::AbstractDict, possible_obs)
     posterior_val - base
 end
 
-# net-voi: VOI minus the cost of observing — the `ask`-gate EU.
+# net-voi: VOI minus the cost of observing — the `ask`-gate EU. The action=observe instance of
+# `net_value` (net_value.jl): Δvalue = voi. Identical subtraction as `voi(...) - cost`.
 net_voi(belief, k::Kernel, actions, fpa::AbstractDict, possible_obs, cost) =
-    voi(belief, k, actions, fpa, possible_obs) - cost
+    net_value(voi(belief, k, actions, fpa, possible_obs), cost)
 
 # ── decide_with_voi: the proceed/block/ask EU decision template ──
 #
