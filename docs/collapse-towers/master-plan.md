@@ -64,6 +64,15 @@ program-axis bit-identical; existing structure/program/sparse tests stay green.
 
 ## Phase 2 — Family-BMA (new capability via the Phase-1 prior on a new axis)
 
+> **LANDED (full suite 40/40 green). Two deviations from the original plan, both recorded in
+> `docs/collapse-towers/phase-2-design.md`:** (1) added **exact closed-form conjugate predictives**
+> (`GaussianMeasure+NormalNormal`, `NormalGammaMeasure+NormalGammaLikelihood`) + a Lanczos `_loggamma`
+> — family reweighting needs exact per-family marginal likelihoods, which Gaussian/NormalGamma lacked
+> (only the approximate MC fallback); approved scope expansion. (2) the **mixture-condition dedup is
+> deferred to `measure-as-view`** — collapsing `condition(MixtureMeasure)` to a Prevision facade is
+> unsafe (drops carrier-space context, changes consumer-visible component type; broke test_flat_mixture
+> + test_host). Phase 2 added the per-component routing **only** to `condition(MixturePrevision)`.
+
 A `MixturePrevision` of **different leaf families over the same observation space**, prior-weighted by
 `complexity_logprior` on the family index, conditioned by the **existing** chain-rule reweighting.
 Feasibility verified: `condition(p::MixturePrevision, k, obs)` (`ontology.jl:1610`) already does the
@@ -156,3 +165,30 @@ possibly grid_world / email_agent meta-action tests (Phase 5 behaviour shift).
 4. **Phase 5 candidate-set tractability vs determinism** — enumerate-and-constrain (recommended) vs sample-and-argmax (reintroduces randomness); decide in the doc.
 5. **Phase 4 currency double-count** — `compute_cost` (inference) sums with, not duplicates, `interrupt_cost` (attention).
 6. **Phase 5 benchmark drift** — greedy vs random perturbation changes app outputs (intended).
+
+## Follow-on arc: `measure-as-view` (decided 2026-06-26; runs AFTER collapse-towers)
+
+A duplication audit (triggered during Phase 2) found the engine drifts from the constitutional
+"Measure is a declared view over Prevision" (`prevision-not-measure`). All 11 Measure facades hold a
+`.prevision` field, yet:
+1. **Full duplication** — mixture `condition`/`prune`/`truncate`/`draw` reimplement the Prevision
+   logic verbatim (Measure ↔ Prevision twins). *Class 1 stays HERE in full:* Phase 2 attempted the
+   `condition(MixtureMeasure)`→facade collapse and **reverted** it — a naive facade drops per-component
+   carrier-space context and changes the consumer-visible component type (Measure→Prevision), breaking
+   `wrap_in_measure`/consumer code. The dedup is real but must thread the carrier space (the
+   `measure-as-view` job), so it lands here, not as a one-liner. Phase 2 added per-component routing
+   only to `condition(MixturePrevision)`.
+2. **Backwards delegation** — the non-conjugate `condition`/`_predictive_ll` fallbacks for
+   `BetaPrevision`/`GaussianPrevision`/`GammaPrevision`/`ProductPrevision` delegate *up* to the
+   Measure facade, inverting the constitution.
+3. **A latent CORRECTNESS bug (highest priority)** — `expect(m::BetaMeasure, f)` uses exact
+   Gauss-Jacobi quadrature (~1e-13) but `expect(p::BetaPrevision, f)` uses the *old uniform-grid
+   Riemann sum* (~1e-4) the Measure path explicitly "replaces"; `TaggedBetaPrevision`/
+   `GaussianPrevision` generic-`f` share the inferior grid. The constitutionally-primary path is
+   silently less accurate than its facade. (Structured Functionals are closed-form on both sides and
+   agree exactly — only the generic-closure fallback diverges.)
+
+The arc: (a) invert backwards delegation to Prevision-primary + make the facades thin views;
+(b) collapse `draw`/`prune`/`truncate`; (c) fix the `expect` asymmetry as an explicit change with a
+test asserting `expect(p, f) ≈ expect(wrap_in_measure(p), f)` to ~1e-12; (d) capture-before-refactor
+bit-exactness throughout. Keeps collapse-towers scoped to the §1.3 / meta-action towers.
