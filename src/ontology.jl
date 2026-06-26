@@ -1494,6 +1494,46 @@ function _predictive_ll(m::CategoricalMeasure, k::Kernel, obs)
     log(max(total, 1e-300))
 end
 
+# Lanczos ln Γ(x), machine-precision (~1e-15) and stdlib-only (the DSL core takes no
+# SpecialFunctions dependency). This is a special-function evaluation (like `log`/`exp`), NOT a
+# Bayesian approximation; it is the normaliser of the NormalGamma conjugate predictive (Student-t).
+const _LANCZOS_G = 7.0
+const _LANCZOS_C = (0.99999999999980993, 676.5203681218851, -1259.1392167224028,
+                    771.32342877765313, -176.61502916214059, 12.507343278686905,
+                    -0.13857109526572012, 9.9843695780195716e-6, 1.5056327351493116e-7)
+function _loggamma(x::Float64)
+    x < 0.5 && return log(π / sin(π * x)) - _loggamma(1.0 - x)      # reflection for x < 1/2
+    x -= 1.0
+    a = _LANCZOS_C[1]
+    for i in 2:9
+        a += _LANCZOS_C[i] / (x + (i - 1))
+    end
+    t = x + _LANCZOS_G + 0.5
+    0.5 * log(2π) + (x + 0.5) * log(t) - t + log(a)
+end
+
+# Exact conjugate predictive (marginal likelihood of one observation), the analogue of the Beta
+# predictive below for the continuous conjugate pairs. collapse-towers Phase 2: Family-BMA reweights
+# families by this marginal, so it MUST be exact — the generic `_predictive_ll(::Measure)` Monte-Carlo
+# fallback is approximate and non-deterministic. Non-conjugate kernels fall back to the generic path
+# (preserving existing behaviour); the exact closed form is added only for the recognised pair.
+function _predictive_ll(m::GaussianMeasure, k::Kernel, obs)
+    k.likelihood_family isa NormalNormal ||
+        return invoke(_predictive_ll, Tuple{Measure, Kernel, Any}, m, k, obs)
+    s2 = m.prevision.sigma^2 + k.likelihood_family.sigma_obs^2     # marginal var = prior var + obs var
+    -0.5 * (log(2π * s2) + (Float64(obs) - m.prevision.mu)^2 / s2) # N(obs | μ₀, √(σ₀²+σ²))
+end
+
+function _predictive_ll(m::NormalGammaMeasure, k::Kernel, obs)
+    k.likelihood_family isa NormalGammaLikelihood ||
+        return invoke(_predictive_ll, Tuple{Measure, Kernel, Any}, m, k, obs)
+    p = m.prevision
+    ν = 2.0 * p.α                                                  # Student-t: dof = 2α,
+    s2 = p.β * (p.κ + 1.0) / (p.α * p.κ)                           #            scale² = β(κ+1)/(ακ),
+    z = (Float64(obs) - p.μ)^2 / s2                                #            location = μ
+    _loggamma((ν + 1) / 2) - _loggamma(ν / 2) - 0.5 * log(ν * π * s2) - ((ν + 1) / 2) * log1p(z / ν)
+end
+
 function _predictive_ll(m::BetaMeasure, k::Kernel, obs)
     val = expect(m, h -> exp(k.log_density(h, obs)))
     log(max(val, 1e-300))
@@ -1610,9 +1650,17 @@ end
 function condition(p::MixturePrevision, k::Kernel, obs)
     new_components = Prevision[]
     new_log_wts = Float64[]
+    # Per-component family resolution for a component-routed kernel (Family-BMA, collapse-towers
+    # Phase 2): each component resolves its own leaf family from `DispatchByComponent`, so
+    # heterogeneous conjugate priors (e.g. Gaussian + NormalGamma) each reach `maybe_conjugate`.
+    # Gated on `DispatchByComponent` so `FiringByTag` still passes through to a component's own
+    # cell-level self-resolution (structure-BMA unchanged); the `LabelledCategoricalPrevision`
+    # re-resolution is idempotent (rho-latent stays bit-exact).
+    routed = k.likelihood_family isa DispatchByComponent
     for (i, comp) in enumerate(p.components)
-        pred_ll = _predictive_ll(comp, k, obs)
-        conditioned = condition(comp, k, obs)
+        k_i = routed ? _with_resolved_family(k, _resolve_likelihood_family(k.likelihood_family, comp)) : k
+        pred_ll = _predictive_ll(comp, k_i, obs)
+        conditioned = condition(comp, k_i, obs)
         base_lw = p.log_weights[i] + pred_ll
         if conditioned isa MixturePrevision
             for (j, sub) in enumerate(conditioned.components)
@@ -1627,6 +1675,14 @@ function condition(p::MixturePrevision, k::Kernel, obs)
     MixturePrevision(new_components, new_log_wts)
 end
 
+# NOTE: this stays a Measure-level loop (a verbatim twin of condition(MixturePrevision) above) on
+# purpose. Collapsing it to a thin facade over the Prevision level (`condition(m.prevision)`) is
+# UNSAFE here: it passes Prevision components where consumers expect Measures, and drops the
+# per-component carrier-space context (a `CategoricalPrevision`/`ProductPrevision` component cannot be
+# `wrap_in_measure`d without its `Finite` space — "Measure binds carrier space, Prevision doesn't").
+# Found the hard way in collapse-towers Phase 2 (broke test_flat_mixture + test_host). The
+# mixture-condition dedup therefore belongs to the `measure-as-view` arc, which handles the
+# carrier-space delegation properly; Phase 2 adds the per-component routing only to the Prevision side.
 function condition(m::MixtureMeasure, k::Kernel, obs)
     new_components = Measure[]
     new_log_wts = Float64[]
@@ -2041,6 +2097,12 @@ export StructureBMA, build_structure_model, build_structure_prior,
        build_structure_prior_dense, structure_observe, structure_observe_soft,
        belief_at_context, context_from_features, structure_firing_tags,
        structure_decision_kernel, reconstruct_structure_prior_from_data
+
+# Family-BMA: the complexity log-prior (complexity.jl) on a family index — a posterior over
+# likelihood families, conditioned through the per-component-routed MixturePrevision condition above.
+# collapse-towers Phase 2.
+include("family_bma.jl")
+export FamilyCandidate, FamilyBMA, build_family_model, build_family_prior, family_observe, family_posterior
 
 include("routing.jl")
 export RoutingState, EmissionBelief, LatencyBelief, route, route_eu, escalation_next,
