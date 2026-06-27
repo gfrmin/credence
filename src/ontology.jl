@@ -1060,21 +1060,23 @@ function condition(m::CategoricalMeasure{T}, k::Kernel, observation) where T
     CategoricalMeasure{T}(m.space, new_logw)
 end
 
-function condition(m::BetaMeasure, k::Kernel, observation)
-    cp = maybe_conjugate(m.prevision, k)
-    if cp !== nothing
-        updated = update(cp, observation).prior
-        return BetaMeasure(m.space, updated.alpha, updated.beta)
-    end
-    if k.source isa Interval && k.target isa Finite && length(k.target.values) == 2
-        if observation == 1 || observation == 1.0 || observation == true
-            return BetaMeasure(m.space, m.alpha + 1.0, m.beta)
-        elseif observation == 0 || observation == 0.0 || observation == false
-            return BetaMeasure(m.space, m.alpha, m.beta + 1.0)
-        end
-    end
-    _condition_by_grid(m, k, observation)
-end
+# ── measure-as-view Phase 2: scalar condition is Prevision-primary; the Measure is a re-binding view ──
+# The Prevision computes the space-free posterior; `_rebind_scalar` re-attaches the carrier the Measure
+# owns. Family-staying results (conjugate/Bernoulli) thread `m.space` (Q3 — preserve the DSL-declared
+# carrier from eval.jl); grid/particle results bind a fresh Finite(grid)/Finite(samples) carrier (the
+# QuadraturePrevision/ParticlePrevision is carrier-free). See test/test_measure_view_condition.jl.
+_rebind_scalar(m::BetaMeasure, p::BetaPrevision) = BetaMeasure(m.space, p.alpha, p.beta)
+_rebind_scalar(m::GaussianMeasure, p::GaussianPrevision) = GaussianMeasure(m.space, p.mu, p.sigma)
+_rebind_scalar(m::GammaMeasure, p::GammaPrevision) = GammaMeasure(m.space, p.alpha, p.beta)
+_rebind_scalar(::Measure, q::QuadraturePrevision) = CategoricalMeasure(Finite(q.grid), q)
+_rebind_scalar(::Measure, pp::ParticlePrevision) = wrap_in_measure(pp)  # = CategoricalMeasure(Finite(samples), pp)
+
+# No-kwarg facade (deliberate): an explicit `; n_particles` on a scalar Measure still falls through to the
+# generic particle catch-all (condition(::Measure; n_particles)), as it did pre-Phase-2 — the kwarg
+# selects the particle override over the grid default (test_core TEST 18). The grid `n` is the Prevision
+# method's default; no consumer overrides it on the Measure (grep-verified).
+condition(m::BetaMeasure, k::Kernel, observation) =
+    _rebind_scalar(m, condition(m.prevision, k, observation))
 
 function condition(m::TaggedBetaMeasure, k::Kernel, observation)
     fam = _resolve_likelihood_family(k.likelihood_family, m)
@@ -1097,14 +1099,8 @@ _conjugacy_prevision(p::TaggedBetaPrevision) = p.beta
 # are themselves the conjugacy-keyed type — no unwrapping needed.
 _conjugacy_prevision(p::Prevision) = p
 
-function condition(m::GaussianMeasure, k::Kernel, observation)
-    cp = maybe_conjugate(m.prevision, k)
-    if cp !== nothing
-        updated = update(cp, observation).prior
-        return GaussianMeasure(m.space, updated.mu, updated.sigma)
-    end
-    _condition_by_grid(m, k, observation)
-end
+condition(m::GaussianMeasure, k::Kernel, observation) =
+    _rebind_scalar(m, condition(m.prevision, k, observation))
 
 # Measure-facade for the exact LinearGaussian conjugate. Without this the generic
 # particle fallback (condition(::Measure, …)) would shadow the conjugate when the
@@ -1141,24 +1137,22 @@ function condition(m::NormalGammaMeasure, k::Kernel, observation)
     _condition_particle(m, k, observation)
 end
 
-function condition(m::GammaMeasure, k::Kernel, observation)
-    cp = maybe_conjugate(m.prevision, k)
-    if cp !== nothing
-        updated = update(cp, observation).prior
-        return GammaMeasure(m.space, updated.alpha, updated.beta)
-    end
-    _condition_particle(m, k, observation)
-end
+condition(m::GammaMeasure, k::Kernel, observation) =
+    _rebind_scalar(m, condition(m.prevision, k, observation))
 
 # ── Prevision-level scalar condition methods (Move 7: Move 5 completion) ──
 
-function condition(p::BetaPrevision, k::Kernel, observation)
+function condition(p::BetaPrevision, k::Kernel, observation; n::Int=64)
     cp = maybe_conjugate(p, k)
     if cp !== nothing
         return update(cp, observation).prior
     end
-    conditioned = condition(wrap_in_measure(p), k, observation)
-    conditioned.prevision
+    # Bernoulli fast-path (relocated from the Measure facade): conjugate-shaped integer update on [0,1].
+    if k.source isa Interval && k.target isa Finite && length(k.target.values) == 2
+        (observation == 1 || observation == 1.0 || observation == true)  && return BetaPrevision(p.alpha + 1.0, p.beta)
+        (observation == 0 || observation == 0.0 || observation == false) && return BetaPrevision(p.alpha, p.beta + 1.0)
+    end
+    _condition_by_grid(p, k, observation; n=n)   # Prevision-native grid → QuadraturePrevision (measure-as-view Phase 2)
 end
 
 function condition(p::TaggedBetaPrevision, k::Kernel, observation)
@@ -1290,13 +1284,12 @@ function log_predictive(p::RhoCategoricalPrevision, k::Kernel, reports)
     log(max(after / before, 1e-300))
 end
 
-function condition(p::GaussianPrevision, k::Kernel, observation)
+function condition(p::GaussianPrevision, k::Kernel, observation; n::Int=64)
     cp = maybe_conjugate(p, k)
     if cp !== nothing
         return update(cp, observation).prior
     end
-    conditioned = condition(wrap_in_measure(p), k, observation)
-    conditioned.prevision
+    _condition_by_grid(p, k, observation; n=n)   # Prevision-native grid → QuadraturePrevision (measure-as-view Phase 2)
 end
 
 # A multivariate Gaussian is conditioned only through its LinearGaussian
@@ -1311,13 +1304,12 @@ function condition(p::MvGaussianPrevision, k::Kernel, observation)
           "the kernel with likelihood_family = LinearGaussian(coeffs, sigma_obs).")
 end
 
-function condition(p::GammaPrevision, k::Kernel, observation)
+function condition(p::GammaPrevision, k::Kernel, observation; n_particles::Int=1000)
     cp = maybe_conjugate(p, k)
     if cp !== nothing
         return update(cp, observation).prior
     end
-    conditioned = condition(wrap_in_measure(p), k, observation)
-    conditioned.prevision
+    _condition_particle(p, k, observation; n_particles=n_particles)   # Prevision-native particle → ParticlePrevision (measure-as-view Phase 2)
 end
 
 function condition(p::DirichletPrevision, k::Kernel, observation)
@@ -1338,43 +1330,56 @@ function condition(p::NormalGammaPrevision, k::Kernel, observation)
           "space context; use NormalGammaMeasure for non-conjugate kernels")
 end
 
+# NOTE: measure-as-view Phase 3 (#163) — backwards delegation; Product threads a per-factor DATA carrier
+# (cat.space.values) and returns a MixtureMeasure — inverts with the mixture-twin collapse.
 function condition(p::ProductPrevision, k::Kernel, obs; kwargs...)
     conditioned = condition(wrap_in_measure(p), k, obs; kwargs...)
     conditioned isa MixtureMeasure ? conditioned.prevision : conditioned.prevision
 end
 
-function _condition_by_grid(m::BetaMeasure, k::Kernel, observation; n::Int=64)
-    grid = collect(range(m.space.lo + 1e-10, m.space.hi - 1e-10, length=n))
+# Prevision-native grid quadrature (measure-as-view Phase 2): the space-free posterior over the
+# type-constant support (Beta: Interval(0,1) — `log_density_at` already encodes the [0,1] closed form, so
+# the bounds are the type-constant 0/1; Gaussian: μ±4σ). Returns a carrier-free QuadraturePrevision; the
+# Measure facade re-binds the Finite(grid) carrier.
+function _condition_by_grid(p::BetaPrevision, k::Kernel, observation; n::Int=64)
+    grid = collect(range(0.0 + 1e-10, 1.0 - 1e-10, length=n))
     logw = Float64[]
     for (i, h) in enumerate(grid)
-        lp = log_density_at(m, h)
+        lp = log_density_at(p, h)
         ll = density(k, h, observation)
         !isnan(ll) || error("density returned NaN for hypothesis $i")
         push!(logw, lp + ll)
     end
-    qp = QuadraturePrevision(grid, logw)
-    CategoricalMeasure(Finite(qp.grid), qp)
+    QuadraturePrevision(grid, logw)
 end
+_condition_by_grid(m::BetaMeasure, k::Kernel, observation; n::Int=64) =
+    (q = _condition_by_grid(m.prevision, k, observation; n=n); CategoricalMeasure(Finite(q.grid), q))
 
-function _condition_by_grid(m::GaussianMeasure, k::Kernel, observation; n::Int=64)
-    lo = m.mu - 4 * m.sigma
-    hi = m.mu + 4 * m.sigma
+function _condition_by_grid(p::GaussianPrevision, k::Kernel, observation; n::Int=64)
+    lo = p.mu - 4 * p.sigma
+    hi = p.mu + 4 * p.sigma
     grid = collect(range(lo, hi, length=n))
     logw = Float64[]
     for (i, h) in enumerate(grid)
-        lp = log_density_at(m, h)
+        lp = log_density_at(p, h)
         ll = density(k, h, observation)
         !isnan(ll) || error("density returned NaN for hypothesis $i")
         push!(logw, lp + ll)
     end
-    qp = QuadraturePrevision(grid, logw)
-    CategoricalMeasure(Finite(qp.grid), qp)
+    QuadraturePrevision(grid, logw)
 end
+_condition_by_grid(m::GaussianMeasure, k::Kernel, observation; n::Int=64) =
+    (q = _condition_by_grid(m.prevision, k, observation; n=n); CategoricalMeasure(Finite(q.grid), q))
 
 log_density_at(m::BetaMeasure, x) = (m.alpha - 1) * log(x) + (m.beta - 1) * log(1 - x)
 log_density_at(m::GammaMeasure, x) = (m.alpha - 1) * log(x) - m.beta * x
 log_density_at(m::TaggedBetaMeasure, x) = log_density_at(m.beta, x)
 log_density_at(m::GaussianMeasure, x) = -0.5 * ((x - m.mu) / m.sigma)^2
+
+# Prevision-native log-densities (measure-as-view Phase 2): identical closed forms to the Measure methods
+# above (field-for-field; m.alpha === m.prevision.alpha), so the relocated grid is bit-identical.
+log_density_at(p::BetaPrevision, x) = (p.alpha - 1) * log(x) + (p.beta - 1) * log(1 - x)
+log_density_at(p::GaussianPrevision, x) = -0.5 * ((x - p.mu) / p.sigma)^2
 
 # ── TruncatedGaussianPrevision: a continuous bounded prior, integrated over [lo,hi] engine-side ──
 # The truncation is the model's SUPPORT (not a grid); the engine chooses the quadrature internally.
@@ -1518,12 +1523,7 @@ end
 # families by this marginal, so it MUST be exact — the generic `_predictive_ll(::Measure)` Monte-Carlo
 # fallback is approximate and non-deterministic. Non-conjugate kernels fall back to the generic path
 # (preserving existing behaviour); the exact closed form is added only for the recognised pair.
-function _predictive_ll(m::GaussianMeasure, k::Kernel, obs)
-    k.likelihood_family isa NormalNormal ||
-        return invoke(_predictive_ll, Tuple{Measure, Kernel, Any}, m, k, obs)
-    s2 = m.prevision.sigma^2 + k.likelihood_family.sigma_obs^2     # marginal var = prior var + obs var
-    -0.5 * (log(2π * s2) + (Float64(obs) - m.prevision.mu)^2 / s2) # N(obs | μ₀, √(σ₀²+σ²))
-end
+_predictive_ll(m::GaussianMeasure, k::Kernel, obs) = _predictive_ll(m.prevision, k, obs)  # facade (measure-as-view Phase 2)
 
 function _predictive_ll(m::NormalGammaMeasure, k::Kernel, obs)
     k.likelihood_family isa NormalGammaLikelihood ||
@@ -1535,10 +1535,7 @@ function _predictive_ll(m::NormalGammaMeasure, k::Kernel, obs)
     _loggamma((ν + 1) / 2) - _loggamma(ν / 2) - 0.5 * log(ν * π * s2) - ((ν + 1) / 2) * log1p(z / ν)
 end
 
-function _predictive_ll(m::BetaMeasure, k::Kernel, obs)
-    val = expect(m, h -> exp(k.log_density(h, obs)))
-    log(max(val, 1e-300))
-end
+_predictive_ll(m::BetaMeasure, k::Kernel, obs) = _predictive_ll(m.prevision, k, obs)  # facade (measure-as-view Phase 2)
 
 function _predictive_ll(m::TaggedBetaMeasure, k::Kernel, obs)
     k.log_density(m, obs)
@@ -1582,8 +1579,10 @@ end
 
 # ── Prevision-level _predictive_ll (Move 7: supports MixturePrevision condition) ──
 
+# Prevision-primary (measure-as-view Phase 2): the predictive is an expectation; expect(p) is carrier-free
+# (and, post-Phase-1, the path the Measure facade already routed through).
 _predictive_ll(p::BetaPrevision, k::Kernel, obs) =
-    _predictive_ll(wrap_in_measure(p), k, obs)
+    (val = expect(p, h -> exp(k.log_density(h, obs))); log(max(val, 1e-300)))
 
 _predictive_ll(p::TaggedBetaPrevision, k::Kernel, obs) =
     k.log_density(p, obs)
@@ -1598,12 +1597,22 @@ function _predictive_ll(p::LabelledCategoricalPrevision, k::Kernel, obs)
     logsumexp([lw[i] + categorical_logdensity(fam, i, obs) for i in eachindex(lw)])
 end
 
-_predictive_ll(p::GaussianPrevision, k::Kernel, obs) =
-    _predictive_ll(wrap_in_measure(p), k, obs)
+# Prevision-primary (measure-as-view Phase 2): the NormalNormal closed form; the non-conjugate fallback
+# routes to the generic Measure sampler via invoke (loop-safe — skips this family's own Measure facade).
+function _predictive_ll(p::GaussianPrevision, k::Kernel, obs)
+    k.likelihood_family isa NormalNormal ||
+        return invoke(_predictive_ll, Tuple{Measure, Kernel, Any}, wrap_in_measure(p), k, obs)
+    s2 = p.sigma^2 + k.likelihood_family.sigma_obs^2                # marginal var = prior var + obs var
+    -0.5 * (log(2π * s2) + (Float64(obs) - p.mu)^2 / s2)           # N(obs | μ₀, √(σ₀²+σ²))
+end
 
+# NOTE: measure-as-view Phase 3 (#163) — backwards delegation; Gamma predictive is sampling (no fixture),
+# routed through the generic Measure sampler — inverts with the discrete/sampling catch-alls.
 _predictive_ll(p::GammaPrevision, k::Kernel, obs) =
     _predictive_ll(wrap_in_measure(p), k, obs)
 
+# NOTE: measure-as-view Phase 3 (#163) — backwards delegation; generic catch-all whose draw/expect bind
+# the DATA carrier for the discrete families (CategoricalPrevision has no carrier-free draw).
 function _predictive_ll(p::Prevision, k::Kernel, obs)
     _predictive_ll(wrap_in_measure(p), k, obs)
 end
@@ -1615,6 +1624,8 @@ function log_predictive(m::Measure, k::Kernel, obs)
     log(max(pred, 1e-300))
 end
 
+# NOTE: measure-as-view Phase 3 (#163) — backwards delegation; generic catch-all binding the discrete DATA
+# carrier (see _predictive_ll(::Prevision) above).
 function log_predictive(p::Prevision, k::Kernel, obs)
     log_predictive(wrap_in_measure(p), k, obs)
 end
@@ -1809,6 +1820,16 @@ function condition(m::ProductMeasure, k::Kernel, obs; kwargs...)
     end
 
     MixtureMeasure(m.space, new_components, new_log_wts)
+end
+
+# Prevision-native importance-sampling fallback (measure-as-view Phase 2): draws from the Prevision
+# (draw(p) ≡ draw(m) in RNG ops for the scalar families — bit-identical under fixed seed), returns the
+# carrier-free ParticlePrevision; the Measure facade re-binds Finite(samples). The Measure overload below
+# is the Phase-3 catch-all (arbitrary m, draw over a discrete carrier) — left byte-for-byte unchanged.
+function _condition_particle(p::Prevision, k::Kernel, obs; n_particles::Int=1000, seed::Int=0)
+    samples = [draw(p) for _ in 1:n_particles]
+    log_weights = Float64[k.log_density(s, obs) for s in samples]
+    ParticlePrevision(samples, log_weights, seed)
 end
 
 function _condition_particle(m::Measure, k::Kernel, obs; n_particles::Int=1000, seed::Int=0)
