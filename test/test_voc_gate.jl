@@ -94,7 +94,7 @@ end
 # re-perturbing a grammar that already holds the compression does not re-add or clobber it. ──
 let
     ft, s = shared_subtree_table(4)                       # net_payoff = 4 > 0 ⇒ would propose a rule for s
-    collide = Symbol("NT_", hash(show_expr(s)) % 10000)   # the exact name propose_nonterminal generates
+    collide = Symbol("NT_", hash(show_expr(s)))           # the exact (full-hash) name propose_nonterminal generates
     existing_body = GTExpr(:red, 0.9)                     # a DIFFERENT body under that same name
     g = Grammar(Set([:red, :green]), [ProductionRule(collide, existing_body)], 1)
     got = perturb_grammar(g, ft; compute_cost = 0.0)

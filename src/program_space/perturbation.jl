@@ -130,7 +130,12 @@ function _compression_payoff(table::SubprogramFrequencyTable)::Union{Tuple{Produ
     expr_c = expr_complexity(best_expr)
     net_payoff = n_sources * (expr_c - 1) - (1 + expr_c)
     net_payoff > 0 || return nothing
-    name = Symbol("NT_", hash(show_expr(best_expr)) % 10000)
+    # Full hash (not % 10000): the name must be injective on the subtree body. It identifies the rule
+    # for downstream `NonterminalRef` lookup, AND `perturb_grammar`'s idempotence guard recognises an
+    # already-abstracted subtree by name. A narrow modulus collides (birthday ~100 nonterminals),
+    # which would alias two distinct subtrees to one name (an ambiguous reference) and silently drop
+    # the second, genuinely-new compression at the guard. (Finding 2, PR #160 adversarial review.)
+    name = Symbol("NT_", hash(show_expr(best_expr)))
     (ProductionRule(name, best_expr), net_payoff)
 end
 
@@ -180,9 +185,9 @@ net_voc(net_payoff_symbols::Real, compute_cost::Real) =
     perturb_grammar(g, freq_table, available_features; compute_cost = 0.0) → Grammar
 
 Perturb a grammar by the single compression-class meta-action whose `net_voc` is greatest, applied iff
-`net_voc > 0`; otherwise a structural no-op (a fresh grammar id over the same feature_set + rules).
-The selection is a **deterministic argmax** — the `rand`-based op choice (the Invariant-1 breach this
-phase retires) is gone. `freq_table` is REQUIRED (the type system enforces posterior analysis before
+`net_voc > 0`; otherwise a structural no-op — the **input grammar returned unchanged (same id)**, so the
+downstream `add_programs_to_state!` dedup (keyed on `grammar.id`) re-adds nothing. The selection is a
+**deterministic argmax** — the `rand`-based op choice (the Invariant-1 breach Phase 5 retires) is gone. `freq_table` is REQUIRED (the type system enforces posterior analysis before
 nonterminal proposal). `available_features` is retained for signature stability (the deferred
 feature-discovery mechanism will consume it); Scope A does not read it.
 
@@ -194,12 +199,15 @@ successors in `docs/collapse-towers/master-plan.md`.
 function perturb_grammar(g::Grammar, freq_table::SubprogramFrequencyTable,
                           available_features::Set{Symbol};
                           compute_cost::Float64 = 0.0)::Grammar
-    noop() = Grammar(g.feature_set, g.rules, next_grammar_id())
+    # A structural no-op returns the INPUT grammar (same id) — not a fresh-id copy. Downstream,
+    # `add_programs_to_state!` deduplicates by `grammar.id`, so a fresh-id no-op would defeat the dedup
+    # and re-inject every program as a fresh Beta(1,1) duplicate (a silent posterior reset — A3). Same
+    # id ⇒ a no-op truly changes nothing. (Tested by test_perturb_consumption.jl.)
     candidate = _compression_payoff(freq_table)
-    isnothing(candidate) && return noop()                       # no compressing subtree
+    isnothing(candidate) && return g                            # no compressing subtree
     rule, net_payoff = candidate
-    rule.name in Set(r.name for r in g.rules) && return noop()  # already present
-    net_voc(net_payoff, compute_cost) > 0 || return noop()      # VOC gate (forward compute priced in)
+    rule.name in Set(r.name for r in g.rules) && return g       # already present
+    net_voc(net_payoff, compute_cost) > 0 || return g           # VOC gate (forward compute priced in)
     Grammar(g.feature_set, [g.rules; rule], next_grammar_id())
 end
 

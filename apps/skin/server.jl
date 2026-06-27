@@ -1472,8 +1472,11 @@ function handle_perturb_grammar(params)
     grammar = state.grammars[grammar_id]
 
     w = weights(state.belief)
+    # min_frequency is a posterior-weight threshold (weighted_frequency ≤ 1), so it must live in [0,1];
+    # the prior `2` was unsatisfiable and made every wire perturbation a no-op. Match the hosts' 0.01.
+    # (Finding 4, PR #160 adversarial review.)
     freq_table = analyse_posterior_subtrees(state.all_programs, w;
-        min_frequency=2, min_complexity=2)
+        min_frequency=0.01, min_complexity=2)
 
     new_grammar = perturb_grammar(grammar, freq_table, all_features)
     state.grammars[new_grammar.id] = new_grammar
