@@ -45,7 +45,8 @@ let cost = 0.05, expected = v - cost   # credence-lint: allow — precedent:test
           "got $got vs $expected")
 end
 
-# ── (3) net_voc shape forward-check (documents the Phase-5 instance; no Phase-5 code yet) ──
+# ── (3) net_voc shares net_value's shape (the Phase-5 instance landed; net_voc itself is exercised in
+# test_voc_gate.jl, where Δv = Δcomplexity_logprior in log-prior nats — same form, prior currency) ──
 let Δv = 0.42, compute_cost = 0.1
     check("net_voc shape: net_value(Δv, compute_cost) == Δv − compute_cost",
           net_value(Δv, compute_cost) == Δv - compute_cost)          # credence-lint: allow — precedent:test-oracle — the Phase-5 instance reduces to the same subtraction

@@ -80,8 +80,8 @@ export expr_complexity, expanded_complexity
 export enumerate_programs, enumerate_programs_as_measure
 export compile_kernel, compile_expr, evaluate_predicate
 export analyse_posterior_subtrees, extract_subtrees
-export propose_nonterminal, perturb_grammar
-export expr_equal, collect_threshold_nodes, replace_threshold
+export propose_nonterminal, perturb_grammar, net_voc
+export expr_equal
 export AgentState, sync_prune!, sync_truncate!
 export aggregate_grammar_weights, top_k_grammar_ids
 export add_programs_to_state!

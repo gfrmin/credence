@@ -2078,6 +2078,7 @@ include("sparse_structure.jl")
 # Helper before its consumer: stdlib.jl's `net_voi` is the action=observe instance.
 # ================================================================
 include("net_value.jl")
+export net_value  # consumed by net_voc (program_space/perturbation.jl, Phase 5), outside module Ontology
 
 # ================================================================
 # Stdlib (extracted to stdlib.jl)

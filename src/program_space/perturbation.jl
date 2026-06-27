@@ -106,100 +106,107 @@ function _extract!(result, e::IfExpr, min_c)
 end
 
 # ═══════════════════════════════════════
-# Nonterminal proposal — requires SubprogramFrequencyTable
+# Compression payoff — the shared description-length arithmetic
 # ═══════════════════════════════════════
+
+"""
+    _compression_payoff(table) → Union{Tuple{ProductionRule, Int}, Nothing}
+
+The best `:add_rule` candidate and its description-length payoff (symbols saved), or `nothing` if no
+posterior subtree compresses (payoff ≤ 0). Defining the most-frequent subtree `s` as a nonterminal
+replaces each of its `n_sources` uses (cost `expr_complexity(s)`) with a reference (cost 1) and adds
+the rule once (cost `1 + expr_complexity(s)`):
+
+    net_payoff = n_sources · (expr_complexity(s) − 1) − (1 + expr_complexity(s))   [symbols]
+
+This is the two-part-MDL saving (CLAUDE.md §1.3). It is the single home of the payoff arithmetic,
+shared by `propose_nonterminal` (the gate) and `net_voc` (the value), so the two never drift.
+"""
+function _compression_payoff(table::SubprogramFrequencyTable)::Union{Tuple{ProductionRule, Int}, Nothing}
+    isempty(table.subtrees) && return nothing
+    best_idx = argmax(table.weighted_frequency)
+    best_expr = table.subtrees[best_idx]
+    n_sources = length(table.source_programs[best_idx])
+    expr_c = expr_complexity(best_expr)
+    net_payoff = n_sources * (expr_c - 1) - (1 + expr_c)
+    net_payoff > 0 || return nothing
+    name = Symbol("NT_", hash(show_expr(best_expr)) % 10000)
+    (ProductionRule(name, best_expr), net_payoff)
+end
 
 """
     propose_nonterminal(table) → Union{ProductionRule, Nothing}
 
-Select the subtree with highest weighted frequency.
-Propose it as a nonterminal if its compression payoff justifies the
-cost of adding a grammar rule.
+Select the highest-weighted-frequency subtree and propose it as a nonterminal iff its compression
+payoff justifies the rule cost (`net_payoff > 0`). The `:add_rule` candidate generator for
+`perturb_grammar`; the payoff arithmetic lives in `_compression_payoff`.
 """
 function propose_nonterminal(table::SubprogramFrequencyTable)::Union{ProductionRule, Nothing}
-    isempty(table.subtrees) && return nothing
-
-    best_idx = argmax(table.weighted_frequency)
-    best_expr = table.subtrees[best_idx]
-    best_freq = table.weighted_frequency[best_idx]
-    n_sources = length(table.source_programs[best_idx])
-
-    expr_c = expr_complexity(best_expr)
-    savings_per_use = expr_c - 1
-    rule_cost = 1 + expr_c
-    net_payoff = n_sources * savings_per_use - rule_cost
-
-    net_payoff > 0 || return nothing
-
-    name = Symbol("NT_", hash(show_expr(best_expr)) % 10000)
-    ProductionRule(name, best_expr)
+    result = _compression_payoff(table)
+    isnothing(result) ? nothing : result[1]
 end
 
 # ═══════════════════════════════════════
-# Grammar perturbation
+# net_voc — Value-of-Computation of a grammar perturbation (collapse-towers Phase 5)
 # ═══════════════════════════════════════
 
 """
-    perturb_grammar(g, freq_table, available_features) → Grammar
+    net_voc(net_payoff_symbols, compute_cost) → Float64
 
-Perturb a grammar by one operator. The freq_table argument is REQUIRED
-(enforced by the type system) to ensure posterior analysis before
-nonterminal proposal. available_features is the full set of named
-features the domain provides.
+The Value-of-Computation of a compression perturbation, depth-one, in **log-prior nats** (R1):
+`net_value(Δcomplexity_logprior, compute_cost)`. `perturb_grammar` sees only `(g, freq_table,
+available_features)` — no belief, no utilities, no re-conditioning — so achievable EU is unaffordable
+depth-one (Russell–Wefald); the affordable value-proxy is the change in the program-space complexity
+prior (CLAUDE.md §1.3). A compression saving `net_payoff_symbols` raises the log-prior by
+
+    complexity_logprior(−net_payoff_symbols; λ = log(2)) = log(2) · net_payoff_symbols      [nats]
+
+(the program-axis λ is pinned to `log(2)` by §1.3). The structural twin of `net_voi` (`stdlib.jl`):
+the same `net_value` form, in the prior's currency rather than utility — the third representation,
+after scalar `net_voi` and Functional-offset routing EU. At `compute_cost = 0` the gate `net_voc > 0`
+is exactly `propose_nonterminal`'s `net_payoff > 0`. Governs the COMPRESSION class only (`:add_rule`);
+generative-change ops (`:modify_threshold`, `:add_feature`, `:remove_feature`) change the likelihood
+over un-entertained programs (the escape-mass frontier), invisible here by construction, and are
+deferred to an EU-priced exploration mechanism (master plan, named successor).
+"""
+net_voc(net_payoff_symbols::Real, compute_cost::Real) =
+    net_value(complexity_logprior(-net_payoff_symbols; λ = log(2)), compute_cost)
+
+# ═══════════════════════════════════════
+# Grammar perturbation — deterministic argmax over net_voc (no rand; Invariant 1 canalised)
+# ═══════════════════════════════════════
+
+"""
+    perturb_grammar(g, freq_table, available_features; compute_cost = 0.0) → Grammar
+
+Perturb a grammar by the single compression-class meta-action whose `net_voc` is greatest, applied iff
+`net_voc > 0`; otherwise a structural no-op (a fresh grammar id over the same feature_set + rules).
+The selection is a **deterministic argmax** — the `rand`-based op choice (the Invariant-1 breach this
+phase retires) is gone. `freq_table` is REQUIRED (the type system enforces posterior analysis before
+nonterminal proposal). `available_features` is retained for signature stability (the deferred
+feature-discovery mechanism will consume it); Scope A does not read it.
+
+Scope A (collapse-towers Phase 5): the compression class is `:add_rule` alone — `propose_nonterminal`'s
+proposed rule, gated by `net_voc`. `:remove_rule` (dictionary hygiene) awaits a sound nonterminal
+reference count; the generative-change ops await an EU-priced exploration budget — both named
+successors in `docs/collapse-towers/master-plan.md`.
 """
 function perturb_grammar(g::Grammar, freq_table::SubprogramFrequencyTable,
-                          available_features::Set{Symbol})::Grammar
-    ops = [:add_feature, :remove_feature, :add_rule, :remove_rule, :modify_threshold]
-    op = rand(ops)
-
-    if op == :add_feature
-        available = setdiff(available_features, g.feature_set)
-        isempty(available) && return Grammar(g.feature_set, g.rules, next_grammar_id())
-        new_feat = rand(collect(available))
-        new_fs = union(g.feature_set, Set([new_feat]))
-        return Grammar(new_fs, g.rules, next_grammar_id())
-
-    elseif op == :remove_feature
-        length(g.feature_set) <= 1 && return Grammar(g.feature_set, g.rules, next_grammar_id())
-        to_remove = rand(collect(g.feature_set))
-        new_fs = setdiff(g.feature_set, Set([to_remove]))
-        return Grammar(new_fs, g.rules, next_grammar_id())
-
-    elseif op == :add_rule
-        proposed = propose_nonterminal(freq_table)
-        isnothing(proposed) && return Grammar(g.feature_set, g.rules, next_grammar_id())
-        existing_names = Set(r.name for r in g.rules)
-        proposed.name in existing_names && return Grammar(g.feature_set, g.rules, next_grammar_id())
-        return Grammar(g.feature_set, [g.rules; proposed], next_grammar_id())
-
-    elseif op == :remove_rule
-        isempty(g.rules) && return Grammar(g.feature_set, g.rules, next_grammar_id())
-        idx = rand(1:length(g.rules))
-        new_rules = [g.rules[i] for i in eachindex(g.rules) if i != idx]
-        return Grammar(g.feature_set, new_rules, next_grammar_id())
-
-    elseif op == :modify_threshold
-        isempty(g.rules) && return Grammar(g.feature_set, g.rules, next_grammar_id())
-        rule_idx = rand(1:length(g.rules))
-        rule = g.rules[rule_idx]
-        nodes = collect_threshold_nodes(rule.body)
-        isempty(nodes) && return Grammar(g.feature_set, g.rules, next_grammar_id())
-        node = rand(nodes)
-        other_thresholds = filter(t -> t != node.threshold, THRESHOLDS)
-        isempty(other_thresholds) && return Grammar(g.feature_set, g.rules, next_grammar_id())
-        new_t = rand(other_thresholds)
-        new_body = replace_threshold(rule.body, node, new_t)
-        new_rules = [i == rule_idx ? ProductionRule(rule.name, new_body) : g.rules[i]
-                     for i in eachindex(g.rules)]
-        return Grammar(g.feature_set, new_rules, next_grammar_id())
-    end
-
-    Grammar(g.feature_set, g.rules, next_grammar_id())
+                          available_features::Set{Symbol};
+                          compute_cost::Float64 = 0.0)::Grammar
+    noop() = Grammar(g.feature_set, g.rules, next_grammar_id())
+    candidate = _compression_payoff(freq_table)
+    isnothing(candidate) && return noop()                       # no compressing subtree
+    rule, net_payoff = candidate
+    rule.name in Set(r.name for r in g.rules) && return noop()  # already present
+    net_voc(net_payoff, compute_cost) > 0 || return noop()      # VOC gate (forward compute priced in)
+    Grammar(g.feature_set, [g.rules; rule], next_grammar_id())
 end
 
-# Backward-compatible 2-argument form using a default feature set
-function perturb_grammar(g::Grammar, freq_table::SubprogramFrequencyTable)::Grammar
-    perturb_grammar(g, freq_table, g.feature_set)
+# Backward-compatible 2-argument form (default feature set; forwards compute_cost)
+function perturb_grammar(g::Grammar, freq_table::SubprogramFrequencyTable;
+                          compute_cost::Float64 = 0.0)::Grammar
+    perturb_grammar(g, freq_table, g.feature_set; compute_cost = compute_cost)
 end
 
 # ═══════════════════════════════════════
@@ -241,66 +248,9 @@ function expr_equal(a::IfExpr, b::IfExpr)
 end
 function expr_equal(::ProgramExpr, ::ProgramExpr) false end
 
-# ═══════════════════════════════════════
-# Threshold node collection and replacement
-# ═══════════════════════════════════════
-
-function collect_threshold_nodes(e::GTExpr) ProgramExpr[e] end
-function collect_threshold_nodes(e::LTExpr) ProgramExpr[e] end
-function collect_threshold_nodes(e::AndExpr)
-    vcat(collect_threshold_nodes(e.left), collect_threshold_nodes(e.right))
-end
-function collect_threshold_nodes(e::OrExpr)
-    vcat(collect_threshold_nodes(e.left), collect_threshold_nodes(e.right))
-end
-function collect_threshold_nodes(e::NotExpr)
-    collect_threshold_nodes(e.child)
-end
-function collect_threshold_nodes(e::NonterminalRef) ProgramExpr[] end
-function collect_threshold_nodes(e::PersistsExpr)
-    collect_threshold_nodes(e.child)
-end
-function collect_threshold_nodes(e::ChangedExpr)
-    collect_threshold_nodes(e.child)
-end
-function collect_threshold_nodes(e::SinceExpr)
-    vcat(collect_threshold_nodes(e.p), collect_threshold_nodes(e.q))
-end
-function collect_threshold_nodes(e::ActionExpr) ProgramExpr[] end
-function collect_threshold_nodes(e::IfExpr)
-    vcat(collect_threshold_nodes(e.predicate), collect_threshold_nodes(e.then_branch), collect_threshold_nodes(e.else_branch))
-end
-
-function replace_threshold(e::GTExpr, old::ProgramExpr, new_t::Float64)
-    expr_equal(e, old) ? GTExpr(e.feature, new_t) : e
-end
-function replace_threshold(e::LTExpr, old::ProgramExpr, new_t::Float64)
-    expr_equal(e, old) ? LTExpr(e.feature, new_t) : e
-end
-function replace_threshold(e::AndExpr, old::ProgramExpr, new_t::Float64)
-    AndExpr(replace_threshold(e.left, old, new_t), replace_threshold(e.right, old, new_t))
-end
-function replace_threshold(e::OrExpr, old::ProgramExpr, new_t::Float64)
-    OrExpr(replace_threshold(e.left, old, new_t), replace_threshold(e.right, old, new_t))
-end
-function replace_threshold(e::NotExpr, old::ProgramExpr, new_t::Float64)
-    NotExpr(replace_threshold(e.child, old, new_t))
-end
-function replace_threshold(e::NonterminalRef, _old::ProgramExpr, _new_t::Float64)
-    e
-end
-function replace_threshold(e::PersistsExpr, old::ProgramExpr, new_t::Float64)
-    PersistsExpr(replace_threshold(e.child, old, new_t), e.n)
-end
-function replace_threshold(e::ChangedExpr, old::ProgramExpr, new_t::Float64)
-    ChangedExpr(replace_threshold(e.child, old, new_t))
-end
-function replace_threshold(e::SinceExpr, old::ProgramExpr, new_t::Float64)
-    SinceExpr(replace_threshold(e.p, old, new_t), replace_threshold(e.q, old, new_t))
-end
-function replace_threshold(e::ActionExpr, _old::ProgramExpr, _new_t::Float64)
-    e
-end
-function replace_threshold(e::IfExpr, old::ProgramExpr, new_t::Float64)
-    IfExpr(replace_threshold(e.predicate, old, new_t), replace_threshold(e.then_branch, old, new_t), replace_threshold(e.else_branch, old, new_t))
-end
+# Threshold-node collection/replacement (`collect_threshold_nodes`, `replace_threshold`) was the
+# machinery of the retired `:modify_threshold` op. `:modify_threshold` is generative-change — it
+# changes which programs the grammar generates (a likelihood effect over un-entertained programs),
+# invisible to depth-one prior-only `net_voc` by construction — so collapse-towers Phase 5 deferred it
+# to an EU-priced exploration budget (master plan, named successor) and deleted the dead machinery
+# rather than leave it unreachable.

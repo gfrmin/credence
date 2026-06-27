@@ -512,35 +512,48 @@ end
 println()
 
 # ═══════════════════════════════════════
-# TEST 14: modify_threshold produces changes (enforcement)
+# TEST 14: perturb_grammar selection is deterministic (rand retired) — collapse-towers Phase 5
 # ═══════════════════════════════════════
+# The `rand`-based op choice (the Invariant-1 breach) is gone: which-perturbation is a deterministic
+# argmax over net_voc, scoped to the compression class (:add_rule). Two runs on identical inputs give
+# the same grammar; the retired generative-change ops (incl. :modify_threshold) no longer fire.
 
 println("=" ^ 60)
-println("TEST 14: modify_threshold produces grammar with modified thresholds")
+println("TEST 14: perturb_grammar selection is deterministic (rand retired)")
 println("=" ^ 60)
 
 let
-    Random.seed!(42)
-    red_body = AndExpr(GTExpr(:red, 0.7), AndExpr(LTExpr(:green, 0.3), LTExpr(:blue, 0.3)))
-    g = Grammar(Set([:red, :green, :blue]), [ProductionRule(:RED, red_body)], 1)
-    original_str = show_expr(red_body)
+    g = Grammar(Set([:red, :green, :blue]),
+                [ProductionRule(:RED, AndExpr(GTExpr(:red, 0.7), LTExpr(:green, 0.3)))], 1)
 
-    dummy_table = SubprogramFrequencyTable(ProgramExpr[], Float64[], Vector{Int}[])
+    # (a) Empty freq_table ⇒ no compressing subtree ⇒ deterministic no-op (rules preserved).
+    empty_table = SubprogramFrequencyTable(ProgramExpr[], Float64[], Vector{Int}[])
+    a1 = perturb_grammar(g, empty_table)
+    a2 = perturb_grammar(g, empty_table)
+    @assert [show_expr(r.body) for r in a1.rules] == [show_expr(r.body) for r in a2.rules] "perturb must be deterministic"
+    @assert Set(r.name for r in a1.rules) == Set([:RED]) "empty table ⇒ no rule added (no-op)"
 
-    found = false
-    for _ in 1:200
-        new_g = perturb_grammar(g, dummy_table)
-        for r in new_g.rules
-            if r.name == :RED && show_expr(r.body) != original_str
-                found = true
-                break
-            end
-        end
-        found && break
+    # (b) A compressing freq_table ⇒ both runs add the SAME nonterminal (deterministic argmax),
+    # and the retired :modify_threshold never fires (the :RED body is untouched).
+    progs = enumerate_programs(g, 3; action_space=[:a, :b, :c])
+    w = zeros(length(progs))
+    for (i, p) in enumerate(progs)
+        s = show_expr(p.expr)
+        w[i] = (occursin("(gt :red 0.7)", s) && occursin("(lt :green 0.3)", s)) ? 1.0 : 1e-3
     end
-
-    @assert found "modify_threshold should produce at least one changed threshold in 200 trials"
-    println("PASSED: modify_threshold produces grammars with modified thresholds")
+    w ./= sum(w)
+    ft = analyse_posterior_subtrees(progs, w; min_frequency=0.005, min_complexity=2)
+    g1 = perturb_grammar(g, ft)
+    g2 = perturb_grammar(g, ft)
+    @assert sort([show_expr(r.body) for r in g1.rules]) == sort([show_expr(r.body) for r in g2.rules]) "two runs ⇒ same grammar"
+    @assert any(r -> r.name == :RED && show_expr(r.body) == show_expr(AndExpr(GTExpr(:red, 0.7), LTExpr(:green, 0.3))), g1.rules) "the original :RED rule body is never mutated (modify_threshold retired)"
+    if propose_nonterminal(ft) !== nothing
+        @assert length(g1.rules) == length(g.rules) + 1 "a compressing table adds exactly one rule"
+        println("PASSED: deterministic — compressing table adds the same single rule on every run")
+    else
+        println("PASSED: deterministic — no compressing subtree, consistent no-op")
+    end
+    println("PASSED: perturb_grammar selection is deterministic (rand retired)")
 end
 println()
 

@@ -7,8 +7,12 @@
 The net expected value of an action: the expected improvement it buys, minus its cost — the **scalar
 reduction** of `E[value] − cost` (SPEC's meta-action passage: "think more or act now is one argmax EU").
 
-Instances: `net_voi` (action = observe; `delta_value = voi`, `src/stdlib.jl`) and `net_voc` (action = a
-meta-action; `delta_value = E[value after the computation] − value(now)`; collapse-towers Phase 5).
+Instances: `net_voi` (action = observe; `delta_value = voi`, in utility currency, `src/stdlib.jl`) and
+`net_voc` (action = a grammar perturbation; `delta_value = Δcomplexity_logprior`, in **log-prior nats**,
+`src/program_space/perturbation.jl`, collapse-towers Phase 5). `net_voc` is the same functional FORM in
+a different currency: depth-one the metalevel can only afford the change in the program-space complexity
+prior, not achievable EU (the value-proxy the complexity-prior axiom exists to supply — SPEC §1.3). The
+form unifies across instances; the currency is whatever each decision context can afford.
 
 The same semantics also lives in a **general (Functional-offset) representation** —
 `eu(joint, LinearCombination([(reward, Projection(a))], -(cost + time_cost)))` — used by the routing
