@@ -85,9 +85,14 @@ No new exports, no signature changes visible to consumers (the `n` kwargs keep d
    violation), and adding Hermite/Laguerre is new numerics that deserves its own move with its own
    exactness tests. Fold it in only if you'd rather not leave a known ~1e-4 on those generic-closure
    paths.
-3. **Is `expect` truly carrier-space-free for these Measures?** The premise of the safe inversion. The
-   bodies read only `α,β` / `μ,σ` — never `m.space`. Confirm by grep (§6); if any scalar `expect` reads
-   the carrier, that family stays Measure-primary and is flagged.
+3. **Is `expect` truly carrier-space-free for these Measures? — VERIFIED (family-specific, not
+   blanket).** The Beta/Gaussian/Gamma `expect` bodies (`:553`/`:627`/`:638`) and the Prevision bodies
+   (`:821`–`:854`) read only `α,β` / `μ,σ` — **never `m.space`** (grepped). So the inversion is safe for
+   exactly these three. **Counterexample worth recording:** `expect(m::CategoricalMeasure, f)` (`:550`)
+   *does* read `m.space.values[i]` — a discrete family is carrier-*bound* (the carrier IS the support).
+   So "`expect` is carrier-space-free" is a property of the *continuous scalar* families, not of `expect`
+   in general; Categorical is correctly outside Phase 1, and any future inversion of a discrete family's
+   `expect` must thread the space (the Phase-2/3 discipline, one move early).
 
 ## 6. Risk + mitigation
 
