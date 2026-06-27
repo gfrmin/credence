@@ -550,7 +550,11 @@ function expect(m::CategoricalMeasure, f::Function)
     sum(w[i] * f(m.space.values[i]) for i in eachindex(w))
 end
 
-function expect(m::BetaMeasure, f::Function; n::Int=32)
+# Gauss-Jacobi quadrature (Golub-Welsch) for E_{Beta(alpha,beta)}[f] with n nodes. The SINGLE home of
+# the rule (measure-as-view Phase 1 relocated it here from the BetaMeasure method, verbatim): the
+# Prevision is its primary caller, the BetaMeasure view delegates. Exact for polynomials up to degree
+# 2n−1; residual ~1e-13. Tested by test/test_measure_view_expect.jl.
+function _gauss_jacobi_expect(alpha::Float64, beta::Float64, f, n::Int)
     # ── Gauss-Jacobi quadrature, hand-rolled via Golub-Welsch ─────────
     #
     # Replaces a uniform-grid Riemann sum (O(1/n²) error) that left
@@ -604,15 +608,22 @@ function expect(m::BetaMeasure, f::Function; n::Int=32)
     # necessity — the cost difference is roughly ~1000 vs ~3000 ops on
     # a tridiagonal eigendecomposition, both negligible compared to
     # BDSL evaluation overhead.
-    a = m.beta - 1.0
-    b = m.alpha - 1.0
+    a = beta - 1.0
+    b = alpha - 1.0
     diag = Vector{Float64}(undef, n)
     offdiag = Vector{Float64}(undef, n - 1)
     diag[1] = (b - a) / (a + b + 2)
     for k in 1:n-1
         s = 2k + a + b
         diag[k + 1] = (b * b - a * a) / (s * (s + 2))
-        β_k = 4 * k * (k + a) * (k + b) * (k + a + b) / (s * s * ((s * s) - 1))
+        # The k=1 off-diagonal carries a removable (1+a+b) factor: the raw form is 0/0 at
+        # a+b=−1 (Beta α+β=1, e.g. the arcsine Beta(0.5,0.5)) → NaN, on which LAPACK's MRRR
+        # eigensolver infinite-loops. Use the analytically-cancelled k=1 form — bit-identical
+        # to the raw form away from the singularity (Beta(2,5)/(3,3) are pinned), finite and
+        # exact on it. Verified by test/test_measure_view_expect.jl (the α+β=1 regression guard).
+        β_k = k == 1 ?
+            4 * (1 + a) * (1 + b) / ((a + b + 2)^2 * (a + b + 3)) :
+            4 * k * (k + a) * (k + b) * (k + a + b) / (s * s * ((s * s) - 1))
         offdiag[k] = sqrt(β_k)
     end
     F = eigen(SymTridiagonal(diag, offdiag))
@@ -622,31 +633,23 @@ function expect(m::BetaMeasure, f::Function; n::Int=32)
     sum(w[i] * f((1.0 + nodes[i]) / 2) for i in eachindex(w)) / s_w
 end
 
+# BetaMeasure is a declared view over BetaPrevision: delegate generic-closure expect to the Prevision
+# (Gauss-Jacobi primary). Bit-preserved vs the old inline method — same rule, same default n=32.
+# `expect` is carrier-space-free, so the inversion is safe. [measure-as-view Phase 1]
+expect(m::BetaMeasure, f::Function; n::Int=32) = expect(m.prevision, f; n=n)
+
 expect(m::TaggedBetaMeasure, f::Function; kwargs...) = expect(m.beta, f; kwargs...)
 
-function expect(m::GaussianMeasure, f::Function; n::Int=64)
-    lo = m.mu - 4 * m.sigma
-    hi = m.mu + 4 * m.sigma
-    grid = range(lo, hi, length=n)
-    logw = [-0.5 * ((x - m.mu) / m.sigma)^2 for x in grid]
-    max_lw = maximum(logw)
-    w = exp.(logw .- max_lw)
-    w ./= sum(w)
-    sum(w[i] * f(grid[i]) for i in eachindex(w))
-end
+# GaussianMeasure is a view: delegate to the (identical-grid) GaussianPrevision. Bit-identical — both
+# sides computed `logw` from the same expression. The Gauss-Hermite accuracy upgrade for this shared
+# uniform grid is a deferred move. [measure-as-view Phase 1 — structural inversion, zero behaviour change]
+expect(m::GaussianMeasure, f::Function; n::Int=64) = expect(m.prevision, f; n=n)
 
-function expect(m::GammaMeasure, f::Function; n::Int=64)
-    μ = m.alpha / m.beta
-    σ = sqrt(m.alpha) / m.beta
-    lo = max(1e-10, μ - 4σ)
-    hi = μ + 6σ
-    grid = range(lo, hi, length=n)
-    logw = [log_density_at(m, x) for x in grid]
-    max_lw = maximum(logw)
-    w = exp.(logw .- max_lw)
-    w ./= sum(w)
-    sum(w[i] * f(grid[i]) for i in eachindex(w))
-end
+# GammaMeasure is a view: delegate to the (identical-grid) GammaPrevision. Bit-identical — the Gamma
+# Prevision inlines the same bare kernel `(α−1)log x − βx` that `log_density_at(::GammaMeasure)`
+# evaluates (same ops, same order), so no last-ULP non-cancellation. The Gauss-Laguerre accuracy
+# upgrade is a deferred move. [measure-as-view Phase 1 — structural inversion, zero behaviour change]
+expect(m::GammaMeasure, f::Function; n::Int=64) = expect(m.prevision, f; n=n)
 
 function expect(m::DirichletMeasure, f::Function; n_samples::Int=1000)
     total = 0.0
@@ -818,14 +821,12 @@ expect(p::DirichletPrevision, ::Identity) = p.alpha ./ sum(p.alpha)
 expect(p::NormalGammaPrevision, ::Identity) = p.μ
 
 # General-function expect on scalar Previsions via quadrature/delegation.
-function expect(p::BetaPrevision, f::Function; n::Int=64)
-    grid = range(1/(2n), 1-1/(2n), length=n)
-    logw = [(p.alpha - 1) * log(x) + (p.beta - 1) * log(1 - x) for x in grid]
-    max_lw = maximum(logw)
-    w = exp.(logw .- max_lw)
-    w ./= sum(w)
-    sum(w[i] * f(grid[i]) for i in eachindex(w))
-end
+# BetaPrevision is PRIMARY for generic-closure expect: Gauss-Jacobi (the shared `_gauss_jacobi_expect`),
+# exact for polynomials up to degree 2n−1. Default n=32 matches the BetaMeasure view that delegates here
+# (keeping that path bit-identical) and replaces the old uniform-grid Riemann sum (~1e-4) — the Beta
+# correctness fix. Structured TestFunctions (Identity/CenteredPower/GeometricTail) keep their closed
+# forms above; only this generic-closure fallback changes. [measure-as-view Phase 1]
+expect(p::BetaPrevision, f::Function; n::Int=32) = _gauss_jacobi_expect(p.alpha, p.beta, f, n)
 
 expect(p::TaggedBetaPrevision, f::Function; kwargs...) = expect(p.beta, f; kwargs...)
 
