@@ -535,7 +535,7 @@ println()
 # ═══════════════════════════════════════
 
 println("=" ^ 60)
-println("TEST 12: execute_meta_action!(:perturb_grammar) adds components")
+println("TEST 12: execute_meta_action!(:perturb_grammar) is duplication-free (Finding 1)")
 println("=" ^ 60)
 
 let
@@ -576,7 +576,14 @@ let
     n_after = length(state.belief.components)
     n_grammars_after = length(state.grammars)
 
-    @assert n_grammars_after > n_grammars_before "Perturbation should add new grammars"
+    # The unconditioned seed posterior at depth 2 has no compressing subtree, so each grammar's
+    # perturbation is a deterministic no-op. Post-Finding-1 (PR #160 adversarial review), a no-op
+    # returns the SAME grammar id, so add_programs_to_state! deduplicates it away: NO new grammars, NO
+    # duplicate components, NO belief reset. Before the fix, every fresh-id no-op silently re-injected
+    # the whole program set as Beta(1,1) duplicates and reported it as progress.
+    @assert n_added == 0 "non-compressing posterior ⇒ clean no-op (no fresh-Beta duplicates — Finding 1)"
+    @assert n_grammars_after == n_grammars_before "a no-op perturbation adds no new grammar (same id)"
+    @assert n_after == n_before "a no-op perturbation adds no components (no duplication)"
     # Parallel arrays must remain aligned
     @assert length(state.metadata) == n_after
     @assert length(state.compiled_kernels) == n_after
@@ -584,7 +591,7 @@ let
 
     println("  Before: $n_before components, $n_grammars_before grammars")
     println("  After: $n_after components, $n_grammars_after grammars (+$n_added)")
-    println("PASSED: execute_meta_action! adds components and grammars, arrays aligned")
+    println("PASSED: execute_meta_action!(:perturb_grammar) is a clean no-op — arrays aligned, no duplication")
 end
 println()
 
