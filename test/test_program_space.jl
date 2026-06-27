@@ -547,12 +547,12 @@ let
     g2 = perturb_grammar(g, ft)
     @assert sort([show_expr(r.body) for r in g1.rules]) == sort([show_expr(r.body) for r in g2.rules]) "two runs ⇒ same grammar"
     @assert any(r -> r.name == :RED && show_expr(r.body) == show_expr(AndExpr(GTExpr(:red, 0.7), LTExpr(:green, 0.3))), g1.rules) "the original :RED rule body is never mutated (modify_threshold retired)"
-    if propose_nonterminal(ft) !== nothing
-        @assert length(g1.rules) == length(g.rules) + 1 "a compressing table adds exactly one rule"
-        println("PASSED: deterministic — compressing table adds the same single rule on every run")
-    else
-        println("PASSED: deterministic — no compressing subtree, consistent no-op")
-    end
+    # The fixture is constructed to compress (weights concentrate on programs sharing a subtree); assert
+    # that precondition rather than branching on it, so a regression that broke the proposer cannot make
+    # this test silently pass as a no-op (the strongest-property idiom).
+    @assert propose_nonterminal(ft) !== nothing "fixture must compress (precondition for the add-path determinism check)"
+    @assert length(g1.rules) == length(g.rules) + 1 "a compressing table adds exactly one rule deterministically"
+    println("PASSED: deterministic — compressing table adds the same single rule on every run")
     println("PASSED: perturb_grammar selection is deterministic (rand retired)")
 end
 println()

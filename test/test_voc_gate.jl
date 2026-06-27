@@ -62,7 +62,7 @@ check("net_voc folds compute_cost linearly (no clamp)", net_voc(2, 100.0) ≈ 2 
 # ── (1) degenerate reduction: compute_cost = 0 ≡ today's deterministic :add_rule branch ──
 let
     g = Grammar(Set([:red, :green]), ProductionRule[], 1)
-    ft, _ = shared_subtree_table(3)                       # net_payoff = 2·3 − 4 = 2 > 0
+    ft, s = shared_subtree_table(3)                       # net_payoff = 2·3 − 4 = 2 > 0; oracle subtree s
     proposed = propose_nonterminal(ft)
     @assert proposed !== nothing
     expected = Grammar(g.feature_set, [g.rules; proposed], 999)   # the :add_rule branch's construction
@@ -70,6 +70,11 @@ let
     check("compute_cost=0 reproduces :add_rule branch (rules)", rules_str(got) == rules_str(expected),
           "got=$(rules_str(got)) expected=$(rules_str(expected))")
     check("compute_cost=0 preserves feature_set", got.feature_set == g.feature_set)
+    # Pin the SELECTED body to the independent oracle s (not just a count / run-equality): a
+    # mis-selection of a different subtree would pass the count checks but fail this.
+    check("the added rule's body == the oracle subtree s",
+          length(got.rules) == 1 && show_expr(got.rules[end].body) == show_expr(s),
+          "added=$(rules_str(got)) oracle=$(show_expr(s))")
 end
 
 # ── (1b) no compressing subtree (net_payoff ≤ 0) ⇒ deterministic no-op ──
@@ -82,6 +87,20 @@ let
     ft1, _ = shared_subtree_table(2)                      # net_payoff = 2·2 − 4 = 0, not > 0
     got1 = perturb_grammar(g, ft1; compute_cost = 0.0)
     check("net_payoff = 0 ⇒ no-op (gate is strict >)", isempty(got1.rules), "rules=$(rules_str(got1))")
+end
+
+# ── (1c) name-collision no-op (path b): a proposed rule whose name already exists ⇒ no-op, and the
+# existing body is never overwritten. This is the idempotence guard that keeps Scope A monotonic —
+# re-perturbing a grammar that already holds the compression does not re-add or clobber it. ──
+let
+    ft, s = shared_subtree_table(4)                       # net_payoff = 4 > 0 ⇒ would propose a rule for s
+    collide = Symbol("NT_", hash(show_expr(s)) % 10000)   # the exact name propose_nonterminal generates
+    existing_body = GTExpr(:red, 0.9)                     # a DIFFERENT body under that same name
+    g = Grammar(Set([:red, :green]), [ProductionRule(collide, existing_body)], 1)
+    got = perturb_grammar(g, ft; compute_cost = 0.0)
+    check("name collision ⇒ no-op (no second rule added)", length(got.rules) == 1, "rules=$(rules_str(got))")
+    check("name collision never overwrites the existing body",
+          show_expr(got.rules[1].body) == show_expr(existing_body), "body=$(show_expr(got.rules[1].body))")
 end
 
 # ── (2) directional: compute_cost flips the gate exactly at net_payoff·log(2) ──
@@ -108,11 +127,19 @@ let
     check("two runs ⇒ identical feature_set", a.feature_set == b.feature_set)
 end
 
-# ── (4) source-level guard: the breach is closed — no `rand(` in the perturbation path ──
+# ── (4) source-level guard: the breach is closed — NO rng entry point on the perturbation path.
+# Widened beyond a bare `rand(` substring: (a) the regex also catches randn/randperm/randsubseq/
+# shuffle/rand!; (b) line comments are stripped so a docstring mention can't false-trip it; (c) it
+# also scans agent_state.jl, where `next_grammar_id` lives — a random id THERE would evade the
+# determinism tests, which compare structure and deliberately exclude the grammar id. ──
 let
-    src = read(joinpath(@__DIR__, "..", "src", "program_space", "perturbation.jl"), String)
-    check("perturbation.jl contains no rand( call", !occursin("rand(", src),
-          "a rand( call survives in perturbation.jl")
+    rng = r"\b(rand|randn|randperm|randsubseq|shuffle|rand!)\s*\("
+    for f in ("program_space/perturbation.jl", "program_space/agent_state.jl")
+        src = read(joinpath(@__DIR__, "..", "src", f), String)
+        code = join((first(split(line, '#')) for line in split(src, '\n')), '\n')  # strip line comments
+        check("$f: no rng entry point on the perturbation path", !occursin(rng, code),
+              "an rng call survives in $f")
+    end
 end
 
 println("="^64)
