@@ -124,10 +124,13 @@ to 0.0; `server.jl:1320` caller untouched — no protocol bump).
 
 ## Phase 5 — VOC gate: retire the `rand` breach in `perturb_grammar`
 
-> **Design RESOLVED in review (2026-06-27); full doc `docs/collapse-towers/phase-5-design.md`.** The
-> design-doc gate did its job — grounding the code against the tree corrected the master plan's
-> projection on two points (R1, R2 below; the 5th substantive overclaim the gate has caught in five
-> phases). The phase did **not** stall: a cheap, *exact* estimator survives for the compression class.
+> **LANDED 2026-06-27 (full suite 43/43; lint + skin smoke + Python 587-passed all green); design doc
+> `docs/collapse-towers/phase-5-design.md`.** The design-doc gate did its job — grounding the code
+> against the tree corrected the master plan's projection on two points (R1, R2 below; the 5th
+> substantive overclaim the gate has caught in five phases). The phase did **not** stall: a cheap,
+> *exact* estimator survives for the compression class. **The `collapse-towers` arc is complete** — both
+> towers collapsed: `complexity_logprior` (Phase 1) and `net_value` (Phase 3) are the single templates,
+> the six bespoke sites route through them, and the `rand` in `perturb_grammar` is gone.
 
 `net_voc(Δ) = Δcomplexity_logprior(Δ) − compute_cost`, depth-one, the structural twin of `net_voi`.
 Replace the `rand`-based selection with a deterministic `argmax` over compression-class candidate
