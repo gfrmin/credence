@@ -69,16 +69,30 @@ Make the **Prevision the primary** for generic-closure `expect` and the Measure 
 See `phase-1-design.md`. (Open question there: unify at the Measure's Gauss-Jacobi `n=32` so the Beta
 Measure path is bit-preserved, vs the Prevision's old `n=64`.)
 
-### Phase 2 — Invert `condition`/`_predictive_ll` delegation (carrier-space-threading)
-Move the non-conjugate `condition`/`_predictive_ll`/`log_predictive` fallbacks for Beta/Gaussian/Gamma/
-Product to Prevision-primary, threading the carrier space where the posterior needs it; the Measure
-facades become thin delegating views. Capture-before-refactor: posteriors pinned `==` pre-refactor.
+### Phase 2 — Invert `condition`/`_predictive_ll` for the continuous-scalar families
+**Scope refined by the carrier-space gate (design doc §1, ratified 2026-06-28):** the master plan's
+"all 9 backwards-delegation sites" split **5 clean / 4 binding** along the **structural-vs-data carrier
+seam**. The *continuous* families (Beta/Gaussian/Gamma) have a *type-recoverable* support
+(`Interval(0,1)`/`Euclidean(1)`/`PositiveReals`, read off the Prevision type), so their non-conjugate
+`condition` + the deterministic Beta/Gaussian `_predictive_ll` invert Prevision-primary with a thin
+**carrier re-bind at the Measure facade** — no live carrier threaded. Capture-before-refactor reuses the
+existing `particle_canonical_v1.jls` fixture (`==`, no new capture). See `phase-2-design.md`.
 
-### Phase 3 — Collapse the duplicated mixture twins (`condition`/`prune`/`truncate`/`draw`)
-The Phase-2-of-collapse-towers deferral. Thread the per-component carrier space so the
-`MixtureMeasure` facade can delegate to `MixturePrevision` without dropping space context or changing
-the consumer-visible component type. Capture-before-refactor against `test_flat_mixture`/`test_host`/
-`test_core` TEST 53 (the tests the naive facade broke).
+The four **binding** sites — `condition(::ProductPrevision)` (per-factor data carrier, returns a
+`MixtureMeasure`) and the three generic catch-alls (`_predictive_ll(::Prevision)`,
+`log_predictive(::Prevision)`, `condition(::Measure)`) — bind because their support is *data*: the
+discrete families' category values live in `m.space.values`, unrecoverable from type
+(`CategoricalPrevision` has no carrier-free `draw`). They **defer to Phase 3** and, since Phase 3
+adjacency is not guaranteed, each carries an explicit `# NOTE:` tracking marker citing the Phase 3 issue
+(#163; the half-state is owned, not silent). Product is **not** pulled into Phase 2.
+
+### Phase 3 — Give the data-valued carrier a Prevision-native home (mixture twins + the 4 binding sites)
+The Phase-2-of-collapse-towers deferral, now seen for what it is: the discrete/per-component carrier is
+*data*, and giving it a carrier-free home is *the same act* as collapsing the duplicated mixture twins
+(`condition`/`prune`/`truncate`/`draw`). Thread the per-component carrier so the `MixtureMeasure` facade
+delegates to `MixturePrevision` without dropping space context or changing the consumer-visible component
+type; in the same move, invert the four binding sites Phase 2 marked. Capture-before-refactor against
+`test_flat_mixture`/`test_host`/`test_core` TEST 53 (the tests the naive facade broke).
 
 ## Hard constraints (inherited)
 Spec-first; design-doc-before-code; stop-and-report at every phase boundary; **no new constitutional
