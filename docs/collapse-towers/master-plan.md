@@ -124,39 +124,61 @@ to 0.0; `server.jl:1320` caller untouched — no protocol bump).
 
 ## Phase 5 — VOC gate: retire the `rand` breach in `perturb_grammar`
 
-`net_voc = E[value(belief after the computation)] − value(belief now) − compute_cost`, depth-one.
-Replace the `rand`-based selections with `optimise` over candidate concrete perturbations ranked by
-`net_voc`; the *selection* becomes an `argmax`, the *surgery* stays a meta-action. The outer
-"perturb or not" decision is already EU-max at the hosts; the breach is the inner "which perturbation"
-choice. Signature unchanged ⇒ skin wire unaffected.
+> **Design RESOLVED in review (2026-06-27); full doc `docs/collapse-towers/phase-5-design.md`.** The
+> design-doc gate did its job — grounding the code against the tree corrected the master plan's
+> projection on two points (R1, R2 below; the 5th substantive overclaim the gate has caught in five
+> phases). The phase did **not** stall: a cheap, *exact* estimator survives for the compression class.
 
-**The 7 `rand` calls split 5 + 2.** Five (outer `rand(ops)` `:153` + structure-preserving inner
-selections `:remove_rule` `:177`, `:modify_threshold` `:183`/`:187`/`:190`) dissolve into the
-structure-preserving concrete-perturbation enumeration ranked by `net_voc` (`:add_rule` is already a
-deterministic `argmax` in `propose_nonterminal`; its `net_payoff` folds in as the description-length
-term). The remaining **two are the alphabet-op rands** (`:add_feature` `:158`, `:remove_feature`
-`:164`).
+`net_voc(Δ) = Δcomplexity_logprior(Δ) − compute_cost`, depth-one, the structural twin of `net_voi`.
+Replace the `rand`-based selection with a deterministic `argmax` over compression-class candidate
+perturbations ranked by `net_voc`; the *selection* becomes an `argmax`, the *surgery* stays a
+meta-action. The outer "perturb or not" decision is already EU-max at the hosts; the breach is the
+inner "which perturbation" choice. Signature unchanged ⇒ skin wire unaffected.
 
-**Alphabet ops are unreachable by depth-one VOC — by construction, not by difficulty.** `:add_feature`
-enlarges the space to admit structure the current posterior *cannot represent*; its value is the value
-of a hypothesis **not yet entertained** — the Cromwell / escape-mass frontier — which myopic depth-one
-lookahead cannot see in principle. Recommendation (the answer, not a fallback): **scope `net_voc` to
-the structure-preserving ops; govern alphabet ops by a separate, explicitly-deferred mechanism** —
-either the feature-inclusion prior the complexity prior already supplies (Phase 1's edge axis *is* a
-feature-inclusion prior) or a small explicit exploration budget.
+**R1 — `net_voc` is in LOG-PRIOR currency, not utility currency (forced, and affirmatively correct).**
+`perturb_grammar` sees only `(g, freq_table, available_features)` — no belief, no utilities, no
+re-conditioning — so achievable EU is *unaffordable* depth-one (it needs the very forward inference
+the metalevel is deciding to spend — Russell–Wefald). The affordable value-proxy is the change in the
+program-space **complexity prior**: `net_voc` in log-prior nats is the complexity-prior axiom (SPEC
+§1.3) doing exactly its job — standing in for true value when true value is unaffordable. It is the
+*third representation* of `net_value` (after scalar `net_voi` and Functional-offset routing EU), same
+form, prior currency. **Honest precision:** this realises the *form* unification (no `rand`; which-
+perturbation is an `argmax` of `net_value`) but **not** SPEC's stronger *one combined `argmax` in a
+single currency* — the host prices perturb-or-not in utility, `perturb_grammar` prices which-
+perturbation in nats, they are never summed, so they never need a common currency. The combined
+single-currency `argmax` is the next escape-mass frontier, out of reach here and named as such.
 
-**Close the inconsistent triple** ("retire all `rand`" + "defer alphabet selection" + "two runs ⇒ same
-grammar") in the Phase 5 design doc by picking, for the two alphabet rands: **(a)** exclude
-`:add_feature`/`:remove_feature` from the Phase-5 op set, or **(b)** select them deterministically from
-the feature-inclusion prior. Both close the breach. **Never leave them random.** The determinism test
-scopes to whichever op set survives.
+**R2 — the op split is 2 + 3 (compression vs generative-change), NOT the plan's 5 + 2.** Depth-one VOC
+over `(g, freq_table)` can value *only what changes the prior*, and only the **compression class**
+changes the prior: `:add_rule` (its value is exactly `propose_nonterminal`'s `net_payoff`, scaled to
+nats by `λ=log(2)`; `net_payoff>0` *is* `net_voc>0` at `compute_cost=0`) and `:remove_rule`. The
+**generative-change class** — `:modify_threshold`, `:add_feature`, `:remove_feature` — changes *which*
+hypotheses the grammar generates (a likelihood effect over programs not in the current ensemble, the
+escape-mass / Cromwell frontier) and is invisible to depth-one prior-only VOC by construction.
+`:modify_threshold` was mis-grouped in the plan's "dissolving five": a threshold constant is one
+symbol regardless of value (`expr_complexity` is threshold-invariant), so `Δcomplexity_logprior ≡ 0`
+— it belongs with the alphabet ops. The three-way identity: *what depth-one VOC can value = what
+changes the prior = the compression class.*
 
-**OQ-voc-estimator** is the genuine crux; the design doc is the gate. Recommended estimator
-(structure-preserving ops): posterior-weighted `Δ complexity_logprior` read off the
-`SubprogramFrequencyTable` already passed in (recovers `net_payoff` for `:add_rule`). Confirm the
-candidate set is **enumerable** (else: constrain it — recommended — not sample-and-argmax, which
-reintroduces randomness). **Stall gate stands:** if no cheap estimator survives, Phase 5 stalls at the
-doc and reports — do not implement a guess.
+**Resolution (ship):** **Scope A** — `net_voc` governs `:add_rule` alone (exact `net_payoff`
+estimator; `perturb_grammar` = deterministic `propose_nonterminal`-or-no-op; the four random branches
+deleted, zero `rand`). **OQ-3(a)** — the three generative-change ops are *excluded and deferred*
+(never random, never an arbitrary deterministic tiebreak — that only launders the breach). A
+`compute_cost::Float64 = 0.0` keyword mirrors Phase 4; at the default it recovers today's `:add_rule`
+gate bit-for-bit. Determinism test: two runs on identical `(g, freq_table)` ⇒ structurally identical
+grammar. Benchmark drift (greedy-vs-random) is intended; update `test_program_space.jl` TEST 14
+(retired `:modify_threshold` random-trial test → determinism test) and any drifted email/grid counts.
+
+**Named successors (tracked, not someday-maybe):**
+1. **Scope B (`:remove_rule`)** — needed for long-run *dictionary hygiene* (Scope A is monotonic: it
+   only grows the dictionary, never prunes). *Blocked on* a sound nonterminal reference count, which
+   `(g, freq_table)` cannot supply (the `freq_table` is lossy at `min_complexity=2`). Not shipped
+   because its value estimate is estimable-not-provably-sound — the stall gate's exact concern.
+2. **EU-priced exploration budget** — restores feature/threshold discovery (the deferred
+   generative-change ops) under an EU-max mechanism (resource-rational, consistent with the
+   metareasoned-approximation direction). **On the *capability* critical path** (Scope A discovers no
+   new feature/threshold until it lands), so sequenced as the *immediate, adjacent* successor to this
+   arc — shortest possible gap between "breach closed" and "exploration restored."
 
 ## Files
 
