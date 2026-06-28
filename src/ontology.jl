@@ -1634,15 +1634,42 @@ function _predictive_ll(p::GaussianPrevision, k::Kernel, obs)
     -0.5 * (log(2π * s2) + (Float64(obs) - p.mu)^2 / s2)           # N(obs | μ₀, √(σ₀²+σ²))
 end
 
-# NOTE: measure-as-view Phase 3 (#163) — backwards delegation; Gamma predictive is sampling (no fixture),
-# routed through the generic Measure sampler — inverts with the discrete/sampling catch-alls.
+# Prevision-primary (measure-as-view Phase 3, Q2): the predictive is the exact integral expect(p, …);
+# Gamma's expect is carrier-free (Phase 1). This is the phase's ONE intended behaviour change — the
+# sampling fallback (200 draws) → exact — captured before/after, mirroring _predictive_ll(::BetaPrevision).
 _predictive_ll(p::GammaPrevision, k::Kernel, obs) =
-    _predictive_ll(wrap_in_measure(p), k, obs)
+    (val = expect(p, h -> exp(k.log_density(h, obs))); log(max(val, 1e-300)))
 
-# NOTE: measure-as-view Phase 3 (#163) — backwards delegation; generic catch-all whose draw/expect bind
-# the DATA carrier for the discrete families (CategoricalPrevision has no carrier-free draw).
+# Prevision-primary (measure-as-view Phase 3): the NormalGamma posterior-predictive Student-t closed form
+# (mirrors _predictive_ll(::NormalGammaMeasure)); removes the family-BMA round-trip through the Measure.
+function _predictive_ll(p::NormalGammaPrevision, k::Kernel, obs)
+    k.likelihood_family isa NormalGammaLikelihood ||
+        return invoke(_predictive_ll, Tuple{Prevision, Kernel, Any}, p, k, obs)
+    ν = 2.0 * p.α
+    s2 = p.β * (p.κ + 1.0) / (p.α * p.κ)
+    z = (Float64(obs) - p.μ)^2 / s2
+    _loggamma((ν + 1) / 2) - _loggamma(ν / 2) - 0.5 * log(ν * π * s2) - ((ν + 1) / 2) * log1p(z / ν)
+end
+
+# Prevision-primary (measure-as-view Phase 3): the predictive is the exact integral. Carrier-FREE types
+# (Particle/Quadrature/TruncatedGaussian/RhoCategorical/Gamma) have expect(p, ::Function). A genuinely
+# carrier-bound Prevision — CategoricalPrevision has no carrier-free expect over a closure — MethodErrors
+# here: its predictive is a Measure op (expect(::CategoricalMeasure, f)), the boundary asserting itself (Q1,
+# prevision-not-measure corollary). No wrap_in_measure round-trip.
 function _predictive_ll(p::Prevision, k::Kernel, obs)
-    _predictive_ll(wrap_in_measure(p), k, obs)
+    val = expect(p, h -> exp(k.log_density(h, obs)))
+    log(max(val, 1e-300))
+end
+
+# Prevision-native mixture predictive (measure-as-view Phase 3): mirrors _predictive_ll(::MixtureMeasure)
+# — the marginal likelihood is Σ_i w_i · P(obs | component_i), passing each COMPONENT to its own
+# _predictive_ll (so a Measure-aware kernel sees the component, not a θ grid point). Without this a
+# MixturePrevision falls to the generic expect-based catch-all above, which integrates the kernel over the
+# mixture's support — wrong for component-reading kernels (structure-BMA / decide_with_voi).
+function _predictive_ll(p::MixturePrevision, k::Kernel, obs)
+    w = weights(p)
+    total = sum(w[i] * exp(_predictive_ll(p.components[i], k, obs)) for i in eachindex(w))
+    log(max(total, 1e-300))
 end
 
 # ── log_predictive: log P(obs | beliefs) — single observation ──
@@ -1652,10 +1679,11 @@ function log_predictive(m::Measure, k::Kernel, obs)
     log(max(pred, 1e-300))
 end
 
-# NOTE: measure-as-view Phase 3 (#163) — backwards delegation; generic catch-all binding the discrete DATA
-# carrier (see _predictive_ll(::Prevision) above).
+# Prevision-primary (measure-as-view Phase 3): mirrors log_predictive(::Measure) — the exact integral,
+# carrier-free. A carrier-bound Prevision (CategoricalPrevision) MethodErrors here (Measure-resident, Q1).
 function log_predictive(p::Prevision, k::Kernel, obs)
-    log_predictive(wrap_in_measure(p), k, obs)
+    val = expect(p, h -> exp(density(k, h, obs)))
+    log(max(val, 1e-300))
 end
 
 # A mixture's marginal likelihood = logsumexp_i(log_weight_i + _predictive_ll(comp_i, k, obs)),
@@ -1980,10 +2008,9 @@ function _sample_index(w::AbstractVector{<:Real})
     length(w)
 end
 
-# The keystone: CategoricalPrevision holds only log_weights — a distribution over an INDEX set. So weights
-# and draw are carrier-free (index = structure); the Measure owns the index→value lookup (value = data).
-# weights(p) mirrors weights(m::CategoricalMeasure) exactly (same operations on the same log_weights).
-weights(p::CategoricalPrevision) = (w = exp.(p.log_weights .- maximum(p.log_weights)); w ./ sum(w))
+# The keystone: CategoricalPrevision holds only log_weights — a distribution over an INDEX set. So draw is
+# carrier-free (the INDEX = structure); the Measure owns the index→value lookup (value = data). `weights`
+# for a CategoricalPrevision lives in stdlib.jl (the public accessor); draw routes through it.
 draw(p::CategoricalPrevision) = _sample_index(weights(p))
 draw(m::CategoricalMeasure) = m.space.values[draw(m.prevision)]
 
