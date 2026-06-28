@@ -1686,6 +1686,12 @@ function log_predictive(p::Prevision, k::Kernel, obs)
     log(max(val, 1e-300))
 end
 
+# NormalGamma's expect is Measure-primary (sampling) — NOT inverted by this arc — so it has no carrier-free
+# expect over a closure and would MethodError the generic catch-all above. Its predictive is the
+# Prevision-native Student-t closed form (measure-as-view Phase 3); log_predictive delegates to
+# _predictive_ll (same quantity — the established log_predictive(::CategoricalMeasure) pattern).
+log_predictive(p::NormalGammaPrevision, k::Kernel, obs) = _predictive_ll(p, k, obs)
+
 # A mixture's marginal likelihood = logsumexp_i(log_weight_i + _predictive_ll(comp_i, k, obs)),
 # routing per-component (each component resolves its own LikelihoodFamily — e.g. a
 # `DispatchByComponent` group kernel reads each `LabelledCategoricalPrevision`'s label). The
