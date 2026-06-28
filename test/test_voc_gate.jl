@@ -21,7 +21,7 @@
 push!(LOAD_PATH, joinpath(@__DIR__, "..", "src"))
 using Credence
 using Credence: Grammar, ProductionRule, SubprogramFrequencyTable, Program,
-                GTExpr, LTExpr, AndExpr, NotExpr, IfExpr, ActionExpr, ProgramExpr,
+                GTExpr, LTExpr, AndExpr, NotExpr, IfExpr, ActionExpr, NonterminalRef, ProgramExpr,
                 perturb_grammar, propose_nonterminal, analyse_posterior_subtrees,
                 expr_complexity, show_expr, net_voc
 
@@ -90,12 +90,21 @@ let
 end
 
 # ── (1c) name-collision no-op (path b): a proposed rule whose name already exists ⇒ no-op, and the
-# existing body is never overwritten. This is the idempotence guard that keeps Scope A monotonic —
-# re-perturbing a grammar that already holds the compression does not re-add or clobber it. ──
+# existing body is never overwritten. This is the idempotence guard that keeps the :add_rule path
+# monotonic — re-perturbing a grammar that already holds the compression does not re-add or clobber it.
+# Move-1 note: the colliding rule must be REFERENCED by the support, else it is a dead rule and
+# :remove_rule (correctly) removes it — a different code path. Adding one program that references the
+# nonterminal makes it live, isolating the add-side idempotence guard (this test's sole purpose). ──
 let
-    ft, s = shared_subtree_table(4)                       # net_payoff = 4 > 0 ⇒ would propose a rule for s
-    collide = Symbol("NT_", hash(show_expr(s)))           # the exact (full-hash) name propose_nonterminal generates
+    s = AndExpr(GTExpr(:red, 0.7), LTExpr(:green, 0.3))   # the compressing subtree (expr_complexity 3)
+    collide = Symbol("NT_", hash(show_expr(s)))           # the exact (full-hash) name propose_nonterminal generates for s
     existing_body = GTExpr(:red, 0.9)                     # a DIFFERENT body under that same name
+    # Four programs share s (⇒ :add_rule proposes a rule named `collide`, net_payoff 4 > 0), plus one
+    # program that REFERENCES `collide` (⇒ it is live, not a :remove_rule candidate).
+    progs = Program[Program(IfExpr(s, ActionExpr(:a), ActionExpr(:b)), 6, 1) for _ in 1:4]
+    push!(progs, Program(IfExpr(NonterminalRef(collide), ActionExpr(:a), ActionExpr(:b)), 3, 1))
+    w = fill(1.0 / 5, 5)
+    ft = analyse_posterior_subtrees(progs, w; min_frequency = 0.0, min_complexity = 2)
     g = Grammar(Set([:red, :green]), [ProductionRule(collide, existing_body)], 1)
     got = perturb_grammar(g, ft; compute_cost = 0.0)
     check("name collision ⇒ no-op (no second rule added)", length(got.rules) == 1, "rules=$(rules_str(got))")
@@ -140,6 +149,110 @@ let
         check("$f: no rng entry point on the perturbation path", !occursin(rng, code),
               "an rng call survives in $f")
     end
+end
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# (5) :remove_rule — dictionary hygiene, the symmetric MDL partner of :add_rule
+#     (exploration-budget Move 1). A rule no posterior-support program references is dead weight:
+#     removing it raises the complexity prior at ZERO fit cost (no support program changes), so it is
+#     prior-only and net_voc-rankable. "Referenced" is counted by a FULL-depth AST walk over the
+#     support (w > 1e-15), INDEPENDENT of extract_subtrees' min_complexity filter (the Scope-B fix).
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# Independent oracle for "the support references `name`": the rule-name token appears in some support
+# program's show_expr. Deliberately NOT the production collect_nonterminal_refs — this oracle pins the
+# prior-only claim (belief untouched) without circular reference to the function under test.
+references_name(progs, name) =                  # credence-lint: allow — precedent:test-oracle — independent reference check for the prior-only pin
+    any(p -> occursin(string(name), show_expr(p.expr)), progs)
+
+# ── (5a) remove a dead rule; keep a live one; prior-only (belief untouched) pin ──
+let
+    # :LIVE is referenced by the support (a bare NonterminalRef predicate); :DEAD by nobody.
+    g = Grammar(Set([:red, :blue]),
+                [ProductionRule(:LIVE, GTExpr(:red, 0.7)), ProductionRule(:DEAD, GTExpr(:blue, 0.5))], 1)
+    progs = Program[Program(IfExpr(NonterminalRef(:LIVE), ActionExpr(:a), ActionExpr(:b)), 3, 1) for _ in 1:3]
+    w = fill(1.0 / 3, 3)
+    ft = analyse_posterior_subtrees(progs, w; min_frequency = 0.0, min_complexity = 2)
+
+    got = perturb_grammar(g, ft; compute_cost = 0.0)
+    names = Set(r.name for r in got.rules)
+    check("dead rule :DEAD is removed", :DEAD ∉ names, "rules=$(rules_str(got))")
+    check("live rule :LIVE is kept", :LIVE ∈ names, "rules=$(rules_str(got))")
+    check("exactly one rule removed", length(got.rules) == 1, "rules=$(rules_str(got))")
+
+    # The reference pass populated the new field: :LIVE referenced (depth-1), :DEAD not.
+    check("reference pass: referenced == {:LIVE}", ft.referenced_nonterminals == Set([:LIVE]),
+          "got $(ft.referenced_nonterminals)")
+    # net_voc of the removal == log(2)·(1 + expr_complexity(body)) == log(2)·2.
+    check("removal net_voc == log(2)·(1 + complexity(body))",
+          net_voc(1 + expr_complexity(GTExpr(:blue, 0.5)), 0.0) ≈ 2 * log(2))
+
+    # Prior-only / belief-untouched pin (independent oracle): :DEAD is referenced by ZERO support
+    # programs, so the support set — hence the posterior on re-conditioning the same data — is
+    # bit-identical across the removal; :LIVE remains referenced.
+    check("prior-only: removed :DEAD referenced by no support program (belief untouched)",
+          !references_name(progs, :DEAD), "a support program referenced :DEAD")
+    check("prior-only: surviving :LIVE still referenced by the support", references_name(progs, :LIVE))
+end
+
+# ── (5b) depth-1 reference is seen (R1) — the Scope-B unsoundness guard ──
+let
+    # :BARE is referenced ONLY by a bare NonterminalRef (a complexity-1 predicate) — exactly the
+    # depth-1 reference the old extract_subtrees(min_complexity=2) count dropped. :TDEAD: referenced
+    # nowhere. A count routed through extract_subtrees would drop the bare ref and wrongly remove :BARE.
+    g = Grammar(Set([:green, :blue]),
+                [ProductionRule(:BARE, GTExpr(:green, 0.2)), ProductionRule(:TDEAD, GTExpr(:blue, 0.9))], 1)
+    progs = Program[Program(IfExpr(NonterminalRef(:BARE), ActionExpr(:a), ActionExpr(:b)), 3, 1) for _ in 1:2]
+    w = fill(0.5, 2)
+    ft = analyse_posterior_subtrees(progs, w; min_frequency = 0.0, min_complexity = 2)
+
+    check("depth-1 reference is collected (:BARE ∈ referenced)", :BARE ∈ ft.referenced_nonterminals,
+          "got $(ft.referenced_nonterminals)")
+    got = perturb_grammar(g, ft; compute_cost = 0.0)
+    names = Set(r.name for r in got.rules)
+    check("depth-1-referenced :BARE is NOT removed (sound full-depth count)", :BARE ∈ names,
+          "rules=$(rules_str(got))")
+    check("truly-dead :TDEAD is removed", :TDEAD ∉ names, "rules=$(rules_str(got))")
+end
+
+# ── (5c) determinism + tiebreak: add ≡ remove net_voc tie resolves remove-first ──
+let
+    # Exact tie: an :add_rule candidate of payoff 2 (subtree s shared by 3 programs, expr_complexity 3
+    # ⇒ 3·(3−1) − (1+3) = 2) AND a :remove_rule candidate of payoff 2 (dead :D, body complexity 1 ⇒
+    # 1 + 1 = 2). Tiebreak = remove-first (hygiene: shrink before grow): :D removed, s NOT added.
+    s = AndExpr(GTExpr(:red, 0.7), LTExpr(:green, 0.3))
+    progs = Program[Program(IfExpr(s, ActionExpr(:a), ActionExpr(:b)), 6, 1) for _ in 1:3]   # share s; no ref to :D
+    w = fill(1.0 / 3, 3)
+    ft = analyse_posterior_subtrees(progs, w; min_frequency = 0.0, min_complexity = 2)
+    g = Grammar(Set([:red, :green]), [ProductionRule(:D, GTExpr(:blue, 0.5))], 1)
+
+    add_payoff = oracle_net_payoff(ft)          # credence-lint: allow — precedent:test-oracle — confirm the exact tie
+    check("tie precondition: add payoff == remove payoff == 2",
+          add_payoff == 2 && (1 + expr_complexity(GTExpr(:blue, 0.5))) == 2, "add_payoff=$add_payoff")
+
+    got = perturb_grammar(g, ft; compute_cost = 0.0)
+    check("net_voc tie resolves remove-first: :D removed", :D ∉ Set(r.name for r in got.rules),
+          "rules=$(rules_str(got))")
+    check("net_voc tie resolves remove-first: subtree NOT added (remove won)", isempty(got.rules),
+          "rules=$(rules_str(got))")
+    a = perturb_grammar(g, ft; compute_cost = 0.0)
+    b = perturb_grammar(g, ft; compute_cost = 0.0)
+    check("tiebreak is deterministic across runs", rules_str(a) == rules_str(b),
+          "a=$(rules_str(a)) b=$(rules_str(b))")
+end
+
+# ── (5d) saturation no-op — the Move-2 prior-saturation signal ──
+let
+    # Every rule referenced AND no compressing subtree ⇒ no add, no remove ⇒ structural no-op: the
+    # INPUT grammar returned unchanged (same id). This no-op is the prior-saturation signal Move 2 reads.
+    g = Grammar(Set([:red]), [ProductionRule(:ONLY, GTExpr(:red, 0.4))], 7)
+    progs = Program[Program(IfExpr(NonterminalRef(:ONLY), ActionExpr(:a), ActionExpr(:b)), 3, 7) for _ in 1:2]
+    w = fill(0.5, 2)
+    ft = analyse_posterior_subtrees(progs, w; min_frequency = 0.0, min_complexity = 2)
+    got = perturb_grammar(g, ft; compute_cost = 0.0)
+    check("saturation no-op: same grammar id (Move-2 signal)", got.id == g.id, "id=$(got.id)")
+    check("saturation no-op: rules unchanged", Set(r.name for r in got.rules) == Set([:ONLY]),
+          "rules=$(rules_str(got))")
 end
 
 println("="^64)

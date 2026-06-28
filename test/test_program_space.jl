@@ -558,6 +558,50 @@ end
 println()
 
 # ═══════════════════════════════════════
+# TEST 14b: perturb_grammar :remove_rule on ENUMERATED programs — exploration-budget Move 1
+# ═══════════════════════════════════════
+# Complements test_voc_gate.jl §5 (hand-built ASTs) with the real trigger on genuinely-enumerated
+# programs: a rule the POSTERIOR abandoned — every program referencing it drops below the w > 1e-15
+# support floor — is removed, while a rule the support still references is kept. This exercises the
+# full-depth reference walk's sharing of the support filter (the Scope-B fix) end-to-end through the
+# enumeration → analyse → perturb pipeline.
+
+println("=" ^ 60)
+println("TEST 14b: perturb_grammar removes a posterior-abandoned rule (enumerated)")
+println("=" ^ 60)
+
+let
+    g = Grammar(Set([:red, :green]),
+                [ProductionRule(:KEEP, GTExpr(:red, 0.7)), ProductionRule(:DROP, LTExpr(:green, 0.3))], 1)
+    progs = enumerate_programs(g, 3; action_space=[:a, :b])
+    # Support = programs referencing :KEEP but NOT :DROP (weight 1); every :DROP-referencing program is
+    # pushed below the support floor (weight 0 ⇒ filtered), modelling the posterior abandoning :DROP.
+    w = zeros(length(progs))
+    for (i, p) in enumerate(progs)
+        s = show_expr(p.expr)
+        w[i] = (occursin("KEEP", s) && !occursin("DROP", s)) ? 1.0 : 0.0
+    end
+    @assert sum(w) > 0 "fixture precondition: some enumerated program references :KEEP without :DROP"
+    w ./= sum(w)
+    # High min_frequency suppresses any :add_rule candidate, so the perturbation under test is
+    # unambiguously the :remove_rule (the reference count is independent of min_frequency).
+    ft = analyse_posterior_subtrees(progs, w; min_frequency=0.99, min_complexity=2)
+
+    # Preconditions (strongest-property idiom — a broken fixture must fail loud, not pass as a no-op):
+    @assert :KEEP in ft.referenced_nonterminals "fixture: the support must reference :KEEP"
+    @assert !(:DROP in ft.referenced_nonterminals) "fixture: the support must NOT reference :DROP (abandoned)"
+    @assert propose_nonterminal(ft) === nothing "fixture: no :add_rule candidate (removal is the sole action)"
+
+    got = perturb_grammar(g, ft)
+    names = Set(r.name for r in got.rules)
+    @assert !(:DROP in names) "posterior-abandoned :DROP is removed (enumerated support)"
+    @assert :KEEP in names "support-referenced :KEEP is kept"
+    @assert got.id != g.id "a real removal advances the grammar id"
+    println("PASSED: enumerated :remove_rule — abandoned :DROP removed, referenced :KEEP kept")
+end
+println()
+
+# ═══════════════════════════════════════
 # TEST 15: Proposed nonterminals are actual posterior subtrees (enforcement, spec §5.10)
 # ═══════════════════════════════════════
 

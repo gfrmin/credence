@@ -32,12 +32,21 @@ exact, since only sub-floor programs reference the removed rule and those are no
 
 ## 2. Files touched
 
-- **`src/program_space/types.jl`** — *modify*: add a fourth field `referenced_nonterminals::Set{Symbol}`
-  to `SubprogramFrequencyTable` (the set of NT names referenced by ≥1 posterior-support program). Add an
-  inner/convenience constructor defaulting it to `Set{Symbol}()` so the existing 3-arg
+- **`src/program_space/types.jl`** — *modify*: add a fourth field
+  `referenced_nonterminals::Union{Nothing, Set{Symbol}}` to `SubprogramFrequencyTable` (the set of NT names
+  referenced by ≥1 posterior-support program, or `nothing` when no analysis has run). Add a 3-arg
+  convenience constructor defaulting it to **`nothing`** so the existing 3-arg
   `SubprogramFrequencyTable(subtrees, freqs, sources)` call sites (tests that hand-build tables) keep
-  compiling and get the **Scope-A-preserving** default (empty ⇒ every rule "referenced-unknown" ⇒ no rule
-  removable ⇒ `:add_rule`-only behaviour bit-for-bit).
+  compiling and get the **Scope-A-preserving** default. **Encoding correction (grounding, 2026-06-28):**
+  the original `Set{Symbol}` default `Set{Symbol}()` does **not** achieve "no rule removable" — the removal
+  predicate is `r.name ∉ referenced`, and `r.name ∉ ∅` is *vacuously true*, so an empty set would make
+  **every** rule removable (the opposite of intent). An empty set also cannot distinguish "analysed, zero
+  references found" (⇒ rules genuinely dead ⇒ remove them) from "not analysed" (⇒ unknown ⇒ remove
+  nothing) — opposite behaviours. `Union{Nothing, Set{Symbol}}` with `nothing` = "not analysed" is the
+  encoding that realises the doc's own intent: `nothing` ⇒ `_removal_payoff` returns `[]` (no candidates);
+  a concrete `Set` (possibly empty — a genuinely-empty analysed set legitimately means "all rules dead") ⇒
+  candidates are rules whose name is absent from it. `analyse_posterior_subtrees` **always** populates a
+  concrete `Set`.
 - **`src/program_space/perturbation.jl`** — *modify*:
   - `analyse_posterior_subtrees`: add a reference-counting pass. For each program with `w > 1e-15` (the
     *same* filter the subtree loop uses), walk the full AST collecting `NonterminalRef` names at **all
@@ -187,3 +196,42 @@ signature is unchanged (the new behaviour is internal candidate generation), so 
   returns `g` with the **same id** (the prior-saturation signal).
 
 Halt-the-line: any failure at end-of-PR is a halt; the branch never sleeps red.
+
+## 8. Ratification + grounding amendments (2026-06-28)
+
+Ratified by the owner. Four binding amendments folded in (the first is the §2 encoding correction above;
+the rest refine §5/§7):
+
+1. **Field encoding → `Union{Nothing, Set{Symbol}}`, default `nothing`** (§2, above). Forced: the
+   empty-`Set` default is vacuously all-removable and conflates "analysed-empty" with "unknown."
+2. **Q1 — resolved *free*, not a capture.** Pre-emptive grep done: `test_persistence.jl` has **zero**
+   references to `SubprogramFrequencyTable` / `freq_table` / `analyse_posterior_subtrees` — the table is
+   transient, recomputed each step. The schema bump needs **no fixture**. The four `SubprogramFrequencyTable(`
+   call sites are `perturbation.jl:53` (the real builder — populates the field) + three hand-built *empty*
+   tables (`test_program_space:530`, `test_perturb_consumption:25`, `test_voc_gate:83`) — all the 3-arg form
+   the `nothing`-default constructor preserves.
+3. **Q2 — total order is lexicographic `rule.name`, NOT `hash(Symbol)`.** Direction stays remove-first
+   (hygiene: shrink before grow), but the within-tie total order is a **string compare on the name**, not a
+   hash. Rationale (owner): Julia's `hash` is stable within a session but **not guaranteed across Julia
+   versions** (the algorithm has changed between releases); since the entire point of the tiebreak is
+   cross-version-reproducible determinism, a lexicographic name compare is stable where the hash is not, at
+   no cost. The Phase-5-safety logic is ratified: the prohibition was on tiebreaking *unknown* values
+   (feigned indifference you can't compute); here the values are *computed and exactly equal*, so any choice
+   is genuinely argmax-optimal and a stable order is honest disambiguation, not laundered arbitrariness.
+   *Owner note (recorded, changes nothing): the direction is consequence-free* — removal is prior-only, so
+   the add and remove classes are independent (doing one never changes whether the other is positive); on a
+   tie **both** fire across successive calls regardless of order, and the saturated fixed point is identical
+   either way. Remove-first wins only on the thin Move-2 ground of keeping the saturated grammar minimal (a
+   cleaner residual-read baseline). Taken on that basis.
+4. **The reference walk is its own full-depth function** `collect_nonterminal_refs!`, recursing to **all
+   depths and all branches** (predicate AND action branches of `IfExpr`), with a method per `ProgramExpr`
+   subtype and **no generic fallback** (fail-loud on a future node type, matching `_extract!` /
+   `expr_complexity`). It is **never** routed through `extract_subtrees(min_complexity)` — that is the exact
+   Scope-B unsoundness (the `min_complexity=2` filter drops bare depth-1 references). Named and separate
+   precisely so a future refactor cannot silently fold it back into the filtered extraction. The R1 test
+   (§7, "depth-1 reference is seen") is the guard that fails against the unsound variant.
+5. **Soundness pin — the prior-only claim is an assertion, not prose** (§7 addition). A `:remove_rule` test
+   verifies, via an **independent oracle** (`show_expr` string-search for the rule name token, *not* the
+   production `collect_nonterminal_refs`), that the removed rule is referenced by **zero** support programs
+   — so the support set (hence the belief, on re-conditioning the same data) is bit-identical across the
+   removal. "Belief untouched" is the whole soundness argument; it is directly testable.
