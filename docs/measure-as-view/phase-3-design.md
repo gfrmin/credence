@@ -26,10 +26,27 @@ draw(p::CategoricalPrevision) = _sample_index(weights(p))   # carrier-free: retu
 draw(m::CategoricalMeasure)   = m.space.values[draw(m.prevision)]   # the Measure owns index→value
 ```
 
-That is the Prevision-native home the master plan asked for. With it, every mixture twin collapses,
-because `MixtureMeasure` holds a **single shared `space`** (`ontology.jl:428`) and reconstructs *every*
-component through that one space (`wrap_in_measure(c, sp)`, `:445`) — so a conditioned/pruned/truncated
-mixture re-attaches its carrier with one `MixtureMeasure(m.space, p2)`.
+That is the Prevision-native home the master plan asked for. With it, the *index/weight-only* mixture
+twins collapse, because `MixtureMeasure` holds a **single shared `space`** (`ontology.jl:428`) and
+reconstructs *every* component through that one space (`wrap_in_measure(c, sp)`, `:445`) — so a
+pruned/truncated mixture re-attaches its carrier with one `MixtureMeasure(m.space, p2)`.
+
+> **Code finding (2026-06-28) — `condition` does NOT collapse; only `prune`/`truncate`/`draw` do.** The
+> gate (Section 2 of the code PR) proved `condition(MixtureMeasure)` is **not** a redundant twin — it is
+> carrier-bound, hence Measure-resident (Q1). The mixture-condition loop passes each component to the
+> kernel's `log_density` (via `_predictive_ll`/`condition`), and *what the kernel receives — a Measure or a
+> Prevision — is observable*: (1) kernels may introspect the component (a `FiringByTag` dual-mode kernel
+> branches on `isa TaggedBetaMeasure` — `test_flat_mixture` TEST 6 mis-dispatched under a blind facade);
+> (2) a component may carry data (a `ProductMeasure` with a `CategoricalMeasure` factor — its predictive
+> needs the carrier to draw values; the Prevision form cannot `wrap_in_measure` a categorical factor
+> without its `Finite` space — `test_host` TEST 5 raised exactly this); (3) a component may need
+> carrier-bound conditioning (`ProductMeasure` + `factor_selector`). So the `condition` twin is two
+> genuinely-different operations sharing a loop *shape*: the Measure loop passes Measure components
+> (carrier-aware, kernel-introspectable), the Prevision loop passes Prevision components (carrier-free +
+> per-component routing, used by the rho-latent / family-BMA / structure-BMA Prevision-entry consumers).
+> This is **Q1 confirmed in the mixture**: conditioning a mixture whose components carry data is
+> carrier-bound, and the bright line is the right architecture, not a wart. `prune`/`truncate`/`draw`
+> carry no kernel (index/weight-only), so they *are* redundant twins and collapse to facades.
 
 **The refinement the gate forces — what "invert" means for a genuinely carrier-bound op.** Three of the
 four sites are carrier-free-in-disguise and become Prevision-native. But two operations underneath them
@@ -64,9 +81,9 @@ All modifications to `src/ontology.jl` unless noted. Line numbers are pre-Phase-
 - `src/ontology.jl:1994` / `:2036` — `draw(m::MixtureMeasure)` / `draw(p::MixturePrevision)` → both route the
   index through `_sample_index`; the Measure draws the reconstructed Measure component (carrier-threaded),
   the Prevision draws the Prevision component.
-- `src/ontology.jl:1698` — `condition(m::MixtureMeasure, k, obs)` → facade:
-  `MixtureMeasure(m.space, condition(m.prevision, k, obs))`. The 18-line Measure-level loop is deleted; its
-  comment (`:1690-1697`, "stays a Measure-level loop on purpose") is replaced by a one-line delegation note.
+- `src/ontology.jl:1698` — `condition(m::MixtureMeasure, k, obs)` **stays a Measure-level loop** (the code
+  finding above: carrier-bound, NOT a redundant twin). Its comment is rewritten to record the three reasons
+  it cannot collapse (kernel introspection / data-carrying components / `factor_selector`).
 - `src/ontology.jl:2049` / `:2063` — `prune`/`truncate(m::MixtureMeasure)` → facades over the Prevision
   form + `m.space` re-bind (identity-preserving early return when nothing changes).
 

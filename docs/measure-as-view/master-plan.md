@@ -98,11 +98,13 @@ type; in the same move, invert the four binding sites Phase 2 marked. Capture-be
 only `log_weights` — it is a distribution over an *index set*, the index→value map living in
 `CategoricalMeasure.space`. So the "missing" `draw(::CategoricalPrevision)` was conflated with the value
 lookup: `draw(p::CategoricalPrevision)` returns the **index** (carrier-free), `draw(m::CategoricalMeasure)
-= m.space.values[draw(m.prevision)]` does the lookup. With that keystone every twin collapses (a
-`MixtureMeasure` carries a single shared `space`, so the facade is `MixtureMeasure(m.space, op(m.prevision))`).
-The bit-exactness is real: `DispatchByComponent` routing only ever flows through `condition(MixturePrevision)`
-(rho-latent / family-BMA condition the Prevision), so collapsing the Measure twin is `==` on the whole
-suite and the routing it gains is a latent correctness win with no current exerciser. **Refinement to
+= m.space.values[draw(m.prevision)]` does the lookup. With that keystone the *index/weight-only* twins
+collapse (a `MixtureMeasure` carries a single shared `space`, so the facade is
+`MixtureMeasure(m.space, op(m.prevision))`).
+
+**Phase 3 code finding (2026-06-28): `condition(MixtureMeasure)` does NOT collapse — only `prune`/`truncate`/`draw` do.** The gate (front-loaded per Q3) proved the `condition` twin is carrier-bound, hence Measure-resident, not a redundant twin. The mixture-condition loop hands each component to the kernel's `log_density`, and what the kernel receives — Measure or Prevision — is observable: kernels may introspect the component (a `FiringByTag` dual-mode kernel branches on `isa TaggedBetaMeasure`, `test_flat_mixture` TEST 6 mis-dispatched under a blind facade), a component may carry data whose predictive needs the carrier (a `ProductMeasure` with a categorical factor — the Prevision form can't `wrap_in_measure` it without its `Finite` space, `test_host` TEST 5), and a component may need carrier-bound conditioning (`factor_selector`). So the Measure loop (carrier-aware, kernel-introspectable) and the Prevision loop (carrier-free + per-component routing, used by the rho-latent / family-BMA / structure-BMA Prevision-entry consumers) are two genuinely-different operations sharing a loop *shape*. This is Q1 confirmed inside the mixture: the bright line is the architecture. `prune`/`truncate`/`draw` carry no kernel → redundant twins → facades. The keystone `draw(::CategoricalPrevision)` lands as planned.
+
+**Refinement to
 "invert":** two of the four sites have genuinely carrier-bound operations underneath (`condition`'s
 `factor_selector` expansion reading `cat.space.values`; predictive over a bare `CategoricalPrevision`).
 "Invert" for these means **remove the round-trip wart**, not force carrier-free — the carrier-bound op
