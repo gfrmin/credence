@@ -22,10 +22,15 @@ function analyse_posterior_subtrees(
     min_complexity::Int=2
 )::SubprogramFrequencyTable
     subtree_map = Dict{String, Tuple{ProgramExpr, Float64, Vector{Int}}}()
+    # The sound nonterminal reference count (exploration-budget Move 1): full-depth walk over the SAME
+    # support set (w > 1e-15) the subtree loop uses, independent of extract_subtrees' min_complexity
+    # filter. A concrete (possibly empty) Set ⇒ analysed; consumed by `_removal_payoff` / `:remove_rule`.
+    referenced = Set{Symbol}()
 
     for (i, prog) in enumerate(programs)
         w = prog_weights[i]
         w > 1e-15 || continue
+        collect_nonterminal_refs!(referenced, prog.expr)
         subtrees = extract_subtrees(prog.expr, min_complexity)
         for st in subtrees
             key = show_expr(st)
@@ -50,7 +55,7 @@ function analyse_posterior_subtrees(
     end
 
     perm = sortperm(freqs, rev=true)
-    SubprogramFrequencyTable(subtrees[perm], freqs[perm], sources[perm])
+    SubprogramFrequencyTable(subtrees[perm], freqs[perm], sources[perm], referenced)
 end
 
 """Extract all subtrees of an expression with complexity ≥ min_c."""
@@ -106,6 +111,43 @@ function _extract!(result, e::IfExpr, min_c)
 end
 
 # ═══════════════════════════════════════
+# Nonterminal reference count — the SOUND, full-depth walk (exploration-budget Move 1)
+# ═══════════════════════════════════════
+
+"""
+    collect_nonterminal_refs!(acc::Set{Symbol}, e::ProgramExpr) → acc
+
+Collect the names of EVERY `NonterminalRef` in `e`, recursing to all depths and into all branches
+(predicate AND action branches of `IfExpr`). The soundness keystone of `:remove_rule`: a rule is
+"referenced" iff some posterior-support program mentions it ANYWHERE, so a missed reference would
+wrongly mark a live rule dead and remove it (silently breaking a support program).
+
+DELIBERATELY SEPARATE from `extract_subtrees`: that function's `min_complexity` filter drops
+complexity-1 (bare `NonterminalRef`) programs — exactly the lossiness that blocked a sound reference
+count (collapse-towers Scope B). This walk MUST NOT be routed through `extract_subtrees`. One method
+per `ProgramExpr` subtype, NO generic fallback — a future node type fails loud (matching `_extract!` /
+`expr_complexity`), because a silently-unwalked node is a silent unsoundness.
+Asserted by test_voc_gate.jl §5b (depth-1 reference is seen).
+"""
+collect_nonterminal_refs!(acc::Set{Symbol}, e::NonterminalRef) = (push!(acc, e.name); acc)
+collect_nonterminal_refs!(acc::Set{Symbol}, ::GTExpr) = acc
+collect_nonterminal_refs!(acc::Set{Symbol}, ::LTExpr) = acc
+collect_nonterminal_refs!(acc::Set{Symbol}, ::ActionExpr) = acc
+collect_nonterminal_refs!(acc::Set{Symbol}, e::AndExpr) =
+    (collect_nonterminal_refs!(acc, e.left); collect_nonterminal_refs!(acc, e.right))
+collect_nonterminal_refs!(acc::Set{Symbol}, e::OrExpr) =
+    (collect_nonterminal_refs!(acc, e.left); collect_nonterminal_refs!(acc, e.right))
+collect_nonterminal_refs!(acc::Set{Symbol}, e::NotExpr) = collect_nonterminal_refs!(acc, e.child)
+collect_nonterminal_refs!(acc::Set{Symbol}, e::PersistsExpr) = collect_nonterminal_refs!(acc, e.child)
+collect_nonterminal_refs!(acc::Set{Symbol}, e::ChangedExpr) = collect_nonterminal_refs!(acc, e.child)
+collect_nonterminal_refs!(acc::Set{Symbol}, e::SinceExpr) =
+    (collect_nonterminal_refs!(acc, e.p); collect_nonterminal_refs!(acc, e.q))
+collect_nonterminal_refs!(acc::Set{Symbol}, e::IfExpr) =
+    (collect_nonterminal_refs!(acc, e.predicate);
+     collect_nonterminal_refs!(acc, e.then_branch);
+     collect_nonterminal_refs!(acc, e.else_branch))
+
+# ═══════════════════════════════════════
 # Compression payoff — the shared description-length arithmetic
 # ═══════════════════════════════════════
 
@@ -151,6 +193,28 @@ function propose_nonterminal(table::SubprogramFrequencyTable)::Union{ProductionR
     isnothing(result) ? nothing : result[1]
 end
 
+"""
+    _removal_payoff(g, table) → Vector{Tuple{ProductionRule, Int}}
+
+The `:remove_rule` candidates: each grammar rule whose name NO posterior-support program references
+(`r.name ∉ table.referenced_nonterminals`). Removing such a rule shrinks the dictionary by its full
+two-part-MDL cost `1 + expr_complexity(r.body)` symbols (the rule def: 1 for the head + the body) at
+ZERO fit cost — no support program referenced it, so the belief is untouched (prior-only). The
+symmetric MDL partner of `_compression_payoff`'s `:add_rule`. Referenced rules are NOT candidates:
+removing them is generative-change (it would change which programs the grammar generates), invisible
+to depth-one prior-only `net_voc` and deferred to a later move.
+
+`table.referenced_nonterminals === nothing` (an un-analysed, hand-built table) ⇒ references unknown ⇒
+no candidates (Scope-A-preserving). A concrete (possibly empty) Set ⇒ analysed; an empty analysed set
+legitimately means every rule is dead. (See the Move 1 design doc on why the sentinel is not an empty
+Set: `name ∉ ∅` is vacuously true, which would make every rule removable.)
+"""
+function _removal_payoff(g::Grammar, table::SubprogramFrequencyTable)::Vector{Tuple{ProductionRule, Int}}
+    refs = table.referenced_nonterminals
+    refs === nothing && return Tuple{ProductionRule, Int}[]
+    [(r, 1 + expr_complexity(r.body)) for r in g.rules if !(r.name in refs)]
+end
+
 # ═══════════════════════════════════════
 # net_voc — Value-of-Computation of a grammar perturbation (collapse-towers Phase 5)
 # ═══════════════════════════════════════
@@ -169,10 +233,11 @@ prior (CLAUDE.md §1.3). A compression saving `net_payoff_symbols` raises the lo
 (the program-axis λ is pinned to `log(2)` by §1.3). The structural twin of `net_voi` (`stdlib.jl`):
 the same `net_value` form, in the prior's currency rather than utility — the third representation,
 after scalar `net_voi` and Functional-offset routing EU. At `compute_cost = 0` the gate `net_voc > 0`
-is exactly `propose_nonterminal`'s `net_payoff > 0`. Governs the COMPRESSION class only (`:add_rule`);
-generative-change ops (`:modify_threshold`, `:add_feature`, `:remove_feature`) change the likelihood
-over un-entertained programs (the escape-mass frontier), invisible here by construction, and are
-deferred to an EU-priced exploration mechanism (master plan, named successor).
+is exactly `propose_nonterminal`'s `net_payoff > 0`. Governs the COMPRESSION class — both `:add_rule`
+(payoff = compression saving) and `:remove_rule` (payoff = the dead rule's reclaimed cost,
+`1 + expr_complexity(body)`); generative-change ops (`:modify_threshold`, `:add_feature`,
+`:remove_feature`) change the likelihood over un-entertained programs (the escape-mass frontier),
+invisible here by construction, and are deferred to an EU-priced exploration mechanism (master plan).
 """
 net_voc(net_payoff_symbols::Real, compute_cost::Real) =
     net_value(complexity_logprior(-net_payoff_symbols; λ = log(2)), compute_cost)
@@ -181,20 +246,40 @@ net_voc(net_payoff_symbols::Real, compute_cost::Real) =
 # Grammar perturbation — deterministic argmax over net_voc (no rand; Invariant 1 canalised)
 # ═══════════════════════════════════════
 
+# Total order on perturbation candidates, for the deterministic argmax. A candidate is the 5-tuple
+# `(voc::Float64, is_remove::Bool, name::String, kind::Symbol, rule::ProductionRule)`. Order:
+# (1) higher `net_voc`; (2) on a tie, prefer `:remove` (hygiene — shrink the dictionary before growing
+# it); (3) on a further tie, lexicographically smaller rule name. No `rand`, no `hash` (Julia's `hash`
+# is not stable across versions — and cross-version-reproducible determinism is the whole point; a name
+# string-compare is stable). A tie is between candidates of EXACTLY-EQUAL computed prior value, so a
+# stable order is honest disambiguation among genuine argmax-optima, not a tiebreak of UNKNOWN values
+# (which Invariant 1 forbids). Asserted by test_voc_gate.jl §5c.
+function _candidate_better(a, b)
+    a[1] != b[1] && return a[1] > b[1]
+    a[2] != b[2] && return a[2]
+    return a[3] < b[3]
+end
+_pick_better(best, cand) = (best === nothing || _candidate_better(cand, best)) ? cand : best
+
 """
     perturb_grammar(g, freq_table, available_features; compute_cost = 0.0) → Grammar
 
-Perturb a grammar by the single compression-class meta-action whose `net_voc` is greatest, applied iff
+Perturb a grammar by the compression-class meta-action whose `net_voc` is greatest, applied iff
 `net_voc > 0`; otherwise a structural no-op — the **input grammar returned unchanged (same id)**, so the
 downstream `add_programs_to_state!` dedup (keyed on `grammar.id`) re-adds nothing. The selection is a
-**deterministic argmax** — the `rand`-based op choice (the Invariant-1 breach Phase 5 retires) is gone. `freq_table` is REQUIRED (the type system enforces posterior analysis before
-nonterminal proposal). `available_features` is retained for signature stability (the deferred
-feature-discovery mechanism will consume it); Scope A does not read it.
+**deterministic argmax** (the `rand`-based op choice — the Invariant-1 breach — is gone). `freq_table`
+is REQUIRED (the type system enforces posterior analysis before nonterminal proposal).
+`available_features` is retained for signature stability (the deferred feature-discovery mechanism will
+consume it); it is not read here.
 
-Scope A (collapse-towers Phase 5): the compression class is `:add_rule` alone — `propose_nonterminal`'s
-proposed rule, gated by `net_voc`. `:remove_rule` (dictionary hygiene) awaits a sound nonterminal
-reference count; the generative-change ops await an EU-priced exploration budget — both named
-successors in `docs/collapse-towers/master-plan.md`.
+The compression class is the **MDL pair** `{:add_rule} ∪ {:remove_rule candidates}` (exploration-budget
+Move 1): `:add_rule` is `_compression_payoff`'s proposed rule (gated by the idempotence guard);
+`:remove_rule` candidates are `_removal_payoff`'s dead rules (referenced by no posterior-support
+program — prior-only, the symmetric MDL partner). The applied meta-action is the `net_voc` argmax over
+the pair, tiebroken by `_candidate_better`. When neither improves the prior, the no-op **is** the
+prior-saturation signal the exploration budget's saturation gate reads (Move 2). The generative-change
+ops (`:modify_threshold`, `:add_feature`, `:remove_feature`) remain deferred — their value is invisible
+to depth-one prior-only `net_voc` (the escape-mass frontier; `docs/exploration-budget/master-plan.md`).
 """
 function perturb_grammar(g::Grammar, freq_table::SubprogramFrequencyTable,
                           available_features::Set{Symbol};
@@ -203,12 +288,27 @@ function perturb_grammar(g::Grammar, freq_table::SubprogramFrequencyTable,
     # `add_programs_to_state!` deduplicates by `grammar.id`, so a fresh-id no-op would defeat the dedup
     # and re-inject every program as a fresh Beta(1,1) duplicate (a silent posterior reset — A3). Same
     # id ⇒ a no-op truly changes nothing. (Tested by test_perturb_consumption.jl.)
-    candidate = _compression_payoff(freq_table)
-    isnothing(candidate) && return g                            # no compressing subtree
-    rule, net_payoff = candidate
-    rule.name in Set(r.name for r in g.rules) && return g       # already present
-    net_voc(net_payoff, compute_cost) > 0 || return g           # VOC gate (forward compute priced in)
-    Grammar(g.feature_set, [g.rules; rule], next_grammar_id())
+    best = nothing  # (voc, is_remove, name, kind, rule) — the running argmax; see _candidate_better
+
+    add = _compression_payoff(freq_table)
+    if !isnothing(add)
+        rule, net_payoff = add
+        if !(rule.name in Set(r.name for r in g.rules))         # idempotence guard (already-present name)
+            v = net_voc(net_payoff, compute_cost)               # VOC gate (forward compute priced in)
+            v > 0 && (best = _pick_better(best, (v, false, string(rule.name), :add, rule)))
+        end
+    end
+    for (rule, net_payoff) in _removal_payoff(g, freq_table)
+        v = net_voc(net_payoff, compute_cost)
+        v > 0 && (best = _pick_better(best, (v, true, string(rule.name), :remove, rule)))
+    end
+
+    best === nothing && return g                                # saturation no-op (the Move-2 signal)
+    if best[4] === :add
+        Grammar(g.feature_set, [g.rules; best[5]], next_grammar_id())
+    else  # :remove — drop the dead rule by name (names are unique under the idempotence guard)
+        Grammar(g.feature_set, [r for r in g.rules if r.name != best[5].name], next_grammar_id())
+    end
 end
 
 # Backward-compatible 2-argument form (default feature set; forwards compute_cost)

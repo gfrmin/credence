@@ -210,6 +210,17 @@ struct SubprogramFrequencyTable
     subtrees::Vector{ProgramExpr}
     weighted_frequency::Vector{Float64}
     source_programs::Vector{Vector{Int}}  # which program indices contained each subtree
+    # NT names referenced by ≥1 posterior-support program, or `nothing` when no analysis has run.
+    # `:remove_rule` (exploration-budget Move 1) consumes this: a rule absent from a *concrete* set is
+    # dead (removable, prior-only). `nothing` ⇒ references unknown ⇒ no rule removable. The sentinel is
+    # load-bearing: a concrete empty Set means "analysed, every rule dead" — the OPPOSITE of unknown —
+    # because the removal predicate `name ∉ referenced` is vacuously true on the empty set.
+    referenced_nonterminals::Union{Nothing, Set{Symbol}}
 end
 
-# No public constructor — only created by analyse_posterior_subtrees
+# 3-arg convenience constructor: `nothing` references (un-analysed). Hand-built tables (tests) get the
+# Scope-A-preserving default — `_removal_payoff` yields no candidates, so `:remove_rule` never fires.
+# `analyse_posterior_subtrees` is the only site that populates a concrete (possibly empty) Set.
+SubprogramFrequencyTable(subtrees::Vector{ProgramExpr}, weighted_frequency::Vector{Float64},
+                         source_programs::Vector{Vector{Int}}) =
+    SubprogramFrequencyTable(subtrees, weighted_frequency, source_programs, nothing)
