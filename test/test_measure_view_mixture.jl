@@ -18,7 +18,9 @@
 
 push!(LOAD_PATH, joinpath(@__DIR__, "..", "src"))
 using Credence
-using Credence: CategoricalPrevision, MixturePrevision, condition, draw, prune, truncate, weights
+using Credence: CategoricalPrevision, MixturePrevision, GammaPrevision, QuadraturePrevision,
+                condition, draw, prune, truncate, weights, expect
+using Credence.Ontology: _predictive_ll
 using Random
 using Serialization
 
@@ -100,6 +102,28 @@ let
     check("truncate(MixtureMeasure) threads m.space (===)", trunc.space === sp)
     check("truncate facade == Prevision-entry re-bound (==)",
           weights(trunc) == weights(MixtureMeasure(m.space, truncate(m.prevision; max_components=2))))
+end
+
+# ── (4) The binding sites inverted: Gamma predictive EXACT (Q2); carrier-bound predictive errors (Q1) ──
+let
+    kg = Kernel(PositiveReals(), Euclidean(1), _ -> error("unused"), (λ, o) -> -0.5 * (o - λ)^2;
+                likelihood_family = PushOnly())
+    p = GammaPrevision(2.0, 3.0)
+    a = _predictive_ll(p, kg, 2.5)
+    b = _predictive_ll(p, kg, 2.5)
+    check("Gamma _predictive_ll is exact/deterministic (Q2: sampling → exact)", a == b, "a=$a b=$b")
+    check("Gamma _predictive_ll == the expect integral (Prevision-primary, exact)",
+          a == log(max(expect(p, h -> exp(kg.log_density(h, 2.5))), 1e-300)))
+    # Carrier-bound: a bare CategoricalPrevision predictive is a Measure op (no carrier-free expect over a
+    # closure) — the Prevision-level call MethodErrors, the boundary asserting itself (Q1 corollary).
+    cp = CategoricalPrevision([log(0.4), log(0.6)])
+    threw = false
+    try
+        _predictive_ll(cp, kg, 1.0)
+    catch
+        threw = true
+    end
+    check("CategoricalPrevision predictive errors at the Prevision level (Q1: Measure-resident)", threw)
 end
 
 println("="^64)
