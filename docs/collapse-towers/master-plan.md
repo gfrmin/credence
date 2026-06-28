@@ -183,6 +183,12 @@ grammar. Benchmark drift (greedy-vs-random) is intended; update `test_program_sp
    new feature/threshold until it lands), so sequenced as the *immediate, adjacent* successor to this
    arc — shortest possible gap between "breach closed" and "exploration restored."
 
+> **Successors scoped 2026-06-28 → `docs/exploration-budget/master-plan.md`.** Both named successors
+> (Scope B + the EU-priced exploration budget) are folded into one arc, `exploration-budget`, opened
+> after `measure-as-view` closed. Its thesis: price generative-change discovery as compute-budgeted
+> lookahead VOI against the belief's residual, saturation-gated, EU-max (no `rand`, no cap). Thesis
+> pending ratification before the move sequence finalises.
+
 ## Files
 
 **Create:** `src/complexity.jl`, `src/net_value.jl` (and likely `src/family_bma.jl`);
