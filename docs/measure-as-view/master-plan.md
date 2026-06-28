@@ -94,6 +94,22 @@ delegates to `MixturePrevision` without dropping space context or changing the c
 type; in the same move, invert the four binding sites Phase 2 marked. Capture-before-refactor against
 `test_flat_mixture`/`test_host`/`test_core` TEST 53 (the tests the naive facade broke).
 
+**The keystone and the refinement (design doc §1, `phase-3-design.md`).** `CategoricalPrevision` holds
+only `log_weights` — it is a distribution over an *index set*, the index→value map living in
+`CategoricalMeasure.space`. So the "missing" `draw(::CategoricalPrevision)` was conflated with the value
+lookup: `draw(p::CategoricalPrevision)` returns the **index** (carrier-free), `draw(m::CategoricalMeasure)
+= m.space.values[draw(m.prevision)]` does the lookup. With that keystone every twin collapses (a
+`MixtureMeasure` carries a single shared `space`, so the facade is `MixtureMeasure(m.space, op(m.prevision))`).
+The bit-exactness is real: `DispatchByComponent` routing only ever flows through `condition(MixturePrevision)`
+(rho-latent / family-BMA condition the Prevision), so collapsing the Measure twin is `==` on the whole
+suite and the routing it gains is a latent correctness win with no current exerciser. **Refinement to
+"invert":** two of the four sites have genuinely carrier-bound operations underneath (`condition`'s
+`factor_selector` expansion reading `cat.space.values`; predictive over a bare `CategoricalPrevision`).
+"Invert" for these means **remove the round-trip wart**, not force carrier-free — the carrier-bound op
+becomes cleanly Measure-resident (as `condition(m::CategoricalMeasure)` already is), and a `MethodError` at
+the Prevision level is the correct loud signal. `prevision-not-measure` = Measure is Prevision **+ carrier**;
+ops that need the carrier live at the Measure level, and that is the view relationship working.
+
 ## Hard constraints (inherited)
 Spec-first; design-doc-before-code; stop-and-report at every phase boundary; **no new constitutional
 text**; no silent fallbacks; tolerance inside the boolean; no `using Test`; **capture-before-refactor**
