@@ -22,7 +22,7 @@ using LinearAlgebra: SymTridiagonal, eigen, dot, cholesky, Symmetric
 import ..Previsions: Prevision
 import ..Previsions: TestFunction, Identity, Projection, NestedProjection,
                      Tabular, LinearCombination, OpaqueClosure, FiringChoice, expect
-import ..Previsions: BetaPrevision, TaggedBetaPrevision, SparseStructurePrevision, GaussianPrevision, TruncatedGaussianPrevision, MvGaussianPrevision, GammaPrevision, CategoricalPrevision, DirichletPrevision, NormalGammaPrevision, ProductPrevision, MixturePrevision, LabelledCategoricalPrevision, RhoCategoricalPrevision
+import ..Previsions: BetaPrevision, TaggedBetaPrevision, SparseStructurePrevision, GaussianPrevision, TruncatedGaussianPrevision, MvGaussianPrevision, GammaPrevision, CategoricalPrevision, DirichletPrevision, NormalGammaPrevision, ZeroMeanGammaPrevision, ProductPrevision, MixturePrevision, LabelledCategoricalPrevision, RhoCategoricalPrevision
 import ..Previsions: ExchangeablePrevision, decompose
 import ..Previsions: ParticlePrevision, QuadraturePrevision, MvQuadraturePrevision, _mv_points
 import ..Previsions: ConditionalPrevision
@@ -37,7 +37,7 @@ export Measure, CategoricalMeasure, BetaMeasure, TaggedBetaMeasure, GaussianMeas
 export Kernel, FactorSelector, kernel_source, kernel_target, kernel_params
 export LikelihoodFamily, LeafFamily, PushOnly, BetaBernoulli, WeightedBernoulli, SoftBernoulli, Flat, FiringByTag, DispatchByComponent, DepthCapExceeded
 export FAMILY_REGISTRY, register_family!
-export NormalNormal, LinearGaussian, Categorical, NormalGammaLikelihood, Exponential, Poisson
+export NormalNormal, LinearGaussian, Categorical, NormalGammaLikelihood, ZeroMeanGammaLikelihood, Exponential, Poisson
 export GroupNoisyChannel, group_noisy_channel_logdensity, RhoGroupChannel, rho_group_channel_factor
 export LogisticReaction, logistic_reaction_logdensity
 export MarginReaction, margin_reaction_logdensity
@@ -1330,6 +1330,12 @@ function condition(p::NormalGammaPrevision, k::Kernel, observation)
           "space context; use NormalGammaMeasure for non-conjugate kernels")
 end
 
+function condition(p::ZeroMeanGammaPrevision, k::Kernel, observation)
+    cp = maybe_conjugate(p, k)
+    cp !== nothing && return update(cp, observation).prior
+    error("condition(::ZeroMeanGammaPrevision, ...) requires a ZeroMeanGammaLikelihood kernel")
+end
+
 # Prevision-native per-factor-routed product conditioning (measure-as-view Phase 3). The factors are
 # independent: a FiringByTag/DispatchByComponent kernel routes the observation to each factor by its own
 # tag (the firing factor updates via its conjugate, non-firing factors resolve to Flat — the registered
@@ -1651,6 +1657,17 @@ function _predictive_ll(p::NormalGammaPrevision, k::Kernel, obs)
     _loggamma((ν + 1) / 2) - _loggamma(ν / 2) - 0.5 * log(ν * π * s2) - ((ν + 1) / 2) * log1p(z / ν)
 end
 
+# Zero-mean Student-t posterior-predictive (the κ→∞, μ≡0 specialisation of NormalGamma): ν = 2α,
+# scale² = β/α, location 0. The scale-free `:plateaued` regime's marginal likelihood for the BMA.
+function _predictive_ll(p::ZeroMeanGammaPrevision, k::Kernel, obs)
+    k.likelihood_family isa ZeroMeanGammaLikelihood ||
+        return invoke(_predictive_ll, Tuple{Prevision, Kernel, Any}, p, k, obs)
+    ν = 2.0 * p.α
+    s2 = p.β / p.α
+    z = Float64(obs)^2 / s2
+    _loggamma((ν + 1) / 2) - _loggamma(ν / 2) - 0.5 * log(ν * π * s2) - ((ν + 1) / 2) * log1p(z / ν)
+end
+
 # Prevision-primary (measure-as-view Phase 3): the predictive is the exact integral. Carrier-FREE types
 # (Particle/Quadrature/TruncatedGaussian/RhoCategorical/Gamma) have expect(p, ::Function). A genuinely
 # carrier-bound Prevision — CategoricalPrevision has no carrier-free expect over a closure — MethodErrors
@@ -1691,6 +1708,7 @@ end
 # Prevision-native Student-t closed form (measure-as-view Phase 3); log_predictive delegates to
 # _predictive_ll (same quantity — the established log_predictive(::CategoricalMeasure) pattern).
 log_predictive(p::NormalGammaPrevision, k::Kernel, obs) = _predictive_ll(p, k, obs)
+log_predictive(p::ZeroMeanGammaPrevision, k::Kernel, obs) = _predictive_ll(p, k, obs)
 
 # A mixture's marginal likelihood = logsumexp_i(log_weight_i + _predictive_ll(comp_i, k, obs)),
 # routing per-component (each component resolves its own LikelihoodFamily — e.g. a
@@ -2194,6 +2212,9 @@ export StructureBMA, build_structure_model, build_structure_prior,
 # collapse-towers Phase 2.
 include("family_bma.jl")
 export FamilyCandidate, FamilyBMA, build_family_model, build_family_prior, family_observe, family_posterior
+
+include("saturation.jl")
+export initial_learning_regime, update_learning_regime, plateau_probability
 
 include("routing.jl")
 export RoutingState, EmissionBelief, LatencyBelief, route, route_eu, escalation_next,

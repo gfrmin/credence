@@ -39,7 +39,7 @@ export Space, Finite, Interval, ProductSpace, Simplex, Euclidean, PositiveReals,
 export Measure, CategoricalMeasure, BetaMeasure, TaggedBetaMeasure, GaussianMeasure, GammaMeasure, ExponentialMeasure, DirichletMeasure, NormalGammaMeasure, EnumerationMeasure, ProductMeasure, MixtureMeasure
 export Kernel, FactorSelector, kernel_source, kernel_target
 export LikelihoodFamily, LeafFamily, PushOnly, BetaBernoulli, WeightedBernoulli, SoftBernoulli, Flat, FiringByTag, DispatchByComponent, DepthCapExceeded
-export NormalNormal, Categorical, NormalGammaLikelihood, Exponential, Poisson
+export NormalNormal, Categorical, NormalGammaLikelihood, ZeroMeanGammaLikelihood, Exponential, Poisson
 export GroupNoisyChannel, group_noisy_channel_logdensity, RhoGroupChannel, rho_group_channel_factor
 export LogisticReaction, logistic_reaction_logdensity
 export MarginReaction, margin_reaction_logdensity
@@ -50,7 +50,7 @@ export Prevision, TestFunction, Indicator, apply
 export params
 export CenteredPower, CenteredSquare, GeometricTail
 export BetaPrevision, TaggedBetaPrevision, GaussianPrevision, TruncatedGaussianPrevision, GammaPrevision
-export CategoricalPrevision, DirichletPrevision, NormalGammaPrevision, LabelledCategoricalPrevision, RhoCategoricalPrevision
+export CategoricalPrevision, DirichletPrevision, NormalGammaPrevision, ZeroMeanGammaPrevision, LabelledCategoricalPrevision, RhoCategoricalPrevision
 export ProductPrevision, MixturePrevision, ExchangeablePrevision, decompose
 export ParticlePrevision, QuadraturePrevision, MvQuadraturePrevision
 export ConditionalPrevision
@@ -60,6 +60,7 @@ export condition, expect, push_measure, density, log_density_at, log_predictive,
 export ConjugatePrevision, maybe_conjugate, update
 export StructureBMA, build_structure_model, build_structure_prior, build_structure_prior_dense, structure_observe, structure_observe_soft, belief_at_context, context_from_features, structure_firing_tags, structure_decision_kernel, reconstruct_structure_prior_from_data
 export FamilyCandidate, FamilyBMA, build_family_model, build_family_prior, family_observe, family_posterior
+export initial_learning_regime, update_learning_regime, plateau_probability
 export RoutingState, EmissionBelief, LatencyBelief, route, route_eu, escalation_next, posterior_accuracy, route_outcome!, decode_correctness, latency_at, route_decide, escalate_decide, routing_belief_readout, reconstruct_latency_from_data, reconstruct_routing_tops_from_data, _ctx_key
 export draw
 export weights, mean, variance, probability, marginal, truncated_mv_quadrature, prune, truncate, logsumexp
@@ -80,9 +81,9 @@ export expr_complexity, expanded_complexity
 export enumerate_programs, enumerate_programs_as_measure
 export compile_kernel, compile_expr, evaluate_predicate
 export analyse_posterior_subtrees, extract_subtrees
-export propose_nonterminal, perturb_grammar, net_voc
+export propose_nonterminal, perturb_grammar, net_voc, compression_exhausted
 export expr_equal
-export AgentState, sync_prune!, sync_truncate!
+export AgentState, sync_prune!, sync_truncate!, reset_learning_regime!
 export aggregate_grammar_weights, top_k_grammar_ids
 export add_programs_to_state!
 export next_grammar_id, reset_grammar_counter!

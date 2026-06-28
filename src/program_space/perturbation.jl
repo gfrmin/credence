@@ -262,6 +262,46 @@ end
 _pick_better(best, cand) = (best === nothing || _candidate_better(cand, best)) ? cand : best
 
 """
+    _best_compression_candidate(g, freq_table; compute_cost = 0.0) → Union{Nothing, Tuple}
+
+The compression-class `net_voc` argmax over the MDL pair `{:add_rule} ∪ {:remove_rule candidates}`, or
+`nothing` if no candidate clears `net_voc > 0` (the saturation no-op). Returns the winning candidate
+`(voc, is_remove, name, kind, rule)` (see `_candidate_better` for the total order). The single home of
+the candidate logic — `perturb_grammar` applies it, `compression_exhausted` (Move 2) tests it for
+`nothing` — so the two can never disagree (DRY).
+"""
+function _best_compression_candidate(g::Grammar, freq_table::SubprogramFrequencyTable;
+                                     compute_cost::Float64 = 0.0)
+    best = nothing  # (voc, is_remove, name, kind, rule) — the running argmax; see _candidate_better
+
+    add = _compression_payoff(freq_table)
+    if !isnothing(add)
+        rule, net_payoff = add
+        if !(rule.name in Set(r.name for r in g.rules))         # idempotence guard (already-present name)
+            v = net_voc(net_payoff, compute_cost)               # VOC gate (forward compute priced in)
+            v > 0 && (best = _pick_better(best, (v, false, string(rule.name), :add, rule)))
+        end
+    end
+    for (rule, net_payoff) in _removal_payoff(g, freq_table)
+        v = net_voc(net_payoff, compute_cost)
+        v > 0 && (best = _pick_better(best, (v, true, string(rule.name), :remove, rule)))
+    end
+    best
+end
+
+"""
+    compression_exhausted(g, freq_table; compute_cost = 0.0) → Bool
+
+The prior-side half of the exploration budget's saturation signal (Move 2): `true` iff no
+compression-class meta-action improves the prior — i.e. `perturb_grammar` would be a no-op. Shares
+`_best_compression_candidate` with `perturb_grammar` exactly, so "exhausted" ≡ "`perturb_grammar`
+returns `g` unchanged" by construction. Prior-only, cheap (no belief, no lookahead). The belief-side
+half (residual plateau) lives in `saturation.jl`.
+"""
+compression_exhausted(g::Grammar, freq_table::SubprogramFrequencyTable; compute_cost::Float64 = 0.0)::Bool =
+    isnothing(_best_compression_candidate(g, freq_table; compute_cost = compute_cost))
+
+"""
     perturb_grammar(g, freq_table, available_features; compute_cost = 0.0) → Grammar
 
 Perturb a grammar by the compression-class meta-action whose `net_voc` is greatest, applied iff
@@ -288,21 +328,7 @@ function perturb_grammar(g::Grammar, freq_table::SubprogramFrequencyTable,
     # `add_programs_to_state!` deduplicates by `grammar.id`, so a fresh-id no-op would defeat the dedup
     # and re-inject every program as a fresh Beta(1,1) duplicate (a silent posterior reset — A3). Same
     # id ⇒ a no-op truly changes nothing. (Tested by test_perturb_consumption.jl.)
-    best = nothing  # (voc, is_remove, name, kind, rule) — the running argmax; see _candidate_better
-
-    add = _compression_payoff(freq_table)
-    if !isnothing(add)
-        rule, net_payoff = add
-        if !(rule.name in Set(r.name for r in g.rules))         # idempotence guard (already-present name)
-            v = net_voc(net_payoff, compute_cost)               # VOC gate (forward compute priced in)
-            v > 0 && (best = _pick_better(best, (v, false, string(rule.name), :add, rule)))
-        end
-    end
-    for (rule, net_payoff) in _removal_payoff(g, freq_table)
-        v = net_voc(net_payoff, compute_cost)
-        v > 0 && (best = _pick_better(best, (v, true, string(rule.name), :remove, rule)))
-    end
-
+    best = _best_compression_candidate(g, freq_table; compute_cost = compute_cost)
     best === nothing && return g                                # saturation no-op (the Move-2 signal)
     if best[4] === :add
         Grammar(g.feature_set, [g.rules; best[5]], next_grammar_id())

@@ -19,6 +19,35 @@ mutable struct AgentState
     all_programs::Vector{Program}
     grammars::Dict{Int, Grammar}            # grammar_id → Grammar
     current_max_depth::Int                  # current enumeration depth
+    # Belief-aware saturation signal (exploration-budget Move 2). The residual-plateau regime belief is
+    # a 2-regime BMA — a Measure (state-is-measure), the residual history summarised; `last_residual` is
+    # the previous step's predictive log-loss, a sufficient statistic for the decrement (one scalar
+    # suffices BECAUSE the history lives in the regime posterior). Both reset on grammar change
+    # (reset_learning_regime!). Move 2 is signal-only — nothing reads these for a decision until Move 3.
+    learning_regime::Ontology.MixturePrevision
+    last_residual::Union{Nothing, Float64}
+end
+
+# Backward-compatible 6-arg constructor: defaults the Move-2 saturation fields (uninformative regime, no
+# residual yet) and forwards to the 8-arg auto-constructor. Every existing AgentState(...) call site
+# (hosts, skin, persistence, tests) uses this and is unaffected.
+AgentState(belief, metadata, compiled_kernels, all_programs, grammars, current_max_depth) =
+    AgentState(belief, metadata, compiled_kernels, all_programs, grammars, current_max_depth,
+               initial_learning_regime(), nothing)
+
+"""
+    reset_learning_regime!(state) → state
+
+Reset the residual-plateau regime belief to its uninformative prior AND clear `last_residual`
+(exploration-budget Move 2, Q1b). Call on every grammar change — pre-change residuals were generated
+under a superseded alphabet and are stale; carrying them would drag the fresh inference. Starting the
+residual Measure afresh (not merely re-weighting toward :improving) is the principled response to a
+*caused* change-point (no BOCPD inference needed — the agent knows it changed the alphabet).
+"""
+function reset_learning_regime!(state::AgentState)
+    state.learning_regime = initial_learning_regime()
+    state.last_residual = nothing
+    state
 end
 
 """

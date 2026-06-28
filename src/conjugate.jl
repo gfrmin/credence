@@ -166,6 +166,23 @@ function update(cp::ConjugatePrevision{NormalGammaPrevision, NormalGammaLikeliho
     ConjugatePrevision(NormalGammaPrevision(κₙ, μₙ, αₙ, βₙ), cp.likelihood)
 end
 
+# ── Pair: (ZeroMeanGammaPrevision, ZeroMeanGammaLikelihood) ──
+# Zero-mean Gaussian, unknown precision. Prior τ = 1/σ² ~ Gamma(α, β); obs r ~ N(0, 1/τ). The mean is
+# fixed at 0 (no μ latent), so the Normal-Gamma update specialises to the precision-only Gamma update:
+# α += 0.5, β += r²/2. (The NormalGamma update above with μ ≡ 0 and the κ-term dropped.)
+
+function maybe_conjugate(p::ZeroMeanGammaPrevision, k::Kernel)
+    if k.likelihood_family isa ZeroMeanGammaLikelihood
+        return ConjugatePrevision(p, k.likelihood_family)
+    end
+    nothing
+end
+
+function update(cp::ConjugatePrevision{ZeroMeanGammaPrevision, ZeroMeanGammaLikelihood}, obs)
+    r = Float64(obs)
+    ConjugatePrevision(ZeroMeanGammaPrevision(cp.prior.α + 0.5, cp.prior.β + r^2 / 2.0), cp.likelihood)
+end
+
 # ── Pair: (GammaPrevision, Exponential) ──
 
 function maybe_conjugate(p::GammaPrevision, k::Kernel)

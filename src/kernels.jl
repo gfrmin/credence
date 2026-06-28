@@ -64,6 +64,10 @@ struct Categorical{T} <: LeafFamily
 end
 
 struct NormalGammaLikelihood <: LeafFamily end
+# Zero-mean Gaussian, unknown precision (Gamma prior on τ = 1/σ²): obs r ~ N(0, σ²), conjugate to a
+# `ZeroMeanGammaPrevision(α, β)` (α += 0.5, β += r²/2). The mean is fixed at 0 — no μ latent. Marginal
+# is a zero-centred Student-t. The scale-free `:plateaued` regime of the saturation signal (Move 2).
+struct ZeroMeanGammaLikelihood <: LeafFamily end
 struct Exponential <: LeafFamily end
 # Count likelihood: obs ~ Poisson(λ), conjugate to a Gamma(α, β) prior on the
 # rate λ. One observation t updates Gamma(α, β) → Gamma(α + t, β + 1), so after

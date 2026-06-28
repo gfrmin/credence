@@ -316,3 +316,38 @@ crossing), so a clean ratified-design checkpoint is cheap insurance on the move 
 quietly become the thresholded gate the stall gate exists to refuse. Built scale-free, with `plateau_prob`
 a prior not a gate, Move 2 hands Move 3 a saturation read honest on both sides — demonstrated not assumed,
 and incapable of capping.
+
+### Code-time refinements (2026-06-28, discovered during implementation)
+
+Two refinements the implementation forced, both consistent with the ratified intent:
+
+1. **The scale-free priors are *near-Jeffreys*, and the new conjugate primitive `ZeroMeanGammaPrevision`
+   was added.** Tracing the conjugacy showed `NormalGammaPrevision` cannot soundly encode μ≡0 (its μ
+   carries a κ-weighted prior; κ→∞ is degenerate), so the `:plateaued` regime needed a new exact
+   component — `ZeroMeanGammaPrevision(α, β)` (zero-mean Gaussian, unknown precision; α += 0.5, β += r²/2;
+   zero-centred Student-t marginal) — added to the conjugate registry (constitution-sanctioned). More
+   importantly, a `Gamma(1,1)` precision prior **pins the noise scale to ~1 and false-plateaus slow
+   tasks** — the exact bug the stall gate refuses. The fix is a **near-Jeffreys diffuse precision prior
+   `Gamma(0.01, 0.01) ≈ p(σ²) ∝ 1/σ²`** in both regimes, so the noise floor is the data's (inferred).
+   The `:improving` regime is the clean nested Bayesian t-test (μ free, μ₀=0, κ=0.1 weak ⇒ σ-relative
+   detection). Empirically: consistent-improving → 0.0, flat → 0.86, **slow (Δ≈0.08) → 0.0** (scale-free,
+   the keystone), cold-start → 0.5, decelerating → 0.33 (graceful, intermediate). `test_saturation.jl`
+   pins the slow-improver case as the scale-free guard.
+2. **Host wiring is deferred to Move 3** (mirroring the Q5 skin-exposure deferral — "no consumer yet").
+   The signal is non-causal in Move 2 (nothing reads it for a decision), so wiring it into the host
+   hot-loops now then re-touching them in Move 3 (where `explore_grammar` consumes it) is wire-then-rewire
+   with no payoff and real behaviour-preservation risk. Move 2 ships the **mechanism** —
+   `compression_exhausted`, the scale-free regime model (`initial/update_learning_regime`,
+   `plateau_probability`), the `AgentState` fields + `reset_learning_regime!` — all unit-tested on
+   synthetic series; Move 3 wires `−log_predictive` into the conditioning sites and the reset into the
+   grammar-change sites alongside the consumer. This makes Move 2 strictly additive (no host changes),
+   and the §3 "existing host tests stay green" holds trivially.
+
+### Worked example (corrected to the implemented model — supersedes §4's illustrative numbers)
+
+§4's decelerating series (2.1→0.76) is genuinely *transitional* — its decrements shrink to ~0.02, so the
+model correctly reads it as ~0.33 (leaning improving but approaching plateau), not the illustrative 0.12.
+The clean signal is **consistency**, not mere decrease. Phase A = a *consistent* improver (Δ≈0.3 steady)
+→ `plateau_probability` 0.0 (still improving); Phase B = bouncing flat (≈0.755) → 0.86 (plateaued). The
+ordering and the scale-free slow case (Δ≈0.08 → 0.0) are what the tests assert (direction, not magic
+points).
