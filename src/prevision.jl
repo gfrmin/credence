@@ -30,7 +30,7 @@ module Previsions
 
 export Prevision, TestFunction, Indicator, apply, expect
 export Identity, Projection, NestedProjection, Tabular, LinearCombination, OpaqueClosure, FiringChoice
-export BetaPrevision, TaggedBetaPrevision, SparseStructurePrevision, GaussianPrevision, TruncatedGaussianPrevision, MvGaussianPrevision, GammaPrevision, CategoricalPrevision, DirichletPrevision, NormalGammaPrevision, ProductPrevision, MixturePrevision, LabelledCategoricalPrevision, RhoCategoricalPrevision
+export BetaPrevision, TaggedBetaPrevision, SparseStructurePrevision, GaussianPrevision, TruncatedGaussianPrevision, MvGaussianPrevision, GammaPrevision, CategoricalPrevision, DirichletPrevision, NormalGammaPrevision, ZeroMeanGammaPrevision, ProductPrevision, MixturePrevision, LabelledCategoricalPrevision, RhoCategoricalPrevision
 export ExchangeablePrevision, decompose
 export ParticlePrevision, QuadraturePrevision, MvQuadraturePrevision, _mv_points
 export ConditionalPrevision
@@ -532,6 +532,28 @@ struct NormalGammaPrevision <: Prevision
 end
 
 """
+    ZeroMeanGammaPrevision(α, β) <: Prevision
+
+A zero-mean Gaussian with unknown precision: `x ~ N(0, σ²)`, `τ = 1/σ² ~ Gamma(α, β)` (rate β). The
+mean is fixed at 0 — there is NO μ latent and no κ pseudo-count, which is exactly what
+`NormalGammaPrevision` cannot represent (its μ carries a κ-weighted prior; κ→∞ at μ=0 is degenerate).
+Conjugate to `ZeroMeanGammaLikelihood` (one obs `r`: α += 0.5, β += r²/2); the posterior-predictive is
+a zero-centred Student-t (ν = 2α, scale² = β/α). This is the **scale-free `:plateaued` regime** of the
+exploration-budget saturation signal — the noise floor is *inferred* from the data, never set
+(docs/exploration-budget/move-2-design.md §8).
+"""
+struct ZeroMeanGammaPrevision <: Prevision
+    α::Float64
+    β::Float64
+
+    function ZeroMeanGammaPrevision(α::Float64, β::Float64)
+        α > 0 || error("α must be positive")
+        β > 0 || error("β must be positive")
+        new(α, β)
+    end
+end
+
+"""
     ProductPrevision(factors::Vector{<:Prevision}) <: Prevision
 
 Prevision for an independent joint over a product space. Holds factors
@@ -1001,6 +1023,7 @@ params(p::GaussianPrevision)    = (type = :gaussian,    mu = p.mu,       sigma =
 params(p::MvGaussianPrevision)  = (type = :mv_gaussian, mu = copy(p.mu),
                                    sigma = [collect(Float64, r) for r in eachrow(p.Sigma)])
 params(p::GammaPrevision)       = (type = :gamma,       alpha = p.alpha, beta = p.beta)
+params(p::ZeroMeanGammaPrevision) = (type = :zero_mean_gamma, alpha = p.α, beta = p.β)
 params(p::DirichletPrevision)   = (type = :dirichlet,   alpha = copy(p.alpha))
 params(p::CategoricalPrevision) = (type = :categorical, log_weights = copy(p.log_weights))
 

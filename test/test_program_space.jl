@@ -602,6 +602,43 @@ end
 println()
 
 # ═══════════════════════════════════════
+# TEST 14c: reset_learning_regime! starts the residual Measure afresh — exploration-budget Move 2 (Q1b)
+# ═══════════════════════════════════════
+# A grammar change invalidates the residual history (it was generated under a superseded alphabet), so
+# the reset must clear BOTH the regime belief and last_residual — not merely re-weight toward improving.
+
+println("=" ^ 60)
+println("TEST 14c: reset_learning_regime! clears the residual history")
+println("=" ^ 60)
+
+let
+    g = Grammar(Set([:red]), ProductionRule[], 1)
+    progs = enumerate_programs(g, 2; action_space=[:a, :b])
+    comps = Prevision[TaggedBetaPrevision(i, BetaPrevision(1.0, 1.0)) for i in eachindex(progs)]
+    state = AgentState(MixturePrevision(comps, zeros(length(progs))),
+                       [(1, i) for i in eachindex(progs)],
+                       [compile_kernel(p, g, i) for (i, p) in enumerate(progs)],
+                       progs, Dict(1 => g), 2)
+    # 6-arg constructor defaults the regime to the uniform prior.
+    @assert plateau_probability(state.learning_regime) ≈ 0.5 "fresh AgentState ⇒ uniform regime prior"
+
+    # Drive the regime off uniform with a consistent-improving residual series; set last_residual.
+    prev = nothing
+    for ℓ in [3.0, 2.7, 2.4, 2.1, 1.8]
+        state.learning_regime = update_learning_regime(state.learning_regime, prev, ℓ)
+        prev = ℓ
+    end
+    state.last_residual = 1.8
+    @assert plateau_probability(state.learning_regime) < 0.4 "precondition: regime moved off uniform"
+
+    reset_learning_regime!(state)
+    @assert plateau_probability(state.learning_regime) ≈ 0.5 "reset returns the regime to the uniform prior"
+    @assert state.last_residual === nothing "reset clears last_residual (residual Measure afresh)"
+    println("PASSED: reset clears the regime belief AND last_residual")
+end
+println()
+
+# ═══════════════════════════════════════
 # TEST 15: Proposed nonterminals are actual posterior subtrees (enforcement, spec §5.10)
 # ═══════════════════════════════════════
 
