@@ -265,7 +265,7 @@ The slug index below is the lint's source of truth for valid slugs (regex `^\*\*
 
 **Slug:** `event-conditioning` — `condition(m, e::Event)` is the preferred form when the conditioning object is a declared predicate. Provably equivalent to `condition(m, indicator_kernel(e), true)` on deterministic events (DLRS Prop. 4.9). No escape hatch; this is the legal path. (Invariants 1 + 2)
 
-**Slug:** `prevision-not-measure` — Prevision is the frozen primitive; Measure is a declared view. Extensions (new conjugate pairs, mixture routing) declare at the Prevision level; Measure-level methods are thin facades. (Invariant 2)
+**Slug:** `prevision-not-measure` — Prevision is the frozen primitive; Measure is a declared view. Extensions (new conjugate pairs, mixture routing) declare at the Prevision level; *carrier-free* Measure-level methods are thin facades, but carrier-bound ops (those reading the carrier's data values) stay Measure-resident — an entailment, not an exception (see the corollary in docs/precedents.md). (Invariant 2)
 
 **Slug:** `event-primary-condition` — `condition(p::Prevision, e::Event)` is a primary primitive (Move 7 §5.1 Option B), NOT sugar for parametric-form via `ObservationEvent(k, obs)`. No escape hatch. (Invariants 1 + 2)
 

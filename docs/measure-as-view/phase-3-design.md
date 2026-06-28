@@ -164,6 +164,28 @@ Two traces, because the centrepiece is the twin collapse and its routing behavio
 
 ## 5. Open design questions
 
+> **Ratified 2026-06-28 (author).** All three ratified, with three refinements.
+> **Q1 — (a), and the justification is promoted from "precedented" to *forced*.** The strongest argument is
+> not the precedent but a *reductio* on (b): "make every op carrier-free" for a genuinely carrier-bound op
+> has exactly one implementation — give the Prevision the atom values, i.e. make `CategoricalPrevision`
+> carry its atoms. But that *is* binding the carrier into the Prevision, so there is no longer a carrier-free
+> Prevision for the Measure to be a view *over*. (b) achieves "every op Prevision-primary" only by destroying
+> the carrier-free core that is the entire point of the arc — self-defeating; it dissolves the distinction it
+> claims to honour. So (a) is not a pragmatic settlement but the *only* disposition under which
+> "Measure is a view over Prevision" survives. The `MethodError` at the Prevision level is the boundary
+> asserting itself correctly — the measure-level analogue of `condition` refusing to run without a likelihood;
+> you do not manufacture data-free versions of data-dependent operations. The keystone makes this per-op and
+> sharp: the index/value seam runs *through* the operations — index-touching ops are structure (Prevision-primary),
+> value-touching ops are data (Measure-resident). Because this is an *entailment* of `prevision-not-measure`,
+> not a new commitment, a **one-line corollary** is landed (docs/precedents.md + the CLAUDE.md slug line:
+> carrier-bound ops are Measure-resident; do not thread the carrier into the Prevision) — a corollary, not an
+> axiom. **Q2 — exact** (the phase's one intended change, before/after; sampling was a Monte-Carlo
+> approximation of a quantity with an exact value). **Q3 — one phase, contingency *sequenced* not merely
+> pre-authorised: run Product's capture FIRST as the phase's canary**, before the coupled twin work commits —
+> front-load the riskiest piece (result-type change, recursion, `factor_selector` carve-out) so the
+> split decision is made early and cheaply, not mid-flight. The prose below is retained as the rationale of
+> record.
+
 1. **The seam's disposition — does "invert the binding site" mean "make carrier-free" or "remove the
    round-trip, leaving carrier-bound ops Measure-resident"?** This is the constitutional reading the whole
    phase rests on (§1). Two of the four sites have operations underneath with *no* carrier-free form:
