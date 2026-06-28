@@ -1330,11 +1330,20 @@ function condition(p::NormalGammaPrevision, k::Kernel, observation)
           "space context; use NormalGammaMeasure for non-conjugate kernels")
 end
 
-# NOTE: measure-as-view Phase 3 (#163) — backwards delegation; Product threads a per-factor DATA carrier
-# (cat.space.values) and returns a MixtureMeasure — inverts with the mixture-twin collapse.
+# Prevision-native per-factor-routed product conditioning (measure-as-view Phase 3). The factors are
+# independent: a FiringByTag/DispatchByComponent kernel routes the observation to each factor by its own
+# tag (the firing factor updates via its conjugate, non-firing factors resolve to Flat — the registered
+# no-op). Carrier-free: each factor's `condition` is Prevision-primary (Phase 2). A `factor_selector`
+# kernel is CARRIER-BOUND — its categorical-factor expansion reads atom values (`cat.space.values`) — and
+# is correctly Measure-resident: condition the `ProductMeasure` (prevision-not-measure corollary, #163).
 function condition(p::ProductPrevision, k::Kernel, obs; kwargs...)
-    conditioned = condition(wrap_in_measure(p), k, obs; kwargs...)
-    conditioned isa MixtureMeasure ? conditioned.prevision : conditioned.prevision
+    k.factor_selector === nothing || error(
+        "condition(::ProductPrevision, factor_selector kernel) is carrier-bound — the categorical-factor " *
+        "expansion reads atom values; condition the ProductMeasure instead. (measure-as-view Phase 3, #163)")
+    if k.likelihood_family isa FiringByTag || k.likelihood_family isa DispatchByComponent
+        return ProductPrevision(Prevision[condition(f, k, obs) for f in p.factors])
+    end
+    _condition_particle(p, k, obs; kwargs...)
 end
 
 # Prevision-native grid quadrature (measure-as-view Phase 2): the space-free posterior over the
@@ -1587,6 +1596,25 @@ _predictive_ll(p::BetaPrevision, k::Kernel, obs) =
 _predictive_ll(p::TaggedBetaPrevision, k::Kernel, obs) =
     k.log_density(p, obs)
 
+# Prevision-native product predictive (measure-as-view Phase 3): factors are independent ⇒ the joint
+# log-predictive is the SUM of per-factor log-predictives, a Flat-resolved factor a no-op (0). Mirrors
+# `_predictive_ll(::ProductMeasure)` at the Prevision level — the structure marginal-likelihood term
+# `condition(::MixturePrevision)` reweights a structure-BMA component by, now without the round-trip
+# through the generic Measure sampler. Non-routed kernels fall to the generic Prevision catch-all.
+function _predictive_ll(p::ProductPrevision, k::Kernel, obs)
+    if k.factor_selector === nothing &&
+       (k.likelihood_family isa FiringByTag || k.likelihood_family isa DispatchByComponent)
+        total = 0.0
+        for f in p.factors
+            fam = _resolve_likelihood_family(k.likelihood_family, f)
+            fam isa Flat && continue
+            total += _predictive_ll(f, _with_resolved_family(k, fam), obs)
+        end
+        return total
+    end
+    invoke(_predictive_ll, Tuple{Prevision, Kernel, Any}, p, k, obs)
+end
+
 # Document marginal likelihood of a labelled categorical at its own label:
 # log Σ_V P(V | label) · exp(per-position density). The `log_weights` are normalised at
 # construction, so this is exactly log P(obs | label) — the term `condition(::MixturePrevision)`
@@ -1778,7 +1806,8 @@ function condition(m::ProductMeasure, k::Kernel, obs; kwargs...)
         # ProductMeasure — leaving an enclosing structure-BMA MixturePrevision
         # un-flattened. See docs/credence-pi-pass-2/move-3-design.md.
         if k.likelihood_family isa FiringByTag || k.likelihood_family isa DispatchByComponent
-            return ProductMeasure(Measure[condition(f, k, obs) for f in m.factors])
+            # Facade (measure-as-view Phase 3): Prevision-primary routed condition + carrier re-bind.
+            return ProductMeasure(condition(m.prevision, k, obs), m.space)
         end
         return _condition_particle(m, k, obs; kwargs...)
     end
