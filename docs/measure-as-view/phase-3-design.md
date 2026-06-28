@@ -48,6 +48,22 @@ pruned/truncated mixture re-attaches its carrier with one `MixtureMeasure(m.spac
 > carrier-bound, and the bright line is the right architecture, not a wart. `prune`/`truncate`/`draw`
 > carry no kernel (index/weight-only), so they *are* redundant twins and collapse to facades.
 
+> **Code finding (2026-06-28) — the generic predictive catch-all is *leaf-only*; structured / not-yet-inverted
+> Previsions need their own predictive.** Inverting `_predictive_ll`/`log_predictive(::Prevision)` to
+> carrier-free `expect` is correct only for Previsions whose kernel reads a point θ *and* which have a
+> carrier-free `expect(p, ::Function)` (Beta/Gaussian/Gamma/Particle/Quadrature/TruncatedGaussian). Two
+> classes needed explicit specialization, both surfaced by tests, not by reasoning: **(a) structured
+> Previsions** — `MixturePrevision` and `ProductPrevision` pass *components/factors* to the kernel (a
+> Measure-aware kernel like structure-BMA's `_approve_logdensity` reads `mean(component)`, not a θ grid
+> point); the generic `expect` integrates the kernel over the support, which is wrong, so each got a
+> per-component/-factor predictive (caught by `test_decide_with_voi`/`test_typed_decision`/`test_compute_cost`).
+> **(b) `NormalGammaPrevision`** — its `expect` is Measure-primary *sampling* (not inverted by this arc),
+> so it has no carrier-free `expect`-over-a-closure; its predictive is the Student-t closed form
+> (`_predictive_ll`), and `log_predictive` delegates to it (caught by the **skin wire smoke**, which the
+> Julia suite missed — `log_predictive` is the wire-crossing verb). A genuinely carrier-bound
+> `CategoricalPrevision` correctly `MethodError`s at the generic catch-all (Q1). The throughline: the
+> generic catch-all serves *carrier-free leaf* Previsions; everyone else declares structure.
+
 **The refinement the gate forces — what "invert" means for a genuinely carrier-bound op.** Three of the
 four sites are carrier-free-in-disguise and become Prevision-native. But two operations underneath them
 are *genuinely* carrier-bound — they read atom values, not indices: `condition`'s `factor_selector`
