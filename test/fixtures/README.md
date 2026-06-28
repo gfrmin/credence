@@ -143,6 +143,23 @@ Assertion tolerance: `==`. Seeded Monte Carlo under fixed seed produces bit-iden
 
 **Invalidation conditions:** Julia version change (RNG implementation differences); intentional change to the `draw` / log-density evaluation order (which would be a Move 6 design-doc amendment); any change to the canonical GammaMeasure / BetaMeasure / GaussianMeasure constructors that affects storage layout. If invalidated, a new fixture (`particle_canonical_v2.jls`) captures at the SHA that introduced the change; the v1 file stays as-is for backward-compat verification.
 
+### `mixture_draw_canonical_v1.jls` — measure-as-view Phase 3 capture-before-refactor
+
+**Source SHA:** `5b0ec51` (Phase 3 Product canary tip, pre-draw-refactor).
+**Captured:** 2026-06-28.
+**Julia version:** 1.12.x.
+**Purpose:** Canonical seeded `draw` sequences under `Random.seed!(42)`, captured before Phase 3 relocates the cumulative-sum draw loop into the shared `_sample_index` helper + the new carrier-free `draw(::CategoricalPrevision)`. The test `test/test_measure_view_mixture.jl` asserts `==` against these throughout the Phase 3 code PR; a `==` failure is a halt-the-line signal that the relocation reordered RNG consumption. (The keystone refactor is bit-identical by construction — same `weights`, one `rand()`, same cumulative compare — so the fixture is the proof, not an approximation.)
+
+Contents (a Dict{Symbol, Any}):
+- `:source_sha`, `:julia_version` — capture provenance (canonical values are bit-identical only under this Julia version).
+- `:cat_draws` — 30 Float64s from `draw(CategoricalMeasure(Finite([10.0,20.0,30.0]), [log.2,log.3,log.5]))` under seed 42.
+- `:mix_draws` — 20 Float64s from `draw(MixtureMeasure(Interval(0,1), [Beta(2,3), Beta(5,5)], [log.4,log.6]))` (continuous components).
+- `:mixcat_draws` — 30 Float64s from `draw` of a `MixtureMeasure` of two `CategoricalMeasure`s over `Finite([1,2,3])` (categorical components — exercises index→value through the mixture).
+
+Assertion tolerance: `==` (precedents.md §4 — not relaxable to `rtol`; relaxing would mask the seed-reorder regression the fixture exists to catch).
+
+**Invalidation conditions:** Julia version change (RNG differences); an intentional change to `draw`'s sampling order (a design-doc amendment). If invalidated, `mixture_draw_canonical_v2.jls` captures at the introducing SHA; v1 stays for backward-compat.
+
 ### `posture-3-capture/` — Posture 4 Move 0 invariance target
 
 **Source SHA:** `5c6a94e464225776e996d6f1f690219a0728ff35` (master tip after PR #43 merge — Posture 3 complete + Move 0 design-doc amendment).

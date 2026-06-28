@@ -1715,14 +1715,20 @@ function condition(p::MixturePrevision, k::Kernel, obs)
     MixturePrevision(new_components, new_log_wts)
 end
 
-# NOTE: this stays a Measure-level loop (a verbatim twin of condition(MixturePrevision) above) on
-# purpose. Collapsing it to a thin facade over the Prevision level (`condition(m.prevision)`) is
-# UNSAFE here: it passes Prevision components where consumers expect Measures, and drops the
-# per-component carrier-space context (a `CategoricalPrevision`/`ProductPrevision` component cannot be
-# `wrap_in_measure`d without its `Finite` space — "Measure binds carrier space, Prevision doesn't").
-# Found the hard way in collapse-towers Phase 2 (broke test_flat_mixture + test_host). The
-# mixture-condition dedup therefore belongs to the `measure-as-view` arc, which handles the
-# carrier-space delegation properly; Phase 2 adds the per-component routing only to the Prevision side.
+# measure-as-view Phase 3 — this STAYS a Measure-level loop; it is NOT a redundant twin of
+# condition(MixturePrevision), and the gate proved it (see phase-3-design.md §5 Q1, test_flat_mixture
+# TEST 6, test_host TEST 5). The loop passes each component to the kernel's log_density (via
+# _predictive_ll/condition), and three things make that CARRIER-BOUND, hence Measure-resident:
+#   1. Kernels may introspect the component — a FiringByTag dual-mode kernel branches on
+#      `isa TaggedBetaMeasure`; the Prevision loop would hand it a Prevision and mis-dispatch.
+#   2. A component may carry data (a ProductMeasure with a CategoricalMeasure factor); its predictive
+#      needs the carrier to draw values — the Prevision form cannot wrap_in_measure a categorical factor
+#      without its Finite space.
+#   3. A component may need carrier-bound conditioning (ProductMeasure + factor_selector).
+# The Prevision twin is the carrier-FREE + per-component-routing path, used by the Prevision-entry
+# consumers (rho-latent / family-BMA / structure-BMA condition the MixturePrevision). The two loops pass
+# DIFFERENT objects to the kernel and are not interchangeable — the duplication is apparent, the seam is
+# real. Phase 3 collapses only the index/weight-only twins (prune/truncate/draw), which carry no kernel.
 function condition(m::MixtureMeasure, k::Kernel, obs)
     new_components = Measure[]
     new_log_wts = Float64[]
@@ -1960,16 +1966,26 @@ end
 # HOST OPERATION: draw
 # ================================================================
 
-function draw(m::CategoricalMeasure)
-    w = weights(m)
+# measure-as-view Phase 3 — the carrier-free index sampler, the single home of the cumulative-sum draw
+# loop the four mixture/categorical draws duplicated. `r < cumw` short-circuits; the trailing `length(w)`
+# is the floating-point fallback (matches the old inlined `…[end]`). One `rand()`, so the relocation is
+# bit-identical under a fixed seed (test/test_measure_view_mixture.jl, fixture mixture_draw_canonical_v1).
+function _sample_index(w::AbstractVector{<:Real})
     r = rand()
     cumw = 0.0
     for i in eachindex(w)
         cumw += w[i]
-        r < cumw && return m.space.values[i]
+        r < cumw && return i
     end
-    m.space.values[end]
+    length(w)
 end
+
+# The keystone: CategoricalPrevision holds only log_weights — a distribution over an INDEX set. So weights
+# and draw are carrier-free (index = structure); the Measure owns the index→value lookup (value = data).
+# weights(p) mirrors weights(m::CategoricalMeasure) exactly (same operations on the same log_weights).
+weights(p::CategoricalPrevision) = (w = exp.(p.log_weights .- maximum(p.log_weights)); w ./ sum(w))
+draw(p::CategoricalPrevision) = _sample_index(weights(p))
+draw(m::CategoricalMeasure) = m.space.values[draw(m.prevision)]
 
 function draw(m::BetaMeasure)
     x = _draw_gamma(m.alpha)
@@ -2020,16 +2036,9 @@ end
 
 draw(m::ProductMeasure) = Any[draw(f) for f in m.factors]
 
-function draw(m::MixtureMeasure)
-    w = weights(m)
-    r = rand()
-    cumw = 0.0
-    for i in eachindex(w)
-        cumw += w[i]
-        r < cumw && return draw(m.components[i])
-    end
-    draw(m.components[end])
-end
+# Pick the component index carrier-free (shared loop), then draw the reconstructed Measure component — so a
+# categorical component returns its VALUE (via draw(::CategoricalMeasure)), not the bare index. Bit-exact.
+draw(m::MixtureMeasure) = draw(m.components[_sample_index(weights(m))])
 
 function draw(p::BetaPrevision)
     x = _draw_gamma(p.alpha)
@@ -2062,24 +2071,15 @@ end
 
 draw(p::ProductPrevision) = Any[draw(f) for f in p.factors]
 
-function draw(p::MixturePrevision)
-    w = weights(p)
-    r = rand()
-    cumw = 0.0
-    for i in eachindex(w)
-        cumw += w[i]
-        r < cumw && return draw(p.components[i])
-    end
-    draw(p.components[end])
-end
+draw(p::MixturePrevision) = draw(p.components[_sample_index(weights(p))])
 
 # ── Mixture maintenance ──
 
+# measure-as-view Phase 3 — facade over the Prevision twin (prune drops a weight-subset; all components
+# share m.space, so the carrier re-binds trivially). Identity-preserving when nothing is pruned.
 function prune(m::MixtureMeasure; threshold::Float64=-20.0)
-    max_lw = maximum(m.log_weights)
-    keep = [i for i in eachindex(m.log_weights) if m.log_weights[i] - max_lw > threshold]
-    length(keep) == length(m.components) && return m
-    MixtureMeasure(m.space, m.components[keep], m.log_weights[keep])
+    pruned = prune(m.prevision; threshold=threshold)
+    pruned === m.prevision ? m : MixtureMeasure(m.space, pruned)
 end
 
 function prune(p::MixturePrevision; threshold::Float64=-20.0)
@@ -2089,11 +2089,11 @@ function prune(p::MixturePrevision; threshold::Float64=-20.0)
     MixturePrevision(p.components[keep], p.log_weights[keep])
 end
 
+# measure-as-view Phase 3 — facade over the Prevision twin (truncate keeps the top-k by weight; shared
+# m.space re-binds trivially). Identity-preserving when already within the cap.
 function truncate(m::MixtureMeasure; max_components::Int=10)
-    length(m.components) <= max_components && return m
-    perm = sortperm(m.log_weights, rev=true)
-    keep = perm[1:min(max_components, length(perm))]
-    MixtureMeasure(m.space, m.components[keep], m.log_weights[keep])
+    trunc = truncate(m.prevision; max_components=max_components)
+    trunc === m.prevision ? m : MixtureMeasure(m.space, trunc)
 end
 
 function truncate(p::MixturePrevision; max_components::Int=10)
