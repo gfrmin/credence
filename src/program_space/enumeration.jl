@@ -6,7 +6,8 @@
 # Complexity scoring
 # ═══════════════════════════════════════
 
-const THRESHOLDS = [0.1, 0.3, 0.5, 0.7, 0.9]
+# `THRESHOLDS` (the default per-feature grid seed) now lives in types.jl with `Grammar` — it is
+# grammar-structural data, and enumeration reads each grammar's own `g.thresholds[feat]` below.
 
 function expr_complexity(e::GTExpr) 1 end
 function expr_complexity(e::LTExpr) 1 end
@@ -70,7 +71,7 @@ function enumerate_programs(g::Grammar, max_depth::Int;
 
     atoms = ProgramExpr[]
     for feat in sort(collect(g.feature_set))  # sorted for deterministic enumeration
-        for t in THRESHOLDS
+        for t in g.thresholds[feat]            # per-feature grid (Move 3); default ≡ global THRESHOLDS
             push!(atoms, GTExpr(feat, t))
             push!(atoms, LTExpr(feat, t))
         end
