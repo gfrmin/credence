@@ -41,12 +41,12 @@ feature is destructive generative change and is never a candidate (only dead fea
 because compression never confounds exploration VOI).** **PR 1 = the `:remove_rule` transitive crash fix**
 (`_removal_payoff` unions rule-body refs) + capture-before-refactor + a nested-abstraction regression test —
 the isolated soundness fix; lands FIRST regardless (it is a live crash; the rest is suboptimality).
-**PR 2 = soften the compression rung in BOTH exploration gates** (`:gw_explore`, `:gw_add_feature`) — a
+**PR 2 = DROP the compression rung from BOTH exploration gates** (`:gw_explore`, `:gw_add_feature`) — a
 self-contained one-sidedness fix (§5 Q1 (i)/(iii)), standalone because once it spans two move surfaces it is
 no longer a compression-*removal* concern; lands BEFORE PR 3 (hard ordering: a dead feature feeding
-`compression_exhausted` while the gate is still hard would *widen* the soft-cap before it is fixed — soften,
-then couple). **PR 3 = `:remove_feature`** (the new op + the `SubprogramFrequencyTable` field + the argmax
-wiring), riding on the softened gate. #174 (the issue) closes on PR 1 + PR 3 — its two stated concerns,
+`compression_exhausted` while the gate is still hard would *widen* the soft-cap before it is fixed — drop the
+veto, then couple). **PR 3 = `:remove_feature`** (the new op + the `SubprogramFrequencyTable` field + the
+argmax wiring), riding on the un-vetoed gate. #174 (the issue) closes on PR 1 + PR 3 — its two stated concerns,
 removal soundness and removal mechanics; PR 2 is the sibling fix the Q1 analysis spawned, kept tied to this
 doc because all three are downstream of the single fact that compression never confounds exploration VOI.
 
@@ -79,13 +79,15 @@ doc because all three are downstream of the single fact that compression never c
   `collect_feature_refs!` soundness (direct + transitive-via-rule-body), `_feature_removal_payoff`, the
   unified argmax, determinism, and the capture-before-refactor pins (§3).
 
-- **`apps/julia/grid_world/host.jl`** (modification, **PR 2** — §5 Q1's finding, standalone). Soften the
-  `compression_exhausted` hard-gate (`... || return -Inf`) to a soft multiplicative discount on the proxy
-  EU, in BOTH `:gw_add_feature` (`:229`) and `:gw_explore` (`:206`); `threshold_exhausted` (`:233`) stays
-  hard. Adds a const `GW_COMPRESSION_UNSATURATED_DISCOUNT` — **named honestly as a proxy-host tuning knob**
-  (a fixed magic constant, NOT a learned multiplier like `plateau`'s carried posterior — see §5 Q1 (ii));
-  its comment records that it is interim, pinned between Move 2 Q3 and the Move-5 currency gap (Q5). This is
-  its own PR, not part of #174's removal commits.
+- **`apps/julia/grid_world/host.jl`** (modification, **PR 2** — §5 Q1's finding, standalone). DROP the
+  `compression_exhausted` hard-gate (`... || return -Inf`) entirely from BOTH `:gw_explore` (`:206`) and
+  `:gw_add_feature` (`:229`); `threshold_exhausted` (`:233`) stays hard. **No discount, no new constant**
+  (the §5 Q1 (ii) resolution): compression is prior-only and never confounds a fit-side VOI, so the soft
+  cost-ordering preference is already carried by the existing meta-action cost asymmetry (`GW_PERTURB_COST`
+  0.05 < `GW_EXPLORE`/`GW_ADD_FEATURE_COST` 0.10) in the caller's argmax — the host compares PROXY EUs in a
+  common scale, so the Q5 currency gap never arises here. Also removes the now-pointless
+  `analyse_posterior_subtrees`/`top_k` from `:gw_explore` and the now-unused `compression_exhausted` import.
+  New `test/test_grid_world_meta.jl` (the FIRST test of `compute_gw_meta_eu`). Its own PR, not part of #174.
 
 **No new meta-action.** `:remove_feature` rides inside the existing `:perturb_grammar`/`:gw_perturb_grammar`
 meta-action (which already calls `perturb_grammar`); the host re-enumerates the returned grammar exactly as
@@ -108,10 +110,12 @@ identities, grammar feature sets — not floats; no tolerance class applies).
 - **`compression_exhausted` / the Q4 ladder shift ONLY where correctness demands it** (§5 Q1): a grammar with
   a removable dead feature, or a nested-abstraction grammar whose false-dead `:remove_rule` candidate the fix
   removes. Both are *corrections*; the nested case is new behaviour exercised only by the new test.
-- **The PR-2 gate-softening is a deliberate behaviour change, NOT preserved** (§5 Q1 finding, §6 risk
-  4(b)): `:gw_add_feature`/`:gw_explore` selection changes when compression is unexhausted (the hard gate
-  was the bug). Its `test_grid_world.jl` pins are captured PRE-change and updated WITH the fix — the only
-  pins in this follow-up that intentionally move; everything in the bullets above holds `==`.
+- **The PR-2 gate-DROP is a deliberate behaviour change, NOT preserved** (§5 Q1 finding, §6 risk 4(b)):
+  `:gw_add_feature`/`:gw_explore` selection changes when compression is unexhausted (the hard veto was the
+  bug). **Correction (verified during PR 2): no existing test pinned these gates** — `compute_gw_meta_eu`
+  was untested (`test_grid_world.jl`'s only agent run sets `max_meta_per_step=0`). So PR 2 *adds the first*
+  test (`test_grid_world_meta.jl`), a net coverage gain — not a pin migration. There is nothing to capture
+  PRE-change; the new test pins the post-drop contract directly. Everything in the bullets above holds `==`.
 
 ## 4. Worked end-to-end examples
 
@@ -189,21 +193,23 @@ coupling as correct — a reclaimable symbol is genuine residual compression, so
 > *live* shipped soft-cap in the Move-3 path (a pending compression candidate deferring a correctly-measured
 > positive-EU threshold refinement). Soften both.
 >
-> **(ii) Mechanical form — the multiplicative discount, as an explicitly INTERIM device.** Its justification
-> is NOT "it matches how `plateau` enters" — that analogy is false and must not be made. `plateau`'s
-> multiplier is a *learned* quantity (the carried regime posterior, a belief that earns its multiplier);
-> `GW_COMPRESSION_UNSATURATED_DISCOUNT` is a fixed constant with no principled value — **a magic number,
-> named honestly as a proxy-host tuning knob.** In a proxy-EU host that is tolerable (the discount is soft,
-> overridable, and the host's EU is already a proxy), but it is not laundered into a posterior. The
-> discount's actual purpose: it keeps compression (priced in *prior* nats) and exploration (priced in
-> *predictive* nats) as **two separate decisions**, sidestepping the cross-currency comparison the
-> principled end-state would require. That end-state — **(A)** drop the gate entirely and let one net-EU
-> argmax order compression against exploration by their own costs — is correct but **blocked on the Move-5
-> currency gap (Q5)**: (A) presupposes Move 5's single-currency unification is permanent, so it cannot be
-> built now. **(B)** a graded compression-residual signal from `_best_compression_candidate` is the
-> principled upgrade for the day this runs on a *real-utility* host (overkill for a proxy host now). So the
-> discount is **interim by construction**, pinned between Move 2 Q3 (soft, never hard) and Q5 (the currency
-> it refuses to cross); the code comment must say exactly this.
+> **(ii) Mechanical form — DROP the gate, no constant (revised from the discount on review).** A first pass
+> ratified a multiplicative discount as an interim device. On building it the bare constant was rejected —
+> *magic constants are a big no-no* — and, decisively, the discount's stated justification does not hold at
+> the host level. That justification was "keep compression (prior nats) and exploration (predictive nats) as
+> two separate decisions, sidestepping the cross-currency comparison." But the host never makes that
+> comparison: `compute_gw_meta_eu` hands every meta-action a PROXY EU (`plateau · BASE − cost`) in a common
+> hand-tuned scale and the caller argmaxes over proxies; the real `explore_grammar`/`explore_features` VOIs
+> are computed at *execution*, not selection. So there is no cross-currency comparison at the selection point
+> to sidestep — the Q5 currency gap is engine-level, untouched by this host gate. The clean interim is
+> therefore to **drop the `compression_exhausted` veto entirely** (no constant): the bug (hard veto) is gone,
+> and the soft "compression-first" preference survives via the EXISTING cost asymmetry (`GW_PERTURB_COST`
+> 0.05 < `GW_EXPLORE`/`GW_ADD_FEATURE_COST` 0.10), exactly as the un-gated `:gw_enumerate_more`/`:gw_deepen`
+> already compete. No correctness claim rides on compression-first (compression never confounds — the whole
+> basis of the fix), so a *stronger* nudge would be a preference with no principle behind its strength: the
+> magic constant. The principled end-states remain — **(A)** one net-EU argmax over compression and
+> exploration once Move 5 closes Q5; **(B)** a graded compression-residual signal for a *real-utility* host
+> (the proxy host needs neither now).
 >
 > **(iii) Sequencing + home — resolved.** Crash-fix → soften → couple. The `:remove_rule` transitive fix is
 > **PR 1** (a crash; first regardless). The softening is **PR 2, standalone** — once (i) makes it span both
@@ -274,13 +280,14 @@ if single-pass reclamation of dead chains matters.
    the tuple changes `_candidate_better`'s total order (e.g. tie-break drift) → a different perturbation wins
    → benchmark drift. Mitigation: preserve the exact order (voc → is_remove → name); capture-before-refactor
    pins `_best_compression_candidate`'s winner `==` on the existing fixtures.
-4. **`compression_exhausted` regression to the Q4 ladder + the gate-softening behaviour change.** Two parts.
+4. **`compression_exhausted` regression to the Q4 ladder + the gate-DROP behaviour change.** Two parts.
    (a) The `:remove_feature` coupling: pin every test grammar's `compression_exhausted` `==`; the only
-   intended change is the coupling, blessed in Q1. (b) The **PR-2** softening **deliberately** changes BOTH
-   `:gw_add_feature` and `:gw_explore` selection when compression is unexhausted (the bug fix): capture the
-   affected `test_grid_world.jl` EU/selection pins PRE-change and update them WITH the softening as the
-   recorded reason (the Move-4 "behaviour shift is intended" discipline) — never reintroduce the hard gate
-   to keep a stale pin green.
+   intended change is the coupling, blessed in Q1. (b) The **PR-2** gate-DROP **deliberately** changes BOTH
+   `:gw_add_feature` and `:gw_explore` selection when compression is unexhausted (the bug fix). No existing
+   test pinned the gate (`compute_gw_meta_eu` was untested), so there is nothing to migrate: PR 2's new
+   `test_grid_world_meta.jl` pins the post-drop contract directly (`:gw_explore` returns the soft plateau
+   proxy, not −Inf, when compression is available; `:gw_add_feature` likewise, with `threshold_exhausted`
+   still vetoing). Never reintroduce the hard veto to keep a stale expectation green.
 
 ## 7. Verification cadence
 
@@ -291,12 +298,13 @@ julia test/test_saturation.jl            # Move 2 compression_exhausted — pinn
 julia test/test_threshold_explore.jl     # Move 3 untouched (incl. the refined-grid-survives-compression pin)
 julia test/test_feature_discovery.jl     # Move 4 :add_feature untouched
 julia test/test_program_space.jl         # enumeration + removal — pinned ==
-julia test/test_grid_world.jl            # PR 3: host :perturb_grammar now also reclaims dead features (no new meta-action)
+julia test/test_grid_world_meta.jl       # PR 2: the FIRST test of compute_gw_meta_eu — gate-drop contract
+julia test/test_grid_world.jl            # host loads + runs after PR 2; PR 3 dead-feature reclaim (no new meta-action)
 ```
 
 Per-PR split: **PR 1** (crash fix) = the nested-abstraction regression test + the §3 capture pins (`==`).
-**PR 2** (soften both gates) = `test_grid_world.jl` — capture the `:gw_explore`/`:gw_add_feature` selection
-pins PRE-change and update them WITH the softening (the only intentionally-moving pins; §6 risk 4(b)).
+**PR 2** (drop the veto, both gates) = `test_grid_world_meta.jl` (NEW — the first test of
+`compute_gw_meta_eu`); `test_grid_world.jl` stays green (host still loads + runs).
 **PR 3** (`:remove_feature`) = `test_compression_removal.jl` + the remaining `==` pins above. Full
 `test/test_*.jl` green before each merge; lint self-test + `check apps/`. **Skin smoke optional** (no wire
 verb, no serialised-path change — the `SubprogramFrequencyTable` field is in-memory only). Halt-the-line on
@@ -310,10 +318,12 @@ blocks inline (§5 Q1 (i)/(ii)/(iii)). Summary:
 - **Q1.** Coupling blessed; `compression_exhausted` confirmed **soft**, `threshold_exhausted` the hard one.
   Its finding (the shipped hard-gate at `:gw_add_feature:229` + `:gw_explore:206`) is fixed by **PR 2**.
   - **(i) Both gates** — one bug, one argument ("compression never confounds the residual"); reject the split.
-  - **(ii) Multiplicative discount, INTERIM** — a proxy-host tuning knob (a magic constant, *not* a
-    `plateau`-style learned multiplier); its job is to keep prior-nats and predictive-nats as separate
-    decisions, sidestepping the Move-5 currency gap (Q5). End-state (A) = single net-EU argmax, Q5-blocked.
-    Upgrade (B) = graded compression-residual, for a real-utility host. Pinned between Move 2 Q3 and Q5.
+  - **(ii) DROP the gate — no constant** (revised from the discount on review: *magic constants are a big
+    no-no*). The discount's "sidestep Q5" rationale does not bite at the host's PROXY-EU layer — no real
+    cross-currency comparison happens at *selection* (the real VOIs are computed at execution) — so the clean
+    interim is to drop the `compression_exhausted` veto entirely; the soft compression-first preference rides
+    the existing cost asymmetry (`GW_PERTURB_COST` < `GW_EXPLORE`/`GW_ADD_FEATURE_COST`). End-state (A) =
+    single net-EU argmax once Move 5 closes Q5; (B) = graded compression-residual for a real-utility host.
   - **(iii)** Crash-fix (PR 1) → soften (PR 2, standalone) → `:remove_feature` (PR 3).
 - **Q2.** The declared `PerturbationCandidate` struct (the thing Move 5 extends).
 - **Q3.** Union **ALL** rule bodies.

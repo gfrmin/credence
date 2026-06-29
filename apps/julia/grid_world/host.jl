@@ -24,7 +24,7 @@ using Credence: density, log_density_at, prune, truncate
 using Credence: AgentState, sync_prune!, sync_truncate!
 using Credence: Grammar, Program, CompiledKernel, ProductionRule
 using Credence: enumerate_programs, compile_kernel
-using Credence: analyse_posterior_subtrees, perturb_grammar, compression_exhausted
+using Credence: analyse_posterior_subtrees, perturb_grammar
 using Credence: aggregate_grammar_weights, top_k_grammar_ids, add_programs_to_state!
 using Credence: next_grammar_id, reset_grammar_counter!
 using Credence: show_expr, GTExpr, LTExpr, AndExpr, OrExpr, NotExpr, NonterminalRef, ActionExpr, IfExpr
@@ -190,46 +190,35 @@ function compute_gw_meta_eu(
     elseif action == :gw_deepen
         return uncertainty_benefit * 0.4 - GW_DEEPEN_COST - meta_cost_this_turn
     elseif action == :gw_explore
-        # Saturation-gated belief-aware exploration (Move 3). Two orthogonal halves, BOTH required
-        # (master plan §3.2): the residual-plateau (belief-side, the SOFT prior — Q3 — it SCALES the EU
-        # continuously, never a hard threshold) AND compression-exhausted (prior-side — perturb would
-        # no-op; orthogonal because compression is a prior effect, the residual a fit effect). The costly
-        # prior-side check is lazy: skipped unless the belief-side EU is already positive (so the
-        # freq_table is built only when exploration is even viable on the residual).
+        # Belief-aware threshold-refinement exploration (Move 3), gated by the residual-plateau SOFT prior
+        # ONLY: plateau SCALES the EU continuously, never a hard threshold. The compression_exhausted hard
+        # rung was DROPPED (#174 PR 2): compression is prior-only and never confounds the fit-side threshold
+        # VOI (Move 2 Q3), so it is a soft cost-ordering preference, not a veto — and that preference is
+        # already carried by the meta-action cost asymmetry (GW_PERTURB_COST < GW_EXPLORE_COST) in the
+        # caller's argmax, exactly as :gw_enumerate_more/:gw_deepen compete with no gate. No discount
+        # constant: the host compares PROXY EUs in a common scale, so there is no cross-currency comparison
+        # to gate here (the Q5 gap is engine-level; the principled end-state is one net-EU argmax once Move 5
+        # closes it). Asserted by test_grid_world_meta.jl §1–§2.
         plateau = plateau_probability(state.learning_regime)
         eu_explore = plateau * GW_EXPLORE_BASE - GW_EXPLORE_COST - meta_cost_this_turn
-        eu_explore <= 0.0 && return eu_explore
-        top = top_k_grammar_ids(state, 1)
-        isempty(top) && return -Inf
-        freq_table = analyse_posterior_subtrees(state.all_programs, weights(state.belief);
-                                                min_frequency=0.01, min_complexity=2)
-        compression_exhausted(state.grammars[top[1]], freq_table) || return -Inf
         return eu_explore
     elseif action == :gw_add_feature
-        # Feature discovery (Move 4): the THIRD rung of the lazy escalation ladder. Admissible only when
-        # plateau ∧ compression_exhausted ∧ threshold_exhausted. The third rung is NOT a fine-before-coarse
-        # ORDERING gate — Q2's two-axis pricing in explore_features (it charges the log2 prior-Occam a
-        # threshold never owes) already orders cheap-before-dear. It is an ATTRIBUTION-FIDELITY guard (§8.4):
-        # a feature's Δℓ measured against a COARSE-grid baseline is confounded — inflated by residual that
-        # threshold refinement would ALSO have captured — so feature evaluation waits until the
-        # threshold-exhausted baseline exists and the feature is scored against what thresholds cannot reach.
-        # A sound deferral (defer a confounded measurement), not a cap on a correctly-measured positive-EU
-        # explore. Lazy & cheapest-first: plateau (cheap) → compression_exhausted (builds the freq_table) →
-        # threshold_exhausted (the full threshold lookahead, last). threshold_exhausted is RECOMPUTED each
-        # call, never carried: the ladder is cyclic (an added feature re-opens its own grid via the next
-        # explore pass), so a cached signal goes stale across the cycle.
+        # Feature discovery (Move 4), gated by plateau (SOFT) ∧ threshold_exhausted (HARD). The
+        # compression_exhausted rung was DROPPED (#174 PR 2): compression is prior-only and never confounds
+        # the fit-side feature Δℓ (Move 2 Q3) — a soft cost-ordering preference (carried by the cost
+        # asymmetry in the caller's argmax), not a veto, and no discount constant is needed at the host's
+        # proxy layer. threshold_exhausted STAYS hard: a feature's Δℓ measured against a COARSE-grid baseline
+        # IS confounded — inflated by residual that threshold refinement would ALSO have captured — so
+        # feature evaluation waits until the threshold-exhausted (un-confounded) baseline exists. A sound
+        # deferral, not a cap (attribution fidelity). It is RECOMPUTED each call, never carried: the ladder
+        # is cyclic (an added feature re-opens its own grid via the next explore pass), so a cached signal
+        # goes stale. Asserted by test_grid_world_meta.jl §3a–§3b.
         plateau = plateau_probability(state.learning_regime)
         eu_feature = plateau * GW_ADD_FEATURE_BASE - GW_ADD_FEATURE_COST - meta_cost_this_turn
         eu_feature <= 0.0 && return eu_feature
         top = top_k_grammar_ids(state, 1)
         isempty(top) && return -Inf
         g_top = state.grammars[top[1]]
-        freq_table = analyse_posterior_subtrees(state.all_programs, weights(state.belief);
-                                                min_frequency=0.01, min_complexity=2)
-        compression_exhausted(g_top, freq_table) || return -Inf
-        # threshold_exhausted ⟺ the threshold lookahead would no-op at the SAME VOI floor the explore
-        # meta-action applies — so features wait until thresholds genuinely stop paying (the un-confounded
-        # baseline). Run last (it is the costliest signal); gated by the two cheaper rungs above.
         explore_grammar(g_top, explore_buffer, state.current_max_depth;
                         action_space=Symbol[:food, :enemy], compute_cost=GW_EXPLORE_VOI_FLOOR) === g_top ||
             return -Inf
