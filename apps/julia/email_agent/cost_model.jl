@@ -33,6 +33,7 @@ function default_cost_model(; time_value::Float64=0.02)
         :enumerate_more  => ng(log(0.5)),
         :perturb_grammar => ng(log(0.5)),
         :deepen          => ng(log(1.0)),
+        :explore         => ng(log(2.0)),   # belief-aware lookahead: re-enumerate + re-condition per candidate
         :ask_llm         => ng(log(3.0)),
         :ask_user        => ng(log(10.0)),
         :jmap_fetch      => ng(log(1.0)),

@@ -249,6 +249,21 @@ function compute_meta_eu(
         return base - expected_cost(cost_model, :perturb_grammar) - meta_cost_this_turn
     elseif action == :deepen
         return entropy_benefit * 0.4 - expected_cost(cost_model, :deepen) - meta_cost_this_turn
+    elseif action == :explore
+        # Saturation-gated belief-aware threshold refinement (Move 3). Same two-orthogonal-halves
+        # rationale as grid_world: residual-plateau (belief-side SOFT prior, Q3 — scales the EU) ∧
+        # compression-exhausted (prior-side, lazy). Gated on last_residual !== nothing so it is live only
+        # where the residual regime is fed (the single-decision path); a safe -Inf on the episode path.
+        state.last_residual === nothing && return -Inf
+        plateau = plateau_probability(state.learning_regime)
+        eu_explore = plateau * 0.6 - expected_cost(cost_model, :explore) - meta_cost_this_turn
+        eu_explore <= 0.0 && return eu_explore
+        top = top_k_grammar_ids(state, 1)
+        isempty(top) && return -Inf
+        freq_table = analyse_posterior_subtrees(state.all_programs, weights(state.belief);
+                                                min_frequency=0.01, min_complexity=2)
+        compression_exhausted(state.grammars[top[1]], freq_table) || return -Inf
+        return eu_explore
     end
     -Inf
 end
@@ -425,6 +440,7 @@ function execute_meta_action!(
     action::Symbol;
     action_space::Vector{Symbol}=DOMAIN_ACTIONS,
     min_log_prior::Float64=-20.0,
+    explore_buffer::Vector{ExploreObservation}=ExploreObservation[],
     verbose::Bool=false
 )::Int
     if action == :enumerate_more
@@ -466,6 +482,24 @@ function execute_meta_action!(
                 action_space=action_space, min_log_prior=min_log_prior)
         end
         verbose && println("  [Meta: deepen → depth=$(state.current_max_depth), +$n_added components]")
+        return n_added
+
+    elseif action == :explore
+        # Belief-aware threshold refinement (Move 3); see grid_world for the canonical shape. The ONLY
+        # meta-action that resets the residual regime (it expands the threshold alphabet — Q1b). compute_cost
+        # is the predictive-log-loss floor (nats) a refinement must clear, distinct from the meta-time cost.
+        top = top_k_grammar_ids(state, 1)
+        isempty(top) && return 0
+        gid = top[1]
+        new_g = explore_grammar(state.grammars[gid], explore_buffer, state.current_max_depth;
+                                action_space=action_space, compute_cost=0.1)
+        new_g.id == gid && return 0   # no positive-VOI refinement → no-op
+        state.grammars[new_g.id] = new_g
+        n_added = add_programs_to_state!(state, new_g, state.current_max_depth;
+            action_space=action_space, min_log_prior=min_log_prior)
+        reset_learning_regime!(state)
+        empty!(explore_buffer)
+        verbose && println("  [Meta: explore → grammar $gid→$(new_g.id) (threshold refined), +$n_added components]")
         return n_added
     end
     0
@@ -782,6 +816,10 @@ function run_agent(;
     temporal_state = Dict{Symbol, Any}(:recent => Dict{Symbol, Float64}[])
     metrics = EmailMetricsTracker()
 
+    # The explore buffer (Move 3): host-side observations under the current threshold alphabet (data, not
+    # belief — Q2b). Fed in the single-decision path; the lookahead replays it; cleared on refinement.
+    explore_buffer = ExploreObservation[]
+
     # 2. MAIN LOOP
     for (step, email) in enumerate(corpus)
         correct_action = user_pref.decide(email)
@@ -862,7 +900,7 @@ function run_agent(;
                    meta_actions_taken < max_meta_per_step
                     elapsed = @elapsed execute_meta_action!(state, chosen_action;
                         action_space=DOMAIN_ACTIONS, min_log_prior=min_log_prior,
-                        verbose=verbose)
+                        explore_buffer=explore_buffer, verbose=verbose)
                     observe_cost!(cost_model, chosen_action, elapsed)
                     meta_actions_taken += 1
                     meta_cost_this_turn += expected_cost(cost_model, chosen_action)
@@ -905,6 +943,16 @@ function run_agent(;
             w = weights(state.belief)
             eu_correct = compute_eu(state, correct_action, rec_cache, w; ask_cost=ask_cost)
             surprise = -log(max(eu_correct, 1e-300))
+
+            # Feed the residual-plateau regime (the Move-2 saturation signal, wired here in Move 3 —
+            # `surprise` IS ℓ = −log predictive) and accumulate the explore buffer. Belief-conditioning
+            # below is untouched: this only updates the Move-2/3 side state.
+            state.learning_regime = update_learning_regime(state.learning_regime,
+                                                           state.last_residual, surprise)
+            state.last_residual = surprise
+            push!(explore_buffer, ExploreObservation(features,
+                Dict{Symbol, Any}(:recent => copy(get(temporal_state, :recent, Dict{Symbol, Float64}[]))),
+                Set([correct_action]), surprise))
 
             k = build_email_observation_kernel(
                 state.compiled_kernels, features,
