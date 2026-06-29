@@ -196,13 +196,18 @@ end
 """
     _removal_payoff(g, table) → Vector{Tuple{ProductionRule, Int}}
 
-The `:remove_rule` candidates: each grammar rule whose name NO posterior-support program references
-(`r.name ∉ table.referenced_nonterminals`). Removing such a rule shrinks the dictionary by its full
-two-part-MDL cost `1 + expr_complexity(r.body)` symbols (the rule def: 1 for the head + the body) at
-ZERO fit cost — no support program referenced it, so the belief is untouched (prior-only). The
-symmetric MDL partner of `_compression_payoff`'s `:add_rule`. Referenced rules are NOT candidates:
-removing them is generative-change (it would change which programs the grammar generates), invisible
-to depth-one prior-only `net_voc` and deferred to a later move.
+The `:remove_rule` candidates: each grammar rule referenced by NEITHER a posterior-support program NOR
+any rule body (`r.name ∉ referenced_nonterminals ∪ ⋃_r collect_nonterminal_refs!(r.body)`). The rule-body
+union is the TRANSITIVE soundness fix (#174): enumerated programs hold `NonterminalRef`s unexpanded (a
+rule's body lives here in `grammar.rules`, resolved at compile time), so a rule referenced only inside
+another rule's body is invisible to the program-AST walk that built `referenced_nonterminals`; without the
+union it is wrongly flagged dead and removed, leaving a dangling ref → `compile_expr` crashes ("Undefined
+nonterminal"). Removing a genuinely-dead rule shrinks the dictionary by its full two-part-MDL cost
+`1 + expr_complexity(r.body)` symbols (the rule def: 1 for the head + the body) at ZERO fit cost — no
+support program referenced it, so the belief is untouched (prior-only). The symmetric MDL partner of
+`_compression_payoff`'s `:add_rule`. Referenced rules are NOT candidates: removing them is generative-change
+(it would change which programs the grammar generates), invisible to depth-one prior-only `net_voc` and
+deferred to a later move.
 
 `table.referenced_nonterminals === nothing` (an un-analysed, hand-built table) ⇒ references unknown ⇒
 no candidates (Scope-A-preserving). A concrete (possibly empty) Set ⇒ analysed; an empty analysed set
@@ -212,7 +217,16 @@ Set: `name ∉ ∅` is vacuously true, which would make every rule removable.)
 function _removal_payoff(g::Grammar, table::SubprogramFrequencyTable)::Vector{Tuple{ProductionRule, Int}}
     refs = table.referenced_nonterminals
     refs === nothing && return Tuple{ProductionRule, Int}[]
-    [(r, 1 + expr_complexity(r.body)) for r in g.rules if !(r.name in refs)]
+    # Transitive soundness (#174): union the program-direct refs with the nonterminal refs from ALL rule
+    # bodies (Q3 — reachability-free: a symbol named only by a *dead* rule's body is kept until that rule
+    # is removed first, then reclaimed next pass, matching one-perturbation-per-call). `copy` so the
+    # table's shared Set is never mutated. The `nothing` default above guards the *un-analysed* table;
+    # this guards *analysed-but-incomplete*. Asserted by test_compression_removal.jl §1–§3.
+    all_refs = copy(refs)
+    for r in g.rules
+        collect_nonterminal_refs!(all_refs, r.body)
+    end
+    [(r, 1 + expr_complexity(r.body)) for r in g.rules if !(r.name in all_refs)]
 end
 
 # ═══════════════════════════════════════
