@@ -15,16 +15,17 @@
 #   §2  no over-protection: a rule dead AND unreferenced by any live body is still removable.
 #   §3  dead-chain reclaim cadence (Q3 union-ALL ⇒ one link per pass).
 #   §4  leaf-body sentinel: the fix is a no-op for non-nested grammars (the §3-of-doc capture claim).
-#
-# PR 3 will extend this file with :remove_feature (collect_feature_refs!, _feature_removal_payoff, the
-# unified PerturbationCandidate argmax).
+#   §5  collect_feature_refs! — the feature-side mirror of collect_nonterminal_refs! (PR 3).
+#   §6  _feature_removal_payoff — a DEAD feature is a candidate; a rule-body-only feature is protected (transitive).
+#   §7  :remove_feature via perturb_grammar — apply (drop feature + grid, complexity −1); the unified argmax.
+#   §8  PerturbationCandidate struct contract — :remove_feature carries the feature Symbol; :remove the rule.
 #
 # Run: julia test/test_compression_removal.jl
 
 push!(LOAD_PATH, joinpath(@__DIR__, "..", "src"))
 using Credence
 using Credence: Grammar, ProductionRule, Program,
-                GTExpr, AndExpr, IfExpr, ActionExpr, NonterminalRef,
+                GTExpr, LTExpr, AndExpr, IfExpr, ActionExpr, NonterminalRef, SubprogramFrequencyTable, ProgramExpr,
                 perturb_grammar, analyse_posterior_subtrees, compile_kernel, CompiledKernel
 
 function check(name, cond, detail = "")
@@ -131,6 +132,90 @@ let
           removal_names(g, ft) == Set([:DEAD]), "got $(removal_names(g, ft))")
 end
 
+# ── §5  collect_feature_refs! — the feature-side mirror of collect_nonterminal_refs! ──
+let
+    refs(e) = (acc = Set{Symbol}(); Credence.collect_feature_refs!(acc, e); acc)
+    check("§5 GTExpr contributes its feature", refs(GTExpr(:red, 0.5)) == Set([:red]))
+    check("§5 LTExpr contributes its feature", refs(LTExpr(:blue, 0.3)) == Set([:blue]))
+    check("§5 And/If recurse into all branches; ActionExpr contributes nothing",
+          refs(IfExpr(AndExpr(GTExpr(:red, 0.5), LTExpr(:blue, 0.3)), ActionExpr(:a), ActionExpr(:b))) ==
+          Set([:red, :blue]))
+    check("§5 NonterminalRef contributes nothing DIRECTLY (the rule-body union handles transitivity)",
+          refs(NonterminalRef(:NT)) == Set{Symbol}())
+end
+
+# ── §6  _feature_removal_payoff — dead feature is a candidate; rule-body-only feature is protected ──
+let
+    # §6a a feature used by NO support program and NO rule body is dead → a candidate.
+    g = Grammar(Set([:red, :wall_dist]), ProductionRule[], 1)
+    prog = Program(IfExpr(GTExpr(:wall_dist, 0.5), ActionExpr(:a), ActionExpr(:b)), 3, 1)   # uses :wall_dist only
+    ft = analyse_posterior_subtrees([prog], [1.0]; min_frequency = 0.0, min_complexity = 2)
+    check("§6a analyse populates referenced_features == {:wall_dist}",
+          ft.referenced_features == Set([:wall_dist]), "got $(ft.referenced_features)")
+    check("§6a dead feature :red is the removal candidate",
+          Credence._feature_removal_payoff(g, ft) == [:red], "got $(Credence._feature_removal_payoff(g, ft))")
+
+    # §6b a feature used ONLY inside a rule body is protected by the rule-body union (transitive).
+    g2 = Grammar(Set([:red]), [ProductionRule(:NT, GTExpr(:red, 0.4))], 2)
+    prog2 = Program(IfExpr(NonterminalRef(:NT), ActionExpr(:a), ActionExpr(:b)), 3, 1)       # :red only via NT's body
+    ft2 = analyse_posterior_subtrees([prog2], [1.0]; min_frequency = 0.0, min_complexity = 2)
+    check("§6b referenced_features (program-direct) == {} (:red invisible to the program walk)",
+          ft2.referenced_features == Set{Symbol}(), "got $(ft2.referenced_features)")
+    check("§6b :red protected by NT's rule body ⇒ NOT a candidate (transitive)",
+          isempty(Credence._feature_removal_payoff(g2, ft2)), "got $(Credence._feature_removal_payoff(g2, ft2))")
+
+    # §6c the `nothing` sentinel (hand-built table) ⇒ no candidates (fail-closed).
+    ft3 = SubprogramFrequencyTable(ProgramExpr[], Float64[], Vector{Int}[])
+    check("§6c nothing referenced_features ⇒ no candidates (fail-closed)",
+          isempty(Credence._feature_removal_payoff(g, ft3)))
+end
+
+# ── §7  :remove_feature via perturb_grammar — apply surgery + the unified argmax ──
+let
+    # §7a a dead feature is reclaimed: feature_set shrinks, its grid drops, complexity −1, fresh id.
+    g = Grammar(Set([:red, :wall_dist]), ProductionRule[], 1)
+    prog = Program(IfExpr(GTExpr(:wall_dist, 0.5), ActionExpr(:a), ActionExpr(:b)), 3, 1)
+    ft = analyse_posterior_subtrees([prog], [1.0]; min_frequency = 0.0, min_complexity = 2)
+    got = perturb_grammar(g, ft; compute_cost = 0.0)
+    check("§7a perturb_grammar removes the dead feature :red",
+          got.feature_set == Set([:wall_dist]), "got $(got.feature_set)")
+    check("§7a :red's grid dropped; :wall_dist's grid kept",
+          !haskey(got.thresholds, :red) && haskey(got.thresholds, :wall_dist), "got $(keys(got.thresholds))")
+    check("§7a complexity drops by exactly 1 (one symbol reclaimed)",
+          got.complexity == g.complexity - 1.0, "got $(got.complexity) vs $(g.complexity)")
+    check("§7a fresh grammar id", got.id != g.id)
+
+    # §7b the unified argmax: a dead RULE (payoff 1+complexity = 2) beats a dead FEATURE (payoff 1) — removed first.
+    g2 = Grammar(Set([:red, :wall_dist]), [ProductionRule(:DEAD, GTExpr(:wall_dist, 0.5))], 1)
+    prog2 = Program(IfExpr(GTExpr(:wall_dist, 0.5), ActionExpr(:a), ActionExpr(:b)), 3, 1)   # :wall_dist alive; :red + :DEAD dead
+    ft2 = analyse_posterior_subtrees([prog2], [1.0]; min_frequency = 0.0, min_complexity = 2)
+    got2 = perturb_grammar(g2, ft2; compute_cost = 0.0)
+    check("§7b unified argmax: dead rule (voc 2log2) beats dead feature (voc log2) — :DEAD removed",
+          :DEAD ∉ Set(r.name for r in got2.rules), "rules=$(sort(string.(r.name for r in got2.rules)))")
+    check("§7b the feature_set is untouched this pass (rule won; :red reclaimed a later pass)",
+          got2.feature_set == Set([:red, :wall_dist]), "got $(got2.feature_set)")
+end
+
+# ── §8  PerturbationCandidate struct contract — typed payload per kind ──
+let
+    g = Grammar(Set([:red, :wall_dist]), ProductionRule[], 1)
+    prog = Program(IfExpr(GTExpr(:wall_dist, 0.5), ActionExpr(:a), ActionExpr(:b)), 3, 1)
+    ft = analyse_posterior_subtrees([prog], [1.0]; min_frequency = 0.0, min_complexity = 2)
+    cand = Credence._best_compression_candidate(g, ft)
+    check("§8 :remove_feature candidate carries the feature Symbol as payload",
+          cand.kind == :remove_feature && cand.payload == :red, "kind=$(cand.kind) payload=$(cand.payload)")
+    check("§8 :remove_feature is a removal (is_remove) with voc == log2 (1 symbol)",
+          cand.is_remove == true && cand.voc ≈ log(2), "is_remove=$(cand.is_remove) voc=$(cand.voc)")
+
+    g2 = Grammar(Set([:red, :blue]), [ProductionRule(:DEAD2, GTExpr(:blue, 0.5))], 2)
+    prog2 = Program(IfExpr(GTExpr(:red, 0.5), ActionExpr(:a), ActionExpr(:b)), 3, 1)          # :red alive; :DEAD2 dead
+    ft2 = analyse_posterior_subtrees([prog2], [1.0]; min_frequency = 0.0, min_complexity = 2)
+    cand2 = Credence._best_compression_candidate(g2, ft2)
+    check("§8 :remove candidate carries the ProductionRule as payload",
+          cand2.kind == :remove && cand2.payload isa ProductionRule && cand2.payload.name == :DEAD2,
+          "kind=$(cand2.kind) payload=$(cand2.payload)")
+end
+
 println("="^64)
-println("ALL CHECKS PASSED — compression-removal :remove_rule transitive soundness")
+println("ALL CHECKS PASSED — compression-removal (:remove_rule transitive + :remove_feature)")
 println("="^64)
