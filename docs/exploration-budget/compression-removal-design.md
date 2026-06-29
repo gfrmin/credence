@@ -74,7 +74,9 @@ doc because all three are downstream of the single fact that compression never c
     alongside add/remove-rule. The candidate representation generalises (§5 Q2). ~5 lines.
   - `perturb_grammar` (`:324`) — apply a `:remove_feature` winner: drop the feature from `feature_set` and
     its grid from `thresholds`, fresh id (the 4-arg constructor, threading the surviving grids). ~6 lines.
-- **`src/Credence.jl`** — export `collect_feature_refs!` (mirrors `collect_nonterminal_refs!`).
+- **`src/Credence.jl`** — *no change* (corrected at code time). `collect_feature_refs!` stays **internal**:
+  the truer mirror of `collect_nonterminal_refs!`, which is itself unexported. Tests reach it via
+  `Credence.collect_feature_refs!`.
 - **`test/test_compression_removal.jl`** (new) — the `:remove_rule` nested-abstraction soundness fix,
   `collect_feature_refs!` soundness (direct + transitive-via-rule-body), `_feature_removal_payoff`, the
   unified argmax, determinism, and the capture-before-refactor pins (§3).

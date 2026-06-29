@@ -22,15 +22,18 @@ function analyse_posterior_subtrees(
     min_complexity::Int=2
 )::SubprogramFrequencyTable
     subtree_map = Dict{String, Tuple{ProgramExpr, Float64, Vector{Int}}}()
-    # The sound nonterminal reference count (exploration-budget Move 1): full-depth walk over the SAME
-    # support set (w > 1e-15) the subtree loop uses, independent of extract_subtrees' min_complexity
-    # filter. A concrete (possibly empty) Set ⇒ analysed; consumed by `_removal_payoff` / `:remove_rule`.
+    # The sound reference counts (exploration-budget Move 1 + #174): full-depth walks over the SAME support
+    # set (w > 1e-15) the subtree loop uses, independent of extract_subtrees' min_complexity filter. Concrete
+    # (possibly empty) Sets ⇒ analysed; consumed by `_removal_payoff`/`:remove_rule` (nonterminals) and
+    # `_feature_removal_payoff`/`:remove_feature` (features).
     referenced = Set{Symbol}()
+    referenced_feats = Set{Symbol}()
 
     for (i, prog) in enumerate(programs)
         w = prog_weights[i]
         w > 1e-15 || continue
         collect_nonterminal_refs!(referenced, prog.expr)
+        collect_feature_refs!(referenced_feats, prog.expr)
         subtrees = extract_subtrees(prog.expr, min_complexity)
         for st in subtrees
             key = show_expr(st)
@@ -55,7 +58,7 @@ function analyse_posterior_subtrees(
     end
 
     perm = sortperm(freqs, rev=true)
-    SubprogramFrequencyTable(subtrees[perm], freqs[perm], sources[perm], referenced)
+    SubprogramFrequencyTable(subtrees[perm], freqs[perm], sources[perm], referenced, referenced_feats)
 end
 
 """Extract all subtrees of an expression with complexity ≥ min_c."""
@@ -147,6 +150,37 @@ collect_nonterminal_refs!(acc::Set{Symbol}, e::IfExpr) =
      collect_nonterminal_refs!(acc, e.then_branch);
      collect_nonterminal_refs!(acc, e.else_branch))
 
+"""
+    collect_feature_refs!(acc::Set{Symbol}, e::ProgramExpr) → acc
+
+Collect the names of EVERY feature a predicate in `e` tests (the `.feature` of each `GTExpr`/`LTExpr`),
+recursing to all depths and into all branches. The feature-side mirror of `collect_nonterminal_refs!` and
+the soundness keystone of `:remove_feature` (#174): a feature is "referenced" iff some posterior-support
+program tests it ANYWHERE, so a missed reference would wrongly mark a live feature dead and remove it
+(deleting the support programs that use it). `NonterminalRef` contributes nothing DIRECTLY — a rule body's
+features are caught by `_feature_removal_payoff`'s rule-body union (the transitive case), exactly as the
+nonterminal walk handles its own transitivity. One method per `ProgramExpr` subtype, NO generic fallback —
+a future node type fails loud (a silently-unwalked node is a silent unsoundness). Asserted by
+test_compression_removal.jl §5–§6.
+"""
+collect_feature_refs!(acc::Set{Symbol}, e::GTExpr) = (push!(acc, e.feature); acc)
+collect_feature_refs!(acc::Set{Symbol}, e::LTExpr) = (push!(acc, e.feature); acc)
+collect_feature_refs!(acc::Set{Symbol}, ::NonterminalRef) = acc
+collect_feature_refs!(acc::Set{Symbol}, ::ActionExpr) = acc
+collect_feature_refs!(acc::Set{Symbol}, e::AndExpr) =
+    (collect_feature_refs!(acc, e.left); collect_feature_refs!(acc, e.right))
+collect_feature_refs!(acc::Set{Symbol}, e::OrExpr) =
+    (collect_feature_refs!(acc, e.left); collect_feature_refs!(acc, e.right))
+collect_feature_refs!(acc::Set{Symbol}, e::NotExpr) = collect_feature_refs!(acc, e.child)
+collect_feature_refs!(acc::Set{Symbol}, e::PersistsExpr) = collect_feature_refs!(acc, e.child)
+collect_feature_refs!(acc::Set{Symbol}, e::ChangedExpr) = collect_feature_refs!(acc, e.child)
+collect_feature_refs!(acc::Set{Symbol}, e::SinceExpr) =
+    (collect_feature_refs!(acc, e.p); collect_feature_refs!(acc, e.q))
+collect_feature_refs!(acc::Set{Symbol}, e::IfExpr) =
+    (collect_feature_refs!(acc, e.predicate);
+     collect_feature_refs!(acc, e.then_branch);
+     collect_feature_refs!(acc, e.else_branch))
+
 # ═══════════════════════════════════════
 # Compression payoff — the shared description-length arithmetic
 # ═══════════════════════════════════════
@@ -229,6 +263,29 @@ function _removal_payoff(g::Grammar, table::SubprogramFrequencyTable)::Vector{Tu
     [(r, 1 + expr_complexity(r.body)) for r in g.rules if !(r.name in all_refs)]
 end
 
+"""
+    _feature_removal_payoff(g, table) → Vector{Symbol}
+
+The `:remove_feature` candidates: each feature in `g.feature_set` referenced by NEITHER a posterior-support
+program NOR any rule body (`f ∉ referenced_features ∪ ⋃_r collect_feature_refs!(r.body)`). Removing such a
+dead feature reclaims exactly **1 symbol** (`length(g.feature_set)` drops by one; thresholds are NOT charged
+— `compute_grammar_complexity` is grid-count-invariant) at ZERO fit cost — no support program tests it, so
+the belief is untouched (prior-only). The feature-side mirror of `_removal_payoff`; the rule-body union is
+the same transitive-soundness device (#174). `table.referenced_features === nothing` (un-analysed) ⇒ no
+candidates (fail-closed). Removing a *live* feature is destructive generative change — never a candidate.
+Sorted for a deterministic candidate vector (the winner is already determinate via `_candidate_better`'s
+name tiebreak; sorting removes any doubt about `Set` iteration order). Asserted by test_compression_removal.jl §6.
+"""
+function _feature_removal_payoff(g::Grammar, table::SubprogramFrequencyTable)::Vector{Symbol}
+    refs = table.referenced_features
+    refs === nothing && return Symbol[]
+    all_refs = copy(refs)
+    for r in g.rules
+        collect_feature_refs!(all_refs, r.body)
+    end
+    sort([f for f in g.feature_set if !(f in all_refs)])
+end
+
 # ═══════════════════════════════════════
 # net_voc — Value-of-Computation of a grammar perturbation (collapse-towers Phase 5)
 # ═══════════════════════════════════════
@@ -247,11 +304,12 @@ prior (CLAUDE.md §1.3). A compression saving `net_payoff_symbols` raises the lo
 (the program-axis λ is pinned to `log(2)` by §1.3). The structural twin of `net_voi` (`stdlib.jl`):
 the same `net_value` form, in the prior's currency rather than utility — the third representation,
 after scalar `net_voi` and Functional-offset routing EU. At `compute_cost = 0` the gate `net_voc > 0`
-is exactly `propose_nonterminal`'s `net_payoff > 0`. Governs the COMPRESSION class — both `:add_rule`
-(payoff = compression saving) and `:remove_rule` (payoff = the dead rule's reclaimed cost,
-`1 + expr_complexity(body)`); generative-change ops (`:modify_threshold`, `:add_feature`,
-`:remove_feature`) change the likelihood over un-entertained programs (the escape-mass frontier),
-invisible here by construction, and are deferred to an EU-priced exploration mechanism (master plan).
+is exactly `propose_nonterminal`'s `net_payoff > 0`. Governs the COMPRESSION class — `:add_rule`
+(payoff = compression saving), `:remove_rule` (payoff = the dead rule's reclaimed cost,
+`1 + expr_complexity(body)`), AND `:remove_feature` (#174; payoff = 1, a dead feature's reclaimed symbol).
+The remaining generative-change ops (`:modify_threshold`, `:add_feature`) change the likelihood over
+un-entertained programs (the escape-mass frontier), invisible here by construction, and are deferred to an
+EU-priced exploration mechanism (master plan).
 """
 net_voc(net_payoff_symbols::Real, compute_cost::Real) =
     net_value(complexity_logprior(-net_payoff_symbols; λ = log(2)), compute_cost)
@@ -286,9 +344,9 @@ end
 _pick_better(best, cand) = (best === nothing || _candidate_better(cand, best)) ? cand : best
 
 """
-    _best_compression_candidate(g, freq_table; compute_cost = 0.0) → Union{Nothing, Tuple}
+    _best_compression_candidate(g, freq_table; compute_cost = 0.0) → Union{Nothing, PerturbationCandidate}
 
-The compression-class `net_voc` argmax over the MDL pair `{:add_rule} ∪ {:remove_rule candidates}`, or
+The compression-class `net_voc` argmax over `{:add_rule} ∪ {:remove_rule} ∪ {:remove_feature}` candidates, or
 `nothing` if no candidate clears `net_voc > 0` (the saturation no-op). Returns the winning
 `PerturbationCandidate` (see `_candidate_better` for the total order). The single home of the candidate
 logic — `perturb_grammar` applies it, `compression_exhausted` (Move 2) tests it for `nothing` — so the
@@ -309,6 +367,10 @@ function _best_compression_candidate(g::Grammar, freq_table::SubprogramFrequency
     for (rule, net_payoff) in _removal_payoff(g, freq_table)
         v = net_voc(net_payoff, compute_cost)
         v > 0 && (best = _pick_better(best, PerturbationCandidate(v, true, string(rule.name), :remove, rule)))
+    end
+    for feat in _feature_removal_payoff(g, freq_table)       # the symmetric MDL partner (#174): a dead
+        v = net_voc(1, compute_cost)                         # feature reclaims exactly 1 symbol
+        v > 0 && (best = _pick_better(best, PerturbationCandidate(v, true, string(feat), :remove_feature, feat)))
     end
     best
 end
@@ -336,14 +398,15 @@ is REQUIRED (the type system enforces posterior analysis before nonterminal prop
 `available_features` is retained for signature stability (the deferred feature-discovery mechanism will
 consume it); it is not read here.
 
-The compression class is the **MDL pair** `{:add_rule} ∪ {:remove_rule candidates}` (exploration-budget
-Move 1): `:add_rule` is `_compression_payoff`'s proposed rule (gated by the idempotence guard);
-`:remove_rule` candidates are `_removal_payoff`'s dead rules (referenced by no posterior-support
-program — prior-only, the symmetric MDL partner). The applied meta-action is the `net_voc` argmax over
-the pair, tiebroken by `_candidate_better`. When neither improves the prior, the no-op **is** the
-prior-saturation signal the exploration budget's saturation gate reads (Move 2). The generative-change
-ops (`:modify_threshold`, `:add_feature`, `:remove_feature`) remain deferred — their value is invisible
-to depth-one prior-only `net_voc` (the escape-mass frontier; `docs/exploration-budget/master-plan.md`).
+The compression class is the **MDL set** `{:add_rule} ∪ {:remove_rule} ∪ {:remove_feature}` candidates
+(exploration-budget Move 1 + #174): `:add_rule` is `_compression_payoff`'s proposed rule (gated by the
+idempotence guard); `:remove_rule` candidates are `_removal_payoff`'s dead rules; `:remove_feature`
+candidates are `_feature_removal_payoff`'s dead features (each reclaiming 1 symbol) — all referenced by no
+posterior-support program, prior-only, the symmetric MDL partners. The applied meta-action is the `net_voc`
+argmax over the set, tiebroken by `_candidate_better`. When none improves the prior, the no-op **is** the
+prior-saturation signal the exploration budget's saturation gate reads (Move 2). The remaining
+generative-change ops (`:modify_threshold`, `:add_feature`) remain deferred — their value is invisible to
+depth-one prior-only `net_voc` (the escape-mass frontier; `docs/exploration-budget/master-plan.md`).
 """
 function perturb_grammar(g::Grammar, freq_table::SubprogramFrequencyTable,
                           available_features::Set{Symbol};
@@ -360,9 +423,15 @@ function perturb_grammar(g::Grammar, freq_table::SubprogramFrequencyTable,
     # value ⇒ identical enumeration), so the compression tests stay green.
     if best.kind === :add
         Grammar(g.feature_set, [g.rules; best.payload::ProductionRule], g.thresholds, next_grammar_id())
-    else  # :remove — drop the dead rule by name (names are unique under the idempotence guard)
+    elseif best.kind === :remove  # drop the dead rule by name (names are unique under the idempotence guard)
         Grammar(g.feature_set, [r for r in g.rules if r.name != (best.payload::ProductionRule).name],
                 g.thresholds, next_grammar_id())
+    else  # :remove_feature — reclaim a dead feature: drop it from feature_set AND its grid from thresholds.
+        # The 4-arg Grammar recomputes complexity (grid-count-invariant), so |G| drops by exactly 1.
+        feat = best.payload::Symbol
+        new_features = Set(f for f in g.feature_set if f != feat)
+        new_thresholds = Dict{Symbol, Vector{Float64}}(f => grid for (f, grid) in g.thresholds if f != feat)
+        Grammar(new_features, g.rules, new_thresholds, next_grammar_id())
     end
 end
 

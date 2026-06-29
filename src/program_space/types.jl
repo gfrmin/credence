@@ -251,11 +251,17 @@ struct SubprogramFrequencyTable
     # load-bearing: a concrete empty Set means "analysed, every rule dead" — the OPPOSITE of unknown —
     # because the removal predicate `name ∉ referenced` is vacuously true on the empty set.
     referenced_nonterminals::Union{Nothing, Set{Symbol}}
+    # FEATURE names referenced by ≥1 posterior-support program — the symmetric partner consumed by
+    # `:remove_feature` (#174). Same support set, same `nothing` sentinel (un-analysed ⇒ no feature
+    # removable): a feature in `g.feature_set` absent from a *concrete* set AND from every rule body is
+    # dead → reclaimable (prior-only MDL, 1 symbol).
+    referenced_features::Union{Nothing, Set{Symbol}}
 end
 
-# 3-arg convenience constructor: `nothing` references (un-analysed). Hand-built tables (tests) get the
-# Scope-A-preserving default — `_removal_payoff` yields no candidates, so `:remove_rule` never fires.
-# `analyse_posterior_subtrees` is the only site that populates a concrete (possibly empty) Set.
+# 3-arg convenience constructor: `nothing` references (un-analysed) for BOTH analysis fields. Hand-built
+# tables (tests) get the Scope-A-preserving default — `_removal_payoff`/`_feature_removal_payoff` yield no
+# candidates, so `:remove_rule`/`:remove_feature` never fire. `analyse_posterior_subtrees` is the only site
+# that populates concrete (possibly empty) Sets.
 SubprogramFrequencyTable(subtrees::Vector{ProgramExpr}, weighted_frequency::Vector{Float64},
                          source_programs::Vector{Vector{Int}}) =
-    SubprogramFrequencyTable(subtrees, weighted_frequency, source_programs, nothing)
+    SubprogramFrequencyTable(subtrees, weighted_frequency, source_programs, nothing, nothing)
