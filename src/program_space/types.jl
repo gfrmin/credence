@@ -111,6 +111,13 @@ struct ProductionRule
     body::ProgramExpr
 end
 
+# The default per-feature threshold grid — the seed every grammar starts from. A threshold (`GTExpr`/
+# `LTExpr`) is enumerated at each grid point; `Grammar.thresholds` carries a per-feature grid so the
+# exploration budget (Move 3) can REFINE it against the belief's residual without touching other
+# grammars. Default grammars copy this for every feature, so enumeration is unchanged. Moved here from
+# enumeration.jl in Move 3 because it is now grammar-structural data, not an enumeration-private constant.
+const THRESHOLDS = [0.1, 0.3, 0.5, 0.7, 0.9]
+
 """
     Grammar(feature_set, rules, id) — a carrier of the complexity prior over program ASTs.
 
@@ -127,8 +134,15 @@ Fields:
   enumerated from this grammar.
 - `rules::Vector{ProductionRule}` — nonterminal productions expanding
   into expression subtrees.
+- `thresholds::Dict{Symbol, Vector{Float64}}` — per-feature grid the
+  predicate atoms (`GTExpr`/`LTExpr`) are enumerated at. Defaults to the
+  global `THRESHOLDS` for every feature; the exploration budget (Move 3)
+  refines it per-feature against the belief's residual. NOT charged in
+  `complexity` — the fineness-Occam is carried by the predictive marginal
+  likelihood, not the prior (SPEC §1.3 margin; Move 3 Q1(b)≡Q3(a)).
 - `complexity::Float64` — precomputed grammar complexity `|G|`,
   contributing `-complexity * log(2)` to each program's log-prior.
+  Threshold-count-invariant by the Q1(b) decision.
 - `id::Int` — grammar identifier, used by `add_programs_to_state!` to
   track which grammar produced each mixture component.
 
@@ -141,7 +155,8 @@ the same enumeration logic.
 struct Grammar
     feature_set::Set{Symbol}
     rules::Vector{ProductionRule}
-    complexity::Float64  # precomputed |G|
+    thresholds::Dict{Symbol, Vector{Float64}}  # per-feature grid (Move 3 refinement target)
+    complexity::Float64  # precomputed |G| — threshold-count-invariant (Q1(b)/§1.3 margin)
     id::Int
 end
 
@@ -151,8 +166,28 @@ function compute_grammar_complexity(feature_set::Set{Symbol}, rules::Vector{Prod
     feature_cost + rules_cost
 end
 
+"""
+    default_thresholds(feature_set) → Dict{Symbol, Vector{Float64}}
+
+The seed per-feature grid: a copy of the global `THRESHOLDS` for every feature. Every grammar built by
+the 3-arg `Grammar(feature_set, rules, id)` constructor uses this, so enumeration is unchanged until a
+grammar is explicitly refined (Move 3 `explore_grammar`). A `copy` per feature so a later per-feature
+refinement never mutates a shared vector.
+"""
+default_thresholds(feature_set::Set{Symbol}) =
+    Dict{Symbol, Vector{Float64}}(f => copy(THRESHOLDS) for f in feature_set)
+
+# 3-arg convenience (the existing call sites): default per-feature grid, computed complexity.
 function Grammar(feature_set::Set{Symbol}, rules::Vector{ProductionRule}, id::Int)
-    Grammar(feature_set, rules, compute_grammar_complexity(feature_set, rules), id)
+    Grammar(feature_set, rules, default_thresholds(feature_set),
+            compute_grammar_complexity(feature_set, rules), id)
+end
+
+# 4-arg with an explicit per-feature grid — the refined-grammar constructor (Move 3 `explore_grammar`).
+# Complexity is computed identically (threshold-count-invariant): a denser grid does NOT raise |G|.
+function Grammar(feature_set::Set{Symbol}, rules::Vector{ProductionRule},
+                 thresholds::Dict{Symbol, Vector{Float64}}, id::Int)
+    Grammar(feature_set, rules, thresholds, compute_grammar_complexity(feature_set, rules), id)
 end
 
 # ═══════════════════════════════════════

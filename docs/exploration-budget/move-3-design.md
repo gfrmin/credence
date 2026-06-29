@@ -383,3 +383,55 @@ figures travel with the paper (paper-as-gating-artifact).
 (ii) with the predictive-Occam justification recorded as **load-bearing on Q3a**; residual-as-order not
 cutoff; predictive nats; the cap-free sequential stop **with the completeness guard**; scope (b). No
 escalation. The Q1(b)≡Q3(a) coupling and the SPEC §1.3 margin note are part of the design-doc PR.
+
+## 9. Code-time refinements (Move 3 code, ratified 2026-06-29)
+
+Surfaced during implementation and ratified before the host integration. Each is forced by a constraint,
+not chosen.
+
+1. **`explore_grammar` is self-contained in `src/`, not a host replay closure — forced by Invariant 1.**
+   The lookahead's marginal-log-loss accumulation (`Σ −log_predictive`) feeds the explore decision, so it
+   cannot live in `apps/` (the spatial face forbids apps/ summing log-probs to influence behaviour). The
+   replay therefore lives in `src/program_space/exploration.jl`, which required lifting a generic
+   `program_space_observation_kernel` into `src/` — grid_world's + email_agent's `build_observation_kernel`
+   (and email_agent's `build_step_kernel`) are the **same closure**, so the lift is a latent dedup. The
+   host copies are left untouched (a NOTE'd DRY follow-up) to keep the live conditioning trajectories
+   bit-stable.
+
+2. **No live `belief` argument.** Signature: `explore_grammar(g, observations, max_depth; action_space,
+   compute_cost)`. Belief-awareness flows through the buffer's per-observation `residual` (the screen
+   *order*) + the **counterfactual replay** (mll under each candidate grammar) — the lookahead reconstructs
+   beliefs per grammar, so the *current* belief object is not an input. `ExploreObservation(features,
+   temporal_state, correct_actions, residual)` is the host-side buffer (Q2b).
+
+3. **Full-eval-argmax, not a residual-order early-stop — Q3b's provable form.** Residual is the evaluation
+   *order* (Q2a); the result is the global argmax over the finite candidate set → one-sided by
+   construction. The completeness-guard test proves it (0.625 wins even as the lowest-residual candidate).
+   `compute_cost` prices each lookahead (graceful degradation via the cost-gated boundary, which flips
+   continuously at `Δℓ`); budget-*limited* early termination is a future hook (the residual order is its
+   seam).
+
+4. **Reset on alphabet expansion (explore) only — NOT on perturb/deepen/enumerate.** A precise reading of
+   Q1b ("superseded alphabet"): compression is a *prior* effect (fit unchanged), and deepen/enumerate are
+   *within-alphabet* — their effects surface in *subsequent* data residuals, which the regime tracks
+   without reset. Only threshold/feature expansion supersedes the alphabet and resets the regime + clears
+   the buffer. This makes the integration far less invasive (perturb/deepen/enumerate untouched) and is
+   *more* correct than resetting on every grammar-id change.
+
+5. **email_agent scope: the single-decision `run_agent` path (default) is fully wired; the episode path is
+   safely gated off.** `:explore`'s meta-EU returns `-Inf` when `state.last_residual === nothing` — true on
+   the episode path (which does not feed the regime), so `:explore` is never chosen there and
+   `execute_meta_action!`'s empty-buffer default makes it a no-op regardless. The episode-path residual
+   feed is a NOTE'd follow-up; the single-decision path is the canonical email integration, mirroring
+   grid_world.
+
+6. **The saturation gate in the host meta-EU.** `:explore` is admissible only when **both** halves hold
+   (master plan §3.2): `compression_exhausted` (prior-side, lazy — computed only when the belief-side EU is
+   already positive) **and** the residual-plateau, where `plateau_probability` is the **soft prior** (Q3 —
+   it scales the EU continuously, never a hard threshold). The two are orthogonal (prior vs fit), so both
+   are required.
+
+7. **Skin: no wire change.** The `Grammar.thresholds` field is defaulted and not serialised outbound; the
+   3-arg `Grammar(::Set,::Vector,::Int)` constructor is unchanged; `explore` is a host-orchestrated
+   meta-action with no wire verb (a wire-parity follow-up if external apps ever drive exploration). The
+   skin smoke is unaffected.
