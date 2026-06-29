@@ -95,6 +95,39 @@ function _refine_grammar(g::Grammar, feature::Symbol, threshold::Float64)::Gramm
     Grammar(g.feature_set, g.rules, refined, next_grammar_id())
 end
 
+"""
+    _feature_candidates(g, available_features) → Vector{Symbol}
+
+The feature-discovery candidate set: the host-furnished features `g` does NOT yet use,
+`available_features \\ g.feature_set`, in sorted (deterministic) order. Move 4's headline realisation —
+base-feature discovery is pure EU-max **selection**, NOT construction: the host already extracts the full
+feature superset every step (its value is in every observation's `features` Dict), so a candidate feature's
+predicates work immediately on adding it. The host *provides* the candidates (`available_features`); the
+lookahead *ranks* them. The fully-closed selection half of the master plan's §3.1 selection/generation seam
+— no proposer, no AST extension (those are the deferred construction frontier: arithmetic feature products).
+"""
+function _feature_candidates(g::Grammar, available_features::Set{Symbol})::Vector{Symbol}
+    sort(collect(setdiff(available_features, g.feature_set)))
+end
+
+"""
+    _add_feature(g, feature) → Grammar
+
+The candidate grammar: `g` with `feature` added to `feature_set` and seeded with the default threshold
+grid, a fresh id. **Complexity RISES by 1** — unlike a threshold refinement (`_refine_grammar`, which is
+complexity-invariant per Q1(b)), a feature is a genuine description-length unit: `compute_grammar_complexity`
+counts `length(feature_set)`, so the new symbol costs one bit of prior. This is Q2, and the exact converse
+of Move 3's Q1(b): a finer grid adds no symbol (fineness-Occam rides the marginal likelihood), a new feature
+adds a symbol (the Occam rides the prior). All existing features' grids are preserved by reference (a refined
+grid SURVIVES the add — the Move-3 review lesson); only `feature` gets a fresh default grid.
+"""
+function _add_feature(g::Grammar, feature::Symbol)::Grammar
+    new_features = union(g.feature_set, Set([feature]))
+    grids = Dict{Symbol, Vector{Float64}}(f => g.thresholds[f] for f in keys(g.thresholds))
+    grids[feature] = copy(THRESHOLDS)
+    Grammar(new_features, g.rules, grids, next_grammar_id())
+end
+
 # ═══════════════════════════════════════
 # The generic program-space observation kernel (lifted from the hosts; Invariant 1 — replay arithmetic
 # must live in src/, so the kernel the replay conditions through lives here too)
@@ -256,6 +289,75 @@ function explore_grammar(g::Grammar, observations::Vector{ExploreObservation}, m
         g_cand = _refine_grammar(g, feat, t)
         mll = _grammar_marginal_log_loss(g_cand, observations, max_depth, action_space)
         voi = net_value(baseline - mll, compute_cost)   # Δℓ − compute_cost, through the stdlib functional
+        if voi > best_voi
+            best_voi = voi
+            best = g_cand
+        end
+    end
+    best
+end
+
+# ═══════════════════════════════════════
+# explore_features — the belief-aware feature-discovery meta-action (Move 4; sibling of explore_grammar)
+# ═══════════════════════════════════════
+
+"""
+    explore_features(g, observations, available_features, max_depth; action_space, compute_cost = 0.0) → Grammar
+
+Grow `g`'s FEATURE alphabet by the single host-furnished candidate whose compute-budgeted lookahead VOI is
+greatest, applied iff that VOI clears the bar; otherwise a structural no-op (the input `g` unchanged). The
+one-rung-up sibling of `explore_grammar`: where threshold refinement sharpens an existing feature's grid,
+feature discovery admits a feature the grammar did not use. Base-feature discovery is pure EU-max
+**selection** — the host already extracts the full feature superset (`_feature_candidates` =
+`available_features \\ g.feature_set`), so a candidate's value is already in every observation's `features`
+Dict; the lookahead ranks the host-provided candidates. (Composed/arithmetic features — *construction* — are
+the deferred §3.1 frontier.)
+
+**The two-axis valuation (Q2 — the keystone, and the converse of Move 3's Q1(b)).** A feature is valued on
+BOTH axes:
+
+    voi = net_value( Δℓ + complexity_logprior(Δcomplexity; λ = log 2), compute_cost )
+        = (mll(buffer|g) − mll(buffer|g')) − log2·Δcomplexity − compute_cost            [nats]
+
+where `g'` = `g` with the candidate feature added and `Δcomplexity = g'.complexity − g.complexity = +1`. The
+fit term `Δℓ` is the SAME marginal-log-loss reduction Move 3 measures (`_grammar_marginal_log_loss`, reused
+verbatim). The prior term is the subtle part: the grammar-complexity prior is a per-grammar CONSTANT added
+to every component's log-weight, so it **cancels inside the normalized marginal log-loss** (`log_predictive`
+/`condition` normalize the mixture — a uniform shift to all weights cancels). Reusing the mll alone would
+therefore price a feature on the fit axis only — exactly what Move 3 does for thresholds, and exactly what
+Q2 says is WRONG for features. So the `−log2·Δcomplexity` prior-Occam penalty is charged **explicitly here,
+at the argmax**. This is the literal mechanical content of the Q1(b)≡Q2 duality: a finer threshold adds no
+symbol (Δcomplexity = 0 ⇒ the term vanishes ⇒ Move 3's `explore_grammar` is the Δcomplexity = 0 special
+case); a new feature adds a symbol (Δcomplexity = +1 ⇒ the feature must repay `log2` nats of prior the
+threshold never owed). fine-before-coarse, made endogenous: the cheap rung clears while it pays; the dear
+rung waits until it doesn't. Asserted by test_feature_discovery.jl §4 (the boundary sits at Δℓ − log2, not Δℓ).
+
+Soundness is trivial for `:add_feature` — enlarging the alphabet can only ADD representable programs, never
+break an existing one — so no reference count is needed (contrast `:remove_feature`, the MDL-compression
+partner). Full-eval argmax over the (small, host-furnished) candidate set in sorted order: deterministic, no
+rand, one feature per call (the host applies it, resets the residual regime — an alphabet expansion, Move 2
+Q1b — and may explore again, including re-opening threshold refinement on the new feature's grid — the cyclic
+ladder of §8.4).
+"""
+function explore_features(g::Grammar, observations::Vector{ExploreObservation},
+                          available_features::Set{Symbol}, max_depth::Int;
+                          action_space::Vector{Symbol} = Symbol[:classify],
+                          compute_cost::Float64 = 0.0)::Grammar
+    isempty(observations) && return g
+    candidates = _feature_candidates(g, available_features)
+    isempty(candidates) && return g
+
+    baseline = _grammar_marginal_log_loss(g, observations, max_depth, action_space)
+
+    best_voi = 0.0   # a candidate must clear net VOI > 0 to win; else no-op
+    best = g
+    for feat in candidates                              # sorted ⇒ deterministic argmax
+        g_cand = _add_feature(g, feat)
+        mll = _grammar_marginal_log_loss(g_cand, observations, max_depth, action_space)
+        # Two-axis valuation: fit Δℓ PLUS the explicit prior-Occam penalty (the grammar-complexity prior
+        # cancels inside the normalized mll, so it is charged here). Δcomplexity = +1 ⇒ −log2 nats.
+        dcomplexity = g_cand.complexity - g.complexity
+        voi = net_value((baseline - mll) + complexity_logprior(dcomplexity; λ = log(2)), compute_cost)
         if voi > best_voi
             best_voi = voi
             best = g_cand

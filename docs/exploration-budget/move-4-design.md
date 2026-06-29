@@ -321,3 +321,47 @@ Base-feature only, with "combinations" clarified as the compositions the grammar
 feature prior-Occam (fine-before-coarse is now endogenous); the three-level ladder banked as *attribution
 fidelity*, not ordering; siblings until Move 5. Move 4 claims **EU-max selection over host-furnished
 features** and stops, correctly, one rung short of proposing the features that aren't there yet.
+
+## 9. Code-time refinements (build, 2026-06-29)
+
+Building surfaced three things the design under-specified. One grounds the headline mechanism (built); two
+move `:remove_feature` out of this move. As-shipped scope: **`:add_feature`, engine + grid_world**.
+
+**9.1 — Q2's prior-Occam is charged EXPLICITLY at the argmax (the design's "reuse the mll" was the wrong
+half).** The grammar-complexity prior is a per-grammar CONSTANT on every component's log-weight, so it
+**cancels inside the normalized marginal log-loss** (`condition`/`log_predictive` normalize — a uniform shift
+to all weights cancels in numerator and denominator at every step). `mll(g')` is therefore blind to
+`g'.complexity`; reusing the mll verbatim would price a feature on the FIT axis alone — violating Q2. So
+`explore_features` charges the prior penalty explicitly:
+
+    voi = net_value( Δℓ + complexity_logprior(Δcomplexity; λ = log2), compute_cost )   [= Δℓ − log2·Δcomplexity − compute_cost]
+
+This *grounds* ratified Q2 rather than disturbing it (the conclusion "priced on both axes" stands; the
+design's assumption that the second axis rode inside the mll did not). It is the literal mechanical content
+of Q1(b)≡Q2: thresholds carry `Δcomplexity = 0` (term vanishes, Occam on the likelihood); features carry
+`+1` (Occam on the prior). Proven by `test_feature_discovery.jl §4`: the explore/no-op boundary sits at
+**Δℓ − log2, not Δℓ** — a fit-only valuation would have added where this no-ops.
+
+**9.2 — `:remove_feature` split to the compression class (issue #174).** `:remove_feature` of a *dead*
+feature is prior-only MDL reclamation — the symmetric partner of `:remove_rule`, priced by `net_voc`, NOT
+the lookahead. Its home is `_best_compression_candidate`, and wiring it there changes `compression_exhausted`
+— the middle rung of this move's Q4 ladder — a behaviour change to shipped Move-1/Move-2 machinery needing
+capture-before-refactor. So the `_remove_feature`/`collect_feature_refs!`/`SubprogramFrequencyTable.
+referenced_features` items from §2 are **deferred to a focused compression-class follow-up** (#174), not built
+here. `:add_feature` needs none of them (enlarging the alphabet is always sound).
+
+**9.3 — that follow-up also closes a shipped `:remove_rule` soundness hole (#174).** Enumerated programs hold
+`NonterminalRef`s unexpanded, so a rule referenced only inside another rule's body is invisible to
+`collect_nonterminal_refs!`'s program-AST walk — `_removal_payoff` flags it dead and removing it crashes
+compilation ("Undefined nonterminal"). Reachable under ordinary nested abstraction; the fail-closed default
+does NOT catch it (it guards the *un-analysed* case, this is *analysed-but-incomplete*). Verified reproduced
+during the build. Shares its fix (union rule-body refs at the consumer) and home (compression class) with
+`:remove_feature`, so #174 closes both — landing **sooner**, since it is a live hole in shipped code.
+
+**9.4 — email_agent `:add_feature` parity deferred (scope B).** The mechanism is engine-level and grid_world
+proves the thesis end-to-end, so a second host adds parity, not capability. email's `compute_meta_eu` has two
+callers without `explore_buffer` in scope, so the `threshold_exhausted` rung needs the buffer threaded
+through both EU-functions (carrying a flag is §8.4-forbidden). Left as an in-code TODO at the email
+`:explore` gate — pure plumbing, fold in when that host is next touched, no design doc required. The one
+condition that would flip this to "do it now" is a near-term need to *report* a two-host result (paper claim
+/ product demo); absent that, deferred.

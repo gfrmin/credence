@@ -30,7 +30,7 @@ using Credence: next_grammar_id, reset_grammar_counter!
 using Credence: show_expr, GTExpr, LTExpr, AndExpr, OrExpr, NotExpr, NonterminalRef, ActionExpr, IfExpr
 using Credence: SubprogramFrequencyTable
 # Move 3 — the belief-aware exploration budget (threshold refinement) + the Move-2 saturation signal.
-using Credence: explore_grammar, ExploreObservation
+using Credence: explore_grammar, explore_features, ExploreObservation
 using Credence: update_learning_regime, plateau_probability, reset_learning_regime!
 
 include("simulation.jl")
@@ -43,7 +43,8 @@ using Random
 # Meta-action constants
 # ═══════════════════════════════════════
 
-const GW_META_ACTIONS = [:gw_enumerate_more, :gw_perturb_grammar, :gw_deepen, :gw_explore, :gw_do_nothing]
+const GW_META_ACTIONS = [:gw_enumerate_more, :gw_perturb_grammar, :gw_deepen, :gw_explore,
+                         :gw_add_feature, :gw_do_nothing]
 const GW_ENUMERATE_COST = 0.05
 const GW_PERTURB_COST = 0.05
 const GW_DEEPEN_COST = 0.10
@@ -52,6 +53,10 @@ const GW_EXPLORE_BASE = 0.6        # the saturation-scaled value the residual-pl
 const GW_EXPLORE_VOI_FLOOR = 0.10  # min predictive-log-loss gain (nats) a refinement must clear — a
                                    # DISTINCT currency from GW_EXPLORE_COST (meta-time), passed as the
                                    # explore_grammar compute_cost (cf. email host's expected_cost vs 0.1)
+const GW_ADD_FEATURE_COST = 0.10       # meta-time cost of the feature-discovery meta-action (Move 4)
+const GW_ADD_FEATURE_BASE = 0.6        # the residual-plateau-scaled value (the soft prior, as for explore)
+const GW_ADD_FEATURE_VOI_FLOOR = 0.10  # min net VOI (nats, ON TOP of the log2 prior-Occam bar that
+                                       # explore_features charges internally) a feature must clear
 
 # ═══════════════════════════════════════
 # Build the observation kernel
@@ -168,7 +173,8 @@ function compute_gw_meta_eu(
     state::AgentState,
     action::Symbol,
     eu_interact::Float64,
-    n_obs::Float64;
+    n_obs::Float64,
+    explore_buffer::Vector{ExploreObservation};
     meta_cost_this_turn::Float64=0.0
 )::Float64
     action == :gw_do_nothing && return -Inf
@@ -199,6 +205,35 @@ function compute_gw_meta_eu(
                                                 min_frequency=0.01, min_complexity=2)
         compression_exhausted(state.grammars[top[1]], freq_table) || return -Inf
         return eu_explore
+    elseif action == :gw_add_feature
+        # Feature discovery (Move 4): the THIRD rung of the lazy escalation ladder. Admissible only when
+        # plateau ∧ compression_exhausted ∧ threshold_exhausted. The third rung is NOT a fine-before-coarse
+        # ORDERING gate — Q2's two-axis pricing in explore_features (it charges the log2 prior-Occam a
+        # threshold never owes) already orders cheap-before-dear. It is an ATTRIBUTION-FIDELITY guard (§8.4):
+        # a feature's Δℓ measured against a COARSE-grid baseline is confounded — inflated by residual that
+        # threshold refinement would ALSO have captured — so feature evaluation waits until the
+        # threshold-exhausted baseline exists and the feature is scored against what thresholds cannot reach.
+        # A sound deferral (defer a confounded measurement), not a cap on a correctly-measured positive-EU
+        # explore. Lazy & cheapest-first: plateau (cheap) → compression_exhausted (builds the freq_table) →
+        # threshold_exhausted (the full threshold lookahead, last). threshold_exhausted is RECOMPUTED each
+        # call, never carried: the ladder is cyclic (an added feature re-opens its own grid via the next
+        # explore pass), so a cached signal goes stale across the cycle.
+        plateau = plateau_probability(state.learning_regime)
+        eu_feature = plateau * GW_ADD_FEATURE_BASE - GW_ADD_FEATURE_COST - meta_cost_this_turn
+        eu_feature <= 0.0 && return eu_feature
+        top = top_k_grammar_ids(state, 1)
+        isempty(top) && return -Inf
+        g_top = state.grammars[top[1]]
+        freq_table = analyse_posterior_subtrees(state.all_programs, weights(state.belief);
+                                                min_frequency=0.01, min_complexity=2)
+        compression_exhausted(g_top, freq_table) || return -Inf
+        # threshold_exhausted ⟺ the threshold lookahead would no-op at the SAME VOI floor the explore
+        # meta-action applies — so features wait until thresholds genuinely stop paying (the un-confounded
+        # baseline). Run last (it is the costliest signal); gated by the two cheaper rungs above.
+        explore_grammar(g_top, explore_buffer, state.current_max_depth;
+                        action_space=Symbol[:food, :enemy], compute_cost=GW_EXPLORE_VOI_FLOOR) === g_top ||
+            return -Inf
+        return eu_feature
     end
     -Inf
 end
@@ -276,6 +311,28 @@ function execute_gw_meta_action!(
         reset_learning_regime!(state)
         empty!(explore_buffer)
         verbose && println("  [Meta: explore → grammar $gid→$(new_g.id) (threshold refined), +$n_added components]")
+        return n_added
+
+    elseif action == :gw_add_feature
+        # Feature discovery (Move 4): add the host-furnished feature whose lookahead VOI (two-axis: fit Δℓ
+        # MINUS the log2 prior-Occam explore_features charges internally) is greatest; no-op if none clears.
+        # Like explore, an ALPHABET EXPANSION ⇒ resets the residual regime + clears the buffer (Q1b). The
+        # candidate source is ALL_GW_FEATURES — the full superset the host already extracts every step, so a
+        # selected feature's value is already in each observation's features Dict (base-feature SELECTION,
+        # not construction). The reset re-opens the next explore pass on the NEW feature's grid (the cycle).
+        top = top_k_grammar_ids(state, 1)
+        isempty(top) && return 0
+        gid = top[1]
+        new_g = explore_features(state.grammars[gid], explore_buffer, ALL_GW_FEATURES,
+                                 state.current_max_depth;
+                                 action_space=gw_action_space, compute_cost=GW_ADD_FEATURE_VOI_FLOOR)
+        new_g.id == gid && return 0   # no positive-VOI feature → no-op
+        state.grammars[new_g.id] = new_g
+        n_added = add_programs_to_state!(state, new_g, state.current_max_depth;
+            action_space=gw_action_space, include_temporal=include_temporal)
+        reset_learning_regime!(state)
+        empty!(explore_buffer)
+        verbose && println("  [Meta: add_feature → grammar $gid→$(new_g.id) (feature acquired), +$n_added components]")
         return n_added
     end
     0
@@ -393,7 +450,7 @@ function run_agent(;
                 best_meta_eu = -Inf
                 best_meta = :gw_do_nothing
                 for ma in GW_META_ACTIONS
-                    meu = compute_gw_meta_eu(state, ma, eu, n_obs;
+                    meu = compute_gw_meta_eu(state, ma, eu, n_obs, explore_buffer;
                                               meta_cost_this_turn=meta_cost_this_turn)
                     if meu > best_meta_eu
                         best_meta_eu = meu
@@ -409,6 +466,7 @@ function run_agent(;
                 meta_cost_this_turn += (best_meta == :gw_deepen ? GW_DEEPEN_COST :
                                         best_meta == :gw_perturb_grammar ? GW_PERTURB_COST :
                                         best_meta == :gw_explore ? GW_EXPLORE_COST :
+                                        best_meta == :gw_add_feature ? GW_ADD_FEATURE_COST :
                                         GW_ENUMERATE_COST)
 
                 sync_prune!(state; threshold=-30.0)
