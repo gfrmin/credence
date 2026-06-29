@@ -13,7 +13,10 @@ const DOMAIN_ACTIONS = [:archive, :flag_urgent, :schedule_later,
                         :triage_urgent, :silent_archive, :escalate]
 
 # Meta-actions: computational operations evaluated by EU
-const META_ACTIONS = [:enumerate_more, :perturb_grammar, :deepen, :do_nothing]
+# :explore — the belief-aware threshold-refinement budget (exploration-budget Move 3); gated on
+# saturation (compression-exhausted ∧ residual-plateau) and only live where the regime is fed (the
+# single-decision run_agent path), a safe no-op on the episode path (empty buffer).
+const META_ACTIONS = [:enumerate_more, :perturb_grammar, :deepen, :explore, :do_nothing]
 
 # Sensor actions: gather more information before deciding
 const SENSOR_ACTIONS = [:ask_llm]

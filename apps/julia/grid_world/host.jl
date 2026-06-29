@@ -24,11 +24,14 @@ using Credence: density, log_density_at, prune, truncate
 using Credence: AgentState, sync_prune!, sync_truncate!
 using Credence: Grammar, Program, CompiledKernel, ProductionRule
 using Credence: enumerate_programs, compile_kernel
-using Credence: analyse_posterior_subtrees, perturb_grammar
+using Credence: analyse_posterior_subtrees, perturb_grammar, compression_exhausted
 using Credence: aggregate_grammar_weights, top_k_grammar_ids, add_programs_to_state!
 using Credence: next_grammar_id, reset_grammar_counter!
 using Credence: show_expr, GTExpr, LTExpr, AndExpr, OrExpr, NotExpr, NonterminalRef, ActionExpr, IfExpr
 using Credence: SubprogramFrequencyTable
+# Move 3 — the belief-aware exploration budget (threshold refinement) + the Move-2 saturation signal.
+using Credence: explore_grammar, ExploreObservation
+using Credence: update_learning_regime, plateau_probability, reset_learning_regime!
 
 include("simulation.jl")
 include("terminals.jl")
@@ -40,10 +43,12 @@ using Random
 # Meta-action constants
 # ═══════════════════════════════════════
 
-const GW_META_ACTIONS = [:gw_enumerate_more, :gw_perturb_grammar, :gw_deepen, :gw_do_nothing]
+const GW_META_ACTIONS = [:gw_enumerate_more, :gw_perturb_grammar, :gw_deepen, :gw_explore, :gw_do_nothing]
 const GW_ENUMERATE_COST = 0.05
 const GW_PERTURB_COST = 0.05
 const GW_DEEPEN_COST = 0.10
+const GW_EXPLORE_COST = 0.10   # the lookahead is expensive (re-enumerate + re-condition per candidate)
+const GW_EXPLORE_BASE = 0.6    # the saturation-scaled value the residual-plateau prior multiplies (Q3)
 
 # ═══════════════════════════════════════
 # Build the observation kernel
@@ -175,6 +180,22 @@ function compute_gw_meta_eu(
         return base - GW_PERTURB_COST - meta_cost_this_turn
     elseif action == :gw_deepen
         return uncertainty_benefit * 0.4 - GW_DEEPEN_COST - meta_cost_this_turn
+    elseif action == :gw_explore
+        # Saturation-gated belief-aware exploration (Move 3). Two orthogonal halves, BOTH required
+        # (master plan §3.2): the residual-plateau (belief-side, the SOFT prior — Q3 — it SCALES the EU
+        # continuously, never a hard threshold) AND compression-exhausted (prior-side — perturb would
+        # no-op; orthogonal because compression is a prior effect, the residual a fit effect). The costly
+        # prior-side check is lazy: skipped unless the belief-side EU is already positive (so the
+        # freq_table is built only when exploration is even viable on the residual).
+        plateau = plateau_probability(state.learning_regime)
+        eu_explore = plateau * GW_EXPLORE_BASE - GW_EXPLORE_COST - meta_cost_this_turn
+        eu_explore <= 0.0 && return eu_explore
+        top = top_k_grammar_ids(state, 1)
+        isempty(top) && return -Inf
+        freq_table = analyse_posterior_subtrees(state.all_programs, weights(state.belief);
+                                                min_frequency=0.01, min_complexity=2)
+        compression_exhausted(state.grammars[top[1]], freq_table) || return -Inf
+        return eu_explore
     end
     -Inf
 end
@@ -186,7 +207,8 @@ Execute a grid-world meta-action. Returns the number of programs added.
 """
 function execute_gw_meta_action!(
     state::AgentState,
-    action::Symbol;
+    action::Symbol,
+    explore_buffer::Vector{ExploreObservation};
     include_temporal::Bool=false,
     verbose::Bool=false
 )::Int
@@ -231,6 +253,26 @@ function execute_gw_meta_action!(
                 action_space=gw_action_space, include_temporal=include_temporal)
         end
         verbose && println("  [Meta: deepen → depth=$(state.current_max_depth), +$n_added components]")
+        return n_added
+
+    elseif action == :gw_explore
+        # Belief-aware threshold refinement (Move 3): refine the top grammar's grid by the candidate whose
+        # lookahead VOI (against the residual buffer) clears compute_cost; no-op if none does. The ONLY
+        # meta-action that resets the residual regime — it expands the threshold alphabet, so pre-change
+        # residuals are stale (Q1b, read precisely as "alphabet expansion" — perturb/deepen/enumerate are
+        # within-alphabet and their effects show up in later residuals, so they do NOT reset).
+        top = top_k_grammar_ids(state, 1)
+        isempty(top) && return 0
+        gid = top[1]
+        new_g = explore_grammar(state.grammars[gid], explore_buffer, state.current_max_depth;
+                                action_space=gw_action_space, compute_cost=GW_EXPLORE_COST)
+        new_g.id == gid && return 0   # no positive-VOI refinement → no-op
+        state.grammars[new_g.id] = new_g
+        n_added = add_programs_to_state!(state, new_g, state.current_max_depth;
+            action_space=gw_action_space, include_temporal=include_temporal)
+        reset_learning_regime!(state)
+        empty!(explore_buffer)
+        verbose && println("  [Meta: explore → grammar $gid→$(new_g.id) (threshold refined), +$n_added components]")
         return n_added
     end
     0
@@ -290,6 +332,11 @@ function run_agent(;
     grammar_dict = Dict{Int, Grammar}(g.id => g for g in grammar_pool)
     state = AgentState(belief, metadata, compiled_kernels, all_programs,
                        grammar_dict, program_max_depth)
+
+    # The explore buffer (Move 3): host-side record of observations under the current threshold alphabet
+    # (data, not belief — brain/body split, Q2b). Fed each conditioning step; the lookahead replays it;
+    # cleared on threshold refinement (alphabet expansion).
+    explore_buffer = ExploreObservation[]
 
     # Temporal state
     temporal_window = TemporalWindow(max_history=10)
@@ -353,11 +400,12 @@ function run_agent(;
 
                 best_meta_eu <= 0.0 && break
 
-                execute_gw_meta_action!(state, best_meta;
+                execute_gw_meta_action!(state, best_meta, explore_buffer;
                     include_temporal=include_temporal, verbose=verbose)
                 meta_actions_taken += 1
                 meta_cost_this_turn += (best_meta == :gw_deepen ? GW_DEEPEN_COST :
                                         best_meta == :gw_perturb_grammar ? GW_PERTURB_COST :
+                                        best_meta == :gw_explore ? GW_EXPLORE_COST :
                                         GW_ENUMERATE_COST)
 
                 sync_prune!(state; threshold=-30.0)
@@ -396,6 +444,16 @@ function run_agent(;
                     LinearCombination(Tuple{Float64, TestFunction}[(-1.0, Identity())], 1.0)))
                 p_obs = is_enemy ? p_enemy_val : (1.0 - p_enemy_val)
                 surprise = -log(max(p_obs, 1e-300))
+
+                # Feed the residual-plateau regime (the Move-2 saturation signal, wired here in Move 3 —
+                # `surprise` IS ℓ = −log predictive) and accumulate the explore buffer. Belief-conditioning
+                # below is untouched: this only updates the Move-2/3 side state.
+                state.learning_regime = update_learning_regime(state.learning_regime,
+                                                               state.last_residual, surprise)
+                state.last_residual = surprise
+                push!(explore_buffer, ExploreObservation(features,
+                    Dict{Symbol, Any}(:recent => copy(get(temporal_state, :recent, Dict{Symbol, Float64}[]))),
+                    Set([true_type]), surprise))
             else
                 surprise = 0.0
                 p_enemy_val = 0.5
