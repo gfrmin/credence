@@ -260,18 +260,28 @@ net_voc(net_payoff_symbols::Real, compute_cost::Real) =
 # Grammar perturbation — deterministic argmax over net_voc (no rand; Invariant 1 canalised)
 # ═══════════════════════════════════════
 
-# Total order on perturbation candidates, for the deterministic argmax. A candidate is the 5-tuple
-# `(voc::Float64, is_remove::Bool, name::String, kind::Symbol, rule::ProductionRule)`. Order:
-# (1) higher `net_voc`; (2) on a tie, prefer `:remove` (hygiene — shrink the dictionary before growing
-# it); (3) on a further tie, lexicographically smaller rule name. No `rand`, no `hash` (Julia's `hash`
-# is not stable across versions — and cross-version-reproducible determinism is the whole point; a name
-# string-compare is stable). A tie is between candidates of EXACTLY-EQUAL computed prior value, so a
-# stable order is honest disambiguation among genuine argmax-optima, not a tiebreak of UNKNOWN values
-# (which Invariant 1 forbids). Asserted by test_voc_gate.jl §5c.
-function _candidate_better(a, b)
-    a[1] != b[1] && return a[1] > b[1]
-    a[2] != b[2] && return a[2]
-    return a[3] < b[3]
+# A perturbation candidate — a kind-tagged, net_voc-ranked grammar edit. Replaces the former 5-tuple so the
+# candidate is a FIRST-CLASS DECLARED type (Invariant 2/3): the structure Move 5's combined single-currency
+# argmax extends by adding `kind`s (the enum), not by widening a positional tuple whose conventions live in
+# slot order. `payload` is the typed edit target — a `ProductionRule` for `:add`/`:remove`, the feature
+# `Symbol` for `:remove_feature`.
+struct PerturbationCandidate
+    voc::Float64                              # net_voc — the argmax key (primary order)
+    is_remove::Bool                           # tie: prefer a removal (shrink) over an addition (grow)
+    name::String                              # tie: lexicographically smaller (version-stable, not `hash`)
+    kind::Symbol                              # :add | :remove | :remove_feature
+    payload::Union{ProductionRule, Symbol}    # rule (:add/:remove) | feature (:remove_feature)
+end
+
+# Total order for the deterministic argmax: (1) higher `net_voc`; (2) on a tie, prefer a removal (hygiene —
+# shrink before grow); (3) on a further tie, lexicographically smaller name. No `rand`, no `hash` (Julia's
+# `hash` is not stable across versions — version-reproducible determinism is the point; a name string-compare
+# is stable). A tie is between candidates of EXACTLY-EQUAL computed prior value, so a stable order is honest
+# disambiguation among genuine argmax-optima, not a tiebreak of UNKNOWN values (Invariant 1). test_voc_gate.jl §5c.
+function _candidate_better(a::PerturbationCandidate, b::PerturbationCandidate)
+    a.voc != b.voc && return a.voc > b.voc
+    a.is_remove != b.is_remove && return a.is_remove
+    return a.name < b.name
 end
 _pick_better(best, cand) = (best === nothing || _candidate_better(cand, best)) ? cand : best
 
@@ -279,26 +289,26 @@ _pick_better(best, cand) = (best === nothing || _candidate_better(cand, best)) ?
     _best_compression_candidate(g, freq_table; compute_cost = 0.0) → Union{Nothing, Tuple}
 
 The compression-class `net_voc` argmax over the MDL pair `{:add_rule} ∪ {:remove_rule candidates}`, or
-`nothing` if no candidate clears `net_voc > 0` (the saturation no-op). Returns the winning candidate
-`(voc, is_remove, name, kind, rule)` (see `_candidate_better` for the total order). The single home of
-the candidate logic — `perturb_grammar` applies it, `compression_exhausted` (Move 2) tests it for
-`nothing` — so the two can never disagree (DRY).
+`nothing` if no candidate clears `net_voc > 0` (the saturation no-op). Returns the winning
+`PerturbationCandidate` (see `_candidate_better` for the total order). The single home of the candidate
+logic — `perturb_grammar` applies it, `compression_exhausted` (Move 2) tests it for `nothing` — so the
+two can never disagree (DRY).
 """
 function _best_compression_candidate(g::Grammar, freq_table::SubprogramFrequencyTable;
-                                     compute_cost::Float64 = 0.0)
-    best = nothing  # (voc, is_remove, name, kind, rule) — the running argmax; see _candidate_better
+                                     compute_cost::Float64 = 0.0)::Union{Nothing, PerturbationCandidate}
+    best = nothing  # the running argmax (a PerturbationCandidate); see _candidate_better
 
     add = _compression_payoff(freq_table)
     if !isnothing(add)
         rule, net_payoff = add
         if !(rule.name in Set(r.name for r in g.rules))         # idempotence guard (already-present name)
             v = net_voc(net_payoff, compute_cost)               # VOC gate (forward compute priced in)
-            v > 0 && (best = _pick_better(best, (v, false, string(rule.name), :add, rule)))
+            v > 0 && (best = _pick_better(best, PerturbationCandidate(v, false, string(rule.name), :add, rule)))
         end
     end
     for (rule, net_payoff) in _removal_payoff(g, freq_table)
         v = net_voc(net_payoff, compute_cost)
-        v > 0 && (best = _pick_better(best, (v, true, string(rule.name), :remove, rule)))
+        v > 0 && (best = _pick_better(best, PerturbationCandidate(v, true, string(rule.name), :remove, rule)))
     end
     best
 end
@@ -348,10 +358,11 @@ function perturb_grammar(g::Grammar, freq_table::SubprogramFrequencyTable,
     # survives a later compression on its lineage — the 3-arg form would re-default the grid and silently
     # discard the refinement. Bit-identical for default grammars (g.thresholds == default_thresholds by
     # value ⇒ identical enumeration), so the compression tests stay green.
-    if best[4] === :add
-        Grammar(g.feature_set, [g.rules; best[5]], g.thresholds, next_grammar_id())
+    if best.kind === :add
+        Grammar(g.feature_set, [g.rules; best.payload::ProductionRule], g.thresholds, next_grammar_id())
     else  # :remove — drop the dead rule by name (names are unique under the idempotence guard)
-        Grammar(g.feature_set, [r for r in g.rules if r.name != best[5].name], g.thresholds, next_grammar_id())
+        Grammar(g.feature_set, [r for r in g.rules if r.name != (best.payload::ProductionRule).name],
+                g.thresholds, next_grammar_id())
     end
 end
 
