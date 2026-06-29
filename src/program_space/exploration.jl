@@ -105,10 +105,14 @@ end
 
 The standard program-space BetaBernoulli per-component conditioning kernel: each component (a
 `TaggedBetaPrevision` tagged by program index) evaluates its compiled kernel on `features` → a recommended
-action; the recommendation is "correct" iff it is in `correct_actions`; the per-component Beta updates
-toward correct/incorrect. `correct_actions::Set` generalises the single-outcome hosts (`Set([true_type])`)
-and email_agent's multi-action step (the set of still-needed actions). The `correct_cache` in `params` is
-read by the `BetaBernoulli` condition dispatch for the per-component update direction.
+action; the recommendation is "correct" iff it is in `correct_actions`. The per-program learning is
+carried by the **mixture reweight** — `_predictive_ll` returns `log(p)` for a correct component and
+`log(1−p)` for an incorrect one (the closure's return), so `condition(::MixturePrevision)` shifts weight
+toward programs that predict the outcome. `correct_actions::Set` generalises the single-outcome hosts
+(`Set([true_type])`) and email_agent's multi-action step (the set of still-needed actions). `correct_cache`
+in `params` is populated as a side effect for parity with the host kernels (and a future dedup), but is
+NOT read by the conditioning dispatch: `update(ConjugatePrevision{BetaPrevision, BetaBernoulli}, 1.0)`
+increments α unconditionally — the discrimination is the reweight, not the per-component Beta direction.
 
 This is the engine-level home of logic the hosts currently duplicate (grid_world/email_agent
 `build_observation_kernel` + email_agent `build_step_kernel` are the same closure); the lookahead replay

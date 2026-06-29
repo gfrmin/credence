@@ -12,7 +12,8 @@ push!(LOAD_PATH, joinpath(@__DIR__, "..", "src"))
 using Credence
 using Credence: Grammar, ProductionRule, enumerate_programs, show_expr, THRESHOLDS,
                 default_thresholds, explore_grammar, ExploreObservation,
-                next_grammar_id, reset_grammar_counter!
+                next_grammar_id, reset_grammar_counter!,
+                perturb_grammar, SubprogramFrequencyTable, ProgramExpr, AndExpr, GTExpr, LTExpr
 
 function check(name, cond, detail = "")
     cond ? println("PASSED: $name") : (println("FAILED: $name — $detail"); error("fail: $name"))
@@ -182,6 +183,25 @@ let
     # §3f Empty buffer / no candidates ⇒ no-op (the input grammar, unchanged).
     check("§3f empty buffer ⇒ no-op", explore_grammar(g, ExploreObservation[], 2; action_space = AS) === g,
           "expected no-op on empty buffer")
+end
+
+# ── §4  a refined grid survives compression (perturb_grammar threads g.thresholds — review should-fix) ──
+let
+    reset_grammar_counter!()
+    g = Grammar(Set([:x]), ProductionRule[], next_grammar_id())
+    g_ref = Credence._refine_grammar(g, :x, 0.42)        # grid [0.1,0.3,0.42,0.5,0.7,0.9]
+    refined_grid = g_ref.thresholds[:x]
+
+    # A freq_table whose top subtree compresses: AndExpr (complexity 3) used by 3 programs ⇒
+    # net_payoff = 3·(3−1) − (1+3) = 2 > 0 ⇒ :add_rule fires (referenced=nothing ⇒ no removal candidates).
+    sub = AndExpr(GTExpr(:x, 0.3), LTExpr(:x, 0.7))
+    table = SubprogramFrequencyTable(ProgramExpr[sub], [3.0], [[1, 2, 3]])
+    g_perturbed = perturb_grammar(g_ref, table, g_ref.feature_set)
+
+    check("§4 perturb compressed the refined grammar (a rule was added)",
+          length(g_perturbed.rules) == length(g_ref.rules) + 1, "rules=$(g_perturbed.rules)")
+    check("§4 the refined threshold grid SURVIVES compression (not re-defaulted to the global grid)",
+          g_perturbed.thresholds[:x] == refined_grid, "got $(g_perturbed.thresholds[:x])")
 end
 
 println("="^64)
