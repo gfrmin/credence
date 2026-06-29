@@ -47,8 +47,11 @@ const GW_META_ACTIONS = [:gw_enumerate_more, :gw_perturb_grammar, :gw_deepen, :g
 const GW_ENUMERATE_COST = 0.05
 const GW_PERTURB_COST = 0.05
 const GW_DEEPEN_COST = 0.10
-const GW_EXPLORE_COST = 0.10   # the lookahead is expensive (re-enumerate + re-condition per candidate)
-const GW_EXPLORE_BASE = 0.6    # the saturation-scaled value the residual-plateau prior multiplies (Q3)
+const GW_EXPLORE_COST = 0.10       # meta-time cost of the explore meta-action (the lookahead is expensive)
+const GW_EXPLORE_BASE = 0.6        # the saturation-scaled value the residual-plateau prior multiplies (Q3)
+const GW_EXPLORE_VOI_FLOOR = 0.10  # min predictive-log-loss gain (nats) a refinement must clear — a
+                                   # DISTINCT currency from GW_EXPLORE_COST (meta-time), passed as the
+                                   # explore_grammar compute_cost (cf. email host's expected_cost vs 0.1)
 
 # ═══════════════════════════════════════
 # Build the observation kernel
@@ -265,7 +268,7 @@ function execute_gw_meta_action!(
         isempty(top) && return 0
         gid = top[1]
         new_g = explore_grammar(state.grammars[gid], explore_buffer, state.current_max_depth;
-                                action_space=gw_action_space, compute_cost=GW_EXPLORE_COST)
+                                action_space=gw_action_space, compute_cost=GW_EXPLORE_VOI_FLOOR)
         new_g.id == gid && return 0   # no positive-VOI refinement → no-op
         state.grammars[new_g.id] = new_g
         n_added = add_programs_to_state!(state, new_g, state.current_max_depth;

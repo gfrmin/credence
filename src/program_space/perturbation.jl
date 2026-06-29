@@ -330,10 +330,14 @@ function perturb_grammar(g::Grammar, freq_table::SubprogramFrequencyTable,
     # id ⇒ a no-op truly changes nothing. (Tested by test_perturb_consumption.jl.)
     best = _best_compression_candidate(g, freq_table; compute_cost = compute_cost)
     best === nothing && return g                                # saturation no-op (the Move-2 signal)
+    # Thread `g.thresholds` through (the 4-arg constructor) so a refined grid (exploration-budget Move 3)
+    # survives a later compression on its lineage — the 3-arg form would re-default the grid and silently
+    # discard the refinement. Bit-identical for default grammars (g.thresholds == default_thresholds by
+    # value ⇒ identical enumeration), so the compression tests stay green.
     if best[4] === :add
-        Grammar(g.feature_set, [g.rules; best[5]], next_grammar_id())
+        Grammar(g.feature_set, [g.rules; best[5]], g.thresholds, next_grammar_id())
     else  # :remove — drop the dead rule by name (names are unique under the idempotence guard)
-        Grammar(g.feature_set, [r for r in g.rules if r.name != best[5].name], next_grammar_id())
+        Grammar(g.feature_set, [r for r in g.rules if r.name != best[5].name], g.thresholds, next_grammar_id())
     end
 end
 
