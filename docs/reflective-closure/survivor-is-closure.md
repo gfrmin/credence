@@ -11,7 +11,7 @@
 > at `~/.claude/plans/` (session-external); this note is the durable capture.
 >
 > **One-line disposition:** write nothing more here today; the engine's attention returns to the
-> `exploration-budget` arc (Move 3 pending). Re-open only on a concrete use-case (§5) or an attempt on
+> active `exploration-budget` arc. Re-open only on a concrete use-case (§5) or an attempt on
 > the open problem (§4).
 
 ## 1. What the gap analysis found, and what is rejected
@@ -19,7 +19,7 @@
 A criterion-vs-content audit of the five axioms (`SPEC.md §1`) found that of ~10 candidate
 foundational omissions, the dissolutions are sound and already match the project's posture —
 causality (Richens–Everitt, robust agents learn causal models), corrigibility-from-CIRL (the
-off-switch game is a *theorem* of A3+A4, not a new axiom), ergodicity-as-content, empowerment-as-VOI
+off-switch game is a *theorem* of A2 (EU-max) + A4 (CIRL), not a new axiom), ergodicity-as-content, empowerment-as-VOI
 — **no action**. Exactly one candidate survived: a **reflective / embedded-agency closure** of the
 hypothesis space ("closed under inclusion of agents of equal power, including the agent's own
 policy"). It is genuinely absent from the repo: CIRL is asymmetric-cooperative; meta-actions
@@ -68,7 +68,7 @@ to the derivation keeps that hole **visible** — the point of the stall-honestl
 Row commits to a mixed policy `p = P(Heads)`; the zero-sum payoff is `EU(p,q) = (2p−1)(2q−1)`. With
 the peer best-responding to the *committed* policy, `min_q EU(p,q) = −|2p−1|`, maximised at `p = ½`
 with value `0`; every pure policy (`p ∈ {0,1}`) scores `−1`. So the maximin policy is the mixed
-`(½,½)` and the pure policies are **strictly dominated**. The mixed play is **selected by argmax over
+`(½,½)` and the pure policies are **strictly worse in maximin value** (security value `−1` vs `0`). The mixed play is **selected by argmax over
 the policy space**, not injected. ∎
 
 **Verdict: dissolves into the act→policy upgrade; no axiom.**
@@ -148,12 +148,13 @@ What it would take to *build* the policy-level `optimise` whose output §3 alrea
   a correct primitive returns `(½,½)` by construction, and a wrong one is caught by the first unit
   test of the primitive. A convergence harness would be a *regression test for a theorem* — ceremony.
   Collapsed to the one-line assertion in §5.
-- **Test B (twin-PD) regression half — collapsed** to one SEE assertion. Its *demo* half is the only
-  genuinely empirical work in the whole thread, and is built **only when twin-PD is product-relevant**
+- **The twin-PD experiment — only its empirical half, and only when product-relevant.** Its
+  theorem-checking half collapses to one SEE assertion (§5). The genuinely empirical half — the only
+  such work in the whole thread — is built **only when twin-PD is product-relevant**
   (`apps/julia/experiments/grain_of_truth/`, when needed): the SEE *theorem* is settled (§3.2), but
   **where the real human-peer falls on the `ρ` axis relative to `ρ* = (T−S)/[(R−P)+(T−S)]`** is not a
   theorem — it depends on how much genuine action-correlation a messy, partially-closed deployment
-  carries. The demo *locates the deployment's `ρ` against the threshold*; it does not watch a
+  carries. The experiment *locates the deployment's `ρ` against the threshold*; it does not watch a
   guaranteed cooperation "survive".
 - **Löbian qualification to the §9 "reflectively stable" claim — out of scope.** A different axis
   (proof-based vs probabilistic self-trust). Not appended here; left for its own thread if it earns
@@ -165,5 +166,5 @@ After §3, this thread is a *settled note plus a deferred open problem* — not 
 clean-case constitutional question is closed (dissolves, no axiom); the implementation is a single
 conditional stdlib primitive built only on demand; the one empirical task waits for product
 relevance; the open problem is deferrable indefinitely. **The engine's attention returns to the
-`exploration-budget` arc (Move 3 pending).** Re-open this note only on a concrete use-case (§5) or an
+active `exploration-budget` arc.** Re-open this note only on a concrete use-case (§5) or an
 attempt on §4.
