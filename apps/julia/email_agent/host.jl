@@ -265,6 +265,14 @@ function compute_meta_eu(
         compression_exhausted(state.grammars[top[1]], freq_table) || return -Inf
         return eu_explore
     end
+    # TODO (email :add_feature parity — Move 4 deferred, scope B): feature discovery (:add_feature /
+    # explore_features) is wired in grid_world but not here. Pure plumbing, no new capability — the
+    # mechanism is engine-level and grid_world proves the thesis end-to-end. Wiring it needs the Q4
+    # threshold_exhausted rung, which runs explore_grammar over the residual buffer; this fn's TWO callers
+    # (the single-decision + episode compute_eu EU-functions) don't have explore_buffer in scope, so it
+    # must be threaded through them. Carrying a threshold_exhausted flag on `state` is forbidden (§8.4 —
+    # the ladder is cyclic, a cached signal goes stale). Fold in whenever this host's meta-actions are next
+    # touched; no design doc required (docs/exploration-budget/move-4-design.md §9).
     -Inf
 end
 
