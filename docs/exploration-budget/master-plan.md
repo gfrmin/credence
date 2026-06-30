@@ -14,6 +14,17 @@
 > seam (§3.1) scopes what each move may *claim*. All five open questions ratified as recommended, with the
 > reasoning strengthened from "preferred" to "forced" where it is forced (§5). The move sequence is final.
 > Move 1's design doc may open.
+>
+> **UPDATE 2026-06-30 — ARC COMPLETE THROUGH MOVE 5.** Moves 1–4 landed; the #174 compression-removal
+> follow-up landed; Move 5 (the capstone) attempted the combined single-currency `argmax` and **refined
+> Q5/§4**: it is **one currency — Δ log-evidence — with two *fidelities*** (a cheap depth-one prior-only
+> surrogate, compression's `net_voc`; vs a re-conditioned exact lookahead, exploration's VOI), NOT two
+> currencies. `explore_features` already sums the prior and likelihood terms in one `net_value`, proving
+> the single currency. The invariant that must not be flattened is the **compute-tier cascade** (EU-max
+> via Russell–Wefald on the cost of evaluation), not a currency incommensurability. **One outstanding
+> empirical gate:** dominance (§3.2 prediction 2 — beat random + fixed-schedule baselines) has no
+> comparative benchmark; **deferred to a paper-gated task** (discovery §3.1 and graceful degradation §3.3
+> are unit-validated). See `docs/exploration-budget/move-5-design.md`.
 
 ## 1. Context — what Scope A left undone, and why it is hard
 
@@ -176,17 +187,27 @@ moves:
   proposed features," never "EU-max feature *generation*"** (§3.1); novel-dimension synthesis is named as
   the standing creative frontier, not implemented. `:remove_feature` reuses Move 1's reference-count
   soundness.
-- **Move 5 — The combined single-currency `argmax`: attempt, expect to stop (close-or-name the headline).**
-  Exploration's lookahead VOI is *already* in utility (realised value gain), so it unifies with the object
-  level for free — the lone outlier is **compression**, priced in prior nats. So the combined `argmax`
-  faces *one* question, not two currencies: can compression's nats become utility? The prediction is **no,
-  and stopping is correct**: compression is cheap *because* it is depth-one prior-priced; pricing it in
-  utility means pricing it by lookahead, which makes it as expensive as exploration and **destroys the
-  cheap-screen-first ordering the whole design rests on**. So the currency gap is not a representational
-  accident to convert away — it is the **signature of the two compute tiers** (cheap prior screen vs
-  expensive utility lookahead). Move 5 attempts the unification, and on hitting this, **names it a permanent
-  frontier with that reasoning** (Phase-5 precedent — do not force a fake common currency). May fold into
-  Move 4 (OQ-5).
+- **Move 5 — The combined single-currency `argmax`: attempted; closed the currency question, named the
+  fidelity frontier (LANDED 2026-06-30).** The attempt found §4's original "two currencies (compression in
+  prior nats, exploration in utility)" framing imprecise on both labels. There is **one** currency —
+  **Δ log-evidence** (`Δlog P(g) + Δlog P(data|g)`, the log joint) — and `explore_features` *already sums
+  its two terms in one `net_value`*, which proves it (a unit mismatch would make that `+` incoherent). The
+  three meta-action classes are three **instances** of one functional, differing in **fidelity** not
+  currency: `explore_features` = the exact, general instance (both terms, re-conditioned); `explore_grammar`
+  = the exact `Δprior = 0` instance; compression's `net_voc` = the cheap **prior-only surrogate** (the
+  likelihood term *dropped* — not because it is zero, but because the depth-one prior-only signature cannot
+  afford to re-condition and measure it, Russell–Wefald). "Utility" also mislabels exploration: `Δℓ` is
+  predictive/log-evidence, not realised ΔEU. **The conclusion stands — do not build the flat exact
+  `argmax`** — but for a sharper reason: ranking compression in the *same exact* `argmax` forces measuring
+  its likelihood term (re-conditioning it), making the cheap screen as expensive as the lookahead. The
+  invariant is therefore the **compute-tier cascade** (cheap surrogate screen → expensive exact lookahead,
+  ordered by the Move-2 saturation gate), which is *itself* EU-max (Russell–Wefald prices the cost of
+  evaluation), **not** a currency incommensurability. Two frontiers, cleanly named: (a) the surrogate/exact
+  **fidelity** cascade is the permanent structure; (b) the genuine log-evidence → realised ΔEU conversion
+  (needs decision-lookahead, the `net_voi` form) is a *separate* standing frontier, shared equally by both
+  classes so it does not separate them. Lands stand-alone (not folded into Move 4). Code footprint: this
+  master-plan refinement + two docstring precision notes; **no `net_evidence_voc` merge** (it would blur
+  the §2 prior/belief seam). See `docs/exploration-budget/move-5-design.md`.
 
 Each move lands design-doc-then-code; the empirical predictions (§3) are checked at Moves 3–5 on a
 purpose-built task (a paper-style figure, per the paper-as-gating-artifact discipline if this feeds a
@@ -212,9 +233,12 @@ publication).
 >   waiting for. The lossy `freq_table` cannot supply soundness; lowering `min_complexity` changes
 >   `freq_table` semantics for *every* consumer (non-local blast radius for a local need). Thread the count
 >   — sound by construction.
-> - **Q5 — attempt, expect to stop; the currency gap *is* the architecture** (see Move 5, §4). Name it a
->   permanent frontier with the two-compute-tiers reasoning, rather than forcing a conversion that would
->   quietly defeat cheap compression.
+> - **Q5 — attempted; REFINED 2026-06-30 (see Move 5, §4).** Not "two currencies that can't merge": **one
+>   currency (Δ log-evidence), two fidelities** (cheap prior-only surrogate vs re-conditioned exact). The
+>   invariant that must not be flattened is the **compute-tier cascade** (EU-max, Russell–Wefald on the
+>   cost of evaluation), not a currency incommensurability — `explore_features` already sums prior and
+>   likelihood nats in one `net_value`, proving the single currency. The separate, genuine frontier is
+>   log-evidence → realised ΔEU (shared by both classes). Do not force the flat exact `argmax`.
 >
 > The prose below is retained as the rationale of record.
 
@@ -244,7 +268,12 @@ publication).
    exploration has a (lookahead-derived) utility-currency value commensurable with compression's prior
    value — or does the currency gap Phase-5 flagged remain, leaving Move 5 a *named* frontier rather than
    a *closed* one? *Recommendation: attempt it at Move 5; if the commensurability doesn't hold honestly,
-   stop and name it* (do not force a fake common currency — the Phase-5 precedent).
+   stop and name it* (do not force a fake common currency — the Phase-5 precedent). **Resolved 2026-06-30
+   (Move 5 §4): the *currency* question closes — it is one currency (Δ log-evidence), shown by
+   `explore_features` summing both terms; the commensurability the question worried about holds. What
+   remains a named frontier is the **fidelity** cascade (cheap prior-only surrogate vs re-conditioned
+   exact), an EU-max compute-tier structure, plus the separate log-evidence → ΔEU conversion. The premise
+   "exploration has a utility-currency value" was itself imprecise: exploration is log-evidence, not ΔEU.**
 
 ## 6. Hard constraints (inherited)
 
