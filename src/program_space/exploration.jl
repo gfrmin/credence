@@ -332,6 +332,15 @@ case); a new feature adds a symbol (Δcomplexity = +1 ⇒ the feature must repay
 threshold never owed). fine-before-coarse, made endogenous: the cheap rung clears while it pays; the dear
 rung waits until it doesn't. Asserted by test_feature_discovery.jl §4 (the boundary sits at Δℓ − log2, not Δℓ).
 
+**Move 5 (one currency, two fidelities).** This two-axis sum *is* the **exact, general instance** of the
+single **Δ log-evidence** VOC — `Δlog P(data|g)` (fit) plus `Δlog P(g)` (prior) in one `net_value`, which
+is *why* the `+` is coherent: both are log-evidence nats, not two currencies. `explore_grammar` is the
+`Δprior = 0` instance of the same functional; compression's `net_voc` (`perturbation.jl`) is the cheap
+**prior-only surrogate** (the likelihood term dropped — its prior-only signature cannot afford to measure
+it). The fidelity gap between the surrogate and this exact re-conditioned eval — *not* a currency gap — is
+the arc's permanent frontier; the two-tier cascade (cheap screen → exact lookahead) orders it and is
+itself EU-max (Russell–Wefald). See `docs/exploration-budget/move-5-design.md`.
+
 Soundness is trivial for `:add_feature` — enlarging the alphabet can only ADD representable programs, never
 break an existing one — so no reference count is needed (contrast `:remove_feature`, the MDL-compression
 partner). Full-eval argmax over the (small, host-furnished) candidate set in sorted order: deterministic, no

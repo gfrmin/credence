@@ -301,9 +301,16 @@ prior (CLAUDE.md §1.3). A compression saving `net_payoff_symbols` raises the lo
 
     complexity_logprior(−net_payoff_symbols; λ = log(2)) = log(2) · net_payoff_symbols      [nats]
 
-(the program-axis λ is pinned to `log(2)` by §1.3). The structural twin of `net_voi` (`stdlib.jl`):
-the same `net_value` form, in the prior's currency rather than utility — the third representation,
-after scalar `net_voi` and Functional-offset routing EU. At `compute_cost = 0` the gate `net_voc > 0`
+(the program-axis λ is pinned to `log(2)` by §1.3). The structural twin of `net_voi` (`stdlib.jl`): the same `net_value` form — the third representation,
+after scalar `net_voi` and Functional-offset routing EU. **Move 5 (one currency, two fidelities):** this
+is NOT a different currency from exploration's lookahead VOI — both are **Δ log-evidence**
+(`Δlog P(g) + Δlog P(data|g)`). `net_voc` scores the **prior-only term**, dropping the likelihood term —
+not because it is zero (abbreviating reweights the mixture) but because the prior-only signature (no
+belief, no re-conditioning) cannot afford to measure it (Russell–Wefald). So `net_voc` is the
+**cheap-surrogate** fidelity of the one currency `explore_features` computes **exactly** (the general
+instance, both terms); `explore_grammar` is the `Δprior = 0` instance; `net_voc` is the Δℓ-dropped
+instance. The cheap/exact fidelity gap — not a currency gap — is what the two-tier cascade orders
+(`docs/exploration-budget/move-5-design.md`). At `compute_cost = 0` the gate `net_voc > 0`
 is exactly `propose_nonterminal`'s `net_payoff > 0`. Governs the COMPRESSION class — `:add_rule`
 (payoff = compression saving), `:remove_rule` (payoff = the dead rule's reclaimed cost,
 `1 + expr_complexity(body)`), AND `:remove_feature` (#174; payoff = 1, a dead feature's reclaimed symbol).
