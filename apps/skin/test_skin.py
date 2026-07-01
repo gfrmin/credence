@@ -1358,6 +1358,63 @@ def test_structure_expect():
         skin.shutdown()
 
 
+def test_program_space_policy_params():
+    """Protocol 1.14: the program-space learning-policy knobs cross the wire as declared
+    data instead of being fixed skin-side — `min_log_prior` on create_state/enumerate/
+    add_programs (the enumeration floor), `min_frequency`/`min_complexity` on
+    perturb_grammar (the subtree-extraction gate). The asserted values are
+    engine-deterministic, calibrated at this exact grammar shape: 1 feature × 3 actions at
+    depth 3 enumerates 1323 programs (123 at min_log_prior=-6.0), and the best shared
+    subtree's weighted frequency ≈ 0.003 sits BELOW the old hardcoded 0.01 — so the fixed
+    skin default silently foreclosed a perturbation min_frequency=0.0 admits, which is
+    exactly why the knob must be the consumer's."""
+    skin = SkinClient()
+    try:
+        skin.initialize()
+        G = {"features": ["colour"], "rules": {}}
+        G2 = {"features": ["speed"], "rules": {}}
+        ACTIONS = ["food", "enemy", "flee"]
+
+        # (a) create_state: the enumeration floor bites.
+        s_def = skin._call("create_state", {
+            "type": "program_space", "grammars": [G], "max_depth": 3,
+            "action_space": ACTIONS})
+        assert s_def["n_components"] == 1323, f"default floor: {s_def['n_components']}"  # credence-lint: allow — precedent:test-oracle — deterministic enumeration count
+        s_res = skin._call("create_state", {
+            "type": "program_space", "grammars": [G], "max_depth": 3,
+            "action_space": ACTIONS, "min_log_prior": -6.0})
+        assert s_res["n_components"] == 123, f"restrictive floor: {s_res['n_components']}"  # credence-lint: allow — precedent:test-oracle — deterministic enumeration count
+
+        # (b) enumerate: the same floor threads through the verb path.
+        n_def = skin._call("enumerate", {
+            "state_id": s_res["state_id"], "grammar": G2, "max_depth": 3,
+            "action_space": ACTIONS})["n_added"]
+        assert n_def == 1323, f"enumerate default floor: {n_def}"  # credence-lint: allow — precedent:test-oracle — deterministic enumeration count
+        n_res = skin._call("enumerate", {
+            "state_id": s_res["state_id"], "grammar": G2, "max_depth": 3,
+            "action_space": ACTIONS, "min_log_prior": -6.0})["n_added"]
+        assert n_res == 123, f"enumerate restrictive floor: {n_res}"  # credence-lint: allow — precedent:test-oracle — deterministic enumeration count
+
+        # (c) perturb_grammar: the extraction gate is the consumer's. On the clean
+        # colour-only state the best subtree is under the 0.01 default, so: default
+        # no-ops (same grammar id — the no-op contract), min_frequency=0.0 extracts
+        # (fresh id), and unsatisfiable knobs no-op again.
+        sid = s_def["state_id"]
+        base = {"state_id": sid, "grammar_id": 1, "all_features": ["colour"]}
+        assert skin._call("perturb_grammar", dict(base))["new_grammar_id"] == 1, \
+            "default gate should no-op (same grammar id)"
+        opened = skin._call("perturb_grammar", {**base, "min_frequency": 0.0})
+        assert opened["new_grammar_id"] != 1, "min_frequency=0.0 must admit the extraction"
+        assert skin._call("perturb_grammar", {**base, "min_frequency": 1.1})["new_grammar_id"] == 1, \
+            "unsatisfiable min_frequency should no-op"
+        assert skin._call("perturb_grammar", {**base, "min_complexity": 1000})["new_grammar_id"] == 1, \
+            "unsatisfiable min_complexity should no-op"
+
+        print("PASS: program-space policy knobs (enumeration floor + extraction gate) are wire-declared")
+    finally:
+        skin.shutdown()
+
+
 def test_routing_verbs_roundtrip():
     """A non-embedding consumer drives EU-max model routing over the wire only: build the
     session (`routing_init`, warm counts inline), pick the EU-max model (`routing_decide`),
@@ -1428,7 +1485,7 @@ def test_initialize_returns_contract():
     skin = SkinClient()
     try:
         result = skin.initialize()
-        assert result["protocol"] == "1.13", f"protocol: {result.get('protocol')}"
+        assert result["protocol"] == "1.14", f"protocol: {result.get('protocol')}"
         assert "version" in result, "engine version missing"
         methods = result["methods"]
         # Core canalised verbs + the Move-3 structure-BMA verbs must be advertised.
@@ -1585,6 +1642,8 @@ if __name__ == "__main__":
     test_structure_decide_tail()
     print()
     test_structure_expect()
+    print()
+    test_program_space_policy_params()
     print()
     test_routing_verbs_roundtrip()
     print()

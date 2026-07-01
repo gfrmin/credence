@@ -1,6 +1,6 @@
 # Credence Skin Protocol
 
-Protocol-Version: 1.13
+Protocol-Version: 1.14
 
 JSON-RPC 2.0 over stdio. Skin reads newline-delimited JSON from stdin,
 writes newline-delimited JSON to stdout, logs to stderr.
@@ -13,6 +13,19 @@ truth, asserted in CI to equal `PROTOCOL_VERSION` in `server.jl`.
 
 ### Changelog
 
+- **1.14** — learning-policy knobs become wire-declared data (minimality-audit follow-up;
+  additive). The skin had been FIXING three modelling constants on the consumer's behalf —
+  a violation of the rule that the skin marshals declarations and never sets policy.
+  (a) `min_log_prior` (the enumeration floor, engine default `-20.0`) is now an optional
+  param on `create_state` (type `program_space`), `enumerate`, and `add_programs`.
+  (b) `min_frequency` / `min_complexity` (the subtree-extraction gate, defaults `0.01`/`2`)
+  are now optional params on `perturb_grammar` — the old hardcoded `0.01` could silently
+  foreclose extractions a consumer wants (a best subtree with weighted frequency below it
+  no-ops). Defaults reproduce 1.13 behaviour exactly. Also: the `perturb_grammar` response
+  is documented as it actually is (`{new_grammar_id}`; same id ⇒ structural no-op), the
+  `eu_interact` binary-outcome restriction is documented, and a skin bit-rot in
+  `build_grammar` (Grammar constructor argument order) that broke `create_state`
+  (program_space) and `enumerate` with a MethodError is fixed with first wire coverage.
 - **1.13** — the belief-derived tail + the per-context read (one additive unit; the
   governor wire requests R1+R2). (a) `structure_decide` gains an optional `tail` object
   `{model_id, state_id, features, function}`: a continuation model + belief + context plus a
@@ -264,9 +277,14 @@ Create a new measure or agent state. Returns its ID.
     }
   ],
   "max_depth": 3,
-  "action_space": ["food", "enemy"]
+  "action_space": ["food", "enemy"],
+  "min_log_prior": -20.0
 }}
 ```
+
+`min_log_prior` (optional, default `-20.0`) is the enumeration floor: programs whose
+complexity log-prior falls below it are not enumerated. Learning policy, so it is the
+consumer's declaration — the default reproduces pre-1.14 behaviour.
 
 Response (all types):
 
@@ -739,7 +757,8 @@ Enumerate programs from a grammar, compile kernels, add to state.
     }
   },
   "max_depth": 3,
-  "action_space": ["food", "enemy"]
+  "action_space": ["food", "enemy"],
+  "min_log_prior": -20.0
 }}
 ```
 
@@ -747,25 +766,41 @@ Enumerate programs from a grammar, compile kernels, add to state.
 {"result": {"n_added": 42, "grammar_id": 3, "n_components": 192}}
 ```
 
+`min_log_prior` (optional, default `-20.0`) — the enumeration floor, as on
+`create_state` (program_space).
+
 ### perturb_grammar
 
-Analyse posterior subtrees and create a perturbed grammar.
+Analyse posterior subtrees and create a perturbed grammar (the compression-class
+meta-action with the greatest positive `net_voc`; otherwise a structural no-op).
 
 ```json
 {"method": "perturb_grammar", "params": {
   "state_id": "s_5",
   "grammar_id": 1,
-  "all_features": ["colour", "speed", "wall_dist", "agent_dist", "x", "y"]
+  "all_features": ["colour", "speed", "wall_dist", "agent_dist", "x", "y"],
+  "min_frequency": 0.01,
+  "min_complexity": 2
 }}
 ```
 
 ```json
-{"result": {"new_grammar_id": 4, "n_new_rules": 3}}
+{"result": {"new_grammar_id": 4}}
 ```
+
+`new_grammar_id` equal to `grammar_id` means a structural no-op (the input grammar,
+unchanged — nothing to extract or reclaim at positive net value). `min_frequency`
+(optional, default `0.01`) and `min_complexity` (optional, default `2`) gate which
+posterior subtrees are extraction candidates: a subtree enters the frequency table only
+if its posterior-weighted frequency is ≥ `min_frequency` (a value in [0,1]; above 1 is
+unsatisfiable ⇒ always a no-op) and its complexity is ≥ `min_complexity`. These are
+learning policy — the consumer's declaration, not the skin's; defaults reproduce
+pre-1.14 behaviour.
 
 ### add_programs
 
-Enumerate from an existing grammar at a new depth.
+Enumerate from an existing grammar at a new depth. `min_log_prior` (optional, default
+`-20.0`) — the enumeration floor, as on `create_state` (program_space).
 
 ```json
 {"method": "add_programs", "params": {
@@ -876,6 +911,10 @@ sync_truncate in one round-trip.
 
 EU of interacting for a program-space agent. Evaluates all compiled
 kernels on features, returns weighted EU.
+
+**Restriction:** exactly two outcome labels in `rewards` (the per-component split
+assumes correct-recommendation vs a single complement); three or more labels fail loud
+with an informative error. Multi-label support needs per-component categorical beliefs.
 
 ```json
 {"method": "eu_interact", "params": {
