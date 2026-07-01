@@ -228,6 +228,106 @@ let req = gather_request(; era_split = false)
           detail = "got effector=$(r["effector"]) probe=$(get(r, "probe", "∅"))")
 end
 
+# ── 5. The grow lane over the wire (slice 5): sensors + actuators, g read daemon-side ─────
+# The body ships bucketed `sensors` + a `grow` block (shared feature vocabulary; per-actuator
+# probe/cost, optional Beta g-prior, optional body-persisted `warm_counts`). The STATELESS daemon
+# rebuilds each actuator's outcome belief per call (`reconstruct_structure_prior_from_data`),
+# reads `g = recovery_g(model, top, sensors)`, and prices the `grows` lane in the scheduler.
+const GROW_VOCAB = Dict{String, Any}(
+    "names"  => ["miss", "p_none"],
+    "values" => [["extraction", "retrieval"], ["hi", "lo"]])
+
+# Outcome history: re-extract recovers on extraction-misses and fails on retrieval-misses;
+# retrieve-wider is the mirror image.
+counts(pairs...) = Dict{String, Any}("contexts" => [
+    Dict{String, Any}("ctx" => collect(ctx), "n1" => n1, "n0" => n0) for (ctx, n1, n0) in pairs])
+const RE_COUNTS = counts((("extraction", "hi"), 6, 0), (("retrieval", "hi"), 0, 6))
+const RW_COUNTS = counts((("extraction", "hi"), 0, 6), (("retrieval", "hi"), 6, 0))
+
+function grow_request(miss::String; applied::Vector{String} = String[], confident::Bool = false,
+                      transforms::Union{Nothing, Vector{Any}} = nothing)
+    req = gather_request(; era_split = false, applied = applied)
+    if confident   # five corroborating observations on candidate 0 ⇒ reports well above the bar
+        req["observations"] = [Dict{String, Any}("reports" => 0, "group" => i,
+                               "authority" => 0.95, "subject_factor" => 1.0, "time_factor" => 1.0)
+                               for i in 0:4]
+    end
+    req["sensors"] = Dict{String, Any}("miss" => miss, "p_none" => "hi")
+    req["grow"] = Dict{String, Any}(
+        "features" => GROW_VOCAB,
+        "actuators" => Any[
+            Dict{String, Any}("probe" => "re-extract", "cost" => 0.2, "warm_counts" => RE_COUNTS),
+            Dict{String, Any}("probe" => "retrieve-wider", "cost" => 0.2, "warm_counts" => RW_COUNTS)])
+    transforms === nothing || (req["transforms"] = transforms)
+    req
+end
+
+let r = Server.decide_response(grow_request("extraction"))
+    check("wire grow: extraction-miss sensors ⇒ gather(re-extract) from LEARNED counts",
+          r["effector"] == "gather" && r["probe"] == "re-extract";
+          detail = "got effector=$(r["effector"]) probe=$(get(r, "probe", "∅"))")
+    check("wire grow: per-actuator g exposed for the body's outcome log",
+          haskey(r, "grow_g") && r["grow_g"]["re-extract"] > 0.5 > r["grow_g"]["retrieve-wider"];
+          detail = "grow_g=$(get(r, "grow_g", "∅"))")
+end
+let r = Server.decide_response(grow_request("retrieval"))
+    check("wire grow: retrieval-miss sensors flip the which-gather ⇒ retrieve-wider",
+          r["effector"] == "gather" && r["probe"] == "retrieve-wider";
+          detail = "got effector=$(r["effector"]) probe=$(get(r, "probe", "∅"))")
+end
+let req = grow_request("extraction")   # a hand-set cold prior: Beta(8,2) ⇒ g = 0.8 exactly
+    req["grow"]["actuators"] = Any[Dict{String, Any}("probe" => "semantic", "cost" => 0.2,
+                                                     "alpha0" => 8.0, "beta0" => 2.0)]
+    r = Server.decide_response(req)
+    check("wire grow: a cold actuator's g is its declared Beta prior mean (the demoted g-prior)",
+          approx(r["grow_g"]["semantic"], 0.8) && r["probe"] == "semantic";
+          detail = "grow_g=$(get(r, "grow_g", "∅")) probe=$(get(r, "probe", "∅"))")
+end
+let r = Server.decide_response(grow_request("extraction"; confident = true))
+    check("wire grow: a confident report stands (self-gates through eu, no p_none branch)",
+          r["effector"] == "report"; detail = "got $(r["effector"])")
+end
+let r = Server.decide_response(grow_request("extraction";
+                                            applied = ["re-extract", "retrieve-wider"]))
+    check("wire grow: applied grow probes are retired ⇒ terminal stands (terminates)",
+          r["effector"] != "gather"; detail = "got $(r["effector"])")
+end
+let r = Server.decide_response(grow_request("extraction"; transforms = Any[]))
+    check("wire grow: the grows lane also rides the data-driven `transforms` path",
+          r["effector"] == "gather" && r["probe"] == "re-extract";
+          detail = "got effector=$(r["effector"]) probe=$(get(r, "probe", "∅"))")
+end
+let req = grow_request("extraction")
+    delete!(req, "sensors")
+    check("wire grow: `grow` without `sensors` fails loud (contract, not a silent cold g)",
+          (try Server.decide_response(req); false catch; true end))
+end
+let r = Server.decide_response(gather_request(; era_split = false))
+    check("wire grow: absent grow block ⇒ no grow_g key (backward-compatible response)",
+          !haskey(r, "grow_g"))
+end
+
+# Live-HTTP grow round-trip: the nested grow block (actuators + warm_counts.contexts) must
+# survive JSON3-over-the-socket coercion, not just plain-Dict handler calls (review note on
+# #182 — the other wire shapes are proven above; this pins the new nested ones).
+let port = 8792
+    server = start_daemon(; port = port, host = "127.0.0.1")
+    try
+        http = HTTP.post("http://127.0.0.1:$port/decide",
+                         ["Content-Type" => "application/json"],
+                         JSON3.write(grow_request("extraction")); retry = false,
+                         readtimeout = 10)
+        resp = JSON3.read(String(http.body))
+        check("HTTP /decide grow: learned counts survive the socket ⇒ gather(re-extract)",
+              http.status == 200 && String(resp.effector) == "gather" &&
+              String(resp.probe) == "re-extract" && haskey(resp, :grow_g);
+              detail = "status=$(http.status) effector=$(get(resp, :effector, "∅")) " *
+                       "probe=$(get(resp, :probe, "∅"))")
+    finally
+        stop_daemon(server)
+    end
+end
+
 println("\n", "="^64)
 println("answer-brain Stage-2a: $(length(PASSED)) checks PASSED · $(length(data.cases)) wire-parity cases")
 println("="^64)
