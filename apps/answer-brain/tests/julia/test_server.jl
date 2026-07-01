@@ -307,6 +307,27 @@ let r = Server.decide_response(gather_request(; era_split = false))
           !haskey(r, "grow_g"))
 end
 
+# Live-HTTP grow round-trip: the nested grow block (actuators + warm_counts.contexts) must
+# survive JSON3-over-the-socket coercion, not just plain-Dict handler calls (review note on
+# #182 — the other wire shapes are proven above; this pins the new nested ones).
+let port = 8792
+    server = start_daemon(; port = port, host = "127.0.0.1")
+    try
+        http = HTTP.post("http://127.0.0.1:$port/decide",
+                         ["Content-Type" => "application/json"],
+                         JSON3.write(grow_request("extraction")); retry = false,
+                         readtimeout = 10)
+        resp = JSON3.read(String(http.body))
+        check("HTTP /decide grow: learned counts survive the socket ⇒ gather(re-extract)",
+              http.status == 200 && String(resp.effector) == "gather" &&
+              String(resp.probe) == "re-extract" && haskey(resp, :grow_g);
+              detail = "status=$(http.status) effector=$(get(resp, :effector, "∅")) " *
+                       "probe=$(get(resp, :probe, "∅"))")
+    finally
+        stop_daemon(server)
+    end
+end
+
 println("\n", "="^64)
 println("answer-brain Stage-2a: $(length(PASSED)) checks PASSED · $(length(data.cases)) wire-parity cases")
 println("="^64)
