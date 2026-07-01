@@ -30,7 +30,8 @@ using Main.Credence: CategoricalMeasure, Finite, Kernel, PushOnly, condition, we
 import Main.Credence.Ontology: optimise, value, net_voi
 
 export Obs, ChannelParams, CANONICAL_CHANNEL,
-       candidate_posterior, terminal_decide, decide_full, decision_fpa, voi_gather, grow_value,
+       candidate_posterior, terminal_decide, decide_full, decision_fpa, voi_gather,
+       grow_value, best_grow,
        provisional_leader, gather_decide,
        Transform, ScheduleCtx, default_registry, registry_from_wire, schedule_decide
 
@@ -193,6 +194,24 @@ post-recovery value (a bound; `g` carries the realism — autonomous-recall Open
 """
 grow_value(g::Float64, u_correct::Float64, eu::Float64, cost::Float64)::Float64 =
     g * (u_correct - eu) - cost
+
+"""
+    best_grow(actuators, u_correct, eu) -> (probe::Union{String,Nothing}, value::Float64)
+
+The which-gather argmax over grow actuators — the ruling's "B half" discriminating (e.g.) re-extract
+vs retrieve-wider. Each actuator is `(probe::String, g::Float64, cost::Float64)`; the winner is the
+`grow_value` argmax, returned iff it strictly clears 0 (mirrors the `:voi` `net_voi > 0` gate). None
+clears ⇒ `(nothing, 0.0)` — no grow, the terminal decision stands.
+"""
+function best_grow(actuators, u_correct::Float64, eu::Float64)
+    best = nothing
+    best_v = 0.0
+    for (probe, g, cost) in actuators
+        v = grow_value(Float64(g), u_correct, eu, Float64(cost))
+        v > best_v && (best_v = v; best = String(probe))
+    end
+    (best, best_v)
+end
 
 """
     decide_full(state, k, u_bar; cp=CANONICAL_CHANNEL)

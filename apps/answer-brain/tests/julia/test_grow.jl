@@ -57,5 +57,23 @@ let u_c = 1.0, cost = 0.1
           approx(AnswerBrain.grow_value(0.5, 1.0, 0.0, 0.1), 0.5 * 1.0 - 0.1))
 end
 
+# ── Slice 2: best_grow — the which-gather argmax (fires only if the best clears 0) ─────────
+let u_c = 1.0, eu = -0.2
+    # Two actuators, different g at the same context ⇒ pick the higher-value one
+    # (this is B discriminating re-extract vs retrieve-wider — the ruling's raison d'être).
+    acts = [("re-extract", 0.7, 0.1), ("retrieve-wider", 0.4, 0.1)]
+    best, bv = AnswerBrain.best_grow(acts, u_c, eu)
+    check("best_grow picks the higher-value actuator", best == "re-extract")
+    check("best_grow value matches grow_value",
+          approx(bv, AnswerBrain.grow_value(0.7, u_c, eu, 0.1)))
+    # Cost can flip the choice: a cheaper, lower-g actuator can win.
+    acts2 = [("re-extract", 0.55, 0.5), ("retrieve-wider", 0.5, 0.05)]
+    best2, _ = AnswerBrain.best_grow(acts2, u_c, eu)
+    check("best_grow accounts for cost (the cheaper actuator wins)", best2 == "retrieve-wider")
+    # A solved question (eu ≈ u_correct) ⇒ nothing clears 0 ⇒ no grow.
+    best3, bv3 = AnswerBrain.best_grow(acts, u_c, u_c)
+    check("best_grow returns nothing when nothing clears cost", best3 === nothing && bv3 == 0.0)
+end
+
 println("-"^64)
-println("grow slice-1 (grow_value): ", length(PASSED), " checks passed")
+println("grow slices 1-2 (grow_value, best_grow): ", length(PASSED), " checks passed")
