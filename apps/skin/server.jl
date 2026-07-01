@@ -586,6 +586,11 @@ function build_function(spec)::Functional
         ]
         offset = Float64(get(spec, "offset", 0.0))
         LinearCombination(terms, offset)
+    elseif t == "geometric_tail"
+        # E[θ/(1−θ)] — the posterior-predictive tail of a geometric repeat process
+        # (closed form α/(β−1) on Beta leaves). A consumer-declared world-model: used by
+        # structure_decide's `tail.function` and readable via structure_expect (1.13).
+        GeometricTail()
     elseif t == "opaque_bdsl" || t == "bdsl"
         env_id = spec["env_id"]
         env = get(DSL_ENVS, env_id, nothing)
@@ -718,7 +723,7 @@ end
 # rides the `credence-skin` image tag). MAJOR bumps on a breaking protocol
 # change; MINOR on additive. Apps pin the major in code and `initialize`
 # rejects a mismatching major with -32010. See docs/decouple/master-plan.md.
-const PROTOCOL_VERSION = "1.12"
+const PROTOCOL_VERSION = "1.13"
 protocol_major(v) = String(first(split(String(v), ".")))
 
 # Advertised method set, returned by `initialize` for client capability
@@ -1255,6 +1260,15 @@ end
 _structure_X(model, features) =
     context_from_features(model, Dict(string(k) => string(v) for (k, v) in pairs(features)))
 
+# A wire belief reference {model_id, state_id, features} → the per-context belief view.
+# Shared by the main, harm, and tail arms of handle_structure_decide and by
+# handle_structure_expect; the belief stays server-side (only scalars cross the wire).
+function _belief_from_ref(obj)
+    m = get_model(string(obj["model_id"]))
+    t = get_state(string(obj["state_id"]))
+    belief_at_context(m, t, _structure_X(m, obj["features"]))
+end
+
 function handle_structure_bma(params)
     names = String[string(n) for n in params["feature_names"]]
     values = Vector{String}[String[string(v) for v in vs] for vs in params["feature_values"]]
@@ -1298,30 +1312,42 @@ function handle_structure_observe(params)
 end
 
 function handle_structure_decide(params)
-    model = get_model(string(params["model_id"]))
-    top = get_state(string(params["state_id"]))
     # Belief view + optional harm coordinate (a second model+belief+context for the unsafe
-    # outcome). Context build is a protocol concern (vocabulary), so wrap as DSLError.
-    bx, harm_belief, harm_cost = try
-        bx0 = belief_at_context(model, top, _structure_X(model, params["features"]))
+    # outcome) + optional tail coordinate (a continuation model+belief+context plus a
+    # CONSUMER-DECLARED functional whose expectation sets expected_repeats — the engine
+    # hardcodes no distributional commitment; the world-model crosses the wire as data).
+    # Context + functional build is a protocol concern (vocabulary), so wrap as DSLError.
+    bx, harm_belief, harm_cost, tail_belief, tail_fn = try
+        bx0 = _belief_from_ref(params)
         hb, hc = nothing, 0.0
         if get(params, "harm", nothing) !== nothing
             h = params["harm"]
-            hmodel = get_model(string(h["model_id"]))
-            htop = get_state(string(h["state_id"]))
-            hb = belief_at_context(hmodel, htop, _structure_X(hmodel, h["features"]))
+            hb = _belief_from_ref(h)
             hc = Float64(get(h, "harm_cost", 0.0))
         end
-        (bx0, hb, hc)
+        tb, tfn = nothing, nothing
+        if get(params, "tail", nothing) !== nothing
+            t = params["tail"]
+            tb = _belief_from_ref(t)
+            tfn = build_function(t["function"])
+        end
+        (bx0, hb, hc, tb, tfn)
     catch e
         _wrap_dsl("structure decision context build failed")(e)
     end
     action = try
+        # Precedence: a tail belief supersedes the scalar expected_repeats (the belief-
+        # derived expectation wins — for the declared geometric_tail, m = E[ρ/(1−ρ)] =
+        # α/(β−1)). The expectation compute — and e.g. geometric_tail's β≤1 divergence
+        # guard — is inference, so it correctly lands in this _wrap_inf arm.
+        er = tail_belief === nothing ?
+             Float64(get(params, "expected_repeats", 0.0)) :
+             Float64(expect(tail_belief, tail_fn))
         decide_with_voi(bx, structure_decision_kernel();
                         cost = Float64(params["cost"]),
                         aversion = Float64(params["aversion"]),
                         interrupt_cost = Float64(params["interrupt_cost"]),
-                        expected_repeats = Float64(get(params, "expected_repeats", 0.0)),
+                        expected_repeats = er,
                         w_time = Float64(get(params, "w_time", 0.0)),
                         exp_time = Float64(get(params, "exp_time", 0.0)),
                         harm_belief = harm_belief, harm_cost = harm_cost)

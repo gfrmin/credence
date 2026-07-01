@@ -1240,6 +1240,72 @@ def test_structure_bma_roundtrip():
         skin.shutdown()
 
 
+def test_structure_decide_tail():
+    """R1 (protocol 1.13): the optional `tail` coordinate on structure_decide folds a
+    belief-derived expected_repeats into the EU decision. The consumer DECLARES the
+    functional (its world-model crosses the wire as data — the engine hardcodes no
+    distributional commitment); the engine computes m = E[f(ρ)] brain-side and prices a
+    block as preventing tf = 1+m calls. Asserts the tail flips proceed→block (a),
+    supersedes the scalar expected_repeats (b), omitting it reproduces the 1.12 decision
+    (c, regression pin), and a missing/unknown declared function fails loud (d) — with
+    ZERO probability arithmetic client-side (Invariant 1 across the wire)."""
+    skin = SkinClient()
+    try:
+        skin.initialize()
+        spec = {"feature_names": ["tool", "rep"],
+                "feature_values": [["bash", "read"], ["rep0", "rep3"]]}
+        ctx = {"tool": "bash", "rep": "rep3"}
+        HUGE = 1.0e9  # interrupt cost that removes :ask from contention
+
+        # Approve belief: three approvals ⇒ every component cell Beta(5,2) ⇒ θ = 5/7.
+        bma = skin._call("structure_bma", dict(spec))
+        mid, sid = bma["model_id"], bma["state_id"]
+        for _ in range(3):
+            skin._call("structure_observe",
+                       {"model_id": mid, "state_id": sid, "features": ctx, "observation": 1})
+
+        def decide(extra=None):
+            p = {"model_id": mid, "state_id": sid, "features": ctx,
+                 "cost": 1.0, "aversion": 1.0, "interrupt_cost": HUGE}
+            if extra:
+                p.update(extra)
+            return skin._call("structure_decide", p)["action"]
+
+        # (c) Baseline without tail: tf = 1 ⇒ block iff θ < 1/2; θ = 5/7 ⇒ proceed.
+        assert decide() == "proceed", "baseline without tail should proceed"
+
+        # Tail belief: three continuations at the context ⇒ cells Beta(5,2) ⇒ per-component
+        # m = α/(β−1) = 5, identical across components so mixture-exact ⇒ tf = 6.
+        # Block iff θ < tf/(tf+λ) = 6/7; θ = 5/7 < 6/7 ⇒ the SAME decision flips to block.
+        tail_bma = skin._call("structure_bma", dict(spec))
+        tmid, tsid = tail_bma["model_id"], tail_bma["state_id"]
+        for _ in range(3):
+            skin._call("structure_observe",
+                       {"model_id": tmid, "state_id": tsid, "features": ctx, "observation": 1})
+        tail = {"model_id": tmid, "state_id": tsid, "features": ctx,
+                "function": {"type": "geometric_tail"}}
+
+        # (a) The declared tail flips proceed→block at unchanged utility data.
+        assert decide({"tail": tail}) == "block", "tail m=5 should flip proceed→block"
+        # (b) Precedence: the belief-derived tail supersedes the scalar expected_repeats.
+        assert decide({"tail": tail, "expected_repeats": 0.0}) == "block", \
+            "tail must supersede the scalar expected_repeats"
+        # (c) Regression pin: omitting tail still reproduces the pre-tail decision.
+        assert decide() == "proceed", "omitting tail reproduces 1.12 behaviour"
+
+        # (d) The world-model declaration is mandatory inside `tail`: an unknown or
+        # missing `function` fails loud as a clean SkinError, not a stacktrace.
+        with pytest.raises(SkinError):
+            decide({"tail": {"model_id": tmid, "state_id": tsid, "features": ctx,
+                             "function": {"type": "bogus"}}})
+        with pytest.raises(SkinError):
+            decide({"tail": {"model_id": tmid, "state_id": tsid, "features": ctx}})
+
+        print("PASS: structure_decide tail coordinate (flip + precedence + pin + fail-loud)")
+    finally:
+        skin.shutdown()
+
+
 def test_routing_verbs_roundtrip():
     """A non-embedding consumer drives EU-max model routing over the wire only: build the
     session (`routing_init`, warm counts inline), pick the EU-max model (`routing_decide`),
@@ -1462,6 +1528,8 @@ if __name__ == "__main__":
     test_call_dsl_belief_roundtrip()
     print()
     test_structure_bma_roundtrip()
+    print()
+    test_structure_decide_tail()
     print()
     test_routing_verbs_roundtrip()
     print()
