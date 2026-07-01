@@ -736,7 +736,7 @@ const SKIN_METHODS = [
     "perturb_grammar", "add_programs", "sync_prune", "sync_truncate",
     "top_grammars", "belief_summary", "condition_and_prune", "eu_interact",
     "call_dsl", "factor", "replace_factor", "n_factors",
-    "structure_bma", "structure_observe", "structure_decide",
+    "structure_bma", "structure_observe", "structure_decide", "structure_expect",
     "routing_init", "routing_decide", "routing_escalate", "routing_outcome",
     "routing_belief", "destroy_routing",
 ]
@@ -778,6 +778,8 @@ function handle_request(method::String, params, id)
         handle_structure_observe(params)
     elseif method == "structure_decide"
         handle_structure_decide(params)
+    elseif method == "structure_expect"
+        handle_structure_expect(params)
     elseif method == "routing_init"
         handle_routing_init(params)
     elseif method == "routing_decide"
@@ -1252,7 +1254,9 @@ end
 # ALL arithmetic — the chain-rule reweight, the EU coefficient assembly — is engine-side
 # (src/structure_bma.jl, src/stdlib.jl `decide_with_voi`); the verbs only marshal JSON,
 # so Invariant 1 holds across the wire by construction. `belief_at_context` is deliberately
-# NOT a verb: no consumer reads the per-context belief across the wire (Move-3 Q2).
+# NOT a verb: the per-context belief object never crosses the wire (Move-3 Q2). Scalar
+# EXPECTATIONS of it are readable via `structure_expect` (1.13) — an audit/calibration
+# read, contractually not a decision channel (protocol.md).
 # ═══════════════════════════════════════
 
 # A features dict {name: bucket} → X (positional, validated against the model's declared
@@ -1355,6 +1359,29 @@ function handle_structure_decide(params)
         _wrap_inf("decide_with_voi failed")(e)
     end
     Dict{String, Any}("action" => string(action))
+end
+
+# The per-context scalar read (protocol 1.13): a declared functional's posterior
+# expectation at a context. Read-only; the belief never crosses the wire (only the
+# scalar does). Per protocol.md this is a display/audit/calibration surface, NOT a
+# decision channel — decisions stay in structure_decide's EU-max.
+function handle_structure_expect(params)
+    bx = try
+        _belief_from_ref(params)
+    catch e
+        _wrap_dsl("structure_expect context build failed")(e)
+    end
+    f = try
+        build_function(params["function"])
+    catch e
+        _wrap_dsl("build_function failed")(e)
+    end
+    v = try
+        Float64(expect(bx, f))
+    catch e
+        _wrap_inf("structure_expect failed")(e)
+    end
+    Dict{String, Any}("value" => v)
 end
 
 # ═══════════════════════════════════════

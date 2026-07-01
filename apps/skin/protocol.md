@@ -566,6 +566,38 @@ per-context view internally, and the belief object never crosses the wire. Scala
 *expectations* of it are readable via `structure_expect` (1.13) for audit and calibration;
 that verb is not a decision channel (see its section).
 
+### structure_expect
+
+A per-context scalar expectation read off a structure belief (protocol 1.13): the
+posterior expectation of a declared `function` at the context. Read-only — no state
+mutation; only the scalar crosses the wire (the belief stays server-side, Invariant 1).
+
+**Usage contract: `structure_expect` is a read for display, audit, and offline
+calibration — it is NOT a decision channel; decisions are `structure_decide`'s job
+(EU-max).** Branching app-side on the returned float (`if P(unsafe) > k: block`)
+reintroduces exactly the hardcoded threshold `structure_decide`'s EU-max exists to
+eliminate. The engine cannot enforce this — it returns a float — so the contract lives
+here, on the surface both sides read, and binds consumers of this protocol.
+
+```json
+{"method": "structure_expect", "params": {
+  "model_id": "m_1", "state_id": "s_1",
+  "features": {"tool": "bash", "rep": "rep3"},
+  "function": {"type": "identity"}
+}}
+```
+
+```json
+{"result": {"value": 0.714285714285714}}
+```
+
+`function` uses the same declared-functional vocabulary as `expect`:
+`{"type": "identity"}` reads the posterior mean `P(unsafe|X) = α/(α+β)`;
+`{"type": "geometric_tail"}` reads the tail `m = E[ρ/(1−ρ)] = α/(β−1)` — the same `m`
+`structure_decide`'s `tail` folds into a decision, so every tail-driven block is
+auditable from the same belief. Unknown `model_id`/`state_id` → `StateNotFound`
+(`-32000`); an unknown `function` fails loud as a DSL error.
+
 ## Routing (protocol 1.5)
 
 A non-embedding consumer drives EU-max model routing over the wire — no probability
