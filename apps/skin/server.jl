@@ -726,7 +726,7 @@ end
 # rides the `credence-skin` image tag). MAJOR bumps on a breaking protocol
 # change; MINOR on additive. Apps pin the major in code and `initialize`
 # rejects a mismatching major with -32010. See docs/decouple/master-plan.md.
-const PROTOCOL_VERSION = "1.13"
+const PROTOCOL_VERSION = "1.14"
 protocol_major(v) = String(first(split(String(v), ".")))
 
 # Advertised method set, returned by `initialize` for client capability
@@ -887,6 +887,9 @@ function handle_create_state(params)
         grammars_spec = params["grammars"]
         max_depth = Int(get(params, "max_depth", 3))
         action_space = Symbol[Symbol(a) for a in params["action_space"]]
+        # The enumeration floor is learning policy — the consumer's, not the skin's
+        # (protocol 1.14; audit follow-up). The engine default is the documented fallback.
+        min_log_prior = Float64(get(params, "min_log_prior", -20.0))
 
         # Build grammars and enumerate programs
         grammar_pool = Grammar[]
@@ -904,7 +907,7 @@ function handle_create_state(params)
 
         for g in grammar_pool
             programs = enumerate_programs(g, max_depth;
-                action_space=action_space, min_log_prior=-20.0)
+                action_space=action_space, min_log_prior=min_log_prior)
             for (pi, p) in enumerate(programs)
                 tag = length(all_ck) + 1
                 push!(all_components, TaggedBetaPrevision(tag, BetaPrevision(1.0, 1.0)))
@@ -1511,7 +1514,8 @@ function handle_enumerate(params)
 
     state.grammars[grammar.id] = grammar
     n_added = add_programs_to_state!(state, grammar, max_depth;
-        action_space=action_space)
+        action_space=action_space,
+        min_log_prior=Float64(get(params, "min_log_prior", -20.0)))
 
     Dict("n_added" => n_added,
          "grammar_id" => grammar.id,
@@ -1528,11 +1532,14 @@ function handle_perturb_grammar(params)
     grammar = state.grammars[grammar_id]
 
     w = weights(state.belief)
-    # min_frequency is a posterior-weight threshold (weighted_frequency ≤ 1), so it must live in [0,1];
-    # the prior `2` was unsatisfiable and made every wire perturbation a no-op. Match the hosts' 0.01.
-    # (Finding 4, PR #160 adversarial review.)
+    # The extraction gate is learning policy — the consumer's, not the skin's (protocol
+    # 1.14; audit follow-up). min_frequency is a posterior-weight threshold
+    # (weighted_frequency ≤ 1), so it must live in [0,1] to be satisfiable — an
+    # unsatisfiable value makes every perturbation a structural no-op (Finding 4,
+    # PR #160 adversarial review; the old hardcoded default 0.01 is the fallback).
     freq_table = analyse_posterior_subtrees(state.all_programs, w;
-        min_frequency=0.01, min_complexity=2)
+        min_frequency=Float64(get(params, "min_frequency", 0.01)),
+        min_complexity=Int(get(params, "min_complexity", 2)))
 
     new_grammar = perturb_grammar(grammar, freq_table, all_features)
     state.grammars[new_grammar.id] = new_grammar
@@ -1549,7 +1556,8 @@ function handle_add_programs(params)
     haskey(state.grammars, grammar_id) || error("grammar not found: $grammar_id")
     grammar = state.grammars[grammar_id]
 
-    n_added = add_programs_to_state!(state, grammar, max_depth)
+    n_added = add_programs_to_state!(state, grammar, max_depth;
+        min_log_prior=Float64(get(params, "min_log_prior", -20.0)))
     Dict("n_added" => n_added,
          "n_components" => length(state.belief.components))
 end
