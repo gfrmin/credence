@@ -30,7 +30,7 @@ using Main.Credence: CategoricalMeasure, Finite, Kernel, PushOnly, condition, we
 import Main.Credence.Ontology: optimise, value, net_voi
 
 export Obs, ChannelParams, CANONICAL_CHANNEL,
-       candidate_posterior, terminal_decide, decide_full, decision_fpa, voi_gather,
+       candidate_posterior, terminal_decide, decide_full, decision_fpa, voi_gather, grow_value,
        provisional_leader, gather_decide,
        Transform, ScheduleCtx, default_registry, registry_from_wire, schedule_decide
 
@@ -177,6 +177,22 @@ function terminal_decide(state::CategoricalMeasure, k::Int, u_bar::AbstractDict;
     act, eu = _decide(state, k, u_bar, cp)
     (_action_name(act, k), eu)
 end
+
+"""
+    grow_value(g, u_correct, eu, cost) -> Float64
+
+The gather VOI of one grow (recall/discovery) actuator — the ruling's "B half"
+(life-agent `docs/ask-as-connection.md` §4, §7). A grow move may enlarge the candidate set K to admit
+a missing truth; `g = P(recover the answer | sensors)` is the engine's structure-BMA belief at the
+sensor context. The value is the gain from converting the current terminal outcome (EU `eu`, from
+`decide_full` — untouched) into a correct report (`u_correct`), realised with probability `g`, net of
+`cost`. The missing-mass **self-gates through `eu`**: a confident report has `eu ≈ u_correct` ⇒ prices
+`≈ −cost` (don't grow a solved question); a withhold has low `eu` ⇒ a large gain. There is no `p_none`
+branch — `p_none`/entropy are features of the sensor context that shape `g`. Optimistic in the
+post-recovery value (a bound; `g` carries the realism — autonomous-recall Open-Q1).
+"""
+grow_value(g::Float64, u_correct::Float64, eu::Float64, cost::Float64)::Float64 =
+    g * (u_correct - eu) - cost
 
 """
     decide_full(state, k, u_bar; cp=CANONICAL_CHANNEL)
