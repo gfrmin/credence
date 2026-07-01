@@ -83,8 +83,9 @@ export expr_complexity, expanded_complexity
 export enumerate_programs, enumerate_programs_as_measure
 export compile_kernel, compile_expr, evaluate_predicate
 export analyse_posterior_subtrees, extract_subtrees
-export propose_nonterminal, perturb_grammar, net_voc, compression_exhausted
+export propose_nonterminal, perturb_grammar, net_voc, compression_exhausted, perturbation_voc
 export ExploreObservation, explore_grammar, explore_features, program_space_observation_kernel, default_thresholds
+export exploration_voi, feature_discovery_voi
 export expr_equal
 export AgentState, sync_prune!, sync_truncate!, reset_learning_regime!
 export aggregate_grammar_weights, top_k_grammar_ids

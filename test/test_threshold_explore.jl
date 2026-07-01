@@ -183,6 +183,18 @@ let
     # §3f Empty buffer / no candidates ⇒ no-op (the input grammar, unchanged).
     check("§3f empty buffer ⇒ no-op", explore_grammar(g, ExploreObservation[], 2; action_space = AS) === g,
           "expected no-op on empty buffer")
+
+    # §3g exploration_voi — the scalar the selection layer ranks by; shares _best_threshold_refinement with
+    # explore_grammar exactly, so the ranked value == the applied edit's Δℓ (Invariant 3, no drift).
+    check("§3g exploration_voi == the winning candidate's Δℓ (cc=0)",
+          exploration_voi(g, data, 2; action_space = AS, compute_cost = 0.0) == dl,
+          "got $(exploration_voi(g, data, 2; action_space = AS, compute_cost = 0.0)) vs dl=$dl")
+    check("§3g exploration_voi == 0.0 when compute_cost suppresses every candidate (no-op floor)",
+          exploration_voi(g, data, 2; action_space = AS, compute_cost = 1.0e6) == 0.0,
+          "got $(exploration_voi(g, data, 2; action_space = AS, compute_cost = 1.0e6))")
+    check("§3g exploration_voi == 0.0 on empty buffer",
+          exploration_voi(g, ExploreObservation[], 2; action_space = AS) == 0.0,
+          "got $(exploration_voi(g, ExploreObservation[], 2; action_space = AS))")
 end
 
 # ── §4  a refined grid survives compression (perturb_grammar threads g.thresholds — review should-fix) ──

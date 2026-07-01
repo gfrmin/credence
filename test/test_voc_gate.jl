@@ -89,6 +89,30 @@ let
     check("net_payoff = 0 ⇒ no-op (gate is strict >)", isempty(got1.rules), "rules=$(rules_str(got1))")
 end
 
+# ── (1d) perturbation_voc — the scalar the selection layer ranks by; shares _best_compression_candidate
+# with perturb_grammar/compression_exhausted (Invariant 3, no drift). The prior-only surrogate fidelity of
+# the one Δ log-evidence currency (Move 5), the cheap-screen peer of exploration_voi's exact lookahead. ──
+let
+    g = Grammar(Set([:red, :green]), ProductionRule[], 1)
+    ft, _ = shared_subtree_table(3)                       # net_payoff = 2 > 0
+    check("perturbation_voc == net_voc(oracle net_payoff) (the winning candidate's VOC)",
+          perturbation_voc(g, ft; compute_cost = 0.0) == net_voc(oracle_net_payoff(ft), 0.0),
+          "got $(perturbation_voc(g, ft; compute_cost = 0.0)) vs $(net_voc(oracle_net_payoff(ft), 0.0))")
+    check("perturbation_voc > 0 iff !compression_exhausted (cc=0)",
+          (perturbation_voc(g, ft; compute_cost = 0.0) > 0) == !compression_exhausted(g, ft; compute_cost = 0.0),
+          "voc=$(perturbation_voc(g, ft; compute_cost = 0.0)) exhausted=$(compression_exhausted(g, ft; compute_cost = 0.0))")
+
+    empty_ft = SubprogramFrequencyTable(ProgramExpr[], Float64[], Vector{Int}[])
+    check("perturbation_voc == 0.0 on the saturation no-op (empty table)",
+          perturbation_voc(g, empty_ft; compute_cost = 0.0) == 0.0,
+          "got $(perturbation_voc(g, empty_ft; compute_cost = 0.0))")
+
+    ft0, _ = shared_subtree_table(2)                      # net_payoff = 0, not > 0 ⇒ no-op
+    check("perturbation_voc == 0.0 when net_payoff = 0 (gate strict >)",
+          perturbation_voc(g, ft0; compute_cost = 0.0) == 0.0,
+          "got $(perturbation_voc(g, ft0; compute_cost = 0.0))")
+end
+
 # ── (1c) name-collision no-op (path b): a proposed rule whose name already exists ⇒ no-op, and the
 # existing body is never overwritten. This is the idempotence guard that keeps the :add_rule path
 # monotonic — re-perturbing a grammar that already holds the compression does not re-add or clobber it.

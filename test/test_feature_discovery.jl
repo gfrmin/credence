@@ -129,6 +129,19 @@ let
     gb = Credence.explore_features(g, data, available, 2; action_space = AS, compute_cost = 0.0)
     check("§3e determinism: identical inputs ⇒ identical feature_set",
           ga.feature_set == gb.feature_set, "a=$(ga.feature_set) b=$(gb.feature_set)")
+
+    # §3f feature_discovery_voi — the scalar the selection layer ranks by; shares _best_feature_addition with
+    # explore_features (Invariant 3). The two-axis Δ log-evidence: fit Δℓ minus the prior-Occam log2 (Δc=+1) —
+    # the boundary §4 mechanizes (Δℓ − log2, not Δℓ).
+    check("§3f feature_discovery_voi == dl − log2 (the two-axis VOI of the winning feature)",
+          Credence.feature_discovery_voi(g, data, available, 2; action_space = AS, compute_cost = 0.0) == dl - log(2),
+          "got $(Credence.feature_discovery_voi(g, data, available, 2; action_space = AS, compute_cost = 0.0)) vs dl−log2=$(dl - log(2))")
+    check("§3f feature_discovery_voi == 0.0 when no feature clears the bar (no-op floor)",
+          Credence.feature_discovery_voi(g, flat, available, 2; action_space = AS, compute_cost = 0.0) == 0.0,
+          "got $(Credence.feature_discovery_voi(g, flat, available, 2; action_space = AS, compute_cost = 0.0))")
+    check("§3f feature_discovery_voi == 0.0 on empty buffer",
+          Credence.feature_discovery_voi(g, ExploreObservation[], available, 2; action_space = AS) == 0.0,
+          "got $(Credence.feature_discovery_voi(g, ExploreObservation[], available, 2; action_space = AS))")
 end
 
 # ── §4  Q2 MECHANIZED: the prior-Occam term is charged EXPLICITLY (boundary at Δℓ − log2, not Δℓ) ──
