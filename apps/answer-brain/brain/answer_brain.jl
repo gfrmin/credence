@@ -254,8 +254,13 @@ end
 #   :guard — mandatory non-VOI refine. Defends an OUT-OF-MODEL risk the candidate belief cannot price
 #            (the belief has no atom for "misattributed to the owner"), so VOI over it is blind and
 #            the guard must fire unconditionally. (recency-on-era_split; the owner-scoped corroborate)
-# `:grow` (discovery/recall — enlarges K) cannot be priced by VOI over a closed categorical (Plan §1);
-# it is a non-VOI action the BODY triggers (a bridge capability + re-decide), never a registry probe.
+# `:grow` (discovery/recall — enlarges K) cannot be priced by `net_voi` over the closed categorical
+# (Plan §1) — but it IS priced (the conferred gather half, life-agent docs/ask-as-connection.md §4/§7):
+# by the engine's gather VOI (`grow_value`/`best_grow`/`recovery_g`, src/gather_voi.jl) against a
+# SEPARATE structure-BMA recovery belief `g = P(recover | sensors)`. Grow actuators ride their own
+# `grows` lane in `schedule_decide` (per-actuator `(probe, g, cost)` — no kernel over the candidate
+# space, so not a registry `Transform`), self-gating on the terminal EU. The body enacts; the agent
+# decides.
 struct Transform
     name::String        # registry id (unique within a registry)
     probe::String       # emitted wire-probe name (the body's capability; the `applied_probes` dedup key)
@@ -344,19 +349,23 @@ function registry_from_wire(descriptors; cp::ChannelParams = CANONICAL_CHANNEL):
 end
 
 """
-    schedule(state, k, u_bar, registry, ctx; cp=CANONICAL_CHANNEL)
+    schedule(state, k, u_bar, registry, ctx; cp=CANONICAL_CHANNEL, grows=[])
         -> (effector, report_index, probe, target, eu)
 
-The uniform VOI scheduler. Decide terminally once, then over the registry: every eligible, unapplied
-**guard** fires first (mandatory, registry order — it defends a risk the belief can't price); then
-every eligible, unapplied **:voi** transform is priced by `net_voi` and the argmax is gathered iff it
-clears its cost. None fire ⇒ the terminal decision stands. `applied_probes` (keyed on the emitted
-`probe`, body-held and resent) makes each probe fire at most once ⇒ the loop terminates. Parity: an
-empty / fully-applied registry returns exactly `decide_full`'s terminal tuple.
+The uniform VOI scheduler. Decide terminally once, then: every eligible, unapplied **guard** fires
+first (mandatory, registry order — it defends a risk the belief can't price); then the eligible,
+unapplied **:voi** transforms are priced by `net_voi` and the **grow** actuators by `grow_value`
+(the engine gather VOI — `g` per actuator, already read from the gather structure-BMA), and the
+overall argmax is gathered iff it clears 0. None fire ⇒ the terminal decision stands.
+`applied_probes` (keyed on the emitted `probe`, body-held and resent) makes each probe — registry
+and grow alike — fire at most once ⇒ the loop terminates. Parity: an empty / fully-applied registry
+with no `grows` returns exactly `decide_full`'s terminal tuple. Grow self-gates on the terminal EU
+(`grow_value(g, u_correct, eu, cost)`): a confident report prices ≈ −cost, so no `p_none` branch.
 """
 function schedule_decide(state::CategoricalMeasure, k::Int, u_bar::AbstractDict,
                   registry::Vector{Transform}, ctx::ScheduleCtx;
-                  cp::ChannelParams = CANONICAL_CHANNEL)
+                  cp::ChannelParams = CANONICAL_CHANNEL,
+                  grows::AbstractVector = Tuple{String, Float64, Float64}[])
     action, report_index, eu = decide_full(state, k, u_bar; cp = cp)
     leader() = provisional_leader(state, k, u_bar; cp = cp)
     # Guards first: mandatory, registry order. A guard prices an out-of-model risk VOI is blind to.
@@ -365,7 +374,7 @@ function schedule_decide(state::CategoricalMeasure, k::Int, u_bar::AbstractDict,
         t.probe in ctx.applied_probes && continue
         t.applies(action, ctx) && return ("gather", nothing, t.probe, leader(), eu)
     end
-    # :voi transforms: price each eligible, unapplied one; gather the argmax if its net_voi > 0.
+    # :voi transforms: price each eligible, unapplied one; keep the net_voi argmax if > 0.
     best = nothing; best_nv = 0.0
     for t in registry
         t.kind === :voi || continue
@@ -373,6 +382,12 @@ function schedule_decide(state::CategoricalMeasure, k::Int, u_bar::AbstractDict,
         t.applies(action, ctx) || continue
         nv = voi_gather(state, k, u_bar, t.kernel_fn(k, cp), collect(Float64, 0:(k - 1)), t.cost; cp = cp)
         nv > best_nv && (best_nv = nv; best = t)
+    end
+    # Grow actuators: the engine gather VOI over the unapplied ones; one EU comparison vs :voi.
+    unapplied = [(p, g, c) for (p, g, c) in grows if !(String(p) in ctx.applied_probes)]
+    grow_probe, grow_v = best_grow(unapplied, Float64(u_bar["u_correct"]), eu)
+    if grow_probe !== nothing && grow_v > best_nv
+        return ("gather", nothing, grow_probe, leader(), eu)
     end
     best === nothing && return (action, report_index, nothing, nothing, eu)
     ("gather", nothing, best.probe, leader(), eu)
@@ -393,11 +408,12 @@ function gather_decide(state::CategoricalMeasure, k::Int, u_bar::AbstractDict;
                        gather_rho::Float64 = 0.0,
                        gather_cost::Float64 = 0.0,
                        applied_probes::AbstractVector{<:AbstractString} = String[],
-                       cp::ChannelParams = CANONICAL_CHANNEL)
+                       cp::ChannelParams = CANONICAL_CHANNEL,
+                       grows::AbstractVector = Tuple{String, Float64, Float64}[])
     reg = default_registry(; gather_rho = gather_rho, gather_cost = gather_cost)
     ctx = ScheduleCtx(era_split, owner_scoped, gather_rho, gather_cost,
                       collect(String, applied_probes))
-    schedule_decide(state, k, u_bar, reg, ctx; cp = cp)
+    schedule_decide(state, k, u_bar, reg, ctx; cp = cp, grows = grows)
 end
 
 end # module AnswerBrain
