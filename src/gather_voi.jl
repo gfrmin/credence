@@ -40,3 +40,17 @@ function best_grow(actuators, u_correct::Float64, eu::Float64)
     end
     (best, best_v)
 end
+
+"""
+    recovery_g(model, top, features) -> Float64
+
+The learned `g = P(recover | sensors)` for one grow actuator: `E[θ | X]` of the actuator's
+structure-BMA outcome belief `top` at the sensor context (`context_from_features` on the
+`features` dict, then `expect` of `Identity` over the `belief_at_context` view). One
+outcome belief per actuator over one shared sensor model (routing's per-model `tops`
+shape); this readout is DECISION-GRADE — it is the pricing input to `grow_value`
+(`posterior_accuracy` is the inspection-only sibling).
+"""
+recovery_g(model::StructureBMA, top::MixturePrevision, features)::Float64 =
+    Float64(expect(belief_at_context(model, top, context_from_features(model, features)),
+                   Identity()))

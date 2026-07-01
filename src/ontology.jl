@@ -2211,7 +2211,7 @@ export StructureBMA, build_structure_model, build_structure_prior,
 # structure-BMA recovery belief (above) — the open-set complement of stdlib's `net_voi`
 # (lifted from apps/answer-brain — the conferred gather half).
 include("gather_voi.jl")
-export grow_value, best_grow
+export grow_value, best_grow, recovery_g
 
 # Family-BMA: the complexity log-prior (complexity.jl) on a family index — a posterior over
 # likelihood families, conditioned through the per-component-routed MixturePrevision condition above.

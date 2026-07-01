@@ -58,5 +58,55 @@ let u_c = 1.0, eu = -0.2
     check("best_grow returns nothing when nothing clears cost", best3 === nothing && bv3 == 0.0)
 end
 
+# ── recovery_g: the learned g — a structure-BMA readout at the sensor context ──────────
+# One outcome belief PER ACTUATOR (like routing's per-model `tops`) over one shared sensor
+# model; `g_c = recovery_g(model, top_c, sensors)` prices actuator c in `grow_value`.
+let model = build_structure_model(["miss", "p_none"],
+                                  [["extraction", "retrieval"], ["hi", "lo"]])
+    sensors_ex = Dict("miss" => "extraction", "p_none" => "hi")
+    sensors_rt = Dict("miss" => "retrieval", "p_none" => "hi")
+
+    # Cold start: every cell is Beta(alpha0=2, beta0=2) ⇒ g is exactly the prior mean.
+    cold = build_structure_prior(model)
+    check("recovery_g cold-starts at the prior mean",
+          approx(recovery_g(model, cold, sensors_ex), 0.5))
+
+    # Evidence moves g at the observed context and (by structure mixing) less elsewhere:
+    # re-extract keeps recovering on extraction-misses, failing on retrieval-misses.
+    top = cold
+    X_ex = context_from_features(model, sensors_ex)
+    X_rt = context_from_features(model, sensors_rt)
+    for _ in 1:6; top = structure_observe(model, top, X_ex, 1); end
+    for _ in 1:6; top = structure_observe(model, top, X_rt, 0); end
+    g_ex = recovery_g(model, top, sensors_ex)
+    g_rt = recovery_g(model, top, sensors_rt)
+    check("recovery_g rises where the actuator recovers", g_ex > 0.5, "g_ex=$g_ex")
+    check("recovery_g falls where it does not", g_rt < 0.5, "g_rt=$g_rt")
+
+    # Warm reconstruction from (n1, n0) counts is exact (order-independence): the
+    # body-shipped warm_counts path gives the SAME g as the sequential observes.
+    warm = reconstruct_structure_prior_from_data(model,
+        Dict("contexts" => [Dict("ctx" => ["extraction", "hi"], "n1" => 6, "n0" => 0),
+                            Dict("ctx" => ["retrieval", "hi"], "n1" => 0, "n0" => 6)]))
+    check("recovery_g from warm counts ≡ sequential observes",
+          approx(recovery_g(model, warm, sensors_ex), g_ex) &&
+          approx(recovery_g(model, warm, sensors_rt), g_rt))
+
+    # End-to-end: per-actuator beliefs feed best_grow — the learned g discriminates
+    # which-gather at the same sensor context.
+    top_re = top                              # re-extract: good on extraction-misses
+    top_rw = cold
+    for _ in 1:6; top_rw = structure_observe(model, top_rw, X_ex, 0); end
+    for _ in 1:6; top_rw = structure_observe(model, top_rw, X_rt, 1); end
+    acts_at(s) = [("re-extract", recovery_g(model, top_re, s), 0.05),
+                  ("retrieve-wider", recovery_g(model, top_rw, s), 0.05)]
+    b_ex, _ = best_grow(acts_at(sensors_ex), 1.0, -0.2)
+    b_rt, _ = best_grow(acts_at(sensors_rt), 1.0, -0.2)
+    check("learned g discriminates which-gather (extraction-miss ⇒ re-extract)",
+          b_ex == "re-extract", "got $b_ex")
+    check("learned g discriminates which-gather (retrieval-miss ⇒ retrieve-wider)",
+          b_rt == "retrieve-wider", "got $b_rt")
+end
+
 println("-"^64)
 println("gather VOI: all checks passed")
