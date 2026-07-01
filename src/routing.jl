@@ -334,8 +334,9 @@ _pget(profile, key::AbstractString, default::Float64)::Float64 =
     route_decide(rt, features, roster, profile) -> Dict | nothing
 
 Resolve a routing decision over the LIVE roster (the user's actual models, sent per request)
-or the declared default roster. Returns `nothing` — body keeps OpenClaw's model — when fewer
-than 2 candidates exist. Per-request profile overrides reward/w_time with no daemon restart.
+or the declared default roster. Returns `nothing` — the caller keeps its incumbent model —
+when fewer than 2 candidates exist. Per-request profile overrides reward/w_time with no
+daemon restart.
 """
 function route_decide(rt::RoutingState, features, roster, profile = nothing)
     names, providers, ids, costs, tops = _resolve_roster(rt, roster)
