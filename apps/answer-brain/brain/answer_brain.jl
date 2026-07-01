@@ -28,6 +28,9 @@ module AnswerBrain
 using Main.Credence: CategoricalMeasure, Finite, Kernel, PushOnly, condition, weights,
                      Tabular, Functional
 import Main.Credence.Ontology: optimise, value, net_voi
+# Gather VOI is engine stdlib (src/gather_voi.jl — upstreamed); imported so the app
+# surface (exports below) stays stable for the daemon/tests.
+import Main.Credence: grow_value, best_grow
 
 export Obs, ChannelParams, CANONICAL_CHANNEL,
        candidate_posterior, terminal_decide, decide_full, decision_fpa, voi_gather,
@@ -177,40 +180,6 @@ function terminal_decide(state::CategoricalMeasure, k::Int, u_bar::AbstractDict;
                          cp::ChannelParams = CANONICAL_CHANNEL)
     act, eu = _decide(state, k, u_bar, cp)
     (_action_name(act, k), eu)
-end
-
-"""
-    grow_value(g, u_correct, eu, cost) -> Float64
-
-The gather VOI of one grow (recall/discovery) actuator — the ruling's "B half"
-(life-agent `docs/ask-as-connection.md` §4, §7). A grow move may enlarge the candidate set K to admit
-a missing truth; `g = P(recover the answer | sensors)` is the engine's structure-BMA belief at the
-sensor context. The value is the gain from converting the current terminal outcome (EU `eu`, from
-`decide_full` — untouched) into a correct report (`u_correct`), realised with probability `g`, net of
-`cost`. The missing-mass **self-gates through `eu`**: a confident report has `eu ≈ u_correct` ⇒ prices
-`≈ −cost` (don't grow a solved question); a withhold has low `eu` ⇒ a large gain. There is no `p_none`
-branch — `p_none`/entropy are features of the sensor context that shape `g`. Optimistic in the
-post-recovery value (a bound; `g` carries the realism — autonomous-recall Open-Q1).
-"""
-grow_value(g::Float64, u_correct::Float64, eu::Float64, cost::Float64)::Float64 =
-    g * (u_correct - eu) - cost
-
-"""
-    best_grow(actuators, u_correct, eu) -> (probe::Union{String,Nothing}, value::Float64)
-
-The which-gather argmax over grow actuators — the ruling's "B half" discriminating (e.g.) re-extract
-vs retrieve-wider. Each actuator is `(probe::String, g::Float64, cost::Float64)`; the winner is the
-`grow_value` argmax, returned iff it strictly clears 0 (mirrors the `:voi` `net_voi > 0` gate). None
-clears ⇒ `(nothing, 0.0)` — no grow, the terminal decision stands.
-"""
-function best_grow(actuators, u_correct::Float64, eu::Float64)
-    best = nothing
-    best_v = 0.0
-    for (probe, g, cost) in actuators
-        v = grow_value(Float64(g), u_correct, eu, Float64(cost))
-        v > best_v && (best_v = v; best = String(probe))
-    end
-    (best, best_v)
 end
 
 """

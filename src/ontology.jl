@@ -2207,6 +2207,12 @@ export StructureBMA, build_structure_model, build_structure_prior,
        belief_at_context, context_from_features, structure_firing_tags,
        structure_decision_kernel, reconstruct_structure_prior_from_data
 
+# Gather VOI: pricing + which-gather argmax for grow (set-enlarging) actuators, against a
+# structure-BMA recovery belief (above) — the open-set complement of stdlib's `net_voi`
+# (lifted from apps/answer-brain — the conferred gather half).
+include("gather_voi.jl")
+export grow_value, best_grow
+
 # Family-BMA: the complexity log-prior (complexity.jl) on a family index — a posterior over
 # likelihood families, conditioned through the per-component-routed MixturePrevision condition above.
 # collapse-towers Phase 2.

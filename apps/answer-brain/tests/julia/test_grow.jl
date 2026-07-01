@@ -1,15 +1,12 @@
 #!/usr/bin/env julia
 # Role: tests
 """
-    test_grow.jl — the gather VOI (the ruling's "B half"): grow actuators priced by a
-    structure-BMA `g_mechanism`, argmaxed for which-gather, self-gating on the terminal EU.
+    test_grow.jl — app-side integration checks for the gather VOI (the ruling's "B half").
 
-The conferred factoring (life-agent `docs/ask-as-connection.md` §4, §7): report/abstain stays the
-exact terminal threshold (`terminal_decide`, untouched); only the *gather* decision is offloaded. A
-grow actuator's value is `grow_value(g, u_correct, eu, cost) = g·(u_correct − eu) − cost`, where
-`g = P(recover | sensors)` is the engine's structure-BMA belief and `eu` is the terminal EU — so the
-missing-mass gate is carried by `u_correct − eu` (a confident report prices ≈ −cost), not a `p_none`
-branch. `terminal_decide` is never touched.
+The pricing (`grow_value`) and the which-gather argmax (`best_grow`) are ENGINE stdlib
+(`src/gather_voi.jl`, behaviour pinned by `test/test_gather_voi.jl`); the app imports and
+re-exports them. These checks pin only the integration: the app surface IS the engine
+function (no shadowing fork), and one behavioural smoke each through the app name.
 
 Run from the credence repo root:
     julia --project=. apps/answer-brain/tests/julia/test_grow.jl
@@ -32,48 +29,25 @@ end
 approx(a, b; atol = 1e-9) = abs(a - b) <= atol
 
 println("="^64)
-println("answer-brain grow — the gather VOI (B half)")
+println("answer-brain grow — engine gather-VOI integration")
 println("="^64)
 
-# ── Slice 1: grow_value — the pure pricing, self-gating on the terminal EU ────────────────
-# grow_value(g, u_correct, eu, cost) = g·(u_correct − eu) − cost
-let u_c = 1.0, cost = 0.1
-    # A confident terminal report (eu ≈ u_correct) has ~zero gain ⇒ net = −cost ⇒ no grow.
-    check("grow_value self-gates at a confident report",
-          approx(AnswerBrain.grow_value(0.9, u_c, u_c, cost), -cost))
-    # A withhold (low eu) with high g clears cost ⇒ positive (grow is worth it).
-    check("grow_value is positive for a high-g withhold",
-          AnswerBrain.grow_value(0.8, u_c, -0.2, cost) > 0.0)
-    # Monotone increasing in g (more likely to recover ⇒ more valuable).
-    check("grow_value is monotone in g",
-          AnswerBrain.grow_value(0.6, u_c, -0.2, cost) >
-          AnswerBrain.grow_value(0.3, u_c, -0.2, cost))
-    # The gain shrinks as the terminal EU rises toward u_correct (less to gain by growing).
-    check("grow_value decreases as terminal EU rises",
-          AnswerBrain.grow_value(0.7, u_c, 0.8, cost) <
-          AnswerBrain.grow_value(0.7, u_c, -0.2, cost))
-    # Cost enters linearly (exact).
-    check("grow_value subtracts cost exactly",
-          approx(AnswerBrain.grow_value(0.5, 1.0, 0.0, 0.1), 0.5 * 1.0 - 0.1))
-end
+# The app surface is the engine function, not a fork.
+check("AnswerBrain.grow_value === Credence.grow_value",
+      AnswerBrain.grow_value === Credence.grow_value)
+check("AnswerBrain.best_grow === Credence.best_grow",
+      AnswerBrain.best_grow === Credence.best_grow)
 
-# ── Slice 2: best_grow — the which-gather argmax (fires only if the best clears 0) ─────────
+# One behavioural smoke each through the app name (self-gating + which-gather).
+let u_c = 1.0, cost = 0.1
+    check("grow_value self-gates at a confident report (≈ −cost)",
+          approx(AnswerBrain.grow_value(0.9, u_c, u_c, cost), -cost))
+end
 let u_c = 1.0, eu = -0.2
-    # Two actuators, different g at the same context ⇒ pick the higher-value one
-    # (this is B discriminating re-extract vs retrieve-wider — the ruling's raison d'être).
-    acts = [("re-extract", 0.7, 0.1), ("retrieve-wider", 0.4, 0.1)]
-    best, bv = AnswerBrain.best_grow(acts, u_c, eu)
-    check("best_grow picks the higher-value actuator", best == "re-extract")
-    check("best_grow value matches grow_value",
-          approx(bv, AnswerBrain.grow_value(0.7, u_c, eu, 0.1)))
-    # Cost can flip the choice: a cheaper, lower-g actuator can win.
-    acts2 = [("re-extract", 0.55, 0.5), ("retrieve-wider", 0.5, 0.05)]
-    best2, _ = AnswerBrain.best_grow(acts2, u_c, eu)
-    check("best_grow accounts for cost (the cheaper actuator wins)", best2 == "retrieve-wider")
-    # A solved question (eu ≈ u_correct) ⇒ nothing clears 0 ⇒ no grow.
-    best3, bv3 = AnswerBrain.best_grow(acts, u_c, u_c)
-    check("best_grow returns nothing when nothing clears cost", best3 === nothing && bv3 == 0.0)
+    best, bv = AnswerBrain.best_grow([("re-extract", 0.7, 0.1), ("retrieve-wider", 0.4, 0.1)], u_c, eu)
+    check("best_grow discriminates which-gather through the app surface",
+          best == "re-extract" && approx(bv, AnswerBrain.grow_value(0.7, u_c, eu, 0.1)))
 end
 
 println("-"^64)
-println("grow slices 1-2 (grow_value, best_grow): ", length(PASSED), " checks passed")
+println("grow integration: ", length(PASSED), " checks passed")
