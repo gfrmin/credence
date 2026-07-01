@@ -1,6 +1,6 @@
 # Credence Skin Protocol
 
-Protocol-Version: 1.12
+Protocol-Version: 1.13
 
 JSON-RPC 2.0 over stdio. Skin reads newline-delimited JSON from stdin,
 writes newline-delimited JSON to stdout, logs to stderr.
@@ -13,6 +13,22 @@ truth, asserted in CI to equal `PROTOCOL_VERSION` in `server.jl`.
 
 ### Changelog
 
+- **1.13** — the belief-derived tail + the per-context read (one additive unit; the
+  governor wire requests R1+R2). (a) `structure_decide` gains an optional `tail` object
+  `{model_id, state_id, features, function}`: a continuation model + belief + context plus a
+  CONSUMER-DECLARED functional whose posterior expectation sets `expected_repeats` — e.g.
+  `{"type": "geometric_tail"}` prices the tail as `m = E[ρ/(1−ρ)] = α/(β−1)`. The declared
+  functional is the consumer's world-model crossing the wire as data; the engine hardcodes no
+  distributional commitment, computes `m` brain-side, and the scalar never transits the
+  consumer. **Precedence:** a present `tail` supersedes the scalar `expected_repeats`.
+  Sending both is a *transient rolling-upgrade fallback only* — a pre-1.13 engine ignores the
+  unknown `tail` and falls back to the hand-typed scalar, but since `structure_expect` is
+  also 1.13 no belief-derived `m` exists there either; the scalar bridge is not a standing
+  endorsement of the typed constant this surface exists to retire. (b) `structure_expect`
+  read verb — a per-context scalar expectation off a structure belief (`function` from the
+  same vocabulary; `geometric_tail` added to it). Read-only; for display, audit, and offline
+  calibration — **not a decision channel** (see the verb section). Version negotiation stays
+  the consumer's job.
 - **1.12** — the lookup ρ-latent goes EXACT (discretisation-antipattern disposal, Phase C). One
   addition, one removal, one reshaped kernel: (a) `reliability_categorical` belief-spec — a
   categorical V (`v_log_weights`, the candidate atoms + NONE, 1-based) with a Beta(`alpha`,`beta`)
@@ -508,9 +524,10 @@ belief `state_id` is unchanged.
 ### structure_decide
 
 The proceed/block/ask EU decision at a context (engine stdlib `decide_with_voi`). The
-client ships only utility scalars; the engine assembles all coefficients, the VOI ask-gate,
-and the argmax. An optional `harm` object adds a second outcome (a separate harm model +
-belief + context) integrated in one EU.
+client ships only utility scalars and declarations; the engine assembles all coefficients,
+the VOI ask-gate, and the argmax. An optional `harm` object adds a second outcome (a
+separate harm model + belief + context) integrated in one EU. An optional `tail` object
+(1.13) derives `expected_repeats` from a continuation belief instead of a hand-typed scalar.
 
 ```json
 {"method": "structure_decide", "params": {
@@ -519,7 +536,10 @@ belief + context) integrated in one EU.
   "cost": 1.0, "aversion": 1.0, "interrupt_cost": 0.5,
   "expected_repeats": 0.0, "w_time": 0.0, "exp_time": 0.0,
   "harm": {"model_id": "m_2", "state_id": "s_2",
-           "features": {"tool": "bash", "rep": "rep3"}, "harm_cost": 2.0}
+           "features": {"tool": "bash", "rep": "rep3"}, "harm_cost": 2.0},
+  "tail": {"model_id": "m_3", "state_id": "s_3",
+           "features": {"tool": "bash", "rep": "rep3"},
+           "function": {"type": "geometric_tail"}}
 }}
 ```
 
@@ -528,10 +548,55 @@ belief + context) integrated in one EU.
 ```
 
 `action` is `"proceed"`, `"block"`, or `"ask"`. `expected_repeats` (m, the multi-turn
-tail), `w_time`/`exp_time` (the wall-clock saving), and `harm` are optional; omitting all
-of them gives the myopic single-outcome decision. `belief_at_context` is intentionally not
-a verb — `structure_decide` consumes the per-context view internally and no consumer reads
-it across the wire.
+tail), `w_time`/`exp_time` (the wall-clock saving), `harm`, and `tail` are optional;
+omitting all of them gives the myopic single-outcome decision.
+
+The `tail` object is a continuation model + belief + context whose posterior expectation
+under the **required, consumer-declared** `function` sets `expected_repeats`:
+`{"type": "geometric_tail"}` declares a geometric repeat process and prices the tail as
+`m = E[ρ/(1−ρ)]` (closed form `α/(β−1)` on Beta cells; `β ≤ 1` fails loud as an inference
+error). The declaration is the consumer's world-model crossing the wire as data — the
+engine never chooses a distributional commitment on the consumer's behalf, and the
+belief-derived `m` never transits the consumer. **Precedence:** a present `tail` supersedes
+the scalar `expected_repeats`; sending both is a transient rolling-upgrade fallback only
+(see the 1.13 changelog). A missing or unknown `tail.function` fails loud as a DSL error.
+
+`belief_at_context` is intentionally not a verb — `structure_decide` consumes the
+per-context view internally, and the belief object never crosses the wire. Scalar
+*expectations* of it are readable via `structure_expect` (1.13) for audit and calibration;
+that verb is not a decision channel (see its section).
+
+### structure_expect
+
+A per-context scalar expectation read off a structure belief (protocol 1.13): the
+posterior expectation of a declared `function` at the context. Read-only — no state
+mutation; only the scalar crosses the wire (the belief stays server-side, Invariant 1).
+
+**Usage contract: `structure_expect` is a read for display, audit, and offline
+calibration — it is NOT a decision channel; decisions are `structure_decide`'s job
+(EU-max).** Branching app-side on the returned float (`if P(unsafe) > k: block`)
+reintroduces exactly the hardcoded threshold `structure_decide`'s EU-max exists to
+eliminate. The engine cannot enforce this — it returns a float — so the contract lives
+here, on the surface both sides read, and binds consumers of this protocol.
+
+```json
+{"method": "structure_expect", "params": {
+  "model_id": "m_1", "state_id": "s_1",
+  "features": {"tool": "bash", "rep": "rep3"},
+  "function": {"type": "identity"}
+}}
+```
+
+```json
+{"result": {"value": 0.714285714285714}}
+```
+
+`function` uses the same declared-functional vocabulary as `expect`:
+`{"type": "identity"}` reads the posterior mean `P(unsafe|X) = α/(α+β)`;
+`{"type": "geometric_tail"}` reads the tail `m = E[ρ/(1−ρ)] = α/(β−1)` — the same `m`
+`structure_decide`'s `tail` folds into a decision, so every tail-driven block is
+auditable from the same belief. Unknown `model_id`/`state_id` → `StateNotFound`
+(`-32000`); an unknown `function` fails loud as a DSL error.
 
 ## Routing (protocol 1.5)
 
