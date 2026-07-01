@@ -448,6 +448,22 @@ function perturb_grammar(g::Grammar, freq_table::SubprogramFrequencyTable;
     perturb_grammar(g, freq_table, g.feature_set; compute_cost = compute_cost)
 end
 
+"""
+    perturbation_voc(g, freq_table; compute_cost = 0.0) → Float64
+
+The scalar net VOC of the best compression-class perturbation — the winning candidate's `net_voc`, or `0.0`
+when none clears (the saturation no-op floor). The `expect`-side value of `perturb_grammar`'s edit: the
+selection layer ranks the `:gw_perturb_grammar` meta-action by this scalar — the **prior-only surrogate**
+fidelity of the one Δ log-evidence currency (Move 5), the cheap-screen peer of `exploration_voi`'s exact
+lookahead. Shares `_best_compression_candidate` with `perturb_grammar` and `compression_exhausted`, so the
+ranked value, the applied edit, and the saturation signal can never disagree (Invariant 3). At
+`compute_cost = 0`, `perturbation_voc > 0` iff `!compression_exhausted`.
+"""
+function perturbation_voc(g::Grammar, freq_table::SubprogramFrequencyTable; compute_cost::Float64 = 0.0)::Float64
+    best = _best_compression_candidate(g, freq_table; compute_cost = compute_cost)
+    best === nothing ? 0.0 : best.voc
+end
+
 # ═══════════════════════════════════════
 # AST structural equality (for subtree matching)
 # ═══════════════════════════════════════

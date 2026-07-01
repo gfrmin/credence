@@ -270,12 +270,36 @@ Mechanism (Q2a/Q3a/Q3b):
 One refinement per call (like `perturb_grammar` adds one rule): the host applies it, resets the residual
 regime (the alphabet changed — Move 2 Q1b), accrues more data, and may explore again.
 """
-function explore_grammar(g::Grammar, observations::Vector{ExploreObservation}, max_depth::Int;
-                         action_space::Vector{Symbol} = Symbol[:classify],
-                         compute_cost::Float64 = 0.0)::Grammar
-    isempty(observations) && return g
+explore_grammar(g::Grammar, observations::Vector{ExploreObservation}, max_depth::Int;
+                action_space::Vector{Symbol} = Symbol[:classify], compute_cost::Float64 = 0.0)::Grammar =
+    first(_best_threshold_refinement(g, observations, max_depth;
+                                     action_space = action_space, compute_cost = compute_cost))
+
+"""
+    exploration_voi(g, observations, max_depth; action_space, compute_cost = 0.0) → Float64
+
+The scalar net VOI of the best threshold refinement — `net_value(Δℓ, compute_cost)` for the argmax
+candidate, or `0.0` when none clears (the no-op floor, matching `explore_grammar`'s structural no-op). The
+`expect`-side value of `explore_grammar`'s edit: the selection layer ranks the `:gw_explore` meta-action by
+this scalar, then applies `explore_grammar`. Shares `_best_threshold_refinement` with `explore_grammar`
+exactly, so the ranked value and the applied edit can never disagree (Invariant 3). Asserted by
+test_threshold_explore.jl §3g (the scalar == the doc's Δℓ).
+"""
+exploration_voi(g::Grammar, observations::Vector{ExploreObservation}, max_depth::Int;
+                action_space::Vector{Symbol} = Symbol[:classify], compute_cost::Float64 = 0.0)::Float64 =
+    last(_best_threshold_refinement(g, observations, max_depth;
+                                    action_space = action_space, compute_cost = compute_cost))
+
+# The shared core: the threshold-refinement argmax, returning BOTH the winning grammar and its net VOI.
+# `explore_grammar` projects out the grammar (apply the edit); `exploration_voi` projects out the scalar
+# (rank the meta-action). One computation, two projections — Invariant 3, no drift between "which refinement"
+# and "how much it's worth". Returns `(g, 0.0)` on the no-op paths (empty buffer / no candidate / none clears).
+function _best_threshold_refinement(g::Grammar, observations::Vector{ExploreObservation}, max_depth::Int;
+                                    action_space::Vector{Symbol} = Symbol[:classify],
+                                    compute_cost::Float64 = 0.0)::Tuple{Grammar, Float64}
+    isempty(observations) && return (g, 0.0)
     candidates = _threshold_candidates(g, observations)
-    isempty(candidates) && return g
+    isempty(candidates) && return (g, 0.0)
 
     masses = Float64[_candidate_residual_mass(feat, t, observations) for (feat, t) in candidates]
     order = sortperm(masses, rev = true)   # stable: residual order, deterministic tie-break
@@ -294,7 +318,7 @@ function explore_grammar(g::Grammar, observations::Vector{ExploreObservation}, m
             best = g_cand
         end
     end
-    best
+    (best, best_voi)
 end
 
 # ═══════════════════════════════════════
@@ -348,13 +372,37 @@ rand, one feature per call (the host applies it, resets the residual regime — 
 Q1b — and may explore again, including re-opening threshold refinement on the new feature's grid — the cyclic
 ladder of §8.4).
 """
-function explore_features(g::Grammar, observations::Vector{ExploreObservation},
-                          available_features::Set{Symbol}, max_depth::Int;
-                          action_space::Vector{Symbol} = Symbol[:classify],
-                          compute_cost::Float64 = 0.0)::Grammar
-    isempty(observations) && return g
+explore_features(g::Grammar, observations::Vector{ExploreObservation},
+                 available_features::Set{Symbol}, max_depth::Int;
+                 action_space::Vector{Symbol} = Symbol[:classify], compute_cost::Float64 = 0.0)::Grammar =
+    first(_best_feature_addition(g, observations, available_features, max_depth;
+                                 action_space = action_space, compute_cost = compute_cost))
+
+"""
+    feature_discovery_voi(g, observations, available_features, max_depth; action_space, compute_cost = 0.0) → Float64
+
+The scalar net VOI of the best feature addition — `net_value(Δℓ + complexity_logprior(Δc; λ=log2), compute_cost)`
+for the argmax candidate, or `0.0` when none clears. The exact, general instance of the one Δ log-evidence
+currency (both the fit and prior terms; Move 5). The `expect`-side value of `explore_features`'s edit: the
+selection layer ranks the `:gw_add_feature` meta-action by this scalar, then applies `explore_features`. Shares
+`_best_feature_addition` with `explore_features` exactly (Invariant 3, no drift). Asserted by test_feature_discovery.jl.
+"""
+feature_discovery_voi(g::Grammar, observations::Vector{ExploreObservation},
+                      available_features::Set{Symbol}, max_depth::Int;
+                      action_space::Vector{Symbol} = Symbol[:classify], compute_cost::Float64 = 0.0)::Float64 =
+    last(_best_feature_addition(g, observations, available_features, max_depth;
+                                action_space = action_space, compute_cost = compute_cost))
+
+# The shared core: the feature-addition argmax, returning BOTH the winning grammar and its net VOI (the
+# two-axis Δ log-evidence — fit Δℓ plus the explicit prior-Occam penalty). `explore_features` projects out the
+# grammar, `feature_discovery_voi` the scalar (Invariant 3). Returns `(g, 0.0)` on the no-op paths.
+function _best_feature_addition(g::Grammar, observations::Vector{ExploreObservation},
+                                available_features::Set{Symbol}, max_depth::Int;
+                                action_space::Vector{Symbol} = Symbol[:classify],
+                                compute_cost::Float64 = 0.0)::Tuple{Grammar, Float64}
+    isempty(observations) && return (g, 0.0)
     candidates = _feature_candidates(g, available_features)
-    isempty(candidates) && return g
+    isempty(candidates) && return (g, 0.0)
 
     baseline = _grammar_marginal_log_loss(g, observations, max_depth, action_space)
 
@@ -372,5 +420,5 @@ function explore_features(g::Grammar, observations::Vector{ExploreObservation},
             best = g_cand
         end
     end
-    best
+    (best, best_voi)
 end
