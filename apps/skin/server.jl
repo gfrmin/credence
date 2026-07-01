@@ -646,7 +646,10 @@ function build_grammar(spec)
         end
     end
     gid = next_grammar_id()
-    Grammar(gid, rules, features)
+    # 3-arg (feature_set, rules, id) convenience constructor — default per-feature
+    # threshold grid, computed complexity (types.jl). Argument order is load-bearing:
+    # asserted end-to-end by test_program_space_policy_params in test_skin.py.
+    Grammar(features, rules, gid)
 end
 
 # ═══════════════════════════════════════
