@@ -279,6 +279,8 @@ The slug index below is the lint's source of truth for valid slugs (regex `^\*\*
 
 **Slug:** `untyped-mixture-construction` — Untyped container literals (`Any[]`, bare `[]`, `Vector{Any}(...)`, `convert(Vector{Any}, ...)`) passed to Mixture/Product/Particle/Enumeration constructors. Use a typed Vector literal (e.g. `TaggedBetaPrevision[]`). Escape hatch for justified heterogeneous construction (e.g. deserialisation). (Invariant 3)
 
+**Slug:** `engine-template-guard` — Domain templates (e.g. `decide_with_voi`, the routing state machine) may live engine-side ONLY under the five-point guard: every coefficient from declared wire data; all math canalised through the axiom ops; no consumer identifiers in code or docs; every default documented and wire-overridable; unsupported shapes fail loud. A template coordinate that requires the engine to *choose* a functional/distribution/threshold for the consumer is redesigned as a declared field. Documentation-only (review checklist, not a pragma target). (Invariants 1 + 2; the decouple commitment)
+
 ## Development commands
 
 Julia tests (one file at a time; `ls test/test_*.jl` for the catalogue):

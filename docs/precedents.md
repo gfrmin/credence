@@ -117,6 +117,20 @@ The compact slug index lives in `CLAUDE.md` — that's what the lint reads to di
 **Escape hatch:** `# credence-lint: allow — precedent:untyped-mixture-construction — <reason>`. Admissible for deserialisation paths where types are recovered at parse time and the intermediate `Any[]` is a transient artefact.
 **Follows from Invariant 3** (single-responsibility representations: the container's element type is part of its representation, and `Any` conflates "I don't know the type" with "any type is allowed").
 
+**Slug:** `engine-template-guard`.
+**Context.** The decouple commitment moves probabilistic/EU *arithmetic* INTO the engine so wire consumers stay math-free ("a wire client ships the scalars, the engine does all the arithmetic" — `src/stdlib.jl`, `src/structure_bma.jl`). The price is a stratum of **domain templates** in engine code — `decide_with_voi` (the proceed/block/ask EVPI template), the routing state machine, the structure-BMA conveniences. Templates are the deliberate exception to engine minimality, and they are where consumer world-models creep inboard one coordinate at a time.
+**The guard.** A template (or a new template coordinate) may live engine-side only if ALL five hold:
+1. Every coefficient comes from **declared wire data** (utility scalars, belief references, declared functionals) — never from a constant the engine picks.
+2. All math is **canalised through the axiom ops** (`condition`/`expect`/`push`/`density` and their stdlib compositions, maximised by the one `optimise`).
+3. **No consumer identifiers** in code or docs (model names, app names, product rosters). Provenance comments are fine; consumer *semantics* are not.
+4. Every default is **documented and wire-overridable** (the `get(params, key, default)` idiom; the default named in `protocol.md`).
+5. Unsupported shapes **fail loud** with an informative error, never a silent approximation or a silent ignore.
+**Legal.** `decide_with_voi`'s coefficient assembly (all inputs are declared kwargs; the EVPI act/refrain/resolve triple is mathematical structure); `structure_decide`'s `tail` with a required consumer-declared `function` field; `alpha0`/`beta0`/`p_edge` as documented overridable defaults; `emission_prior` as an optional `routing_init` param.
+**Illegal.** The skin hardcoding `expect(tb, GeometricTail())` (the engine choosing the consumer's distributional world-model — redesigned as the declared `tail.function` field in 1.13); the skin fixing `min_frequency`/`min_complexity`/`min_log_prior` (learning policy the consumer could not override — exposed in 1.14); "OpenClaw's model" in a `src/` docstring.
+**Rewrite:** a coordinate that requires the engine to *choose* a functional, distribution, prior, or threshold for the consumer becomes a **declared field** in the wire request (Invariant 2 at the protocol boundary).
+**No pragma.** Documentation-only — this is a design-review checklist for template additions, not a line-level lint target. The audit surface is `protocol.md` diffs and template signatures.
+**Follows from Invariants 1 + 2 and the decouple commitment** (SPEC §6.9): no consumer math (Invariant 1 across the wire), no consumer modelling in the engine (true decoupling), declared structure at every boundary (Invariant 2). Sibling of the "reads are not decisions" contract (`structure_expect`, 1.13): that governs what *leaves* the engine; this governs what *enters* it.
+
 ## Specific derivations
 
 ### Indifference implies exploration
