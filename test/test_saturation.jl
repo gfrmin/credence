@@ -45,7 +45,7 @@ end
 # ── (2) compression_exhausted ≡ perturb_grammar no-op (the prior-side half, Move-1 reuse) ──
 let
     g = Grammar(Set([:red, :green]), ProductionRule[], 1)
-    s = AndExpr(GTExpr(:red, 0.7), LTExpr(:green, 0.3))
+    s = AndExpr(GTExpr(FeatureRef(:red), 0.7), LTExpr(FeatureRef(:green), 0.3))
     progs = Program[Program(IfExpr(s, ActionExpr(:a), ActionExpr(:b)), 6, 1) for _ in 1:3]
     ft = analyse_posterior_subtrees(progs, fill(1 / 3, 3); min_frequency = 0.0, min_complexity = 2)
     check("compressing table ⇒ NOT exhausted", compression_exhausted(g, ft) == false)

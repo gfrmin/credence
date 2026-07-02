@@ -163,8 +163,12 @@ nonterminal walk handles its own transitivity. One method per `ProgramExpr` subt
 a future node type fails loud (a silently-unwalked node is a silent unsoundness). Asserted by
 test_compression_removal.jl §5–§6.
 """
-collect_feature_refs!(acc::Set{Symbol}, e::GTExpr) = (push!(acc, e.feature); acc)
-collect_feature_refs!(acc::Set{Symbol}, e::LTExpr) = (push!(acc, e.feature); acc)
+# The walk sees THROUGH arithmetic (num_feature_refs!, types.jl): a product referencing :a
+# keeps :a alive for :remove_feature. (Design §2's "deferred with #174" note was stale —
+# collect_feature_refs! landed WITH #174 before this move, so the NumExpr recursion is a
+# correctness requirement here, not a follow-up.)
+collect_feature_refs!(acc::Set{Symbol}, e::GTExpr) = num_feature_refs!(acc, e.lhs)
+collect_feature_refs!(acc::Set{Symbol}, e::LTExpr) = num_feature_refs!(acc, e.lhs)
 collect_feature_refs!(acc::Set{Symbol}, ::NonterminalRef) = acc
 collect_feature_refs!(acc::Set{Symbol}, ::ActionExpr) = acc
 collect_feature_refs!(acc::Set{Symbol}, e::AndExpr) =
@@ -469,10 +473,10 @@ end
 # ═══════════════════════════════════════
 
 function expr_equal(a::GTExpr, b::GTExpr)
-    a.feature == b.feature && a.threshold == b.threshold
+    num_equal(a.lhs, b.lhs) && a.threshold == b.threshold
 end
 function expr_equal(a::LTExpr, b::LTExpr)
-    a.feature == b.feature && a.threshold == b.threshold
+    num_equal(a.lhs, b.lhs) && a.threshold == b.threshold
 end
 function expr_equal(a::AndExpr, b::AndExpr)
     expr_equal(a.left, b.left) && expr_equal(a.right, b.right)

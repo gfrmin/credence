@@ -17,14 +17,14 @@
 
 push!(LOAD_PATH, joinpath(@__DIR__, "..", "..", "src"))
 using Credence
-using Credence: Grammar, ProductionRule, GTExpr, LTExpr, AndExpr, show_expr,
+using Credence: Grammar, ProductionRule, FeatureRef, GTExpr, LTExpr, AndExpr, show_expr,
                 enumerate_programs, enumerate_programs_as_measure, weights,
                 TaggedBetaPrevision, BetaPrevision, Prevision, MixturePrevision,
                 compile_kernel, program_space_observation_kernel, condition,
                 ExploreObservation
 
 g = Grammar(Set([:a, :b]),
-            [ProductionRule(:HOT, AndExpr(GTExpr(:a, 0.7), LTExpr(:b, 0.3)))], 901)
+            [ProductionRule(:HOT, AndExpr(GTExpr(FeatureRef(:a), 0.7), LTExpr(FeatureRef(:b), 0.3)))], 901)
 const AS = Symbol[:food, :enemy]
 
 progs = enumerate_programs(g, 3; action_space = AS)

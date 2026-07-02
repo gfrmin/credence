@@ -206,7 +206,7 @@ let
 
     # A freq_table whose top subtree compresses: AndExpr (complexity 3) used by 3 programs ⇒
     # net_payoff = 3·(3−1) − (1+3) = 2 > 0 ⇒ :add_rule fires (referenced=nothing ⇒ no removal candidates).
-    sub = AndExpr(GTExpr(:x, 0.3), LTExpr(:x, 0.7))
+    sub = AndExpr(GTExpr(FeatureRef(:x), 0.3), LTExpr(FeatureRef(:x), 0.7))
     table = SubprogramFrequencyTable(ProgramExpr[sub], [3.0], [[1, 2, 3]])
     g_perturbed = perturb_grammar(g_ref, table, g_ref.feature_set)
 

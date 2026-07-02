@@ -47,8 +47,8 @@ println("="^64)
 # PROGRAM AST, which never enters NT_A's body, so referenced_nonterminals = {:NT_A}. Pre-fix
 # _removal_payoff flags :NT_B dead and removes it, leaving NT_A's body with a dangling ref → crash.
 let
-    nt_b = ProductionRule(:NT_B, GTExpr(:x, 0.3))
-    nt_a = ProductionRule(:NT_A, AndExpr(NonterminalRef(:NT_B), GTExpr(:y, 0.5)))
+    nt_b = ProductionRule(:NT_B, GTExpr(FeatureRef(:x), 0.3))
+    nt_a = ProductionRule(:NT_A, AndExpr(NonterminalRef(:NT_B), GTExpr(FeatureRef(:y), 0.5)))
     g = Grammar(Set([:x, :y]), [nt_b, nt_a], 1)
     prog = Program(IfExpr(NonterminalRef(:NT_A), ActionExpr(:a), ActionExpr(:b)), 3, 1)
     ft = analyse_posterior_subtrees([prog], [1.0]; min_frequency = 0.0, min_complexity = 2)
@@ -79,9 +79,9 @@ end
 # NOBODY. The fix keeps NT_LEAF (NT_MID's body protects it) but NT_ORPHAN stays dead and removable.
 let
     g = Grammar(Set([:x, :y, :z]),
-                [ProductionRule(:NT_LEAF, GTExpr(:x, 0.3)),
-                 ProductionRule(:NT_MID, AndExpr(NonterminalRef(:NT_LEAF), GTExpr(:y, 0.5))),
-                 ProductionRule(:NT_ORPHAN, GTExpr(:z, 0.1))], 1)
+                [ProductionRule(:NT_LEAF, GTExpr(FeatureRef(:x), 0.3)),
+                 ProductionRule(:NT_MID, AndExpr(NonterminalRef(:NT_LEAF), GTExpr(FeatureRef(:y), 0.5))),
+                 ProductionRule(:NT_ORPHAN, GTExpr(FeatureRef(:z), 0.1))], 1)
     prog = Program(IfExpr(NonterminalRef(:NT_MID), ActionExpr(:a), ActionExpr(:b)), 3, 1)
     ft = analyse_posterior_subtrees([prog], [1.0]; min_frequency = 0.0, min_complexity = 2)
 
@@ -101,9 +101,9 @@ end
 # the programs only, not the grammar, so the same ft re-scores each pass.)
 let
     g0 = Grammar(Set([:x, :y]),
-                 [ProductionRule(:NT_Y, GTExpr(:x, 0.3)),
-                  ProductionRule(:NT_X, AndExpr(NonterminalRef(:NT_Y), GTExpr(:y, 0.5)))], 1)
-    prog = Program(IfExpr(GTExpr(:x, 0.2), ActionExpr(:a), ActionExpr(:b)), 3, 1)  # references no nonterminal
+                 [ProductionRule(:NT_Y, GTExpr(FeatureRef(:x), 0.3)),
+                  ProductionRule(:NT_X, AndExpr(NonterminalRef(:NT_Y), GTExpr(FeatureRef(:y), 0.5)))], 1)
+    prog = Program(IfExpr(GTExpr(FeatureRef(:x), 0.2), ActionExpr(:a), ActionExpr(:b)), 3, 1)  # references no nonterminal
     ft = analyse_posterior_subtrees([prog], [1.0]; min_frequency = 0.0, min_complexity = 2)
 
     check("§3 referenced_nonterminals == {} (program references no rule)",
@@ -125,7 +125,7 @@ end
 # are the full capture pins; this is the in-file sentinel.
 let
     g = Grammar(Set([:red, :blue]),
-                [ProductionRule(:LIVE, GTExpr(:red, 0.7)), ProductionRule(:DEAD, GTExpr(:blue, 0.5))], 1)
+                [ProductionRule(:LIVE, GTExpr(FeatureRef(:red), 0.7)), ProductionRule(:DEAD, GTExpr(FeatureRef(:blue), 0.5))], 1)
     progs = Program[Program(IfExpr(NonterminalRef(:LIVE), ActionExpr(:a), ActionExpr(:b)), 3, 1) for _ in 1:3]
     ft = analyse_posterior_subtrees(progs, fill(1 / 3, 3); min_frequency = 0.0, min_complexity = 2)
     check("§4 leaf-body grammar: only :DEAD removable (fix is a no-op here)",
@@ -135,10 +135,10 @@ end
 # ── §5  collect_feature_refs! — the feature-side mirror of collect_nonterminal_refs! ──
 let
     refs(e) = (acc = Set{Symbol}(); Credence.collect_feature_refs!(acc, e); acc)
-    check("§5 GTExpr contributes its feature", refs(GTExpr(:red, 0.5)) == Set([:red]))
-    check("§5 LTExpr contributes its feature", refs(LTExpr(:blue, 0.3)) == Set([:blue]))
+    check("§5 GTExpr contributes its feature", refs(GTExpr(FeatureRef(:red), 0.5)) == Set([:red]))
+    check("§5 LTExpr contributes its feature", refs(LTExpr(FeatureRef(:blue), 0.3)) == Set([:blue]))
     check("§5 And/If recurse into all branches; ActionExpr contributes nothing",
-          refs(IfExpr(AndExpr(GTExpr(:red, 0.5), LTExpr(:blue, 0.3)), ActionExpr(:a), ActionExpr(:b))) ==
+          refs(IfExpr(AndExpr(GTExpr(FeatureRef(:red), 0.5), LTExpr(FeatureRef(:blue), 0.3)), ActionExpr(:a), ActionExpr(:b))) ==
           Set([:red, :blue]))
     check("§5 NonterminalRef contributes nothing DIRECTLY (the rule-body union handles transitivity)",
           refs(NonterminalRef(:NT)) == Set{Symbol}())
@@ -148,7 +148,7 @@ end
 let
     # §6a a feature used by NO support program and NO rule body is dead → a candidate.
     g = Grammar(Set([:red, :wall_dist]), ProductionRule[], 1)
-    prog = Program(IfExpr(GTExpr(:wall_dist, 0.5), ActionExpr(:a), ActionExpr(:b)), 3, 1)   # uses :wall_dist only
+    prog = Program(IfExpr(GTExpr(FeatureRef(:wall_dist), 0.5), ActionExpr(:a), ActionExpr(:b)), 3, 1)   # uses :wall_dist only
     ft = analyse_posterior_subtrees([prog], [1.0]; min_frequency = 0.0, min_complexity = 2)
     check("§6a analyse populates referenced_features == {:wall_dist}",
           ft.referenced_features == Set([:wall_dist]), "got $(ft.referenced_features)")
@@ -156,7 +156,7 @@ let
           Credence._feature_removal_payoff(g, ft) == [:red], "got $(Credence._feature_removal_payoff(g, ft))")
 
     # §6b a feature used ONLY inside a rule body is protected by the rule-body union (transitive).
-    g2 = Grammar(Set([:red]), [ProductionRule(:NT, GTExpr(:red, 0.4))], 2)
+    g2 = Grammar(Set([:red]), [ProductionRule(:NT, GTExpr(FeatureRef(:red), 0.4))], 2)
     prog2 = Program(IfExpr(NonterminalRef(:NT), ActionExpr(:a), ActionExpr(:b)), 3, 1)       # :red only via NT's body
     ft2 = analyse_posterior_subtrees([prog2], [1.0]; min_frequency = 0.0, min_complexity = 2)
     check("§6b referenced_features (program-direct) == {} (:red invisible to the program walk)",
@@ -174,7 +174,7 @@ end
 let
     # §7a a dead feature is reclaimed: feature_set shrinks, its grid drops, complexity −1, fresh id.
     g = Grammar(Set([:red, :wall_dist]), ProductionRule[], 1)
-    prog = Program(IfExpr(GTExpr(:wall_dist, 0.5), ActionExpr(:a), ActionExpr(:b)), 3, 1)
+    prog = Program(IfExpr(GTExpr(FeatureRef(:wall_dist), 0.5), ActionExpr(:a), ActionExpr(:b)), 3, 1)
     ft = analyse_posterior_subtrees([prog], [1.0]; min_frequency = 0.0, min_complexity = 2)
     got = perturb_grammar(g, ft; compute_cost = 0.0)
     check("§7a perturb_grammar removes the dead feature :red",
@@ -186,8 +186,8 @@ let
     check("§7a fresh grammar id", got.id != g.id)
 
     # §7b the unified argmax: a dead RULE (payoff 1+complexity = 2) beats a dead FEATURE (payoff 1) — removed first.
-    g2 = Grammar(Set([:red, :wall_dist]), [ProductionRule(:DEAD, GTExpr(:wall_dist, 0.5))], 1)
-    prog2 = Program(IfExpr(GTExpr(:wall_dist, 0.5), ActionExpr(:a), ActionExpr(:b)), 3, 1)   # :wall_dist alive; :red + :DEAD dead
+    g2 = Grammar(Set([:red, :wall_dist]), [ProductionRule(:DEAD, GTExpr(FeatureRef(:wall_dist), 0.5))], 1)
+    prog2 = Program(IfExpr(GTExpr(FeatureRef(:wall_dist), 0.5), ActionExpr(:a), ActionExpr(:b)), 3, 1)   # :wall_dist alive; :red + :DEAD dead
     ft2 = analyse_posterior_subtrees([prog2], [1.0]; min_frequency = 0.0, min_complexity = 2)
     got2 = perturb_grammar(g2, ft2; compute_cost = 0.0)
     check("§7b unified argmax: dead rule (voc 2log2) beats dead feature (voc log2) — :DEAD removed",
@@ -199,7 +199,7 @@ end
 # ── §8  PerturbationCandidate struct contract — typed payload per kind ──
 let
     g = Grammar(Set([:red, :wall_dist]), ProductionRule[], 1)
-    prog = Program(IfExpr(GTExpr(:wall_dist, 0.5), ActionExpr(:a), ActionExpr(:b)), 3, 1)
+    prog = Program(IfExpr(GTExpr(FeatureRef(:wall_dist), 0.5), ActionExpr(:a), ActionExpr(:b)), 3, 1)
     ft = analyse_posterior_subtrees([prog], [1.0]; min_frequency = 0.0, min_complexity = 2)
     cand = Credence._best_compression_candidate(g, ft)
     check("§8 :remove_feature candidate carries the feature Symbol as payload",
@@ -207,8 +207,8 @@ let
     check("§8 :remove_feature is a removal (is_remove) with voc == log2 (1 symbol)",
           cand.is_remove == true && cand.voc ≈ log(2), "is_remove=$(cand.is_remove) voc=$(cand.voc)")
 
-    g2 = Grammar(Set([:red, :blue]), [ProductionRule(:DEAD2, GTExpr(:blue, 0.5))], 2)
-    prog2 = Program(IfExpr(GTExpr(:red, 0.5), ActionExpr(:a), ActionExpr(:b)), 3, 1)          # :red alive; :DEAD2 dead
+    g2 = Grammar(Set([:red, :blue]), [ProductionRule(:DEAD2, GTExpr(FeatureRef(:blue), 0.5))], 2)
+    prog2 = Program(IfExpr(GTExpr(FeatureRef(:red), 0.5), ActionExpr(:a), ActionExpr(:b)), 3, 1)          # :red alive; :DEAD2 dead
     ft2 = analyse_posterior_subtrees([prog2], [1.0]; min_frequency = 0.0, min_complexity = 2)
     cand2 = Credence._best_compression_candidate(g2, ft2)
     check("§8 :remove candidate carries the ProductionRule as payload",

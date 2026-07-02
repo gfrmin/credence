@@ -21,17 +21,58 @@ function compile_kernel(program::Program, grammar::Grammar, program_id::Int)::Co
     CompiledKernel(closure, program.complexity, grammar.id, program_id)
 end
 
+"""
+    compile_num(e::NumExpr) → (features, temporal_state) → Float64
+
+Compile a numeric expression into a closure. `compile_num(FeatureRef)` is the historical
+feature read `(f, _ts) -> get(f, feat, 0.0)`, so a lifted bare-feature atom compiles to a
+bit-identical closure. `Div` is protected TRUE division (`x/0 = 0.0` — the Koza-closure
+artifact, documented; poles are real: rates, inverse distances); `AQ` is the analytic
+quotient `x/√(1+y²)` — total and smooth, the enumeration default (design §5 Q2).
+"""
+function compile_num(e::FeatureRef)
+    feat = e.feature
+    (features, _ts) -> get(features, feat, 0.0)
+end
+function compile_num(e::Times)
+    l = compile_num(e.left); r = compile_num(e.right)
+    (f, ts) -> l(f, ts) * r(f, ts)
+end
+function compile_num(e::Plus)
+    l = compile_num(e.left); r = compile_num(e.right)
+    (f, ts) -> l(f, ts) + r(f, ts)
+end
+function compile_num(e::Minus)
+    l = compile_num(e.left); r = compile_num(e.right)
+    (f, ts) -> l(f, ts) - r(f, ts)
+end
+function compile_num(e::Div)
+    l = compile_num(e.left); r = compile_num(e.right)
+    (f, ts) -> begin
+        d = r(f, ts)
+        d == 0.0 ? 0.0 : l(f, ts) / d
+    end
+end
+function compile_num(e::AQ)
+    l = compile_num(e.left); r = compile_num(e.right)
+    (f, ts) -> l(f, ts) / sqrt(1.0 + r(f, ts)^2)
+end
+function compile_num(e::Neg)
+    c = compile_num(e.child)
+    (f, ts) -> -c(f, ts)
+end
+
 """Compile an expression into a closure: (features::Dict{Symbol,Float64}, temporal_state) → Bool."""
 function compile_expr(e::GTExpr, _rules)
-    feat = e.feature
+    lhs_fn = compile_num(e.lhs)
     t = e.threshold
-    (features, _ts) -> get(features, feat, 0.0) > t
+    (features, ts) -> lhs_fn(features, ts) > t
 end
 
 function compile_expr(e::LTExpr, _rules)
-    feat = e.feature
+    lhs_fn = compile_num(e.lhs)
     t = e.threshold
-    (features, _ts) -> get(features, feat, 0.0) < t
+    (features, ts) -> lhs_fn(features, ts) < t
 end
 
 function compile_expr(e::AndExpr, rules)

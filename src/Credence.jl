@@ -75,6 +75,9 @@ export extract_reliability_means
 # perturbation, AgentState). Defined directly in this module.
 export ProgramExpr, GTExpr, LTExpr, AndExpr, OrExpr, NotExpr, NonterminalRef
 export PersistsExpr, ChangedExpr, SinceExpr
+# The numeric sublayer (feature-arithmetic move): decision-free combinators only.
+export NumExpr, FeatureRef, Times, Plus, Minus, Div, AQ, Neg
+export show_num, num_equal, num_complexity, compile_num, NUM_OPS_DEFAULT
 export show_expr
 export ProductionRule, Grammar, compute_grammar_complexity
 export Program, CompiledKernel, SubprogramFrequencyTable

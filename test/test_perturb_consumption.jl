@@ -55,7 +55,7 @@ let
     check("no-op preserves feature_set + rules", noop.feature_set == g.feature_set && isempty(noop.rules))
 
     # net_payoff = 0 (n_sources=2, expr_c=3) is also a no-op and must preserve the id.
-    s = AndExpr(GTExpr(:red, 0.7), LTExpr(:green, 0.3))
+    s = AndExpr(GTExpr(FeatureRef(:red), 0.7), LTExpr(FeatureRef(:green), 0.3))
     progs = Program[Program(IfExpr(s, ActionExpr(:a), ActionExpr(:b)), 6, g.id) for _ in 1:2]
     ft0 = analyse_posterior_subtrees(progs, fill(0.5, 2); min_frequency=0.0, min_complexity=2)
     check("net_payoff≤0 no-op also preserves the id", perturb_grammar(g, ft0).id == g.id)
@@ -83,7 +83,7 @@ end
 # server (handle_perturb_grammar) used min_frequency=2 — making every wire perturbation a no-op; the
 # hosts (and now the skin) use 0.01. ──
 let
-    s = AndExpr(GTExpr(:red, 0.7), LTExpr(:green, 0.3))
+    s = AndExpr(GTExpr(FeatureRef(:red), 0.7), LTExpr(FeatureRef(:green), 0.3))
     progs = Program[Program(IfExpr(s, ActionExpr(:a), ActionExpr(:b)), 6, 1) for _ in 1:4]
     w = fill(0.25, 4)                                     # normalised posterior weights, sum = 1
     ft_ok  = analyse_posterior_subtrees(progs, w; min_frequency = 0.01, min_complexity = 2)

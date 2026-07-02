@@ -35,7 +35,7 @@ rules_str(g::Grammar) = sort([string(r.name) * "=" * show_expr(r.body) for r in 
 # A freq_table with a known compressing subtree s = And(GT(:red,0.7), LT(:green,0.3)) (expr_complexity
 # 3) shared by `n` distinct programs ⇒ net_payoff = n·(3−1) − (1+3) = 2n − 4.
 function shared_subtree_table(n::Int)
-    s = AndExpr(GTExpr(:red, 0.7), LTExpr(:green, 0.3))
+    s = AndExpr(GTExpr(FeatureRef(:red), 0.7), LTExpr(FeatureRef(:green), 0.3))
     progs = Program[IfExpr(s, ActionExpr(:a), ActionExpr(:b)) |> e -> Program(e, 6, 1) for _ in 1:n]
     w = fill(1.0 / n, n)
     (analyse_posterior_subtrees(progs, w; min_frequency = 0.0, min_complexity = 2), s)
@@ -120,9 +120,9 @@ end
 # :remove_rule (correctly) removes it — a different code path. Adding one program that references the
 # nonterminal makes it live, isolating the add-side idempotence guard (this test's sole purpose). ──
 let
-    s = AndExpr(GTExpr(:red, 0.7), LTExpr(:green, 0.3))   # the compressing subtree (expr_complexity 3)
+    s = AndExpr(GTExpr(FeatureRef(:red), 0.7), LTExpr(FeatureRef(:green), 0.3))   # the compressing subtree (expr_complexity 3)
     collide = Symbol("NT_", hash(show_expr(s)))           # the exact (full-hash) name propose_nonterminal generates for s
-    existing_body = GTExpr(:red, 0.9)                     # a DIFFERENT body under that same name
+    existing_body = GTExpr(FeatureRef(:red), 0.9)                     # a DIFFERENT body under that same name
     # Four programs share s (⇒ :add_rule proposes a rule named `collide`, net_payoff 4 > 0), plus one
     # program that REFERENCES `collide` (⇒ it is live, not a :remove_rule candidate).
     progs = Program[Program(IfExpr(s, ActionExpr(:a), ActionExpr(:b)), 6, 1) for _ in 1:4]
@@ -193,7 +193,7 @@ references_name(progs, name) =                  # credence-lint: allow — prece
 let
     # :LIVE is referenced by the support (a bare NonterminalRef predicate); :DEAD by nobody.
     g = Grammar(Set([:red, :blue]),
-                [ProductionRule(:LIVE, GTExpr(:red, 0.7)), ProductionRule(:DEAD, GTExpr(:blue, 0.5))], 1)
+                [ProductionRule(:LIVE, GTExpr(FeatureRef(:red), 0.7)), ProductionRule(:DEAD, GTExpr(FeatureRef(:blue), 0.5))], 1)
     progs = Program[Program(IfExpr(NonterminalRef(:LIVE), ActionExpr(:a), ActionExpr(:b)), 3, 1) for _ in 1:3]
     w = fill(1.0 / 3, 3)
     ft = analyse_posterior_subtrees(progs, w; min_frequency = 0.0, min_complexity = 2)
@@ -209,7 +209,7 @@ let
           "got $(ft.referenced_nonterminals)")
     # net_voc of the removal == log(2)·(1 + expr_complexity(body)) == log(2)·2.
     check("removal net_voc == log(2)·(1 + complexity(body))",
-          net_voc(1 + expr_complexity(GTExpr(:blue, 0.5)), 0.0) ≈ 2 * log(2))
+          net_voc(1 + expr_complexity(GTExpr(FeatureRef(:blue), 0.5)), 0.0) ≈ 2 * log(2))
 
     # Prior-only / belief-untouched pin (independent oracle): :DEAD is referenced by ZERO support
     # programs, so the support set — hence the posterior on re-conditioning the same data — is
@@ -225,7 +225,7 @@ let
     # depth-1 reference the old extract_subtrees(min_complexity=2) count dropped. :TDEAD: referenced
     # nowhere. A count routed through extract_subtrees would drop the bare ref and wrongly remove :BARE.
     g = Grammar(Set([:green, :blue]),
-                [ProductionRule(:BARE, GTExpr(:green, 0.2)), ProductionRule(:TDEAD, GTExpr(:blue, 0.9))], 1)
+                [ProductionRule(:BARE, GTExpr(FeatureRef(:green), 0.2)), ProductionRule(:TDEAD, GTExpr(FeatureRef(:blue), 0.9))], 1)
     progs = Program[Program(IfExpr(NonterminalRef(:BARE), ActionExpr(:a), ActionExpr(:b)), 3, 1) for _ in 1:2]
     w = fill(0.5, 2)
     ft = analyse_posterior_subtrees(progs, w; min_frequency = 0.0, min_complexity = 2)
@@ -244,15 +244,15 @@ let
     # Exact tie: an :add_rule candidate of payoff 2 (subtree s shared by 3 programs, expr_complexity 3
     # ⇒ 3·(3−1) − (1+3) = 2) AND a :remove_rule candidate of payoff 2 (dead :D, body complexity 1 ⇒
     # 1 + 1 = 2). Tiebreak = remove-first (hygiene: shrink before grow): :D removed, s NOT added.
-    s = AndExpr(GTExpr(:red, 0.7), LTExpr(:green, 0.3))
+    s = AndExpr(GTExpr(FeatureRef(:red), 0.7), LTExpr(FeatureRef(:green), 0.3))
     progs = Program[Program(IfExpr(s, ActionExpr(:a), ActionExpr(:b)), 6, 1) for _ in 1:3]   # share s; no ref to :D
     w = fill(1.0 / 3, 3)
     ft = analyse_posterior_subtrees(progs, w; min_frequency = 0.0, min_complexity = 2)
-    g = Grammar(Set([:red, :green]), [ProductionRule(:D, GTExpr(:blue, 0.5))], 1)
+    g = Grammar(Set([:red, :green]), [ProductionRule(:D, GTExpr(FeatureRef(:blue), 0.5))], 1)
 
     add_payoff = oracle_net_payoff(ft)          # credence-lint: allow — precedent:test-oracle — confirm the exact tie
     check("tie precondition: add payoff == remove payoff == 2",
-          add_payoff == 2 && (1 + expr_complexity(GTExpr(:blue, 0.5))) == 2, "add_payoff=$add_payoff")
+          add_payoff == 2 && (1 + expr_complexity(GTExpr(FeatureRef(:blue), 0.5))) == 2, "add_payoff=$add_payoff")
 
     got = perturb_grammar(g, ft; compute_cost = 0.0)
     check("net_voc tie resolves remove-first: :D removed", :D ∉ Set(r.name for r in got.rules),
@@ -269,7 +269,7 @@ end
 let
     # Every rule referenced AND no compressing subtree ⇒ no add, no remove ⇒ structural no-op: the
     # INPUT grammar returned unchanged (same id). This no-op is the prior-saturation signal Move 2 reads.
-    g = Grammar(Set([:red]), [ProductionRule(:ONLY, GTExpr(:red, 0.4))], 7)
+    g = Grammar(Set([:red]), [ProductionRule(:ONLY, GTExpr(FeatureRef(:red), 0.4))], 7)
     progs = Program[Program(IfExpr(NonterminalRef(:ONLY), ActionExpr(:a), ActionExpr(:b)), 3, 7) for _ in 1:2]
     w = fill(0.5, 2)
     ft = analyse_posterior_subtrees(progs, w; min_frequency = 0.0, min_complexity = 2)

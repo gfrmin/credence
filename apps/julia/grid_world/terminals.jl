@@ -33,14 +33,14 @@ function generate_seed_grammars()::Vector{Grammar}
     push!(grammars, Grammar(Set([:red, :green, :blue, :speed]), ProductionRule[], next_grammar_id()))
 
     # 6. Colour grammar with RED nonterminal
-    red_body = AndExpr(GTExpr(:red, 0.7), AndExpr(LTExpr(:green, 0.3), LTExpr(:blue, 0.3)))
+    red_body = AndExpr(GTExpr(FeatureRef(:red), 0.7), AndExpr(LTExpr(FeatureRef(:green), 0.3), LTExpr(FeatureRef(:blue), 0.3)))
     push!(grammars, Grammar(
         Set([:red, :green, :blue]),
         [ProductionRule(:RED, red_body)],
         next_grammar_id()))
 
     # 7. Colour grammar with BLUE nonterminal
-    blue_body = AndExpr(LTExpr(:red, 0.3), AndExpr(LTExpr(:green, 0.3), GTExpr(:blue, 0.7)))
+    blue_body = AndExpr(LTExpr(FeatureRef(:red), 0.3), AndExpr(LTExpr(FeatureRef(:green), 0.3), GTExpr(FeatureRef(:blue), 0.7)))
     push!(grammars, Grammar(
         Set([:red, :green, :blue]),
         [ProductionRule(:BLUE, blue_body)],
@@ -49,18 +49,18 @@ function generate_seed_grammars()::Vector{Grammar}
     # 8. Motion grammar with MOVING nonterminal
     push!(grammars, Grammar(
         Set([:speed, :wall_dist]),
-        [ProductionRule(:MOVING, GTExpr(:speed, 0.3))],
+        [ProductionRule(:MOVING, GTExpr(FeatureRef(:speed), 0.3))],
         next_grammar_id()))
 
     # 9. Motion grammar with NEAR_WALL nonterminal
     push!(grammars, Grammar(
         Set([:speed, :wall_dist]),
-        [ProductionRule(:NEAR_WALL, LTExpr(:wall_dist, 0.3))],
+        [ProductionRule(:NEAR_WALL, LTExpr(FeatureRef(:wall_dist), 0.3))],
         next_grammar_id()))
 
     # 10. Colour+speed with RED and MOVING nonterminals
-    red_cs = AndExpr(GTExpr(:red, 0.7), AndExpr(LTExpr(:green, 0.3), LTExpr(:blue, 0.3)))
-    moving_cs = GTExpr(:speed, 0.3)
+    red_cs = AndExpr(GTExpr(FeatureRef(:red), 0.7), AndExpr(LTExpr(FeatureRef(:green), 0.3), LTExpr(FeatureRef(:blue), 0.3)))
+    moving_cs = GTExpr(FeatureRef(:speed), 0.3)
     push!(grammars, Grammar(
         Set([:red, :green, :blue, :speed]),
         [ProductionRule(:RED, red_cs), ProductionRule(:MOVING, moving_cs)],
@@ -68,8 +68,8 @@ function generate_seed_grammars()::Vector{Grammar}
 
     # 11. Colour+speed with RED_AND_MOVING compound nonterminal
     ram = AndExpr(
-        AndExpr(GTExpr(:red, 0.7), AndExpr(LTExpr(:green, 0.3), LTExpr(:blue, 0.3))),
-        GTExpr(:speed, 0.3))
+        AndExpr(GTExpr(FeatureRef(:red), 0.7), AndExpr(LTExpr(FeatureRef(:green), 0.3), LTExpr(FeatureRef(:blue), 0.3))),
+        GTExpr(FeatureRef(:speed), 0.3))
     push!(grammars, Grammar(
         Set([:red, :green, :blue, :speed]),
         [ProductionRule(:RED_AND_MOVING, ram)],
@@ -78,8 +78,8 @@ function generate_seed_grammars()::Vector{Grammar}
     # 12. Full sensor with colour nonterminals
     push!(grammars, Grammar(
         ALL_GW_FEATURES,
-        [ProductionRule(:RED, AndExpr(GTExpr(:red, 0.7), AndExpr(LTExpr(:green, 0.3), LTExpr(:blue, 0.3)))),
-         ProductionRule(:BLUE, AndExpr(LTExpr(:red, 0.3), AndExpr(LTExpr(:green, 0.3), GTExpr(:blue, 0.7))))],
+        [ProductionRule(:RED, AndExpr(GTExpr(FeatureRef(:red), 0.7), AndExpr(LTExpr(FeatureRef(:green), 0.3), LTExpr(FeatureRef(:blue), 0.3)))),
+         ProductionRule(:BLUE, AndExpr(LTExpr(FeatureRef(:red), 0.3), AndExpr(LTExpr(FeatureRef(:green), 0.3), GTExpr(FeatureRef(:blue), 0.7))))],
         next_grammar_id()))
 
     grammars

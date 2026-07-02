@@ -281,6 +281,8 @@ The slug index below is the lint's source of truth for valid slugs (regex `^\*\*
 
 **Slug:** `engine-template-guard` — Domain templates (e.g. `decide_with_voi`, the routing state machine) may live engine-side ONLY under the five-point guard: every coefficient from declared wire data; all math canalised through the axiom ops; no consumer identifiers in code or docs; every default documented and wire-overridable; unsupported shapes fail loud. A template coordinate that requires the engine to *choose* a functional/distribution/threshold for the consumer is redesigned as a declared field. Documentation-only (review checklist, not a pragma target). (Invariants 1 + 2; the decouple commitment)
 
+**Slug:** `decision-free-combinator` — Primitives added to an open-vocabulary roster (`NumExpr` arithmetic ops, named distributions, space types, Event subtypes) must be decision-free combinators: total, domain-independent, and parameter-free (or carrying a free-parameter slot whose value is data-fit by the same machinery as every other parameter). A primitive that bakes a numeric threshold, coefficient, or decision the data should determine is illegitimate — it injects an answer, not a prior. Learnable constants are data-derived candidates priced by the complexity prior (the threshold mechanism), never literals in primitives; the deferred `ConstSlot` is governed by this rule. The seed grid `THRESHOLDS` is retroactively blessed as decision-free (a data-refinable seed, not a decision). Documentation-only (review checklist + the structural no-numeric-field test in `test_feature_arithmetic.jl` §4). (Invariants 1 + 2; SPEC §1.3)
+
 ## Development commands
 
 Julia tests (one file at a time; `ls test/test_*.jl` for the catalogue):

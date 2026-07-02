@@ -27,7 +27,7 @@ using Credence: enumerate_programs, compile_kernel
 using Credence: analyse_posterior_subtrees, perturb_grammar
 using Credence: aggregate_grammar_weights, top_k_grammar_ids, add_programs_to_state!
 using Credence: next_grammar_id, reset_grammar_counter!
-using Credence: show_expr, GTExpr, LTExpr, AndExpr, OrExpr, NotExpr, NonterminalRef, ActionExpr, IfExpr
+using Credence: show_expr, FeatureRef, GTExpr, LTExpr, AndExpr, OrExpr, NotExpr, NonterminalRef, ActionExpr, IfExpr
 using Credence: SubprogramFrequencyTable
 # Move 3 — the belief-aware exploration budget (threshold refinement) + the Move-2 saturation signal.
 using Credence: explore_grammar, explore_features, ExploreObservation
