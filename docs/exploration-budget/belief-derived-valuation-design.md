@@ -8,7 +8,19 @@
 > replaces them with posterior expectations. Design-doc-before-code; this doc is the review
 > surface.
 
-**STATUS: DRAFT — §5 open questions need answers before code.**
+**STATUS: RATIFIED (author, 2026-07-02) — all six §5 proposals approved as proposed: (Q1) yield
+= injected posterior mass, predictive delta named as finer fidelity; (Q2) declared horizons
+only, open-ended hosts keep H = n_buf; (Q3) context = op × changed-since-last-fire; (Q4) argmax
+tie order kept, equal priors; (Q5) eligibility gate removed, escape competes freely; (Q6)
+declared compute prices stay as utility data. Code follows on this arc's next PR.**
+
+**Returns-model family (fixed at ratification, before the gate run — §6's one-prior-choice
+discipline):** yields are observed in nats (`−log(1−mass)`) under an Exponential observation
+model with a Gamma(2, 1) prior on the rate — conjugate (`GammaPrevision × Exponential`, already
+in the registry), expected next yield `E[1/λ] = β/(α−1)` exact via a declared TestFunction (the
+`GeometricTail` closed-form pattern). Prior expected yield = 1 nat of bounded initial optimism
+(fires once per fresh context at the default price, then evidence takes over: after one
+zero-yield observation the cell's expectation halves).
 
 ## 1. Purpose
 
