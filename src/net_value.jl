@@ -27,3 +27,27 @@ A paired back-reference comment is kept at `_eu_functional` (`src/routing.jl`) s
 site is visible against this invariant.
 """
 net_value(delta_value::Real, cost::Real) = delta_value - cost
+
+"""
+    growth_value(fit, n_buf, plateau, horizon; prior_term = 0.0, compute_cost = 0.0) -> Float64
+
+The horizon-completed Δ log-evidence value of a hypothesis-space growth op
+(belief-derived-valuation design §2a):
+
+    plateau · fit · (horizon / n_buf) + prior_term − compute_cost
+
+`fit` is the lookahead's window-total Δℓ measured over `n_buf` conditioning events; `horizon` is
+the expected number of remaining conditioning events (DECLARED task data — the episode length is
+the host's to declare; open-ended hosts pass `horizon = n_buf` and recover the window-total
+valuation); `plateau` is P(the measured gain is a persistent plateau, Move 2) — *whether* the
+gain is real vs *how long* it pays, no double count. `prior_term` (the one-time Occam charge,
+e.g. −log 2 per feature symbol) is never horizon-multiplied — it is a prior over grammars, paid
+once. With `horizon == n_buf` and `plateau == 1` this reduces BIT-EXACTLY to
+`net_value(fit + prior_term, compute_cost)`, the pre-move valuation (the multiplier is exactly
+1.0; pinned by test_growth_returns.jl §5). `n_buf ≤ 0` (empty window) ⇒ the fit term is 0.
+
+Same linear-value−cost INVARIANT as `net_value` above: no clamp, no nonlinearity.
+"""
+growth_value(fit::Real, n_buf::Integer, plateau::Real, horizon::Real;
+             prior_term::Real = 0.0, compute_cost::Real = 0.0) =
+    (n_buf <= 0 ? 0.0 : plateau * fit * (horizon / n_buf)) + prior_term - compute_cost
