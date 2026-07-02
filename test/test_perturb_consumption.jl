@@ -17,6 +17,7 @@ using Credence: Grammar, ProductionRule, SubprogramFrequencyTable, ProgramExpr, 
                 perturb_grammar, analyse_posterior_subtrees, enumerate_programs, compile_kernel,
                 add_programs_to_state!, ExploreObservation, AgentState, weights, show_expr
 using Credence: TaggedBetaPrevision, BetaPrevision, MixturePrevision, CompiledKernel
+using Credence: NonterminalRef, collect_nonterminal_refs!, perturbation_voc, propose_nonterminal
 
 function check(name, cond, detail = "")
     cond ? println("PASSED: $name") : (println("FAILED: $name — $detail"); error("fail: $name"))
@@ -92,6 +93,68 @@ let
           "expected a non-empty table")
     check("min_frequency=2 (>1) is unsatisfiable ⇒ empty table (the Finding-4 bug)",
           isempty(ft_bad.subtrees), "a >1 weighted-frequency threshold cannot be met")
+end
+
+# ── (4) cross-grammar dangling nonterminal (the 2026-07-03 gate-run regression) ──
+# The frequency table spans the posterior over ALL grammars. The globally best subtree may
+# reference a nonterminal defined only in its ORIGIN grammar; installing it into another grammar
+# creates a dangling NonterminalRef, and every later enumeration of that lineage crashes in
+# compile_expr ("Undefined nonterminal"). The fix: _compression_payoff's argmax is scoped to
+# subtrees whose refs resolve in the TARGET grammar — shared by perturb_grammar (transition),
+# perturbation_voc (score), and compression_exhausted (signal), so the three stay one function.
+let
+    origin_rule = ProductionRule(:NT_ORIGIN, GTExpr(FeatureRef(:red), 0.7))
+    gA = Grammar(Set([:red, :blue]), [origin_rule], 41)          # defines :NT_ORIGIN
+    gB = Grammar(Set([:red, :blue]), ProductionRule[], 42)       # does NOT
+
+    # The dominant subtrees reference :NT_ORIGIN (4 sources × 0.2); plain, fully-resolvable
+    # subtrees are next (3 sources × 0.15). All have positive MDL payoff.
+    nt_subtree = AndExpr(NonterminalRef(:NT_ORIGIN), GTExpr(FeatureRef(:red), 0.7))
+    plain_subtree = AndExpr(GTExpr(FeatureRef(:red), 0.7), LTExpr(FeatureRef(:blue), 0.3))
+    progs = Program[]
+    for _ in 1:4
+        push!(progs, Program(IfExpr(nt_subtree, ActionExpr(:a), ActionExpr(:b)), 6, gA.id))
+    end
+    for _ in 1:3
+        push!(progs, Program(IfExpr(plain_subtree, ActionExpr(:a), ActionExpr(:b)), 6, gB.id))
+    end
+    w = [fill(0.2, 4); fill(0.15, 3)]
+    ft = analyse_posterior_subtrees(progs, w; min_frequency = 0.0, min_complexity = 2)
+
+    proposed = propose_nonterminal(ft)   # the un-targeted legacy surface: global argmax
+    check("(4) precondition: the GLOBAL best subtree references the origin-only nonterminal",
+          proposed !== nothing && :NT_ORIGIN in collect_nonterminal_refs!(Set{Symbol}(), proposed.body),
+          "proposed=$(proposed === nothing ? "nothing" : show_expr(proposed.body))")
+
+    # Target B (lacks :NT_ORIGIN): the invalid subtrees are skipped; the best RESOLVABLE subtree
+    # is installed instead — never a dangling reference.
+    gB2 = perturb_grammar(gB, ft)
+    check("(4) perturbing the foreign grammar still compresses (fallthrough to a valid subtree)",
+          gB2.id != gB.id && length(gB2.rules) == 1, "id=$(gB2.id) rules=$(length(gB2.rules))")
+    check("(4) the installed rule has NO dangling refs (B has no other rules ⇒ refs must be empty)",
+          isempty(collect_nonterminal_refs!(Set{Symbol}(), gB2.rules[1].body)),
+          show_expr(gB2.rules[1].body))
+
+    # The crash repro: enumerate + compile the perturbed lineage — must not throw.
+    for (pi, p) in enumerate(enumerate_programs(gB2, 3; action_space = Symbol[:a, :b]))
+        compile_kernel(p, gB2, pi)
+    end
+    check("(4) enumerate + compile of the perturbed lineage does not crash", true)
+
+    # Target A (defines :NT_ORIGIN): targeting must not block valid installs — every installed
+    # rule's refs resolve within A's own rules.
+    gA2 = perturb_grammar(gA, ft)
+    rule_names_A = Set(r.name for r in gA2.rules)
+    check("(4) the origin grammar still compresses, with every ref resolvable there",
+          gA2.id != gA.id &&
+          all(issubset(collect_nonterminal_refs!(Set{Symbol}(), r.body), rule_names_A)
+              for r in gA2.rules))
+
+    # Score == transition: VOC is positive exactly when the executor changes the grammar,
+    # for both targets (the shared _best_compression_candidate core).
+    check("(4) perturbation_voc > 0 ⟺ perturb_grammar changes the grammar (both targets)",
+          (perturbation_voc(gB, ft) > 0.0) == (gB2.id != gB.id) &&
+          (perturbation_voc(gA, ft) > 0.0) == (gA2.id != gA.id))
 end
 
 println("="^64)
