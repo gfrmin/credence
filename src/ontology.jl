@@ -29,7 +29,7 @@ import ..Previsions: ConditionalPrevision
 import ..Previsions: condition
 import ..Previsions: params
 import ..Previsions: ConjugatePrevision, maybe_conjugate, update, _dispatch_path
-import ..Previsions: CenteredPower, CenteredSquare, GeometricTail
+import ..Previsions: CenteredPower, CenteredSquare, GeometricTail, Reciprocal
 import ..Previsions: Indicator, apply
 
 export Space, Finite, Interval, ProductSpace, Simplex, Euclidean, PositiveReals, support
@@ -51,7 +51,7 @@ export ConjugatePrevision, maybe_conjugate, update
 export draw
 export weights, mean, variance, entropy, log_density_at, prune, truncate, logsumexp
 export FrozenVectorView
-export WeightsDomainError, probability, marginal, truncated_mv_quadrature, CenteredPower, CenteredSquare, GeometricTail
+export WeightsDomainError, probability, marginal, truncated_mv_quadrature, CenteredPower, CenteredSquare, GeometricTail, Reciprocal
 
 # ================================================================
 # FrozenVectorView{T}
@@ -810,6 +810,15 @@ function expect(p::BetaPrevision, ::GeometricTail)
     p.alpha / (p.beta - 1.0)
 end
 
+# Exact reciprocal mean on the Gamma leaf (the GeometricTail closed-form pattern):
+# E_Gamma(α,β)[1/λ] = β/(α−1), α > 1. The posterior-predictive expected next
+# Exponential observation — the returns-to-growth read (growth_valuation.jl) —
+# bypassing the generic quadrature `expect(::GammaPrevision, ::TestFunction)`.
+function expect(p::GammaPrevision, ::Reciprocal)
+    p.alpha > 1.0 || error("Reciprocal diverges for α ≤ 1 (got α=$(p.alpha)); the rate posterior must have α > 1")
+    p.beta / (p.alpha - 1.0)
+end
+
 # Exact Beta moment on Prevision leaves (mirrors the BetaMeasure form): the integrated
 # claim-EU `optimise{include,withhold}` reaches this through a `beta` create_state.
 expect(p::BetaPrevision, cp::CenteredPower{n}) where n = _beta_central_moment(p.alpha, p.beta, n, cp.μ)
@@ -1035,6 +1044,20 @@ function probability(m::MixtureMeasure, e::TagSet)
     total = 0.0
     for (i, comp) in enumerate(m.components)
         if comp isa TaggedBetaMeasure && comp.tag in e.tags
+            total += w[i]
+        end
+    end
+    total
+end
+
+# Prevision-level sibling (prevision-not-measure: the TagSet mass read is carrier-free —
+# weights + tags only — so it declares at the Prevision level). The returns-to-growth
+# yield observable (`growth_yield`, growth_valuation.jl) reads through this.
+function probability(p::MixturePrevision, e::TagSet)
+    w = weights(p)
+    total = 0.0
+    for (i, comp) in enumerate(p.components)
+        if comp isa TaggedBetaPrevision && comp.tag in e.tags
             total += w[i]
         end
     end
@@ -2221,6 +2244,13 @@ export FamilyCandidate, FamilyBMA, build_family_model, build_family_prior, famil
 
 include("saturation.jl")
 export initial_learning_regime, update_learning_regime, plateau_probability
+
+# Belief-derived meta-action valuation: the horizon-completed growth value (the net_value
+# pattern) + the learned returns-to-growth model (Gamma×Exponential cells conditioned on
+# realised yields). Exploration-budget arc, belief-derived-valuation-design.md.
+include("growth_valuation.jl")
+export growth_value, GrowthReturns, initial_growth_returns,
+       expected_growth_yield, observe_growth_yield!, note_space_change!, growth_yield
 
 include("routing.jl")
 export RoutingState, EmissionBelief, LatencyBelief, route, route_eu, escalation_next,

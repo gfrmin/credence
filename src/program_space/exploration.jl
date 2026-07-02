@@ -227,54 +227,87 @@ end
 # ═══════════════════════════════════════
 
 """
-    explore_grammar(g, observations, max_depth; action_space, compute_cost = 0.0) → Grammar
+    explore_grammar(g, observations, max_depth; action_space, compute_cost = 0.0,
+                    plateau = 1.0, horizon = nothing) → Grammar
 
-Refine `g`'s threshold grid by the single candidate whose compute-budgeted lookahead VOI is greatest,
-applied iff that VOI clears `compute_cost`; otherwise a structural no-op (the input `g` unchanged). The
+Refine `g`'s threshold grid by the single candidate whose horizon-completed lookahead value is greatest,
+applied iff that value clears 0; otherwise a structural no-op (the input `g` unchanged). The
 belief-aware sibling of prior-only `perturb_grammar`: the value of a threshold is invisible to depth-one
 prior `net_voc` (complexity-invariant — all fit, no prior signal), so this *actually* refines, re-enumerates,
 re-conditions the buffer, and measures the realised marginal-log-loss reduction.
 
-Mechanism (Q2a/Q3a/Q3b):
+Mechanism (Q2a/Q3a/Q3b + belief-derived-valuation §2a):
 - Candidates = midpoints between adjacent observed values (`_threshold_candidates`) — the complete finite
   set, no proposer (master plan §3.1).
 - Evaluated in descending residual-mass order (the screen ORDERS; it never gates).
-- VOI of a candidate = `net_value(Δℓ, compute_cost)` where `Δℓ = mll(buffer|g) − mll(buffer|g')` is the
-  predictive-log-loss reduction (the SAME nats the saturation residual is measured in). `compute_cost`
-  prices the lookahead spend; raising it suppresses refinement smoothly (no cliff, no hard cap — Q3b).
-- The full finite candidate set is evaluated and the argmax taken (one-sided: no positive-VOI candidate is
-  skipped — Q3b's provable form, not a heuristic early-stop). Returns `g` unchanged when none clears.
+- The fit of a candidate = `Δℓ = mll(buffer|g) − mll(buffer|g')`, the predictive-log-loss reduction (the
+  SAME nats the saturation residual is measured in); the fit-argmax candidate wins.
+- The candidate is applied iff its COMPLETED value clears 0: `growth_value(Δℓ, n_buf, plateau, H;
+  compute_cost)` — the same function the selection seam scores with (`exploration_voi`), so the score and
+  the transition are one function (belief-derived-valuation §2a; CONSTITUTION §3.55). At the defaults
+  (`plateau = 1`, `horizon = nothing` ⇒ `H = n_buf`) this is exactly the pre-horizon `Δℓ − compute_cost`
+  gate. `compute_cost` prices the lookahead spend; raising it suppresses refinement smoothly (Q3b).
 
 One refinement per call (like `perturb_grammar` adds one rule): the host applies it, resets the residual
 regime (the alphabet changed — Move 2 Q1b), accrues more data, and may explore again.
 """
-explore_grammar(g::Grammar, observations::Vector{ExploreObservation}, max_depth::Int;
-                action_space::Vector{Symbol} = Symbol[:classify], compute_cost::Float64 = 0.0)::Grammar =
-    first(_best_threshold_refinement(g, observations, max_depth;
-                                     action_space = action_space, compute_cost = compute_cost))
+function explore_grammar(g::Grammar, observations::Vector{ExploreObservation}, max_depth::Int;
+                         action_space::Vector{Symbol} = Symbol[:classify], compute_cost::Float64 = 0.0,
+                         plateau::Float64 = 1.0, horizon::Union{Nothing, Float64} = nothing)::Grammar
+    g_best, fit = _best_threshold_refinement(g, observations, max_depth; action_space = action_space)
+    _completed_growth_value(fit, length(observations), plateau, horizon;
+                            compute_cost = compute_cost) > 0.0 ? g_best : g
+end
 
 """
-    exploration_voi(g, observations, max_depth; action_space, compute_cost = 0.0) → Float64
+    exploration_voi(g, observations, max_depth; action_space, compute_cost = 0.0,
+                    plateau = 1.0, horizon = nothing) → Float64
 
-The scalar net VOI of the best threshold refinement — `net_value(Δℓ, compute_cost)` for the argmax
-candidate, or `0.0` when none clears (the no-op floor, matching `explore_grammar`'s structural no-op). The
-`expect`-side value of `explore_grammar`'s edit: the selection layer ranks the `:gw_explore` meta-action by
-this scalar, then applies `explore_grammar`. Shares `_best_threshold_refinement` with `explore_grammar`
-exactly, so the ranked value and the applied edit can never disagree (Invariant 3). Asserted by
-test_threshold_explore.jl §3g (the scalar == the doc's Δℓ).
+The scalar horizon-completed value of the best threshold refinement — `growth_value(Δℓ, n_buf, plateau,
+H; compute_cost)` for the fit-argmax candidate, or `0.0` when none clears (the no-op floor, matching
+`explore_grammar`'s structural no-op). At the defaults this is the pre-horizon `net_value(Δℓ,
+compute_cost)` exactly. The `expect`-side value of `explore_grammar`'s edit: the selection layer ranks
+the `:gw_explore` meta-action by this scalar, then applies `explore_grammar` with the SAME `plateau`/
+`horizon`, so the ranked value and the applied edit can never disagree (Invariant 3; CONSTITUTION §3.55).
+Asserted by test_threshold_explore.jl §3g (the scalar == the doc's Δℓ). Selection seams that memoise
+should cache `exploration_fit` (pure in `(grammar, buffer, depth)`) and complete via `growth_value` —
+`plateau`/`horizon` change per step, the fit does not.
 """
-exploration_voi(g::Grammar, observations::Vector{ExploreObservation}, max_depth::Int;
-                action_space::Vector{Symbol} = Symbol[:classify], compute_cost::Float64 = 0.0)::Float64 =
-    last(_best_threshold_refinement(g, observations, max_depth;
-                                    action_space = action_space, compute_cost = compute_cost))
+function exploration_voi(g::Grammar, observations::Vector{ExploreObservation}, max_depth::Int;
+                         action_space::Vector{Symbol} = Symbol[:classify], compute_cost::Float64 = 0.0,
+                         plateau::Float64 = 1.0, horizon::Union{Nothing, Float64} = nothing)::Float64
+    fit = exploration_fit(g, observations, max_depth; action_space = action_space)
+    v = _completed_growth_value(fit, length(observations), plateau, horizon; compute_cost = compute_cost)
+    v > 0.0 ? v : 0.0
+end
 
-# The shared core: the threshold-refinement argmax, returning BOTH the winning grammar and its net VOI.
-# `explore_grammar` projects out the grammar (apply the edit); `exploration_voi` projects out the scalar
-# (rank the meta-action). One computation, two projections — Invariant 3, no drift between "which refinement"
-# and "how much it's worth". Returns `(g, 0.0)` on the no-op paths (empty buffer / no candidate / none clears).
+"""
+    exploration_fit(g, observations, max_depth; action_space) → Float64
+
+The raw fit axis of the best threshold refinement: the window-total `Δℓ` of the fit-argmax candidate
+(`0.0` when no candidate has positive fit). PURE in `(grammar, buffer, depth)` — the memoisable half of
+`exploration_voi`; the horizon completion (`growth_value` with the step's `plateau`/`H`) is cheap
+arithmetic applied on top.
+"""
+exploration_fit(g::Grammar, observations::Vector{ExploreObservation}, max_depth::Int;
+                action_space::Vector{Symbol} = Symbol[:classify])::Float64 =
+    last(_best_threshold_refinement(g, observations, max_depth; action_space = action_space))
+
+# The completion shared by the voi functions and the executors: `horizon === nothing` declares no
+# horizon (open-ended host) ⇒ H = n_buf, the window-total score (§5 Q2 ratified).
+_completed_growth_value(fit::Float64, n_buf::Int, plateau::Float64, horizon::Union{Nothing, Float64};
+                        prior_term::Float64 = 0.0, compute_cost::Float64 = 0.0)::Float64 =
+    growth_value(fit, n_buf, plateau, horizon === nothing ? Float64(n_buf) : horizon;
+                 prior_term = prior_term, compute_cost = compute_cost)
+
+# The shared core: the threshold-refinement FIT argmax, returning BOTH the winning grammar and its raw
+# fit Δℓ. `explore_grammar` projects out the grammar (apply the edit); `exploration_fit`/`exploration_voi`
+# project out the scalar (rank the meta-action). One computation, two projections — Invariant 3, no drift
+# between "which refinement" and "how much it's worth". Returns `(g, 0.0)` on the no-op paths (empty
+# buffer / no candidate / none with positive fit). The prior/cost/horizon axes are applied OUTSIDE, by
+# `growth_value` — this core is pure in `(grammar, buffer, depth)` so selection seams can memoise it.
 function _best_threshold_refinement(g::Grammar, observations::Vector{ExploreObservation}, max_depth::Int;
-                                    action_space::Vector{Symbol} = Symbol[:classify],
-                                    compute_cost::Float64 = 0.0)::Tuple{Grammar, Float64}
+                                    action_space::Vector{Symbol} = Symbol[:classify])::Tuple{Grammar, Float64}
     isempty(observations) && return (g, 0.0)
     candidates = _threshold_candidates(g, observations)
     isempty(candidates) && return (g, 0.0)
@@ -284,19 +317,19 @@ function _best_threshold_refinement(g::Grammar, observations::Vector{ExploreObse
 
     baseline = _grammar_marginal_log_loss(g, observations, max_depth, action_space)
 
-    best_voi = 0.0   # a candidate must clear net VOI > 0 to win; else no-op
+    best_fit = 0.0   # a candidate must have positive fit to win; else no-op
     best = g
     for idx in order
         feat, t = candidates[idx]
         g_cand = _refine_grammar(g, feat, t)
         mll = _grammar_marginal_log_loss(g_cand, observations, max_depth, action_space)
-        voi = net_value(baseline - mll, compute_cost)   # Δℓ − compute_cost, through the stdlib functional
-        if voi > best_voi
-            best_voi = voi
+        fit = baseline - mll
+        if fit > best_fit
+            best_fit = fit
             best = g_cand
         end
     end
-    (best, best_voi)
+    (best, best_fit)
 end
 
 # ═══════════════════════════════════════
@@ -350,53 +383,90 @@ rand, one feature per call (the host applies it, resets the residual regime — 
 Q1b — and may explore again, including re-opening threshold refinement on the new feature's grid — the cyclic
 ladder of §8.4).
 """
-explore_features(g::Grammar, observations::Vector{ExploreObservation},
-                 available_features::Set{Symbol}, max_depth::Int;
-                 action_space::Vector{Symbol} = Symbol[:classify], compute_cost::Float64 = 0.0)::Grammar =
-    first(_best_feature_addition(g, observations, available_features, max_depth;
-                                 action_space = action_space, compute_cost = compute_cost))
+function explore_features(g::Grammar, observations::Vector{ExploreObservation},
+                          available_features::Set{Symbol}, max_depth::Int;
+                          action_space::Vector{Symbol} = Symbol[:classify], compute_cost::Float64 = 0.0,
+                          plateau::Float64 = 1.0, horizon::Union{Nothing, Float64} = nothing)::Grammar
+    g_best, fit, dcomplexity = _best_feature_addition(g, observations, available_features, max_depth;
+                                                      action_space = action_space)
+    _completed_growth_value(fit, length(observations), plateau, horizon;
+                            prior_term = complexity_logprior(dcomplexity; λ = log(2)),
+                            compute_cost = compute_cost) > 0.0 ? g_best : g
+end
 
 """
-    feature_discovery_voi(g, observations, available_features, max_depth; action_space, compute_cost = 0.0) → Float64
+    feature_discovery_voi(g, observations, available_features, max_depth; action_space,
+                          compute_cost = 0.0, plateau = 1.0, horizon = nothing) → Float64
 
-The scalar net VOI of the best feature addition — `net_value(Δℓ + complexity_logprior(Δc; λ=log2), compute_cost)`
-for the argmax candidate, or `0.0` when none clears. The exact, general instance of the one Δ log-evidence
-currency (both the fit and prior terms; Move 5). The `expect`-side value of `explore_features`'s edit: the
-selection layer ranks the `:gw_add_feature` meta-action by this scalar, then applies `explore_features`. Shares
-`_best_feature_addition` with `explore_features` exactly (Invariant 3, no drift). Asserted by test_feature_discovery.jl.
+The scalar horizon-completed value of the best feature addition — `growth_value(Δℓ, n_buf, plateau, H;
+prior_term = complexity_logprior(Δc; λ=log2), compute_cost)` for the fit-argmax candidate, or `0.0`
+when none clears. At the defaults (`plateau = 1`, `horizon = nothing` ⇒ `H = n_buf`) this is exactly the
+pre-horizon `net_value(Δℓ + complexity_logprior(Δc), compute_cost)`. The prior-Occam charge is ONE-TIME —
+it rides `prior_term`, outside both the `plateau` multiplication and the horizon (belief-derived-valuation
+§2a: a prior over grammars is paid once, never multiplied by how long the fit pays). The exact, general
+instance of the one Δ log-evidence currency (both the fit and prior terms; Move 5). The `expect`-side value
+of `explore_features`'s edit: the selection layer ranks the `:gw_add_feature` meta-action by this scalar,
+then applies `explore_features` with the SAME `plateau`/`horizon` (Invariant 3; CONSTITUTION §3.55).
+Asserted by test_feature_discovery.jl. Memoising seams cache `feature_discovery_fit` and complete via
+`growth_value`.
 """
-feature_discovery_voi(g::Grammar, observations::Vector{ExploreObservation},
-                      available_features::Set{Symbol}, max_depth::Int;
-                      action_space::Vector{Symbol} = Symbol[:classify], compute_cost::Float64 = 0.0)::Float64 =
-    last(_best_feature_addition(g, observations, available_features, max_depth;
-                                action_space = action_space, compute_cost = compute_cost))
+function feature_discovery_voi(g::Grammar, observations::Vector{ExploreObservation},
+                               available_features::Set{Symbol}, max_depth::Int;
+                               action_space::Vector{Symbol} = Symbol[:classify], compute_cost::Float64 = 0.0,
+                               plateau::Float64 = 1.0, horizon::Union{Nothing, Float64} = nothing)::Float64
+    fit, dcomplexity = feature_discovery_fit(g, observations, available_features, max_depth;
+                                             action_space = action_space)
+    v = _completed_growth_value(fit, length(observations), plateau, horizon;
+                                prior_term = complexity_logprior(dcomplexity; λ = log(2)),
+                                compute_cost = compute_cost)
+    v > 0.0 ? v : 0.0
+end
 
-# The shared core: the feature-addition argmax, returning BOTH the winning grammar and its net VOI (the
-# two-axis Δ log-evidence — fit Δℓ plus the explicit prior-Occam penalty). `explore_features` projects out the
-# grammar, `feature_discovery_voi` the scalar (Invariant 3). Returns `(g, 0.0)` on the no-op paths.
+"""
+    feature_discovery_fit(g, observations, available_features, max_depth; action_space) → (Float64, Float64)
+
+The raw axes of the best feature addition: `(Δℓ, Δcomplexity)` of the fit-argmax candidate (`(0.0, 0.0)`
+when no candidate has positive fit — the vanishing `Δc` makes the completed no-op score exactly 0.0).
+PURE in `(grammar, buffer, features, depth)` — the memoisable half of `feature_discovery_voi`; the
+completion (`growth_value` with the step's `plateau`/`H` and the one-time prior charge) is cheap
+arithmetic applied on top.
+"""
+function feature_discovery_fit(g::Grammar, observations::Vector{ExploreObservation},
+                               available_features::Set{Symbol}, max_depth::Int;
+                               action_space::Vector{Symbol} = Symbol[:classify])::Tuple{Float64, Float64}
+    _, fit, dcomplexity = _best_feature_addition(g, observations, available_features, max_depth;
+                                                 action_space = action_space)
+    (fit, dcomplexity)
+end
+
+# The shared core: the feature-addition FIT argmax, returning the winning grammar, its raw fit Δℓ, and its
+# Δcomplexity (the prior axis, charged by the completion — the grammar-complexity prior is a per-grammar
+# CONSTANT added to every component's log-weight, so it cancels inside the normalized marginal log-loss
+# and must be charged explicitly outside). The candidate ORDERING is unchanged by moving the prior/cost
+# axes out: Δcomplexity (+1) and compute_cost are candidate-invariant, so the fit argmax is the old
+# bundled argmax. `explore_features` projects out the grammar, `feature_discovery_fit`/`_voi` the scalars
+# (Invariant 3). Returns `(g, 0.0, 0.0)` on the no-op paths. Pure in its arguments — memoisable.
 function _best_feature_addition(g::Grammar, observations::Vector{ExploreObservation},
                                 available_features::Set{Symbol}, max_depth::Int;
-                                action_space::Vector{Symbol} = Symbol[:classify],
-                                compute_cost::Float64 = 0.0)::Tuple{Grammar, Float64}
-    isempty(observations) && return (g, 0.0)
+                                action_space::Vector{Symbol} = Symbol[:classify])::Tuple{Grammar, Float64, Float64}
+    isempty(observations) && return (g, 0.0, 0.0)
     candidates = _feature_candidates(g, available_features)
-    isempty(candidates) && return (g, 0.0)
+    isempty(candidates) && return (g, 0.0, 0.0)
 
     baseline = _grammar_marginal_log_loss(g, observations, max_depth, action_space)
 
-    best_voi = 0.0   # a candidate must clear net VOI > 0 to win; else no-op
+    best_fit = 0.0   # a candidate must have positive fit to win; else no-op
     best = g
+    best_dc = 0.0
     for feat in candidates                              # sorted ⇒ deterministic argmax
         g_cand = _add_feature(g, feat)
         mll = _grammar_marginal_log_loss(g_cand, observations, max_depth, action_space)
-        # Two-axis valuation: fit Δℓ PLUS the explicit prior-Occam penalty (the grammar-complexity prior
-        # cancels inside the normalized mll, so it is charged here). Δcomplexity = +1 ⇒ −log2 nats.
-        dcomplexity = g_cand.complexity - g.complexity
-        voi = net_value((baseline - mll) + complexity_logprior(dcomplexity; λ = log(2)), compute_cost)
-        if voi > best_voi
-            best_voi = voi
+        fit = baseline - mll
+        if fit > best_fit
+            best_fit = fit
             best = g_cand
+            best_dc = Float64(g_cand.complexity - g.complexity)
         end
     end
-    (best, best_voi)
+    (best, best_fit, best_dc)
 end

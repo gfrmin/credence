@@ -26,14 +26,20 @@ mutable struct AgentState
     # (reset_learning_regime!). Move 2 is signal-only — nothing reads these for a decision until Move 3.
     learning_regime::Ontology.MixturePrevision
     last_residual::Union{Nothing, Float64}
+    # Learned returns-to-growth (belief-derived-valuation §2b): Gamma×Exponential cells per
+    # (op × changed-since-last-fire) context, conditioned on realised yields through the one
+    # learning mechanism. Brain state (state-is-measure), like learning_regime above; also like
+    # it, rebuilt fresh by hosts that reconstruct AgentState from persisted parallel arrays.
+    growth_returns::Ontology.GrowthReturns
 end
 
 # Backward-compatible 6-arg constructor: defaults the Move-2 saturation fields (uninformative regime, no
-# residual yet) and forwards to the 8-arg auto-constructor. Every existing AgentState(...) call site
-# (hosts, skin, persistence, tests) uses this and is unaffected.
+# residual yet) and the returns-to-growth state (fresh prior cells), forwarding to the 9-arg
+# auto-constructor. Every existing AgentState(...) call site (hosts, skin, persistence, tests) uses this
+# and is unaffected.
 AgentState(belief, metadata, compiled_kernels, all_programs, grammars, current_max_depth) =
     AgentState(belief, metadata, compiled_kernels, all_programs, grammars, current_max_depth,
-               initial_learning_regime(), nothing)
+               initial_learning_regime(), nothing, Ontology.initial_growth_returns())
 
 """
     reset_learning_regime!(state) → state

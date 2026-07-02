@@ -36,7 +36,7 @@ export ParticlePrevision, QuadraturePrevision, MvQuadraturePrevision, _mv_points
 export ConditionalPrevision
 export ConjugatePrevision, maybe_conjugate, update, _dispatch_path
 export push_component!, replace_component!
-export CenteredPower, CenteredSquare, GeometricTail
+export CenteredPower, CenteredSquare, GeometricTail, Reciprocal
 export params
 # At Move 2, `Ontology`'s `Functional` hierarchy is aliased onto these
 # types (`const Functional = TestFunction` plus `import ..Previsions:
@@ -222,6 +222,25 @@ ontology.jl, which reaches the fast path without quadrature.
 struct GeometricTail <: TestFunction end
 
 apply(::GeometricTail, ρ) = ρ / (1.0 - ρ)
+
+"""
+    Reciprocal() <: TestFunction
+
+The reciprocal test function on a positive-rate space: `apply(Reciprocal(), λ) = 1/λ`.
+
+Semantics. For an observation model whose mean is the inverse of its rate
+parameter (Exponential: `E[y | λ] = 1/λ`), the posterior-predictive expected
+next observation is `E[1/λ]` — this test function integrated against the rate
+posterior. For a Gamma(α, β) posterior (shape/rate) the integral is the exact
+`β/(α−1)` (α>1); see the closed-form `expect(::GammaPrevision, ::Reciprocal)`
+in ontology.jl, which reaches the fast path without quadrature (the
+`GeometricTail` closed-form pattern). Used by the learned returns-to-growth
+model (`growth_valuation.jl`): expected next yield of a meta-action under a
+Gamma×Exponential returns belief.
+"""
+struct Reciprocal <: TestFunction end
+
+apply(::Reciprocal, λ) = 1.0 / λ
 
 """
     FiringChoice(fired, when_fires, when_not) <: TestFunction

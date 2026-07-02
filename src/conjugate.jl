@@ -196,7 +196,10 @@ end
 
 function update(cp::ConjugatePrevision{GammaPrevision, Exponential}, obs)
     r = Float64(obs)
-    r > 0 || error("Exponential observations must be positive, got $r")
+    # Zero is IN the Exponential's support ([0, ∞), density λ at 0) and is the modal
+    # observation of the returns-to-growth model (a dedup no-op's yield is exactly 0.0 —
+    # growth_valuation.jl); the conjugate update is well-defined there (α+1, β+0).
+    r >= 0 || error("Exponential observations must be non-negative, got $r")
     ConjugatePrevision(GammaPrevision(cp.prior.alpha + 1.0, cp.prior.beta + r), cp.likelihood)
 end
 
