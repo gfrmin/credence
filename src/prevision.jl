@@ -36,7 +36,7 @@ export ParticlePrevision, QuadraturePrevision, MvQuadraturePrevision, _mv_points
 export ConditionalPrevision
 export ConjugatePrevision, maybe_conjugate, update, _dispatch_path
 export push_component!, replace_component!
-export CenteredPower, CenteredSquare, GeometricTail
+export CenteredPower, CenteredSquare, GeometricTail, ExponentialMean
 export params
 # At Move 2, `Ontology`'s `Functional` hierarchy is aliased onto these
 # types (`const Functional = TestFunction` plus `import ..Previsions:
@@ -222,6 +222,25 @@ ontology.jl, which reaches the fast path without quadrature.
 struct GeometricTail <: TestFunction end
 
 apply(::GeometricTail, ρ) = ρ / (1.0 - ρ)
+
+"""
+    ExponentialMean() <: TestFunction
+
+The posterior-predictive mean of an Exponential observation model on a rate
+space (0, ∞): `apply(ExponentialMean(), λ) = 1/λ`.
+
+Semantics. If observations arrive Exponential(λ) given the rate, the expected
+next observation is `E[y|λ] = 1/λ`; integrated against a rate posterior,
+`expect(belief, ExponentialMean())` is the posterior-predictive expected next
+observation. For a Gamma(α, β) posterior the integral is the exact `β/(α−1)`
+(α>1) — see the closed form in ontology.jl (the `GeometricTail`
+divergence-guard pattern). Consumed by the growth-returns model
+(belief-derived-valuation design §2b): the expected next yield, in nats, of
+firing a meta-action.
+"""
+struct ExponentialMean <: TestFunction end
+
+apply(::ExponentialMean, λ) = 1.0 / λ
 
 """
     FiringChoice(fired, when_fires, when_not) <: TestFunction
