@@ -204,7 +204,7 @@ function score_gw_meta_actions(
     changed::Dict{Symbol, Bool};
     op_compute_cost::Float64 = GW_OP_COMPUTE_COST_DEFAULT,
     horizon::Union{Nothing, Float64} = nothing,
-    voi_cache::Union{Nothing, Dict{NTuple{4, Int}, Float64}} = nothing,
+    voi_cache::Union{Nothing, Dict{Tuple{Symbol, Int, Int, Int, Int}, Float64}} = nothing,
     cache_epoch::Int = 0
 )::Dict{Symbol, Float64}
     gw_action_space = Symbol[:food, :enemy]
@@ -244,7 +244,7 @@ function score_gw_meta_actions(
     fit_explore = voi_cache === nothing ?
         exploration_fit(g_top, explore_buffer, state.current_max_depth;
                         action_space = gw_action_space) :
-        get!(voi_cache, (1000 + cache_epoch, g_top.id, n_buf, state.current_max_depth)) do
+        get!(voi_cache, (:explore, cache_epoch, g_top.id, n_buf, state.current_max_depth)) do
             exploration_fit(g_top, explore_buffer, state.current_max_depth;
                             action_space = gw_action_space)
         end
@@ -255,7 +255,7 @@ function score_gw_meta_actions(
         fit_feature = voi_cache === nothing ?
             feature_discovery_fit(g_top, explore_buffer, ALL_GW_FEATURES,
                                   state.current_max_depth; action_space = gw_action_space) :
-            get!(voi_cache, (2000 + cache_epoch, g_top.id, n_buf, state.current_max_depth)) do
+            get!(voi_cache, (:add_feature, cache_epoch, g_top.id, n_buf, state.current_max_depth)) do
                 feature_discovery_fit(g_top, explore_buffer, ALL_GW_FEATURES,
                                       state.current_max_depth; action_space = gw_action_space)
             end
@@ -504,9 +504,11 @@ function run_agent(;
     explore_buffer = ExploreObservation[]
     # Exact memoisation of the pure lookahead FITS (see score_gw_meta_actions): epoch bumps on
     # growth-op execution and window trims so equal-length buffers with different content never
-    # collide with stale keys. The per-step valuation (plateau, horizon) is applied outside the
-    # cache through growth_value.
-    voi_cache = Dict{NTuple{4, Int}, Float64}()
+    # collide with stale keys; the op lives in the key as a Symbol (a typed field, not an
+    # arithmetic offset — offsets like 1000+epoch vs 2000+epoch collide across ops once the
+    # epoch passes their spacing, e.g. any run with ≳1000 window trims). The per-step valuation
+    # (plateau, horizon) is applied outside the cache through growth_value.
+    voi_cache = Dict{Tuple{Symbol, Int, Int, Int, Int}, Float64}()
     cache_epoch = 0
 
     # The learned returns-to-growth belief (belief-derived-valuation §2b) + its bookkeeping DATA:

@@ -1038,18 +1038,13 @@ function probability(m::Measure, e::Event)
     expect(m, h -> k.log_density(h, true) == 0.0 ? 1.0 : 0.0)
 end
 
-function probability(m::MixtureMeasure, e::TagSet)
-    w = weights(m)
-    total = 0.0
-    for (i, comp) in enumerate(m.components)
-        if comp isa TaggedBetaMeasure && comp.tag in e.tags
-            total += w[i]
-        end
-    end
-    total
-end
+# The TagSet mass read is carrier-free (prevision-not-measure), so the Measure method is the
+# thin facade over the Prevision primary below — one loop, no fork (the MixtureMeasure's
+# components are TaggedBetaMeasure views over the same TaggedBetaPrevisions, same tags,
+# same weights; delegation is value-identical and skips the per-component view re-wrap).
+probability(m::MixtureMeasure, e::TagSet) = probability(getfield(m, :prevision), e)
 
-# Prevision twin of the TagSet mass read (prevision-not-measure: carrier-free — the tag and the
+# Prevision primary of the TagSet mass read (prevision-not-measure: carrier-free — the tag and the
 # weight are Prevision-resident, no carrier data touched). The growth-returns yield observable
 # reads injected-component mass through this (belief-derived-valuation design §2b).
 function probability(p::MixturePrevision, e::TagSet)
