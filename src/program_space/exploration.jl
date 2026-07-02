@@ -255,8 +255,8 @@ function explore_grammar(g::Grammar, observations::Vector{ExploreObservation}, m
                          action_space::Vector{Symbol} = Symbol[:classify], compute_cost::Float64 = 0.0,
                          plateau::Float64 = 1.0, horizon::Union{Nothing, Float64} = nothing)::Grammar
     g_best, fit = _best_threshold_refinement(g, observations, max_depth; action_space = action_space)
-    _completed_growth_value(fit, length(observations), plateau, horizon;
-                            compute_cost = compute_cost) > 0.0 ? g_best : g
+    growth_value(fit, length(observations), plateau, horizon;
+                 compute_cost = compute_cost) > 0.0 ? g_best : g
 end
 
 """
@@ -277,7 +277,7 @@ function exploration_voi(g::Grammar, observations::Vector{ExploreObservation}, m
                          action_space::Vector{Symbol} = Symbol[:classify], compute_cost::Float64 = 0.0,
                          plateau::Float64 = 1.0, horizon::Union{Nothing, Float64} = nothing)::Float64
     fit = exploration_fit(g, observations, max_depth; action_space = action_space)
-    v = _completed_growth_value(fit, length(observations), plateau, horizon; compute_cost = compute_cost)
+    v = growth_value(fit, length(observations), plateau, horizon; compute_cost = compute_cost)
     v > 0.0 ? v : 0.0
 end
 
@@ -293,12 +293,20 @@ exploration_fit(g::Grammar, observations::Vector{ExploreObservation}, max_depth:
                 action_space::Vector{Symbol} = Symbol[:classify])::Float64 =
     last(_best_threshold_refinement(g, observations, max_depth; action_space = action_space))
 
-# The completion shared by the voi functions and the executors: `horizon === nothing` declares no
-# horizon (open-ended host) ⇒ H = n_buf, the window-total score (§5 Q2 ratified).
-_completed_growth_value(fit::Float64, n_buf::Int, plateau::Float64, horizon::Union{Nothing, Float64};
-                        prior_term::Float64 = 0.0, compute_cost::Float64 = 0.0)::Float64 =
-    growth_value(fit, n_buf, plateau, horizon === nothing ? Float64(n_buf) : horizon;
-                 prior_term = prior_term, compute_cost = compute_cost)
+"""
+    feature_growth_value(fit, dcomplexity, n_buf, plateau, horizon; compute_cost = 0.0) → Float64
+
+The feature-discovery completion: `growth_value` with the one-time prior-Occam charge
+`complexity_logprior(Δcomplexity; λ = log 2)` composed in — the SINGLE home of that
+composition, shared by `feature_discovery_voi`, `explore_features`, and any selection
+seam completing a cached `(fit, Δc)` pair (Invariant 1: the λ coefficient and the
+charge's placement — outside plateau AND horizon — live in the engine exactly once).
+"""
+feature_growth_value(fit::Float64, dcomplexity::Float64, n_buf::Int, plateau::Float64,
+                     horizon::Union{Nothing, Float64}; compute_cost::Float64 = 0.0)::Float64 =
+    growth_value(fit, n_buf, plateau, horizon;
+                 prior_term = complexity_logprior(dcomplexity; λ = log(2)),
+                 compute_cost = compute_cost)
 
 # The shared core: the threshold-refinement FIT argmax, returning BOTH the winning grammar and its raw
 # fit Δℓ. `explore_grammar` projects out the grammar (apply the edit); `exploration_fit`/`exploration_voi`
@@ -348,20 +356,26 @@ feature discovery admits a feature the grammar did not use. Base-feature discove
 Dict; the lookahead ranks the host-provided candidates. (Composed/arithmetic features — *construction* — are
 the deferred §3.1 frontier.)
 
-**The two-axis valuation (Q2 — the keystone, and the converse of Move 3's Q1(b)).** A feature is valued on
-BOTH axes:
+**The two-axis valuation (Q2 — the keystone, and the converse of Move 3's Q1(b)), horizon-completed
+(belief-derived-valuation §2a).** A feature is valued on BOTH axes:
 
-    voi = net_value( Δℓ + complexity_logprior(Δcomplexity; λ = log 2), compute_cost )
-        = (mll(buffer|g) − mll(buffer|g')) − log2·Δcomplexity − compute_cost            [nats]
+    value = feature_growth_value(Δℓ, Δcomplexity, n_buf, plateau, H; compute_cost)
+          = plateau · (Δℓ/n_buf) · H  −  log2·Δcomplexity  −  compute_cost            [nats]
 
-where `g'` = `g` with the candidate feature added and `Δcomplexity = g'.complexity − g.complexity = +1`. The
-fit term `Δℓ` is the SAME marginal-log-loss reduction Move 3 measures (`_grammar_marginal_log_loss`, reused
-verbatim). The prior term is the subtle part: the grammar-complexity prior is a per-grammar CONSTANT added
+where `g'` = `g` with the candidate feature added, `Δℓ = mll(buffer|g) − mll(buffer|g')`, and
+`Δcomplexity = g'.complexity − g.complexity = +1`. At the defaults (`plateau = 1`, `H = n_buf`) this is
+the pre-horizon `Δℓ − log2·Δc − compute_cost`. The fit term `Δℓ` is the SAME marginal-log-loss reduction
+Move 3 measures (`_grammar_marginal_log_loss`, reused verbatim); the CANDIDATE argmax is on the fit axis
+alone (`_best_feature_addition`) because the prior and cost terms are candidate-invariant. The prior term
+is the subtle part: the grammar-complexity prior is a per-grammar CONSTANT added
 to every component's log-weight, so it **cancels inside the normalized marginal log-loss** (`log_predictive`
 /`condition` normalize the mixture — a uniform shift to all weights cancels). Reusing the mll alone would
 therefore price a feature on the fit axis only — exactly what Move 3 does for thresholds, and exactly what
-Q2 says is WRONG for features. So the `−log2·Δcomplexity` prior-Occam penalty is charged **explicitly here,
-at the argmax**. This is the literal mechanical content of the Q1(b)≡Q2 duality: a finer threshold adds no
+Q2 says is WRONG for features. So the `−log2·Δcomplexity` prior-Occam penalty is charged **explicitly, by
+the completion** (`feature_growth_value` — its single home), as a ONE-TIME term: outside the `plateau`
+multiplication AND outside the horizon (a prior over grammars is paid once, never multiplied by how long
+the fit pays — belief-derived-valuation §2a). This is the literal mechanical content of the Q1(b)≡Q2
+duality: a finer threshold adds no
 symbol (Δcomplexity = 0 ⇒ the term vanishes ⇒ Move 3's `explore_grammar` is the Δcomplexity = 0 special
 case); a new feature adds a symbol (Δcomplexity = +1 ⇒ the feature must repay `log2` nats of prior the
 threshold never owed). fine-before-coarse, made endogenous: the cheap rung clears while it pays; the dear
@@ -389,9 +403,8 @@ function explore_features(g::Grammar, observations::Vector{ExploreObservation},
                           plateau::Float64 = 1.0, horizon::Union{Nothing, Float64} = nothing)::Grammar
     g_best, fit, dcomplexity = _best_feature_addition(g, observations, available_features, max_depth;
                                                       action_space = action_space)
-    _completed_growth_value(fit, length(observations), plateau, horizon;
-                            prior_term = complexity_logprior(dcomplexity; λ = log(2)),
-                            compute_cost = compute_cost) > 0.0 ? g_best : g
+    feature_growth_value(fit, dcomplexity, length(observations), plateau, horizon;
+                         compute_cost = compute_cost) > 0.0 ? g_best : g
 end
 
 """
@@ -416,9 +429,8 @@ function feature_discovery_voi(g::Grammar, observations::Vector{ExploreObservati
                                plateau::Float64 = 1.0, horizon::Union{Nothing, Float64} = nothing)::Float64
     fit, dcomplexity = feature_discovery_fit(g, observations, available_features, max_depth;
                                              action_space = action_space)
-    v = _completed_growth_value(fit, length(observations), plateau, horizon;
-                                prior_term = complexity_logprior(dcomplexity; λ = log(2)),
-                                compute_cost = compute_cost)
+    v = feature_growth_value(fit, dcomplexity, length(observations), plateau, horizon;
+                             compute_cost = compute_cost)
     v > 0.0 ? v : 0.0
 end
 

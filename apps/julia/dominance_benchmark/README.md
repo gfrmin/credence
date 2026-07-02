@@ -14,7 +14,7 @@ Five policies over the same seam (`run_agent(meta_policy=…)`), same seeds, sam
 | `eu_max` | `default_eu_max_policy` — argmax of the real scores, act-now floor at 0 | the agent |
 | `random_p{.05,.15,.4}` | with rate p, a uniform non-idle op; score-blind; **best-tuned p reported** | retired random explorer |
 | `fixed_k{5,10,25,50}` | one growth op every k steps, VOI-blind; **best-tuned k reported** | the hand-tuned schedule |
-| `never_explore` | eu_max with growth ops vetoed; same entropy-scored search ops | Scope-A floor / de-confounder |
+| `never_explore` | eu_max with growth ops vetoed; same learned-returns escape ops | Scope-A floor / de-confounder |
 | `clairvoyant` | eu_max + eager growth in ground-truth regime windows (masks nothing) | adaptation-timing ceiling |
 
 Score-blind baselines (`random`, `fixed`) are declared as such (`ScoreBlind`), so the seam
@@ -33,11 +33,12 @@ Paired-seed percentile bootstrap (10 000 resamples) on per-seed gaps. The gate, 
 `run.jl` (running it IS the check):
 
 - CI of `eu_max − random` and `eu_max − best fixed` excludes 0 on **both** realised value
-  (AUC of cumulative interaction energy) and sample efficiency (steps to the run's own
-  half-total);
+  (AUC of cumulative interaction energy, with final-window rate reported co-primary) and
+  sample efficiency (fixed-reference: steps to half the best compared policy's per-seed
+  total — belief-derived-valuation §2c);
 - **headline:** CI of `eu_max − never_explore` excludes 0 — both sides share the identical
-  entropy-scored escape-mass ops, so this gap is exploration's isolated value, uncontaminated
-  by the policy's one heuristic score;
+  learned-returns escape mechanism (each conditioned on its own realised yields), so this
+  gap is exploration's isolated value;
 - bracket `never_explore ≤ eu_max ≤ clairvoyant` on mean AUC (the left inequality is a
   hypothesis under test; the right is a sanity check that must always hold);
 - minimax regret: the worst-seed AUC gap vs random and vs best fixed is ≥ 0;

@@ -78,6 +78,7 @@ end
 const GW_AS = Symbol[:food, :enemy]
 # Fresh-context escape score: the returns prior's expected yield (Gamma(2,1) ⇒ β/(α−1) = 1 nat
 # of bounded initial optimism) minus the declared one-bit price.
+# credence-lint: allow — precedent:test-oracle — the manual fresh-cell oracle the escape pins compare against
 const ESCAPE_FRESH = 1.0 - log(2.0)
 
 println("="^64)
@@ -249,7 +250,7 @@ let
           "enum=$(final[:gw_enumerate_more]) deepen=$(final[:gw_deepen])")
     check("§5 the learned expectations are Tier-1 reads (score == E[yield] − price)",
           final[:gw_enumerate_more] ==
-          expected_growth_yield(state.growth_returns, :gw_enumerate_more) - log(2.0))
+          expected_growth_yield(state.growth_returns, :gw_enumerate_more) - log(2.0))   # credence-lint: allow — precedent:test-oracle — manual E[yield]−price oracle for the seam wiring pin
 end
 
 # ── §6  default_eu_max_policy: the act-now floor and deterministic tie order (synthetic dicts) ──

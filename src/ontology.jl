@@ -1039,20 +1039,14 @@ function probability(m::Measure, e::Event)
     expect(m, h -> k.log_density(h, true) == 0.0 ? 1.0 : 0.0)
 end
 
-function probability(m::MixtureMeasure, e::TagSet)
-    w = weights(m)
-    total = 0.0
-    for (i, comp) in enumerate(m.components)
-        if comp isa TaggedBetaMeasure && comp.tag in e.tags
-            total += w[i]
-        end
-    end
-    total
-end
+# The TagSet mass read is carrier-free (weights + tags only), so it declares at the
+# Prevision level (prevision-not-measure); the Measure method is the thin facade. The
+# returns-to-growth yield observable (`growth_yield`, growth_valuation.jl) reads through
+# the Prevision primary. Components without an Int tag contribute no mass (mirrors the
+# TaggedBetaMeasure semantics this replaced); causal consumers that require an
+# all-tagged mixture fail loud themselves (see growth_yield).
+probability(m::MixtureMeasure, e::TagSet) = probability(getfield(m, :prevision), e)
 
-# Prevision-level sibling (prevision-not-measure: the TagSet mass read is carrier-free —
-# weights + tags only — so it declares at the Prevision level). The returns-to-growth
-# yield observable (`growth_yield`, growth_valuation.jl) reads through this.
 function probability(p::MixturePrevision, e::TagSet)
     w = weights(p)
     total = 0.0

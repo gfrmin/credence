@@ -33,31 +33,29 @@ function summarise(policy::String, seed::Int, m::MetricsTracker,
     auc = sum(ce) / n
     w = max(1, round(Int, 0.2 * n))
     fwm = (ce[end] - (n - w >= 1 ? ce[n - w] : 0.0)) / w
-    sth = n
-    if ce[end] > 0.0
-        half = 0.5 * ce[end]
-        for t in 1:n
-            if ce[t] >= half
-                sth = t
-                break
-            end
-        end
-    end
+    # Self-relative steps-to-own-half (secondary): the same first-crossing scan as the
+    # fixed-reference metric, at this run's own half-total; n when final ≤ 0.
+    sth = ce[end] > 0.0 ? steps_to_level(ce, 0.5 * ce[end]) : n
     RunSummary(policy, seed, auc, fwm, sth, sum(m.meta_actions_per_step),
                last(m.n_grammars), growth_steps, copy(ce))
 end
 
 """
-    steps_to_level(r, level) → Int
+    steps_to_level(trajectory, level) → Int
+    steps_to_level(r::RunSummary, level) → Int
 
 Fixed-reference sample efficiency (belief-derived-valuation §2c): the first step at which
-the run's cumulative energy reaches `level` (a reference SHARED across policies — run.jl
-uses half the best policy's total on the same seed). Runs that never reach it score the
-full run length — bounded, and comparable across policies unlike steps-to-own-half.
+the cumulative-energy trajectory reaches `level` (a reference SHARED across policies —
+run.jl uses half the best compared policy's total on the same seed). Runs that never
+reach it score the full run length — bounded, and comparable across policies unlike
+steps-to-own-half. The ONE home of the crossing convention (`>=`, never-reached ⇒ n),
+shared by the secondary self-relative column. Linear scan, not binary search — the
+trajectory need not be monotone (energy losses).
 """
-function steps_to_level(r::RunSummary, level::Float64)::Int
-    for t in eachindex(r.cumulative)
-        r.cumulative[t] >= level && return t
+function steps_to_level(ce::Vector{Float64}, level::Float64)::Int
+    for t in eachindex(ce)
+        ce[t] >= level && return t
     end
-    length(r.cumulative)
+    length(ce)
 end
+steps_to_level(r::RunSummary, level::Float64)::Int = steps_to_level(r.cumulative, level)

@@ -88,11 +88,16 @@ function main(; n_seeds::Int = DB_N_SEEDS)
     println("best-tuned fixed schedule: $best_fixed; best-tuned random: $best_random")
 
     eu = results["eu_max"]
-    # Fixed-reference efficiency levels (belief-derived-valuation §2c): per seed, half the BEST
-    # policy's cumulative total — one level shared by every policy on that seed, so "faster"
-    # cannot be earned by collapsing early against one's own shrunken total.
+    # Fixed-reference efficiency levels (belief-derived-valuation §2c): per seed, half the best
+    # COMPARED policy's cumulative total — one level shared by every compared pair on that seed,
+    # so "faster" cannot be earned by collapsing early against one's own shrunken total. The
+    # clairvoyant ceiling is excluded from the reference: a level no compared policy approaches
+    # saturates every steps_to_level at the run length and silently zeroes the paired gap. A
+    # non-positive best total (hostile seed) degenerates the same way (everyone crosses at t=1,
+    # gap 0) — the seed then contributes no efficiency signal, which is conservative for the gate.
+    compared = ["eu_max", best_random, best_fixed, "never_explore"]
     n_per = length(eu)
-    ref_level = [0.5 * maximum(results[name][i].cumulative[end] for name in keys(results))
+    ref_level = [0.5 * maximum(results[name][i].cumulative[end] for name in compared)
                  for i in 1:n_per]
     gaps = Dict{String, Dict{Symbol, Tuple{Float64, Float64, Float64}}}()
     for base in [best_random, best_fixed, "never_explore"]

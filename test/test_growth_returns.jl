@@ -99,9 +99,9 @@ let
     # 0.0, 0.0, then 0.4).
     observe_growth_yield!(gr, :enumerate, 0.4)
     cell = gr.cells[(:enumerate, false)]
-    pr = params(cell)   # credence-lint: allow — precedent:test-oracle — exact conjugate α/β against the manual Gamma×Exponential update
+    pr = params(cell)
     check("§3 exact conjugate state: α == 2+3, β == 1+0.4",
-          pr.alpha == 5.0 && pr.beta == 1.4, "params=$pr")
+          pr.alpha == 5.0 && pr.beta == 1.4, "params=$pr")   # credence-lint: allow — precedent:test-oracle — exact conjugate α/β against the manual Gamma×Exponential update
     check("§3 expected yield == β/(α−1) == 1.4/4 exactly",
           expected_growth_yield(gr, :enumerate) == 1.4 / 4.0)
 
@@ -125,8 +125,8 @@ let
                          zeros(4))
     check("§4 mass of tags {3,4} on the uniform 4-mixture == 0.5 (probability, Tier-1 read)",
           probability(m, TagSet(Interval(0.0, 1.0), Set([3, 4]))) == 0.5)
-    check("§4 yield == −log(1 − mass) exactly",
-          growth_yield(m, [3, 4]) == -log1p(-0.5))
+    check("§4 yield == −log(incumbent mass) exactly (== −log(1 − mass); incumbent-side read)",
+          growth_yield(m, [3, 4]) == -log(0.5))
     check("§4 empty tag set (dedup no-op) yields exactly 0.0",
           growth_yield(m, Int[]) == 0.0)
 
@@ -147,9 +147,9 @@ let
     check("§4 precondition: the enumeration injected components", n_added > 0, "n_added=$n_added")
     tags = (len_before + 1):length(state.compiled_kernels)
     w = weights(state.belief)
-    mass = sum(w[t] for t in tags)   # credence-lint: allow — precedent:test-oracle — manual mass sum against probability(·, TagSet)
-    check("§4 yield of the injected block == −log(1 − Σ injected weights) exactly",
-          growth_yield(state.belief, tags) == -log1p(-mass))
+    inc_mass = sum(w[t] for t in 1:len_before)   # credence-lint: allow — precedent:test-oracle — manual incumbent-mass sum against probability(·, TagSet)
+    check("§4 yield of the injected block == −log(Σ incumbent weights) exactly (incumbent-side, no 1−mass cancellation)",
+          growth_yield(state.belief, tags) == -log(inc_mass))
 
     # Dedup no-op: the same grammar again adds nothing and yields exactly 0.0.
     len_before2 = length(state.compiled_kernels)

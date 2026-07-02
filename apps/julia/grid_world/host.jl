@@ -36,7 +36,7 @@ using Credence: update_learning_regime, plateau_probability, reset_learning_regi
 using Credence: exploration_voi, feature_discovery_voi, perturbation_voc
 # Belief-derived valuation (belief-derived-valuation-design.md): horizon-completed growth
 # scores from cached pure fits + the learned returns-to-growth model for escape ops.
-using Credence: exploration_fit, feature_discovery_fit, growth_value, complexity_logprior, net_value
+using Credence: exploration_fit, feature_discovery_fit, growth_value, feature_growth_value, net_value
 using Credence: expected_growth_yield, observe_growth_yield!, note_space_change!, growth_yield
 
 include("simulation.jl")
@@ -199,7 +199,8 @@ function score_gw_meta_actions(
     explore_buffer::Vector{ExploreObservation};
     op_compute_cost::Dict{Symbol, Float64} = GW_OP_COMPUTE_COST_DEFAULT,
     horizon::Union{Nothing, Float64} = nothing,
-    voi_cache::Union{Nothing, Dict{NTuple{4, Int}, NTuple{2, Float64}}} = nothing,
+    plateau::Union{Nothing, Float64} = nothing,
+    voi_cache::Union{Nothing, Dict{Tuple{Symbol, Int, Int, Int, Int}, NTuple{2, Float64}}} = nothing,
     cache_epoch::Int = 0
 )::Dict{Symbol, Float64}
     gw_action_space = Symbol[:food, :enemy]
@@ -229,30 +230,32 @@ function score_gw_meta_actions(
     # a cache, not an approximation. The epoch (owned by the run loop, bumped on growth-op
     # execution and window trims) prevents key collisions across content changes at equal length.
     n_buf = length(explore_buffer)
-    plateau = plateau_probability(state.learning_regime)
-    H = horizon === nothing ? Float64(n_buf) : horizon
+    pl = plateau === nothing ? plateau_probability(state.learning_regime) : plateau
     fit_explore = voi_cache === nothing ?
         exploration_fit(g_top, explore_buffer, state.current_max_depth;
                         action_space = gw_action_space) :
-        get!(voi_cache, (1000 + cache_epoch, g_top.id, n_buf, state.current_max_depth)) do
+        get!(voi_cache, (:explore, cache_epoch, g_top.id, n_buf, state.current_max_depth)) do
             (exploration_fit(g_top, explore_buffer, state.current_max_depth;
                              action_space = gw_action_space), 0.0)
         end[1]
-    scored[:gw_explore] = growth_value(fit_explore, n_buf, plateau, H;
+    scored[:gw_explore] = growth_value(fit_explore, n_buf, pl, horizon;
                                        compute_cost = get(op_compute_cost, :gw_explore, 0.0))
-    if fit_explore > 0.0
+    # The attribution gate tests the COMPLETED explore score (not raw fit): "a positive-VOI
+    # refinement remains" is judged at the value the argmax sees, so a declared explore price
+    # that puts refinement under water re-opens feature discovery instead of -Inf-gating it
+    # forever. At zero prices sign(completed) == sign(fit) — behaviour-unchanged.
+    if scored[:gw_explore] > 0.0
         scored[:gw_add_feature] = -Inf
     else
         fit_fd, dc_fd = voi_cache === nothing ?
             feature_discovery_fit(g_top, explore_buffer, ALL_GW_FEATURES,
                                   state.current_max_depth; action_space = gw_action_space) :
-            get!(voi_cache, (2000 + cache_epoch, g_top.id, n_buf, state.current_max_depth)) do
+            get!(voi_cache, (:add_feature, cache_epoch, g_top.id, n_buf, state.current_max_depth)) do
                 feature_discovery_fit(g_top, explore_buffer, ALL_GW_FEATURES,
                                       state.current_max_depth; action_space = gw_action_space)
             end
-        scored[:gw_add_feature] = growth_value(fit_fd, n_buf, plateau, H;
-                                               prior_term = complexity_logprior(dc_fd; λ = log(2)),
-                                               compute_cost = get(op_compute_cost, :gw_add_feature, 0.0))
+        scored[:gw_add_feature] = feature_growth_value(fit_fd, dc_fd, n_buf, pl, horizon;
+                                                       compute_cost = get(op_compute_cost, :gw_add_feature, 0.0))
     end
 
     # Learned returns-to-growth tier (belief-derived-valuation §2b): each escape op's value is
@@ -316,10 +319,11 @@ score_blind(::ScoreBlind) = true
 
 Execute a grid-world meta-action. Returns the number of programs added.
 
-`plateau`/`horizon` MUST match the values `score_gw_meta_actions` scored with: the growth
-executors (`explore_grammar`/`explore_features`) gate their edit on the SAME horizon-
-completed `growth_value` the score reported, so the score and the transition are one
-function (belief-derived-valuation §2a; CONSTITUTION §3.55).
+`plateau`/`horizon`/`op_compute_cost` MUST match the values `score_gw_meta_actions`
+scored with: the growth executors (`explore_grammar`/`explore_features`) gate their edit
+on the SAME horizon-completed, price-completed `growth_value` the score reported, so the
+score and the transition are one function (belief-derived-valuation §2a; CONSTITUTION
+§3.55) — on every coordinate, the declared compute price included.
 
 Escape ops (`:gw_enumerate_more`/`:gw_deepen`) additionally feed the learned returns
 model: the realised yield — the posterior mass their coherently-injected components
@@ -336,21 +340,15 @@ function execute_gw_meta_action!(
     verbose::Bool=false,
     plateau::Float64=1.0,
     horizon::Union{Nothing, Float64}=nothing,
+    op_compute_cost::Dict{Symbol, Float64}=GW_OP_COMPUTE_COST_DEFAULT,
     max_program_depth::Union{Nothing, Int}=nothing
 )::Int
     gw_action_space = Symbol[:food, :enemy]
 
     if action == :gw_enumerate_more
         len_before = length(state.compiled_kernels)
-        top_gids = top_k_grammar_ids(state, 3)
-        n_added = 0
-        for gid in top_gids
-            haskey(state.grammars, gid) || continue
-            n_added += add_programs_to_state!(state, state.grammars[gid],
-                state.current_max_depth;
-                observations=explore_buffer,
-                action_space=gw_action_space, include_temporal=include_temporal)
-        end
+        n_added = _enumerate_top_grammars!(state, explore_buffer;
+                                           include_temporal=include_temporal)
         _observe_escape_yield!(state, action, len_before, n_added)
         verbose && println("  [Meta: enumerate_more → +$n_added components]")
         return n_added
@@ -361,15 +359,19 @@ function execute_gw_meta_action!(
                                                 min_frequency=0.01, min_complexity=2)
         top_gids = top_k_grammar_ids(state, 3)
         n_added = 0
+        pool_changed = false
         for gid in top_gids
             haskey(state.grammars, gid) || continue
             new_g = perturb_grammar(state.grammars[gid], freq_table, ALL_GW_FEATURES)
+            new_g.id == gid && continue          # structural no-op: nothing to install
             state.grammars[new_g.id] = new_g
+            pool_changed = true
             n_added += add_programs_to_state!(state, new_g, state.current_max_depth;
                 observations=explore_buffer,
                 action_space=gw_action_space, include_temporal=include_temporal)
         end
-        n_added > 0 && note_space_change!(state.growth_returns)
+        # The pool changing is the hypothesis-space change (even if every program deduped).
+        pool_changed && note_space_change!(state.growth_returns)
         verbose && println("  [Meta: perturb_grammar → +$n_added components]")
         return n_added
 
@@ -389,15 +391,8 @@ function execute_gw_meta_action!(
         end
         len_before = length(state.compiled_kernels)
         state.current_max_depth += 1
-        top_gids = top_k_grammar_ids(state, 3)
-        n_added = 0
-        for gid in top_gids
-            haskey(state.grammars, gid) || continue
-            n_added += add_programs_to_state!(state, state.grammars[gid],
-                state.current_max_depth;
-                observations=explore_buffer,
-                action_space=gw_action_space, include_temporal=include_temporal)
-        end
+        n_added = _enumerate_top_grammars!(state, explore_buffer;
+                                           include_temporal=include_temporal)
         _observe_escape_yield!(state, action, len_before, n_added; depth_changed=true)
         verbose && println("  [Meta: deepen → depth=$(state.current_max_depth), +$n_added components]")
         return n_added
@@ -415,13 +410,16 @@ function execute_gw_meta_action!(
         isempty(top) && return 0
         gid = top[1]
         new_g = explore_grammar(state.grammars[gid], explore_buffer, state.current_max_depth;
-                                action_space=gw_action_space, plateau=plateau, horizon=horizon)
+                                action_space=gw_action_space, plateau=plateau, horizon=horizon,
+                                compute_cost=get(op_compute_cost, :gw_explore, 0.0))
         new_g.id == gid && return 0   # no candidate clears the completed value → no-op
         state.grammars[new_g.id] = new_g
         n_added = add_programs_to_state!(state, new_g, state.current_max_depth;
             observations=explore_buffer,
             action_space=gw_action_space, include_temporal=include_temporal)
-        n_added > 0 && note_space_change!(state.growth_returns)
+        # The grammar POOL changed (a hypothesis-space change even if every enumerated
+        # program deduped): ops that fired earlier earn fresh consideration.
+        note_space_change!(state.growth_returns)
         reset_learning_regime!(state)
         verbose && println("  [Meta: explore → grammar $gid→$(new_g.id) (threshold refined), +$n_added components]")
         return n_added
@@ -440,18 +438,37 @@ function execute_gw_meta_action!(
         gid = top[1]
         new_g = explore_features(state.grammars[gid], explore_buffer, ALL_GW_FEATURES,
                                  state.current_max_depth;
-                                 action_space=gw_action_space, plateau=plateau, horizon=horizon)
+                                 action_space=gw_action_space, plateau=plateau, horizon=horizon,
+                                 compute_cost=get(op_compute_cost, :gw_add_feature, 0.0))
         new_g.id == gid && return 0   # no candidate clears the completed value → no-op
         state.grammars[new_g.id] = new_g
         n_added = add_programs_to_state!(state, new_g, state.current_max_depth;
             observations=explore_buffer,
             action_space=gw_action_space, include_temporal=include_temporal)
-        n_added > 0 && note_space_change!(state.growth_returns)
+        # The grammar POOL changed: fresh consideration for earlier-fired ops (as in explore).
+        note_space_change!(state.growth_returns)
         reset_learning_regime!(state)
         verbose && println("  [Meta: add_feature → grammar $gid→$(new_g.id) (feature acquired), +$n_added components]")
         return n_added
     end
     0
+end
+
+# The shared escape-op injection recipe (enumerate and deepen differ only by the depth bump
+# and frontier check): re-enumerate the top-3 grammars at the current depth through the
+# coherent-injection path. One home, so the two ops' returns cells are always conditioned
+# on identically-measured yields.
+function _enumerate_top_grammars!(state::AgentState, explore_buffer::Vector{ExploreObservation};
+                                  include_temporal::Bool=false)::Int
+    n_added = 0
+    for gid in top_k_grammar_ids(state, 3)
+        haskey(state.grammars, gid) || continue
+        n_added += add_programs_to_state!(state, state.grammars[gid],
+            state.current_max_depth;
+            observations=explore_buffer,
+            action_space=Symbol[:food, :enemy], include_temporal=include_temporal)
+    end
+    n_added
 end
 
 # The escape-op returns observation (belief-derived-valuation §2b): the realised yield is the
@@ -492,8 +509,11 @@ function run_agent(;
     # 3→4), and only the task knows its pool, so growth is opt-in: declare a larger frontier
     # (the dominance benchmark declares start+1) or `nothing` for explicitly unbounded.
     # At the frontier deepen is an honest no-op whose zero yield retires it through the
-    # returns cells. The pre-change scheme never fired deepen at all (the tie order shadowed
-    # it), so this default is strictly more permissive than the old behaviour, never less.
+    # returns cells. Under the default argmax policy the pre-change scheme never fired
+    # deepen at all (the tie order shadowed it), so for that policy this default is
+    # strictly more permissive; policies that force :gw_deepen (custom/stochastic) must
+    # declare the frontier they want — the benchmark's RANDOM_OPS already excludes deepen
+    # for exactly the wall-clock reason this default guards.
     max_program_depth::Union{Nothing, Int}=program_max_depth
 )
     Random.seed!(rng_seed)
@@ -548,9 +568,11 @@ function run_agent(;
     explore_buffer = ExploreObservation[]
     # Exact memoisation of the pure lookahead FITS (see score_gw_meta_actions): epoch bumps on
     # growth-op execution and window trims so equal-length buffers with different content never
-    # collide with stale keys. Values are (fit, Δcomplexity) pairs — the horizon completion
-    # (plateau/H, which change every step) is applied outside the cache.
-    voi_cache = Dict{NTuple{4, Int}, NTuple{2, Float64}}()
+    # collide with stale keys; the op lives in the key as a Symbol (a typed field, not an
+    # arithmetic offset that could collide across ops at high epochs). Values are
+    # (fit, Δcomplexity) pairs — the horizon completion (plateau/H, which change every step)
+    # is applied outside the cache.
+    voi_cache = Dict{Tuple{Symbol, Int, Int, Int, Int}, NTuple{2, Float64}}()
     cache_epoch = 0
     # Conditioning-event count — with `max_steps` (declared task data) and the step index, the
     # host's bookkeeping for the declared-horizon completion H (belief-derived-valuation §2a):
@@ -618,15 +640,18 @@ function run_agent(;
                 scored = score_blind(meta_policy) ?
                     Dict{Symbol, Float64}(:gw_do_nothing => 0.0) :
                     score_gw_meta_actions(state, explore_buffer; op_compute_cost=op_compute_cost,
-                                          horizon=H, voi_cache=voi_cache, cache_epoch=cache_epoch)
+                                          horizon=H, plateau=pl,
+                                          voi_cache=voi_cache, cache_epoch=cache_epoch)
                 chosen = meta_policy(scored, step)::Symbol
                 chosen == :gw_do_nothing && break
 
-                # plateau/horizon match the score's, so the growth executors gate on the same
-                # completed value the argmax saw (score == transition, CONSTITUTION §3.55).
+                # plateau/horizon/op_compute_cost match the score's, so the growth executors
+                # gate on the same completed value the argmax saw (score == transition,
+                # CONSTITUTION §3.55) — on every coordinate, the declared price included.
                 execute_gw_meta_action!(state, chosen, explore_buffer;
                     include_temporal=include_temporal, verbose=verbose,
-                    plateau=pl, horizon=H, max_program_depth=max_program_depth)
+                    plateau=pl, horizon=H, op_compute_cost=op_compute_cost,
+                    max_program_depth=max_program_depth)
                 chosen in (:gw_explore, :gw_add_feature) && (cache_epoch += 1)
                 meta_actions_taken += 1
 

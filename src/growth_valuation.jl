@@ -28,8 +28,9 @@ The horizon-completed value of a growth meta-action (design §2a):
 - `plateau` — P(the measured gain is a persistent plateau, not transient): *whether*
   the gain is real (Move-2 semantics, unchanged).
 - `H` — expected remaining conditioning events: *how long* it pays. Declared task
-  data + host bookkeeping counts. Open-ended hosts declare `H = n_buf` (§5 Q2),
-  recovering the window-total score.
+  data + host bookkeeping counts. `nothing` declares an open-ended host (§5 Q2)
+  ⇒ `H = n_buf`, recovering the window-total score — this defaulting rule lives
+  HERE and only here, so every scoring seam and executor completes identically.
 - `prior_term` — the one-time Occam charge (e.g. `complexity_logprior(Δcomplexity)`
   for a feature add). A prior over grammars is paid ONCE — never multiplied by the
   horizon, never discounted by `plateau` (it is not a measured gain).
@@ -40,14 +41,18 @@ window-total score `plateau·Δℓ + prior_term − compute_cost` EXACTLY (`H/n_
 in floats) — the nested-special-case pin, test_growth_returns.jl §1. `n_buf ≤ 0`
 (empty window) means no measured gain: the value is `prior_term − compute_cost`.
 
-Pure linear value − cost, no clamp (the `net_value` invariant, `src/net_value.jl`);
-the no-op floor (a lookahead with no clearing candidate scores 0) belongs to the
-callers (`exploration_voi` / `feature_discovery_voi`), not to this functional.
+The subtraction routes through the one canalised scalar reduction `net_value`
+(`src/net_value.jl` — pure linear value − cost, no clamp; this site is on that
+invariant's audit surface, paired back-reference kept there). The no-op floor
+(a lookahead with no clearing candidate scores 0) belongs to the callers
+(`exploration_voi` / `feature_discovery_voi`), not to this functional.
 """
-function growth_value(Δℓ::Float64, n_buf::Int, plateau::Float64, H::Float64;
+function growth_value(Δℓ::Float64, n_buf::Int, plateau::Float64,
+                      H::Union{Nothing, Float64};
                       prior_term::Float64 = 0.0, compute_cost::Float64 = 0.0)::Float64
-    n_buf <= 0 && return prior_term - compute_cost
-    plateau * Δℓ * (H / n_buf) + prior_term - compute_cost
+    n_buf <= 0 && return net_value(prior_term, compute_cost)
+    h = H === nothing ? Float64(n_buf) : H
+    net_value(plateau * Δℓ * (h / n_buf) + prior_term, compute_cost)
 end
 
 # ═══════════════════════════════════════
@@ -58,6 +63,10 @@ end
 # Gamma(α, β) prior on the rate — conjugate (`GammaPrevision × Exponential`, the
 # registry pair in conjugate.jl). Expected next yield E[y] = E[1/λ] = β/(α−1), exact
 # via the declared `Reciprocal` test function. Built once; stateless.
+# NOTE: apps/skin/server.jl builds the same declared shape for the wire's "exponential"
+# kernel (with a numerics guard on log(λ) its non-conjugate paths need); lifting one
+# shared constructor into kernels.jl is a follow-up — kept separate here to leave the
+# skin bit-stable in this move.
 const _GROWTH_YIELD_KERNEL = Kernel(PositiveReals(), PositiveReals(),
     _ -> error("generate not used in condition"),
     (λ, y) -> log(λ) - λ * y;
@@ -154,21 +163,39 @@ end
 
 The realised yield observable of an executed op (design §5 Q1, ratified: injected
 posterior mass): the posterior mass captured by the op's coherently-injected
-components — `probability(belief, TagSet(injected tags))`, a Tier-1 read — converted
-to nats as `−log(1 − mass)` (the log-evidence the op claimed). Exactly `0.0` when
-the op injected nothing (dedup no-op: empty `tags` ⇒ mass 0), near-zero when zombies
-re-enter at evidence-crushed weight (the churn self-reports as worthless). Read
-immediately after injection, BEFORE `sync_prune!`/`sync_truncate!` re-tag.
+components, converted to nats as `−log(1 − mass)` (the log-evidence the op claimed).
+Exactly `0.0` when the op injected nothing (dedup no-op: empty `tags` ⇒ mass 0),
+near-zero when zombies re-enter at evidence-crushed weight (the churn self-reports
+as worthless). Read immediately after injection, BEFORE `sync_prune!`/`sync_truncate!`
+re-tag.
 
-Defined for injection into a belief with incumbents (mass < 1); an op that injects
-into an empty belief has no incumbents to claim mass from and fails loud.
+Computed from the INCUMBENT side — `1 − mass = probability(belief, TagSet(incumbent
+tags))`, a Tier-1 read — so a high-yield injection never suffers the `1 − mass`
+cancellation: when the injected block holds all but ~1e-16 of the mass, the incumbent
+sum is that small number exactly, not a rounded 0. The mixture's components carry the
+contiguous tags `1..N` (the sync re-tag discipline), so the incumbent set is the
+complement of `tags`. An incumbent mass that underflows to exactly `0.0`
+(incumbents > ~745 nats under the newcomers) saturates at the measurement's
+representable bound `−log(floatmin(Float64))` — a type fact, not a tuned constant:
+the instrument's resolution, not a decision.
+
+The belief is assumed to be a Beta-carrier tagged mixture (`TaggedBetaPrevision`
+components — the program-space shape); components without tags contribute no mass.
 """
 function growth_yield(belief::MixturePrevision, tags)::Float64
     tagset = Set{Int}(tags)
     isempty(tagset) && return 0.0
-    mass = probability(belief, TagSet(Interval(0.0, 1.0), tagset))
-    mass < 1.0 || error("growth_yield: injected components hold ALL posterior mass " *
-                        "(mass = $mass) — the yield observable requires incumbents " *
-                        "(injection into an empty belief is not an escape-op shape)")
-    -log1p(-mass)
+    # Declared structure, fail loud (Invariant 2): the TagSet mass read silently skips
+    # untagged components, which here would fabricate zero yields and silently mis-train
+    # the returns cells — so the unsupported shape errors instead.
+    all(c isa TaggedBetaPrevision for c in belief.components) ||
+        error("growth_yield: the belief must be a tagged Beta mixture " *
+              "(TaggedBetaPrevision components); an untagged component would silently " *
+              "contribute zero mass and corrupt the yield observable")
+    incumbents = setdiff(Set{Int}(1:length(belief.components)), tagset)
+    isempty(incumbents) &&
+        error("growth_yield: no incumbent components — the yield observable requires " *
+              "incumbents (injection into an empty belief is not an escape-op shape)")
+    inc_mass = probability(belief, TagSet(Interval(0.0, 1.0), incumbents))
+    inc_mass > 0.0 ? -log(inc_mass) : -log(floatmin(Float64))
 end
