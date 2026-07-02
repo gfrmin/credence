@@ -57,7 +57,13 @@ function run_cell(policy_name::String, factory::Function, seed::Int)::RunSummary
         respawn = true,
         observe_adjacent = true,
         seed_grammars = colour_only_pool(),
-        explore_window = 30)
+        explore_window = 30,
+        # The task's declared depth frontier: depth-4 enumeration on this pool is ~7×10⁵
+        # components per firing (measured) and the mass-yield observable rewards the flood
+        # (design §5 Q1's attention-vs-value wedge), so the task declares its program space
+        # capped one deepen above the start — deepen gets its honest probe and its zero
+        # yields at the frontier retire it through the returns cells.
+        max_program_depth = 3)
     summarise(policy_name, seed, metrics, growth_log)
 end
 

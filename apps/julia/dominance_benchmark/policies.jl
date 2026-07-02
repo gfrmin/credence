@@ -58,9 +58,10 @@ end
 
 """
 Scope-A floor: EU-max with grammar/feature growth masked off, keeping the SAME
-entropy-scored escape-mass ops as eu_max. The headline gap eu_max − never_explore
-isolates exploration's value with the heuristic held constant on both sides —
-the one comparison the softest score in the policy cannot contaminate (§6).
+learned-returns escape ops as eu_max (each side's returns beliefs conditioned on its
+own realised yields). The headline gap eu_max − never_explore isolates exploration's
+value with the escape mechanism held constant on both sides — the one comparison the
+softest score in the policy cannot contaminate (§6).
 """
 function make_never_explore()
     # credence-lint: allow — precedent:baseline-comparison — never_explore: growth ops vetoed, the Scope-A floor de-confounder
