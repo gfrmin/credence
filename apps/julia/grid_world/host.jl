@@ -277,6 +277,21 @@ end
 default_eu_max_policy(scored::Dict{Symbol, Float64}, ::Int)::Symbol = default_eu_max_policy(scored)
 
 """
+    ScoreBlind(f) — a meta-policy wrapper declaring that `f` never reads the scores.
+
+Score-blind baselines (random, fixed-schedule) select ops without consulting `scored`;
+computing the exact VOI lookaheads on their behalf is pure waste, so the seam skips
+`score_gw_meta_actions` for policies wrapped in this. Behaviour-neutral by construction —
+the wrapped policy receives an act-now-only dict it was never going to read.
+"""
+struct ScoreBlind <: Function
+    f::Function
+end
+(p::ScoreBlind)(scored::Dict{Symbol, Float64}, step::Int) = p.f(scored, step)::Symbol
+score_blind(::Function) = false
+score_blind(::ScoreBlind) = true
+
+"""
     execute_gw_meta_action!(state, action; ...) → Int
 
 Execute a grid-world meta-action. Returns the number of programs added.
@@ -499,8 +514,10 @@ function run_agent(;
             # baselines (random, fixed-schedule) may deliberately act on non-positive scores —
             # that waste is exactly what the dominance benchmark measures.
             while meta_actions_taken < max_meta_per_step
-                scored = score_gw_meta_actions(state, explore_buffer; escape_cost=escape_cost,
-                                               voi_cache=voi_cache, cache_epoch=cache_epoch)
+                scored = score_blind(meta_policy) ?
+                    Dict{Symbol, Float64}(:gw_do_nothing => 0.0) :
+                    score_gw_meta_actions(state, explore_buffer; escape_cost=escape_cost,
+                                          voi_cache=voi_cache, cache_epoch=cache_epoch)
                 chosen = meta_policy(scored, step)::Symbol
                 chosen == :gw_do_nothing && break
 
