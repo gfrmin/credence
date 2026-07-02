@@ -46,8 +46,10 @@ once. With `horizon == n_buf` and `plateau == 1` this reduces BIT-EXACTLY to
 `net_value(fit + prior_term, compute_cost)`, the pre-move valuation (the multiplier is exactly
 1.0; pinned by test_growth_returns.jl §5). `n_buf ≤ 0` (empty window) ⇒ the fit term is 0.
 
-Same linear-value−cost INVARIANT as `net_value` above: no clamp, no nonlinearity.
+Same linear-value−cost INVARIANT as `net_value` above: no clamp, no nonlinearity — and the
+subtraction ROUTES through `net_value`, so this site sits on that invariant's audit surface
+(bit-identical: `(a + p) − c` either way).
 """
 growth_value(fit::Real, n_buf::Integer, plateau::Real, horizon::Real;
              prior_term::Real = 0.0, compute_cost::Real = 0.0) =
-    (n_buf <= 0 ? 0.0 : plateau * fit * (horizon / n_buf)) + prior_term - compute_cost
+    net_value((n_buf <= 0 ? 0.0 : plateau * fit * (horizon / n_buf)) + prior_term, compute_cost)
