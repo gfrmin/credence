@@ -32,6 +32,8 @@ using Credence: SubprogramFrequencyTable
 # Move 3 — the belief-aware exploration budget (threshold refinement) + the Move-2 saturation signal.
 using Credence: explore_grammar, explore_features, ExploreObservation
 using Credence: update_learning_regime, plateau_probability, reset_learning_regime!
+# Dominance move — the real single-currency argmax at the selection seam.
+using Credence: exploration_voi, feature_discovery_voi, perturbation_voc, entropy
 
 include("simulation.jl")
 include("terminals.jl")
@@ -43,20 +45,20 @@ using Random
 # Meta-action constants
 # ═══════════════════════════════════════
 
+# Tie order is load-bearing: the selection argmax resolves ties by first-listed. Enumerate
+# (breadth) precedes deepen (depth) so equal escape-mass scores take the cheaper op first
+# (dominance-design §5.1's named refinement — entropy does not distinguish them — deferred).
 const GW_META_ACTIONS = [:gw_enumerate_more, :gw_perturb_grammar, :gw_deepen, :gw_explore,
                          :gw_add_feature, :gw_do_nothing]
-const GW_ENUMERATE_COST = 0.05
-const GW_PERTURB_COST = 0.05
-const GW_DEEPEN_COST = 0.10
-const GW_EXPLORE_COST = 0.10       # meta-time cost of the explore meta-action (the lookahead is expensive)
-const GW_EXPLORE_BASE = 0.6        # the saturation-scaled value the residual-plateau prior multiplies (Q3)
-const GW_EXPLORE_VOI_FLOOR = 0.10  # min predictive-log-loss gain (nats) a refinement must clear — a
-                                   # DISTINCT currency from GW_EXPLORE_COST (meta-time), passed as the
-                                   # explore_grammar compute_cost (cf. email host's expected_cost vs 0.1)
-const GW_ADD_FEATURE_COST = 0.10       # meta-time cost of the feature-discovery meta-action (Move 4)
-const GW_ADD_FEATURE_BASE = 0.6        # the residual-plateau-scaled value (the soft prior, as for explore)
-const GW_ADD_FEATURE_VOI_FLOOR = 0.10  # min net VOI (nats, ON TOP of the log2 prior-Occam bar that
-                                       # explore_features charges internally) a feature must clear
+# One currency — Δ log-evidence, nats (Move 5) — and one declared price. The escape-mass ops
+# (:gw_enumerate_more/:gw_deepen) have no exact VOI: their value is the un-entertained tail's,
+# myopic-unreachable by construction, so they are scored by posterior entropy (a NAMED HEURISTIC,
+# dominance-design §0/§5.1) against this compute price: one bit. It is utility DATA — the
+# caller's declared price of search compute, overridable via run_agent(escape_cost=…) — not a
+# decision mechanism. Every proxy constant of the pre-dominance scheme (BASE/COST/VOI_FLOOR and
+# the inline confidence arithmetic) is retired; the exact and surrogate tiers price their own
+# compute through the engine's compute_cost kwargs (default 0.0).
+const GW_ESCAPE_COST_DEFAULT = log(2.0)
 
 # ═══════════════════════════════════════
 # Build the observation kernel
@@ -149,82 +151,105 @@ end
 # ═══════════════════════════════════════
 
 """
-    mean_observation_count_gw(state) → Float64
+    score_gw_meta_actions(state, explore_buffer; escape_cost) → Dict{Symbol, Float64}
 
-Average number of observations across components: mean(α + β - 2).
+Score every grid-world meta-action in the ONE currency — Δ log-evidence, nats
+(Move 5; dominance-design §4). Each op is priced at its own fidelity:
+
+    :gw_explore          plateau · exploration_voi          exact re-conditioned lookahead
+    :gw_add_feature      plateau · feature_discovery_voi    exact lookahead; hard-gated on
+                                                            thresholds-exhausted (attribution)
+    :gw_perturb_grammar  perturbation_voc                   prior-only surrogate, never
+                                                            re-conditioned (§5.3 cascade)
+    :gw_enumerate_more,  entropy(belief) − escape_cost      escape-mass HEURISTIC (named, §0),
+    :gw_deepen                                              eligible only when the exact tier
+                                                            is non-positive (saturation-ordered
+                                                            strictly below any positive exact VOI)
+    :gw_do_nothing       0.0                                the act-now reference
+
+`plateau` is the regime-marginalised soft gate (Move 2): with probability `plateau` the
+residual is a persistent plateau and the measured Δℓ is real; with probability 1−plateau
+the agent is still learning and the residual decays on its own (VOI ≈ 0) — so
+E[VOI] = plateau·Δℓ. Never a hard threshold. threshold_exhausted stays HARD on
+:gw_add_feature with zero constants: a feature Δℓ measured against a coarse grid is
+confounded — inflated by residual that refinement would ALSO capture — so the
+un-confounded baseline exists iff no positive-VOI refinement remains, i.e. the already-
+computed exploration score is ≤ 0. Recomputed each call, never carried (the ladder is
+cyclic). The compression rung stays soft (#174 PR 2): perturbation_voc competes in the
+argmax at its own prior-only score, no veto in either direction.
+
+Asserted by test_grid_world_meta.jl.
 """
-function mean_observation_count_gw(state::AgentState)::Float64
-    isempty(state.belief.components) && return 0.0
-    total = 0.0
-    for comp in state.belief.components
-        tbm = comp::TaggedBetaPrevision
-        total += tbm.beta.alpha + tbm.beta.beta - 2.0  # credence-lint: allow — precedent:expect-through-accessor — pseudo-count sum (α+β−2) has no stdlib function
+function score_gw_meta_actions(
+    state::AgentState,
+    explore_buffer::Vector{ExploreObservation};
+    escape_cost::Float64 = GW_ESCAPE_COST_DEFAULT
+)::Dict{Symbol, Float64}
+    gw_action_space = Symbol[:food, :enemy]
+    scored = Dict{Symbol, Float64}(:gw_do_nothing => 0.0)
+
+    top = top_k_grammar_ids(state, 1)
+    if isempty(top)
+        for ma in GW_META_ACTIONS
+            ma == :gw_do_nothing || (scored[ma] = -Inf)
+        end
+        return scored
     end
-    total / length(state.belief.components)
+    g_top = state.grammars[top[1]]
+
+    # Prior-only surrogate (the cheap fidelity): best compression net-VOC over the posterior
+    # subtree table. Never re-conditioned at selection (§5.3 — real VOI replaces proxy-for-exact
+    # on the exploration ops ONLY; flattening the cascade would delete its EU-optimal
+    # evaluation-cost ordering, Move 5 §4/§6).
+    ft = analyse_posterior_subtrees(state.all_programs, weights(state.belief);
+                                    min_frequency = 0.01, min_complexity = 2)
+    scored[:gw_perturb_grammar] = perturbation_voc(g_top, ft)
+
+    # Exact re-conditioned lookahead tier, regime-marginalised by the plateau soft gate.
+    plateau = plateau_probability(state.learning_regime)
+    voi_explore = exploration_voi(g_top, explore_buffer, state.current_max_depth;
+                                  action_space = gw_action_space)
+    scored[:gw_explore] = plateau * voi_explore
+    scored[:gw_add_feature] = voi_explore > 0.0 ? -Inf :
+        plateau * feature_discovery_voi(g_top, explore_buffer, ALL_GW_FEATURES,
+                                        state.current_max_depth;
+                                        action_space = gw_action_space)
+
+    # Escape-mass heuristic tier, saturation-ordered strictly below any positive exact VOI (§0):
+    # eligible only once the exact tier is non-positive, then scored by posterior entropy against
+    # the declared compute price. :gw_enumerate_more with every top grammar already enumerated at
+    # the current depth provably adds no hypothesis (add_programs_to_state! dedup) — but knowing
+    # that costs the enumeration itself, so both ops carry the same H − cost and ties resolve by
+    # GW_META_ACTIONS order (breadth before depth).
+    exact_max = max(scored[:gw_explore], scored[:gw_add_feature])
+    escape = exact_max > 0.0 ? -Inf : entropy(state.belief) - escape_cost
+    scored[:gw_enumerate_more] = escape
+    scored[:gw_deepen] = escape
+
+    scored
 end
 
 """
-    compute_gw_meta_eu(state, action, eu_interact, n_obs; meta_cost_this_turn) → Float64
+    default_eu_max_policy(scored) → Symbol
 
-EU for grid-world meta-actions. Uses |eu_interact| as confidence proxy:
-low |eu| means the agent is near indifference → meta-actions have high VOI.
+The agent's selection policy: deterministic argmax over `scored` in GW_META_ACTIONS
+order (strict `>`, first-listed wins ties), with the act-now floor — returns
+:gw_do_nothing unless some op's score strictly exceeds 0.0 (any op with net value ≤ 0
+must lose to acting now, dominance-design §0). Benchmark baselines substitute this
+function via run_agent(meta_policy=…); the seam adds no behaviour of its own.
 """
-function compute_gw_meta_eu(
-    state::AgentState,
-    action::Symbol,
-    eu_interact::Float64,
-    n_obs::Float64,
-    explore_buffer::Vector{ExploreObservation};
-    meta_cost_this_turn::Float64=0.0
-)::Float64
-    action == :gw_do_nothing && return -Inf
-
-    confidence = abs(eu_interact) / 5.0  # normalize by max reward magnitude
-    uncertainty_benefit = (1.0 - confidence) / (1.0 + 0.1 * n_obs)
-
-    if action == :gw_enumerate_more
-        return uncertainty_benefit * 0.5 - GW_ENUMERATE_COST - meta_cost_this_turn
-    elseif action == :gw_perturb_grammar
-        base = n_obs > 5.0 ? uncertainty_benefit * 0.6 : 0.0
-        return base - GW_PERTURB_COST - meta_cost_this_turn
-    elseif action == :gw_deepen
-        return uncertainty_benefit * 0.4 - GW_DEEPEN_COST - meta_cost_this_turn
-    elseif action == :gw_explore
-        # Belief-aware threshold-refinement exploration (Move 3), gated by the residual-plateau SOFT prior
-        # ONLY: plateau SCALES the EU continuously, never a hard threshold. The compression_exhausted hard
-        # rung was DROPPED (#174 PR 2): compression is prior-only and never confounds the fit-side threshold
-        # VOI (Move 2 Q3), so it is a soft cost-ordering preference, not a veto — and that preference is
-        # already carried by the meta-action cost asymmetry (GW_PERTURB_COST < GW_EXPLORE_COST) in the
-        # caller's argmax, exactly as :gw_enumerate_more/:gw_deepen compete with no gate. No discount
-        # constant: the host compares PROXY EUs in a common scale, so there is no cross-currency comparison
-        # to gate here (the Q5 gap is engine-level; the principled end-state is one net-EU argmax once Move 5
-        # closes it). Asserted by test_grid_world_meta.jl §1–§2.
-        plateau = plateau_probability(state.learning_regime)
-        eu_explore = plateau * GW_EXPLORE_BASE - GW_EXPLORE_COST - meta_cost_this_turn
-        return eu_explore
-    elseif action == :gw_add_feature
-        # Feature discovery (Move 4), gated by plateau (SOFT) ∧ threshold_exhausted (HARD). The
-        # compression_exhausted rung was DROPPED (#174 PR 2): compression is prior-only and never confounds
-        # the fit-side feature Δℓ (Move 2 Q3) — a soft cost-ordering preference (carried by the cost
-        # asymmetry in the caller's argmax), not a veto, and no discount constant is needed at the host's
-        # proxy layer. threshold_exhausted STAYS hard: a feature's Δℓ measured against a COARSE-grid baseline
-        # IS confounded — inflated by residual that threshold refinement would ALSO have captured — so
-        # feature evaluation waits until the threshold-exhausted (un-confounded) baseline exists. A sound
-        # deferral, not a cap (attribution fidelity). It is RECOMPUTED each call, never carried: the ladder
-        # is cyclic (an added feature re-opens its own grid via the next explore pass), so a cached signal
-        # goes stale. Asserted by test_grid_world_meta.jl §3a–§3b.
-        plateau = plateau_probability(state.learning_regime)
-        eu_feature = plateau * GW_ADD_FEATURE_BASE - GW_ADD_FEATURE_COST - meta_cost_this_turn
-        eu_feature <= 0.0 && return eu_feature
-        top = top_k_grammar_ids(state, 1)
-        isempty(top) && return -Inf
-        g_top = state.grammars[top[1]]
-        explore_grammar(g_top, explore_buffer, state.current_max_depth;
-                        action_space=Symbol[:food, :enemy], compute_cost=GW_EXPLORE_VOI_FLOOR) === g_top ||
-            return -Inf
-        return eu_feature
+function default_eu_max_policy(scored::Dict{Symbol, Float64})::Symbol
+    best = :gw_do_nothing
+    best_score = 0.0
+    for ma in GW_META_ACTIONS
+        ma == :gw_do_nothing && continue
+        s = get(scored, ma, -Inf)
+        if s > best_score
+            best_score = s
+            best = ma
+        end
     end
-    -Inf
+    best
 end
 
 """
@@ -292,7 +317,7 @@ function execute_gw_meta_action!(
         isempty(top) && return 0
         gid = top[1]
         new_g = explore_grammar(state.grammars[gid], explore_buffer, state.current_max_depth;
-                                action_space=gw_action_space, compute_cost=GW_EXPLORE_VOI_FLOOR)
+                                action_space=gw_action_space)
         new_g.id == gid && return 0   # no positive-VOI refinement → no-op
         state.grammars[new_g.id] = new_g
         n_added = add_programs_to_state!(state, new_g, state.current_max_depth;
@@ -314,7 +339,7 @@ function execute_gw_meta_action!(
         gid = top[1]
         new_g = explore_features(state.grammars[gid], explore_buffer, ALL_GW_FEATURES,
                                  state.current_max_depth;
-                                 action_space=gw_action_space, compute_cost=GW_ADD_FEATURE_VOI_FLOOR)
+                                 action_space=gw_action_space)
         new_g.id == gid && return 0   # no positive-VOI feature → no-op
         state.grammars[new_g.id] = new_g
         n_added = add_programs_to_state!(state, new_g, state.current_max_depth;
@@ -339,7 +364,9 @@ function run_agent(;
     max_meta_per_step::Int=3,
     include_temporal::Bool=false,
     verbose::Bool=true,
-    rng_seed::Int=42
+    rng_seed::Int=42,
+    meta_policy::Function=default_eu_max_policy,
+    escape_cost::Float64=GW_ESCAPE_COST_DEFAULT
 )
     Random.seed!(rng_seed)
 
@@ -429,34 +456,21 @@ function run_agent(;
             # Feature dict for this entity
             features = entity_features(entity, world.agent_pos, world.config.grid_size)
 
-            # Meta-action inner loop: improve hypothesis space before domain decision
-            meta_cost_this_turn = 0.0
+            # Meta-action inner loop: improve hypothesis space before domain decision.
+            # One scored dict per iteration (each execution changes the state, so scores are
+            # recomputed fresh — no within-turn cost accumulator; the loop is bounded by
+            # max_meta_per_step and by the policy returning :gw_do_nothing). The policy owns
+            # the stop rule: default_eu_max_policy implements the act-now floor; benchmark
+            # baselines (random, fixed-schedule) may deliberately act on non-positive scores —
+            # that waste is exactly what the dominance benchmark measures.
             while meta_actions_taken < max_meta_per_step
-                eu = compute_eu_interact(state.belief, state.compiled_kernels,
-                                          features, temporal_state)
-                n_obs = mean_observation_count_gw(state)
+                scored = score_gw_meta_actions(state, explore_buffer; escape_cost=escape_cost)
+                chosen = meta_policy(scored)::Symbol
+                chosen == :gw_do_nothing && break
 
-                best_meta_eu = -Inf
-                best_meta = :gw_do_nothing
-                for ma in GW_META_ACTIONS
-                    meu = compute_gw_meta_eu(state, ma, eu, n_obs, explore_buffer;
-                                              meta_cost_this_turn=meta_cost_this_turn)
-                    if meu > best_meta_eu
-                        best_meta_eu = meu
-                        best_meta = ma
-                    end
-                end
-
-                best_meta_eu <= 0.0 && break
-
-                execute_gw_meta_action!(state, best_meta, explore_buffer;
+                execute_gw_meta_action!(state, chosen, explore_buffer;
                     include_temporal=include_temporal, verbose=verbose)
                 meta_actions_taken += 1
-                meta_cost_this_turn += (best_meta == :gw_deepen ? GW_DEEPEN_COST :
-                                        best_meta == :gw_perturb_grammar ? GW_PERTURB_COST :
-                                        best_meta == :gw_explore ? GW_EXPLORE_COST :
-                                        best_meta == :gw_add_feature ? GW_ADD_FEATURE_COST :
-                                        GW_ENUMERATE_COST)
 
                 sync_prune!(state; threshold=-30.0)
                 sync_truncate!(state; max_components=2000)
