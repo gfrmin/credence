@@ -163,7 +163,7 @@ println("=" ^ 60)
 let
     g_bare = Grammar(Set([:red, :green, :blue]), ProductionRule[], 1)
 
-    red_body = AndExpr(GTExpr(:red, 0.7), AndExpr(LTExpr(:green, 0.3), LTExpr(:blue, 0.3)))
+    red_body = AndExpr(GTExpr(FeatureRef(:red), 0.7), AndExpr(LTExpr(FeatureRef(:green), 0.3), LTExpr(FeatureRef(:blue), 0.3)))
     g_red = Grammar(Set([:red, :green, :blue]), [ProductionRule(:RED, red_body)], 2)
 
     bare_complexity = expr_complexity(red_body)
@@ -350,7 +350,7 @@ let
     g = Grammar(Set([:red, :speed]), ProductionRule[], 1)
 
     # Test temporal predicates via IfExpr programs
-    changed_pred = ChangedExpr(GTExpr(:red, 0.5))
+    changed_pred = ChangedExpr(GTExpr(FeatureRef(:red), 0.5))
     if_expr = IfExpr(changed_pred, ActionExpr(:a), ActionExpr(:b))
     ck = compile_kernel(Program(if_expr, expr_complexity(if_expr), 1), g, 1)
 
@@ -365,7 +365,7 @@ let
 
     println("PASSED: CHANGED operator compiles and evaluates correctly in IfExpr")
 
-    persists_pred = PersistsExpr(GTExpr(:red, 0.5), 2)
+    persists_pred = PersistsExpr(GTExpr(FeatureRef(:red), 0.5), 2)
     if_expr2 = IfExpr(persists_pred, ActionExpr(:a), ActionExpr(:b))
     ck2 = compile_kernel(Program(if_expr2, expr_complexity(if_expr2), 1), g, 2)
 
@@ -524,7 +524,7 @@ println("=" ^ 60)
 
 let
     g = Grammar(Set([:red, :green, :blue]),
-                [ProductionRule(:RED, AndExpr(GTExpr(:red, 0.7), LTExpr(:green, 0.3)))], 1)
+                [ProductionRule(:RED, AndExpr(GTExpr(FeatureRef(:red), 0.7), LTExpr(FeatureRef(:green), 0.3)))], 1)
 
     # (a) Empty freq_table ⇒ no compressing subtree ⇒ deterministic no-op (rules preserved).
     empty_table = SubprogramFrequencyTable(ProgramExpr[], Float64[], Vector{Int}[])
@@ -546,7 +546,7 @@ let
     g1 = perturb_grammar(g, ft)
     g2 = perturb_grammar(g, ft)
     @assert sort([show_expr(r.body) for r in g1.rules]) == sort([show_expr(r.body) for r in g2.rules]) "two runs ⇒ same grammar"
-    @assert any(r -> r.name == :RED && show_expr(r.body) == show_expr(AndExpr(GTExpr(:red, 0.7), LTExpr(:green, 0.3))), g1.rules) "the original :RED rule body is never mutated (modify_threshold retired)"
+    @assert any(r -> r.name == :RED && show_expr(r.body) == show_expr(AndExpr(GTExpr(FeatureRef(:red), 0.7), LTExpr(FeatureRef(:green), 0.3))), g1.rules) "the original :RED rule body is never mutated (modify_threshold retired)"
     # The fixture is constructed to compress (weights concentrate on programs sharing a subtree); assert
     # that precondition rather than branching on it, so a regression that broke the proposer cannot make
     # this test silently pass as a no-op (the strongest-property idiom).
@@ -572,7 +572,7 @@ println("=" ^ 60)
 
 let
     g = Grammar(Set([:red, :green]),
-                [ProductionRule(:KEEP, GTExpr(:red, 0.7)), ProductionRule(:DROP, LTExpr(:green, 0.3))], 1)
+                [ProductionRule(:KEEP, GTExpr(FeatureRef(:red), 0.7)), ProductionRule(:DROP, LTExpr(FeatureRef(:green), 0.3))], 1)
     progs = enumerate_programs(g, 3; action_space=[:a, :b])
     # Support = programs referencing :KEEP but NOT :DROP (weight 1); every :DROP-referencing program is
     # pushed below the support floor (weight 0 ⇒ filtered), modelling the posterior abandoning :DROP.
@@ -716,7 +716,7 @@ let
     println("  Scenario A PASSED: stable 2nd-half ll=$(round(stable_ll_second_half, digits=2)), " *
             "CHANGED 2nd-half ll=$changed_ll_second_half")
 
-    changed_gt = compile_expr(ChangedExpr(GTExpr(:red, 0.7)), ProductionRule[])
+    changed_gt = compile_expr(ChangedExpr(GTExpr(FeatureRef(:red), 0.7)), ProductionRule[])
     ts = Dict{Symbol, Any}(:recent => Dict{Symbol, Float64}[])
     changed_fires = Bool[]
 
@@ -866,8 +866,8 @@ println("TEST: Named feature compilation")
 println("=" ^ 60)
 
 let
-    gt = GTExpr(:urgency, 0.7)
-    lt = LTExpr(:urgency, 0.3)
+    gt = GTExpr(FeatureRef(:urgency), 0.7)
+    lt = LTExpr(FeatureRef(:urgency), 0.3)
     fn_gt = compile_expr(gt, ProductionRule[])
     fn_lt = compile_expr(lt, ProductionRule[])
     ts = Dict{Symbol, Any}()
@@ -889,12 +889,12 @@ println("TEST: Missing feature defaults to 0.0")
 println("=" ^ 60)
 
 let
-    gt = GTExpr(:nonexistent, 0.5)
+    gt = GTExpr(FeatureRef(:nonexistent), 0.5)
     fn = compile_expr(gt, ProductionRule[])
     ts = Dict{Symbol, Any}()
     @assert fn(Dict(:urgency => 0.9), ts) == false "Missing feature defaults to 0.0, so 0.0 > 0.5 is false"
 
-    gt2 = GTExpr(:nonexistent, -0.1)
+    gt2 = GTExpr(FeatureRef(:nonexistent), -0.1)
     fn2 = compile_expr(gt2, ProductionRule[])
     @assert fn2(Dict(:urgency => 0.9), ts) == true "0.0 > -0.1 is true"
     println("PASSED: Missing features default to 0.0")
@@ -934,9 +934,9 @@ println("TEST: show_expr format for named features")
 println("=" ^ 60)
 
 let
-    @assert show_expr(GTExpr(:urgency, 0.7)) == "(gt :urgency 0.7)" "GTExpr show format"
-    @assert show_expr(LTExpr(:speed, 0.3)) == "(lt :speed 0.3)" "LTExpr show format"
-    @assert show_expr(AndExpr(GTExpr(:red, 0.7), LTExpr(:green, 0.3))) ==
+    @assert show_expr(GTExpr(FeatureRef(:urgency), 0.7)) == "(gt :urgency 0.7)" "GTExpr show format"
+    @assert show_expr(LTExpr(FeatureRef(:speed), 0.3)) == "(lt :speed 0.3)" "LTExpr show format"
+    @assert show_expr(AndExpr(GTExpr(FeatureRef(:red), 0.7), LTExpr(FeatureRef(:green), 0.3))) ==
         "AND((gt :red 0.7),(lt :green 0.3))" "AndExpr with named features"
     println("PASSED: show_expr produces correct format")
 end

@@ -9,7 +9,7 @@ features directly (e.g., :subject_has_you, :sender_is_bulk_domain).
 push!(LOAD_PATH, joinpath(@__DIR__, "..", "..", "..", "src"))
 using Credence
 using Credence: Grammar, ProductionRule
-using Credence: GTExpr, LTExpr, AndExpr, OrExpr, NotExpr
+using Credence: FeatureRef, GTExpr, LTExpr, AndExpr, OrExpr, NotExpr
 using Credence: next_grammar_id, reset_grammar_counter!
 
 # ═══════════════════════════════════════
@@ -69,25 +69,25 @@ function generate_email_seed_grammars()::Vector{Grammar}
     # 9. PERSONAL = AND(subject_has_you, NOT(sender_has_news_kw))
     push!(grammars, Grammar(
         Set([:subject_has_you, :sender_has_news_kw, :is_large_html]),
-        [ProductionRule(:PERSONAL, AndExpr(GTExpr(:subject_has_you, 0.5), NotExpr(GTExpr(:sender_has_news_kw, 0.5))))],
+        [ProductionRule(:PERSONAL, AndExpr(GTExpr(FeatureRef(:subject_has_you), 0.5), NotExpr(GTExpr(FeatureRef(:sender_has_news_kw), 0.5))))],
         next_grammar_id()))
 
     # 10. NEWSLETTER = AND(is_large_html, OR(sender_has_news_kw, preview_has_click))
     push!(grammars, Grammar(
         Set([:is_large_html, :sender_has_news_kw, :preview_has_click]),
-        [ProductionRule(:NEWSLETTER, AndExpr(GTExpr(:is_large_html, 0.5), OrExpr(GTExpr(:sender_has_news_kw, 0.5), GTExpr(:preview_has_click, 0.5))))],
+        [ProductionRule(:NEWSLETTER, AndExpr(GTExpr(FeatureRef(:is_large_html), 0.5), OrExpr(GTExpr(FeatureRef(:sender_has_news_kw), 0.5), GTExpr(FeatureRef(:preview_has_click), 0.5))))],
         next_grammar_id()))
 
     # 11. NEEDS_ACTION = OR(subject_has_failed, subject_has_action_kw)
     push!(grammars, Grammar(
         Set([:subject_has_failed, :subject_has_action_kw, :subject_has_you]),
-        [ProductionRule(:NEEDS_ACTION, OrExpr(GTExpr(:subject_has_failed, 0.5), GTExpr(:subject_has_action_kw, 0.5)))],
+        [ProductionRule(:NEEDS_ACTION, OrExpr(GTExpr(FeatureRef(:subject_has_failed), 0.5), GTExpr(FeatureRef(:subject_has_action_kw), 0.5)))],
         next_grammar_id()))
 
     # 12. Sender hash + noreply with KNOWN_SENDER
     push!(grammars, Grammar(
         Set([:sender_h0, :sender_h1, :sender_h2, :sender_h3, :sender_is_noreply]),
-        [ProductionRule(:KNOWN_SENDER, AndExpr(GTExpr(:sender_h0, 0.5), GTExpr(:sender_h2, 0.5)))],
+        [ProductionRule(:KNOWN_SENDER, AndExpr(GTExpr(FeatureRef(:sender_h0), 0.5), GTExpr(FeatureRef(:sender_h2), 0.5)))],
         next_grammar_id()))
 
     # 13. Metadata: time + thread + length + question
@@ -98,7 +98,7 @@ function generate_email_seed_grammars()::Vector{Grammar}
     # 14. Money + attachment with INVOICE
     push!(grammars, Grammar(
         Set([:subject_has_money_kw, :has_attachment, :subject_has_confirmed]),
-        [ProductionRule(:INVOICE, AndExpr(GTExpr(:subject_has_money_kw, 0.5), GTExpr(:has_attachment, 0.5)))],
+        [ProductionRule(:INVOICE, AndExpr(GTExpr(FeatureRef(:subject_has_money_kw), 0.5), GTExpr(FeatureRef(:has_attachment), 0.5)))],
         next_grammar_id()))
 
     grammars
@@ -116,7 +116,7 @@ function generate_email_seed_grammars_extended()::Vector{Grammar}
     # 15. Triage state
     push!(grammars, Grammar(
         Set([:subject_has_urgent_kw, :has_label_urgent, :is_in_priority, :user_notified]),
-        [ProductionRule(:NOT_YET_LABELLED, NotExpr(GTExpr(:has_label_urgent, 0.5)))],
+        [ProductionRule(:NOT_YET_LABELLED, NotExpr(GTExpr(FeatureRef(:has_label_urgent), 0.5)))],
         next_grammar_id()))
 
     # 16. Archive state

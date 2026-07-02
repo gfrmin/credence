@@ -20,7 +20,7 @@ using Credence: enumerate_programs, compile_kernel
 using Credence: AgentState, sync_prune!, sync_truncate!
 using Credence: aggregate_grammar_weights, top_k_grammar_ids, add_programs_to_state!
 using Credence: next_grammar_id, reset_grammar_counter!
-using Credence: GTExpr, AndExpr, NotExpr, ActionExpr, IfExpr
+using Credence: FeatureRef, GTExpr, AndExpr, NotExpr, ActionExpr, IfExpr
 
 include(joinpath(@__DIR__, "..", "apps", "julia", "email_agent", "host.jl"))
 

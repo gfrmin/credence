@@ -25,7 +25,7 @@
 
 push!(LOAD_PATH, joinpath(@__DIR__, "..", "src"))
 using Credence
-using Credence: Grammar, ProductionRule, Program, GTExpr, AndExpr, IfExpr, ActionExpr, NonterminalRef,
+using Credence: Grammar, ProductionRule, Program, FeatureRef, GTExpr, AndExpr, IfExpr, ActionExpr, NonterminalRef,
                 AgentState, MixturePrevision, TaggedBetaPrevision, BetaPrevision, Prevision,
                 compile_kernel, update_learning_regime, plateau_probability,
                 analyse_posterior_subtrees, compression_exhausted, ExploreObservation,
@@ -58,7 +58,7 @@ end
 # A grammar whose top has a DEAD rule ⇒ compression NOT exhausted; the program references only :LIVE.
 function compressible_state()
     g = Grammar(Set([:red, :blue]),
-                [ProductionRule(:LIVE, GTExpr(:red, 0.7)), ProductionRule(:DEAD, GTExpr(:blue, 0.5))], 1)
+                [ProductionRule(:LIVE, GTExpr(FeatureRef(:red), 0.7)), ProductionRule(:DEAD, GTExpr(FeatureRef(:blue), 0.5))], 1)
     prog = Program(IfExpr(NonterminalRef(:LIVE), ActionExpr(:a), ActionExpr(:b)), 3, 1)
     plateau!(mk_state(g, prog))
 end
@@ -94,7 +94,7 @@ end
 # ── §2  exhausted grammar, empty buffer, concentrated single-component belief ⇒ do_nothing ──
 let
     g = Grammar(Set([:red]), ProductionRule[], 2)   # no rules ⇒ nothing to compress ⇒ exhausted
-    prog = Program(IfExpr(GTExpr(:red, 0.5), ActionExpr(:a), ActionExpr(:b)), 3, 1)
+    prog = Program(IfExpr(GTExpr(FeatureRef(:red), 0.5), ActionExpr(:a), ActionExpr(:b)), 3, 1)
     state = plateau!(mk_state(g, prog))
     ft = analyse_posterior_subtrees(state.all_programs, weights(state.belief);
                                     min_frequency = 0.01, min_complexity = 2)
@@ -116,7 +116,7 @@ end
 # ── §3  refinable buffer: explore scores plateau·(real VOI); add_feature + escape hard-gated ──
 let
     g = Grammar(Set([:red]), ProductionRule[], 3)
-    prog = Program(IfExpr(GTExpr(:red, 0.5), ActionExpr(:a), ActionExpr(:b)), 3, 1)
+    prog = Program(IfExpr(GTExpr(FeatureRef(:red), 0.5), ActionExpr(:a), ActionExpr(:b)), 3, 1)
     state = plateau!(mk_state(g, prog))
     # Separable only at ~0.4 (off the default grid {0.1,0.3,0.5,0.7,0.9}): 0.35 vs 0.45 land on
     # the same side of every existing threshold, so refinement MUST add ~0.4 ⇒ positive VOI.
@@ -144,7 +144,7 @@ end
 # ── §4  thresholds exhausted, a NEW feature separates: add_feature scores its real two-axis VOI ──
 let
     g = Grammar(Set([:red]), ProductionRule[], 4)
-    prog = Program(IfExpr(GTExpr(:red, 0.5), ActionExpr(:a), ActionExpr(:b)), 3, 1)
+    prog = Program(IfExpr(GTExpr(FeatureRef(:red), 0.5), ActionExpr(:a), ActionExpr(:b)), 3, 1)
     state = plateau!(mk_state(g, prog))
     # :red is CONSTANT across classes (no refinement can help ⇒ thresholds exhausted, the
     # un-confounded baseline exists); :speed ∈ ALL_GW_FEATURES separates cleanly at the default
@@ -173,7 +173,7 @@ end
 # ── §5  uncertain multi-component belief, exact tier silent: the escape-mass heuristic fires ──
 let
     g = Grammar(Set([:red]), ProductionRule[], 5)
-    prog = Program(IfExpr(GTExpr(:red, 0.5), ActionExpr(:a), ActionExpr(:b)), 3, 1)
+    prog = Program(IfExpr(GTExpr(FeatureRef(:red), 0.5), ActionExpr(:a), ActionExpr(:b)), 3, 1)
     state = plateau!(mk_state(g, prog; k = 4))   # uniform 4-mixture ⇒ H = log 4 > log 2
     scored = score_gw_meta_actions(state, ExploreObservation[])
     h = entropy(state.belief)

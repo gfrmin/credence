@@ -9,8 +9,21 @@
 # `THRESHOLDS` (the default per-feature grid seed) now lives in types.jl with `Grammar` — it is
 # grammar-structural data, and enumeration reads each grammar's own `g.thresholds[feat]` below.
 
-function expr_complexity(e::GTExpr) 1 end
-function expr_complexity(e::LTExpr) 1 end
+# Numeric-sublayer complexity: a bare feature read costs 1; each arithmetic combinator adds 1.
+# expr_complexity(GTExpr) = num_complexity(lhs) keeps the bare-feature atom at cost 1 (the
+# threshold- and comparison-free convention of Move 3 Q1(b) — a threshold adds no symbol, the
+# comparison is bundled), so every pre-arithmetic program keeps an identical complexity,
+# prior, and posterior (pinned by test/fixtures/feature_arithmetic_lift_v1.tsv).
+function num_complexity(e::FeatureRef) 1 end
+function num_complexity(e::Times) 1 + num_complexity(e.left) + num_complexity(e.right) end
+function num_complexity(e::Plus) 1 + num_complexity(e.left) + num_complexity(e.right) end
+function num_complexity(e::Minus) 1 + num_complexity(e.left) + num_complexity(e.right) end
+function num_complexity(e::Div) 1 + num_complexity(e.left) + num_complexity(e.right) end
+function num_complexity(e::AQ) 1 + num_complexity(e.left) + num_complexity(e.right) end
+function num_complexity(e::Neg) 1 + num_complexity(e.child) end
+
+function expr_complexity(e::GTExpr) num_complexity(e.lhs) end
+function expr_complexity(e::LTExpr) num_complexity(e.lhs) end
 function expr_complexity(e::AndExpr) 1 + expr_complexity(e.left) + expr_complexity(e.right) end
 function expr_complexity(e::OrExpr) 1 + expr_complexity(e.left) + expr_complexity(e.right) end
 function expr_complexity(e::NotExpr) 1 + expr_complexity(e.child) end
@@ -26,8 +39,8 @@ function expanded_complexity(e::ProgramExpr, rules::Vector{ProductionRule})
     _expanded(e, rules)
 end
 
-function _expanded(e::GTExpr, _) 1 end
-function _expanded(e::LTExpr, _) 1 end
+function _expanded(e::GTExpr, _) num_complexity(e.lhs) end
+function _expanded(e::LTExpr, _) num_complexity(e.lhs) end
 function _expanded(e::AndExpr, r) 1 + _expanded(e.left, r) + _expanded(e.right, r) end
 function _expanded(e::OrExpr, r) 1 + _expanded(e.left, r) + _expanded(e.right, r) end
 function _expanded(e::NotExpr, r) 1 + _expanded(e.child, r) end
@@ -60,20 +73,92 @@ Depth semantics (overall program tree depth, not just predicate depth):
 Predicate depth = program depth - 1. To get AND/OR/NOT predicates (old depth 2),
 use max_depth=3.
 """
+# The enumeration's default arithmetic combinator roster (design §5 Q2): AQ is the default
+# quotient (total, smooth, artifact-free); protected Div is constructible/compilable/priced
+# but enters enumeration only when a caller passes it in `num_ops` (poles opt-in, the x/0
+# artifact documented at compile_num). All entries must be decision-free combinators
+# (precedent decision-free-combinator).
+const NUM_OPS_DEFAULT = (Times, Plus, Minus, AQ, Neg)
+
+"""
+    _num_exprs_by_depth(g, max_num_depth, num_ops) → Vector{Vector{NumExpr}}
+
+The depth-bounded numeric-expression set. Depth 1 is `FeatureRef` per grammar feature
+(sorted — the behaviour-preserving floor: `max_num_depth = 1` yields exactly the lifted
+image of the pre-arithmetic atoms). Depth d ≥ 2: the combinators over lower-depth
+expressions where at least one argument sits at depth d−1. Commutative ops (Times, Plus)
+enumerate unordered pairs; non-commutative ops (Minus, Div, AQ) enumerate ordered pairs
+excluding identical arguments (x−x, x/x are constants — degenerate predicates). Order is
+deterministic throughout.
+"""
+function _num_exprs_by_depth(g::Grammar, max_num_depth::Int, num_ops)::Vector{Vector{NumExpr}}
+    by_depth = Vector{NumExpr}[]
+    push!(by_depth, NumExpr[FeatureRef(f) for f in sort(collect(g.feature_set))])
+    for d in 2:max_num_depth
+        lower = NumExpr[]
+        for dd in 1:(d - 1)
+            append!(lower, by_depth[dd])
+        end
+        depth_of = Dict{Int, Int}()
+        i = 0
+        for dd in 1:(d - 1), _ in by_depth[dd]
+            i += 1
+            depth_of[i] = dd
+        end
+        fresh = NumExpr[]
+        for op in num_ops
+            if op === Neg
+                for a in by_depth[d - 1]
+                    push!(fresh, Neg(a))
+                end
+            elseif op === Times || op === Plus
+                for i in eachindex(lower), j in i:length(lower)
+                    max(depth_of[i], depth_of[j]) == d - 1 || continue
+                    push!(fresh, op(lower[i], lower[j]))
+                end
+            else  # Minus, Div, AQ — ordered, no identical arguments
+                for i in eachindex(lower), j in eachindex(lower)
+                    i == j && continue
+                    max(depth_of[i], depth_of[j]) == d - 1 || continue
+                    push!(fresh, op(lower[i], lower[j]))
+                end
+            end
+        end
+        push!(by_depth, fresh)
+    end
+    by_depth
+end
+
+"""Threshold grid for a numeric expression: a bare feature read uses the grammar's
+per-feature grid (Move 3's refinement target); a compound expression uses the default seed
+grid until the explore-path generalisation attaches per-NumExpr observed-value grids
+(design §5 Q4 — the floor choice; the grid is not charged, fineness-Occam rides the
+marginal likelihood)."""
+_num_threshold_grid(g::Grammar, e::FeatureRef) = g.thresholds[e.feature]
+_num_threshold_grid(::Grammar, ::NumExpr) = THRESHOLDS
+
 function enumerate_programs(g::Grammar, max_depth::Int;
                             include_temporal::Bool=false,
                             min_log_prior::Float64=-20.0,
-                            action_space::Vector{Symbol}=Symbol[:classify])::Vector{Program}
+                            action_space::Vector{Symbol}=Symbol[:classify],
+                            max_num_depth::Int=1,
+                            num_ops=NUM_OPS_DEFAULT)::Vector{Program}
     max_complexity = -min_log_prior - g.complexity  # early pruning threshold
 
     # ── Phase 1: enumerate predicate expressions by depth ──
-    # Predicates are Boolean-valued (GT, LT, AND, OR, NOT, temporal, nonterminal)
+    # Predicates are Boolean-valued (GT, LT, AND, OR, NOT, temporal, nonterminal).
+    # The comparison atoms threshold a NumExpr; max_num_depth = 1 (the default) restricts
+    # the numeric sublayer to bare FeatureRefs — the behaviour-preserving floor. Raising it
+    # is a meta-decision, not a host setting (the escalate-arithmetic-depth meta-action is
+    # the named successor); the kwarg is the enumeration lever that meta-action drives.
 
     atoms = ProgramExpr[]
-    for feat in sort(collect(g.feature_set))  # sorted for deterministic enumeration
-        for t in g.thresholds[feat]            # per-feature grid (Move 3); default ≡ global THRESHOLDS
-            push!(atoms, GTExpr(feat, t))
-            push!(atoms, LTExpr(feat, t))
+    for (d, nums) in enumerate(_num_exprs_by_depth(g, max_num_depth, num_ops))
+        for nexpr in nums
+            for t in _num_threshold_grid(g, nexpr)
+                push!(atoms, GTExpr(nexpr, t))
+                push!(atoms, LTExpr(nexpr, t))
+            end
         end
     end
     for r in g.rules
@@ -163,11 +248,15 @@ across invocations with the same grammar / max_depth / action_space.
 function enumerate_programs_as_measure(g::Grammar, max_depth::Int;
                                        include_temporal::Bool=false,
                                        min_log_prior::Float64=-20.0,
-                                       action_space::Vector{Symbol}=Symbol[:classify])
+                                       action_space::Vector{Symbol}=Symbol[:classify],
+                                       max_num_depth::Int=1,
+                                       num_ops=NUM_OPS_DEFAULT)
     programs = enumerate_programs(g, max_depth;
                                    include_temporal=include_temporal,
                                    min_log_prior=min_log_prior,
-                                   action_space=action_space)
+                                   action_space=action_space,
+                                   max_num_depth=max_num_depth,
+                                   num_ops=num_ops)
     # Program node-count prior: the SPEC §1.3 complexity log-prior (`complexity.jl`) as the
     # two-part MDL code — `g.complexity` defines the dictionary, `p.complexity` describes the
     # program given it (each nonterminal ref costs 1). λ = log(2), pinned by §1.3. The two-call
