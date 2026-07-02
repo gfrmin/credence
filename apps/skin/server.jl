@@ -32,7 +32,7 @@ using Credence: AgentState, sync_prune!, sync_truncate!
 using Credence: Grammar, Program, CompiledKernel, ProductionRule
 using Credence: enumerate_programs, compile_kernel
 using Credence: analyse_posterior_subtrees, perturb_grammar
-using Credence: aggregate_grammar_weights, top_k_grammar_ids, add_programs_to_state!
+using Credence: aggregate_grammar_weights, top_k_grammar_ids, add_programs_to_state!, ExploreObservation
 using Credence: next_grammar_id, reset_grammar_counter!
 using Credence: show_expr
 using Credence: log_density_at
@@ -1513,7 +1513,10 @@ function handle_enumerate(params)
     action_space = Symbol[Symbol(a) for a in params["action_space"]]
 
     state.grammars[grammar.id] = grammar
+    # The wire has no explore-buffer verb yet, so the evidence window is DECLARED empty —
+    # newcomers enter at prior (coherent-injection-design.md §5 Q2; the pre-change behaviour).
     n_added = add_programs_to_state!(state, grammar, max_depth;
+        observations=ExploreObservation[],
         action_space=action_space,
         min_log_prior=Float64(get(params, "min_log_prior", -20.0)))
 
@@ -1556,7 +1559,9 @@ function handle_add_programs(params)
     haskey(state.grammars, grammar_id) || error("grammar not found: $grammar_id")
     grammar = state.grammars[grammar_id]
 
+    # Declared-empty window — see the handle above and coherent-injection-design.md §5 Q2.
     n_added = add_programs_to_state!(state, grammar, max_depth;
+        observations=ExploreObservation[],
         min_log_prior=Float64(get(params, "min_log_prior", -20.0)))
     Dict("n_added" => n_added,
          "n_components" => length(state.belief.components))

@@ -21,32 +21,10 @@ each candidate grammar), not a live belief argument — the lookahead reconstruc
 using .Ontology
 
 # ═══════════════════════════════════════
-# The observation buffer — the host's record of evidence under the current alphabet
+# The observation buffer — the host's record of evidence
 # ═══════════════════════════════════════
-
-"""
-    ExploreObservation(features, temporal_state, correct_actions, residual)
-
-One conditioning event in the explore buffer (host-side DATA, not belief — brain/body split, Q2b). Carries
-exactly what the lookahead needs:
-- `features` — the feature dict, for (a) proposing threshold candidates at observed values and (b) replay.
-- `temporal_state` — temporal context, threaded to the compiled kernels during replay.
-- `correct_actions` — the outcome(s) that count as "correct" for this obs (a `Set` generalises the
-  single-outcome hosts — `Set([true_type])` — and email_agent's multi-action step). Defines the
-  Beta-update direction per component during the replay's conditioning.
-- `residual` — `−log predictive` of this obs under the belief at conditioning time (the host's already-
-  computed `surprise`). Used to ORDER candidate evaluation (descending residual mass), not as a gate — the
-  residual ranks where to look first, no cutoff (Q2a).
-
-The buffer is `all-history-since-reset` (Q2b): the full evidence under the current alphabet, cleared by
-`reset_learning_regime!` on every grammar change (Move 2 Q1b).
-"""
-struct ExploreObservation
-    features::Dict{Symbol, Float64}
-    temporal_state::Dict{Symbol, Any}
-    correct_actions::Set{Symbol}
-    residual::Float64
-end
+# `ExploreObservation` itself lives in types.jl (declared data; agent_state.jl's coherent
+# injection needs it before this file loads — coherent-injection-design.md §1).
 
 # ═══════════════════════════════════════
 # Candidate generation — the complete, finite candidate set (Q2a)

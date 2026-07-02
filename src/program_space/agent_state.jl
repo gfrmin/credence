@@ -115,12 +115,32 @@ end
 # ═══════════════════════════════════════
 
 """
-    add_programs_to_state!(state, grammar, max_depth; ...) → Int
+    add_programs_to_state!(state, grammar, max_depth; observations, ...) → Int
 
 Enumerate programs from `grammar` at `max_depth`, compile kernels, and
 append to all parallel arrays. Deduplicates: skips programs whose
 (grammar_id, expr) already exists in state.all_programs — injecting
 fresh Beta(1,1) for already-observed hypotheses disrupts the posterior.
+
+`observations` (REQUIRED — no default) is the retained evidence window: every
+observation the live belief conditioned on since window start, in order, with each
+record's `residual` = −log_predictive at its conditioning time. Newcomers are injected
+COHERENTLY: assembled as a newcomers-only mixture, prequentially conditioned on the
+window through Tier-1 `condition` (the one learning mechanism), then aligned to the
+incumbents' scale so each arrives at
+
+    log-weight = complexity prior + Σₜ pred_llₜ + Σₜ residualₜ      (shared offset with incumbents)
+
+`MixturePrevision`'s constructor normalises on every construction, so two ledgers restore
+the cross-group constant that normalisation discards: `Z_new + Σ log_predictive` during
+the replay de-normalises the replay, and `Σ residual` (the incumbents' recorded surprises
+— the same normalisers their live trajectory absorbed) re-applies the incumbents' shift.
+The result is bit-identical to having injected the newcomers at window start and
+conditioned jointly: hypothesis addition commutes with conditioning, asserted `==` by
+test_coherent_injection.jl §1 (host-side it is exact up to `sync_prune!`/`sync_truncate!`
+mass drops, ≤ e⁻³⁰ relative per prune). The kwarg has no default so a call site can never
+silently inject ignorant components again — an empty window is an explicit declaration
+(honest at t=0), not an omission. See docs/exploration-budget/coherent-injection-design.md.
 
 Returns count of programs added.
 """
@@ -128,6 +148,7 @@ function add_programs_to_state!(
     state::AgentState,
     grammar::Grammar,
     max_depth::Int;
+    observations::Vector{ExploreObservation},
     action_space::Vector{Symbol}=Symbol[:classify],
     min_log_prior::Float64=-20.0,
     include_temporal::Bool=false
@@ -143,7 +164,6 @@ function add_programs_to_state!(
                       if state.metadata[i][1] == grammar.id]
 
     n_added = 0
-    base_idx = length(state.compiled_kernels)
     new_components = TaggedBetaPrevision[]
     new_lw = Float64[]
     new_meta = Tuple{Int, Int}[]
@@ -154,9 +174,12 @@ function add_programs_to_state!(
         # Skip if this expression already exists for this grammar
         any(e -> expr_equal(e, p.expr), existing_exprs) && continue
 
-        base_idx += 1
+        # Tags are LOCAL (1..n) during the replay below — program_space_observation_kernel
+        # dispatches by tag into new_ck — then re-tagged to global positions on append
+        # (the sync_prune! re-tag discipline).
+        n_added += 1
         push!(new_components, Ontology.TaggedBetaPrevision(
-            base_idx, Ontology.BetaPrevision(1.0, 1.0)))
+            n_added, Ontology.BetaPrevision(1.0, 1.0)))
         # Program node-count prior (two-part MDL): the SPEC §1.3 complexity log-prior
         # (`complexity.jl`), λ = log(2). Bit-identical to the old literal (test_complexity.jl).
         lw = complexity_logprior(grammar.complexity; λ = log(2)) +
@@ -165,11 +188,34 @@ function add_programs_to_state!(
         push!(new_meta, (grammar.id, pi))
         push!(new_ck, compile_kernel(p, grammar, pi))
         push!(new_progs, p)
-        n_added += 1
     end
 
     if !isempty(new_components)
-        all_comps = Prevision[state.belief.components..., new_components...]
+        # Coherent injection: replay the evidence window through the newcomers-only mixture
+        # via Tier-1 condition, then restore the cross-group scale (docstring above; the
+        # constructor normalises, so the replay's and the incumbents' normalisation
+        # constants are re-applied via the two ledgers).
+        if !isempty(observations)
+            # De-normalisation ledger: the newcomers' prior normaliser + every replay-step
+            # predictive (accumulated BEFORE each condition, prequentially).
+            denorm = Ontology.logsumexp(new_lw)
+            nm = Ontology.MixturePrevision(Prevision[new_components...], new_lw)
+            for obs in observations
+                k = program_space_observation_kernel(new_ck, obs.features,
+                                                     obs.temporal_state, obs.correct_actions)
+                denorm += Ontology.log_predictive(nm, k, 1.0)
+                nm = Ontology.condition(nm, k, 1.0)
+            end
+            # Incumbent ledger: the surprises the live trajectory recorded are exactly the
+            # normalisers its weights absorbed over the same window.
+            ledger = sum(obs.residual for obs in observations)
+            new_components = TaggedBetaPrevision[c for c in nm.components]
+            new_lw = nm.log_weights .+ (denorm + ledger)
+        end
+        offset = length(state.compiled_kernels)
+        retagged = TaggedBetaPrevision[Ontology.TaggedBetaPrevision(offset + i, c.beta)
+                                       for (i, c) in enumerate(new_components)]
+        all_comps = Prevision[state.belief.components..., retagged...]
         all_lw = Float64[state.belief.log_weights..., new_lw...]
         state.belief = Ontology.MixturePrevision(all_comps, all_lw)
         append!(state.metadata, new_meta)

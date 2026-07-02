@@ -781,12 +781,14 @@ let
 
     # Try to add programs from the same grammar at the same depth — should deduplicate
     n_added = add_programs_to_state!(state, g, 2;
+        observations=Credence.ExploreObservation[],
         action_space=[:food, :enemy])
     @assert n_added == 0 "Deduplication should prevent adding same programs, got $n_added"
     @assert length(state.belief.components) == n_before "Component count should not change"
 
     # Add programs at a deeper depth — should add new ones
     n_added_deeper = add_programs_to_state!(state, g, 3;
+        observations=Credence.ExploreObservation[],
         action_space=[:food, :enemy])
     n_after = length(state.belief.components)
 
