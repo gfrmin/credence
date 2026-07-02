@@ -131,6 +131,18 @@ The compact slug index lives in `CLAUDE.md` — that's what the lint reads to di
 **No pragma.** Documentation-only — this is a design-review checklist for template additions, not a line-level lint target. The audit surface is `protocol.md` diffs and template signatures.
 **Follows from Invariants 1 + 2 and the decouple commitment** (SPEC §6.9): no consumer math (Invariant 1 across the wire), no consumer modelling in the engine (true decoupling), declared structure at every boundary (Invariant 2). Sibling of the "reads are not decisions" contract (`structure_expect`, 1.13): that governs what *leaves* the engine; this governs what *enters* it.
 
+**Slug:** `decision-free-combinator`.
+**Context.** The vocabulary rosters are open by design (CLAUDE.md: "Named distributions, space types, and Event subtypes may be added"), and the feature-arithmetic move opened one more — the `NumExpr` combinators (`× + − ÷ neg`). An open roster is where a baked *answer* can enter dressed as a *primitive*: a "useful" operator carrying a magic coefficient, a comparison with a built-in cutoff, a domain-shaped transform. Once in the alphabet, such a primitive is enumerated, priced, and believed — the injected decision launders itself through the complexity prior.
+**The rule.** A primitive added to an open-vocabulary roster must be a **decision-free combinator**:
+1. **Total** — defined on its whole domain (Koza closure; `Div`'s protected `x/0 = 0.0` is the documented artifact-bearing exception, with the artifact-free `AQ` as the enumeration default — feature-arithmetic design §5 Q2).
+2. **Domain-independent** — no consumer or task semantics in the primitive (a `wall_proximity` op is a feature, not a combinator).
+3. **Parameter-free**, or carrying a **free-parameter slot whose value is data-fit** by the same machinery as every other parameter (threshold-style: data-derived candidates, enumerated, complexity-priced at `log₂ n` bits per grid choice — SPEC §1.3 margin). Never a literal in the primitive.
+**Legal.** `Times/Plus/Minus/Div/AQ/Neg` over `NumExpr` (no numeric fields — asserted structurally by `test_feature_arithmetic.jl` §4); the `THRESHOLDS` seed grid (a data-refinable seed the explore path refines, not a decision — retroactively blessed); the deferred `ConstSlot` *as designed* (a slot data-fit like a threshold).
+**Illegal.** A `ConstSlot` whose value is a literal chosen at primitive-definition time; a comparison op with a built-in cutoff (`IsHigh(x) ≡ x > 0.7`); a combinator with a tuned coefficient (`0.3·x + 0.7·y` as one primitive); any roster addition whose "usefulness" comes from a number the data should have determined.
+**Rewrite:** the baked number becomes a data-derived candidate set fit by enumeration under the complexity prior (the threshold mechanism), or the primitive decomposes into decision-free parts plus a declared parameter.
+**No pragma.** Documentation-only — a design-review checklist for roster additions plus the structural no-numeric-field test; not a line-level lint target.
+**Follows from Invariants 1 + 2 and SPEC §1.3**: a baked coefficient is a second decision mechanism hiding in the prior's support (Invariant 1), undeclared structure (Invariant 2), and a corruption of the complexity prior's neutrality (§1.3 — the prior weighs *description length*, not *smuggled answers*). Sibling of `engine-template-guard`: that guards the template stratum against consumer world-models; this guards the vocabulary rosters against baked decisions.
+
 ## Specific derivations
 
 ### Indifference implies exploration

@@ -32,8 +32,8 @@ extracts the full sensor superset each step, so discovery candidates are availab
 """
 function colour_only_pool()::Vector{Grammar}
     reset_grammar_counter!()
-    red_body = AndExpr(GTExpr(:red, 0.7), AndExpr(LTExpr(:green, 0.3), LTExpr(:blue, 0.3)))
-    blue_body = AndExpr(LTExpr(:red, 0.3), AndExpr(LTExpr(:green, 0.3), GTExpr(:blue, 0.7)))
+    red_body = AndExpr(GTExpr(FeatureRef(:red), 0.7), AndExpr(LTExpr(FeatureRef(:green), 0.3), LTExpr(FeatureRef(:blue), 0.3)))
+    blue_body = AndExpr(LTExpr(FeatureRef(:red), 0.3), AndExpr(LTExpr(FeatureRef(:green), 0.3), GTExpr(FeatureRef(:blue), 0.7)))
     Grammar[
         Grammar(Set([:red, :green, :blue]), ProductionRule[], next_grammar_id()),
         Grammar(Set([:red, :green, :blue]), [ProductionRule(:RED, red_body)], next_grammar_id()),

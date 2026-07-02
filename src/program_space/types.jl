@@ -12,15 +12,106 @@ inference over grammars shares these types.
 
 abstract type ProgramExpr end
 
-struct GTExpr <: ProgramExpr
+# ═══════════════════════════════════════
+# NumExpr — the numeric sublayer (feature-arithmetic move)
+# ═══════════════════════════════════════
+
+"""
+    NumExpr — real-valued expressions over features (the numeric sublayer).
+
+A SEPARATE abstract type from the Boolean/action `ProgramExpr` layer (Invariant 3,
+single-responsibility representations: a numeric node must not type-check where a predicate
+is expected). Comparison predicates (`GTExpr`/`LTExpr`) threshold a `NumExpr`; the bare
+feature read is the reified `FeatureRef`, so today's atom `(gt :a t)` is
+`GTExpr(FeatureRef(:a), t)` — a pure lift (behaviour pinned by
+test/fixtures/feature_arithmetic_lift_v1.tsv).
+
+Every primitive here is a decision-free combinator (precedent `decision-free-combinator`):
+total, domain-independent, parameter-free — no field carries a numeric literal (asserted
+structurally by test_feature_arithmetic.jl). Division comes in two operators (design §5 Q2):
+`AQ` (analytic quotient, `x/√(1+y²)` — total, smooth, artifact-free; the enumeration
+default) and `Div` (protected true division, `x/0 = 0.0` — the Koza-closure artifact is
+documented; exposed because genuine poles exist: rates, inverse distances). The complexity
+prior selects per hypothesis whichever is shorter for the data.
+"""
+abstract type NumExpr end
+
+struct FeatureRef <: NumExpr
     feature::Symbol
+end
+struct Times <: NumExpr
+    left::NumExpr
+    right::NumExpr
+end
+struct Plus <: NumExpr
+    left::NumExpr
+    right::NumExpr
+end
+struct Minus <: NumExpr
+    left::NumExpr
+    right::NumExpr
+end
+struct Div <: NumExpr       # protected true division: x/0 = 0.0 (documented artifact; poles are real)
+    left::NumExpr
+    right::NumExpr
+end
+struct AQ <: NumExpr        # analytic quotient x/√(1+y²) (Ni–Drieberg–Rockett 2013): total, smooth
+    left::NumExpr
+    right::NumExpr
+end
+struct Neg <: NumExpr
+    child::NumExpr
+end
+
+show_num(e::FeatureRef) = ":$(e.feature)"
+show_num(e::Times) = "(* $(show_num(e.left)) $(show_num(e.right)))"
+show_num(e::Plus) = "(+ $(show_num(e.left)) $(show_num(e.right)))"
+show_num(e::Minus) = "(- $(show_num(e.left)) $(show_num(e.right)))"
+show_num(e::Div) = "(/ $(show_num(e.left)) $(show_num(e.right)))"
+show_num(e::AQ) = "(aq $(show_num(e.left)) $(show_num(e.right)))"
+show_num(e::Neg) = "(neg $(show_num(e.child)))"
+
+"""Structural equality over the numeric sublayer (the `expr_equal` sibling)."""
+num_equal(a::FeatureRef, b::FeatureRef) = a.feature == b.feature
+num_equal(a::Times, b::Times) = num_equal(a.left, b.left) && num_equal(a.right, b.right)
+num_equal(a::Plus, b::Plus) = num_equal(a.left, b.left) && num_equal(a.right, b.right)
+num_equal(a::Minus, b::Minus) = num_equal(a.left, b.left) && num_equal(a.right, b.right)
+num_equal(a::Div, b::Div) = num_equal(a.left, b.left) && num_equal(a.right, b.right)
+num_equal(a::AQ, b::AQ) = num_equal(a.left, b.left) && num_equal(a.right, b.right)
+num_equal(a::Neg, b::Neg) = num_equal(a.child, b.child)
+num_equal(::NumExpr, ::NumExpr) = false
+
+"""
+Collect `FeatureRef` feature names in a `NumExpr` (the `collect_feature_refs!` sibling —
+`:remove_feature`'s liveness walk must see through arithmetic: a product referencing `:a`
+keeps `:a` alive). One method per subtype, NO generic fallback — a future node fails loud.
+"""
+num_feature_refs!(acc::Set{Symbol}, e::FeatureRef) = (push!(acc, e.feature); acc)
+num_feature_refs!(acc::Set{Symbol}, e::Times) =
+    (num_feature_refs!(acc, e.left); num_feature_refs!(acc, e.right))
+num_feature_refs!(acc::Set{Symbol}, e::Plus) =
+    (num_feature_refs!(acc, e.left); num_feature_refs!(acc, e.right))
+num_feature_refs!(acc::Set{Symbol}, e::Minus) =
+    (num_feature_refs!(acc, e.left); num_feature_refs!(acc, e.right))
+num_feature_refs!(acc::Set{Symbol}, e::Div) =
+    (num_feature_refs!(acc, e.left); num_feature_refs!(acc, e.right))
+num_feature_refs!(acc::Set{Symbol}, e::AQ) =
+    (num_feature_refs!(acc, e.left); num_feature_refs!(acc, e.right))
+num_feature_refs!(acc::Set{Symbol}, e::Neg) = num_feature_refs!(acc, e.child)
+
+struct GTExpr <: ProgramExpr
+    lhs::NumExpr
     threshold::Float64
 end
 
 struct LTExpr <: ProgramExpr
-    feature::Symbol
+    lhs::NumExpr
     threshold::Float64
 end
+
+# The mechanical lift of the historical bare-Symbol form is spelled at every construction
+# site as GTExpr(FeatureRef(:f), t) — deliberately no Symbol-accepting sugar constructor,
+# so the reshape stays visible and one spelling exists (design §3/§6.4).
 
 struct AndExpr <: ProgramExpr
     left::ProgramExpr
@@ -69,10 +160,10 @@ end
 # ── Pretty printing ──
 
 function show_expr(e::GTExpr)
-    "(gt :$(e.feature) $(e.threshold))"
+    "(gt $(show_num(e.lhs)) $(e.threshold))"    # show_num(FeatureRef(:a)) = ":a" ⇒ "(gt :a t)" unchanged
 end
 function show_expr(e::LTExpr)
-    "(lt :$(e.feature) $(e.threshold))"
+    "(lt $(show_num(e.lhs)) $(e.threshold))"
 end
 function show_expr(e::AndExpr)
     "AND($(show_expr(e.left)),$(show_expr(e.right)))"

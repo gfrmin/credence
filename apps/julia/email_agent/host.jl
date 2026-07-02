@@ -28,7 +28,7 @@ using Credence: enumerate_programs, compile_kernel
 using Credence: analyse_posterior_subtrees, perturb_grammar
 using Credence: aggregate_grammar_weights, top_k_grammar_ids, add_programs_to_state!
 using Credence: next_grammar_id, reset_grammar_counter!
-using Credence: show_expr, GTExpr
+using Credence: show_expr, FeatureRef, GTExpr
 
 include("features.jl")
 include("terminals.jl")
