@@ -29,7 +29,7 @@ import ..Previsions: ConditionalPrevision
 import ..Previsions: condition
 import ..Previsions: params
 import ..Previsions: ConjugatePrevision, maybe_conjugate, update, _dispatch_path
-import ..Previsions: CenteredPower, CenteredSquare, GeometricTail
+import ..Previsions: CenteredPower, CenteredSquare, GeometricTail, ExponentialMean
 import ..Previsions: Indicator, apply
 
 export Space, Finite, Interval, ProductSpace, Simplex, Euclidean, PositiveReals, support
@@ -51,7 +51,7 @@ export ConjugatePrevision, maybe_conjugate, update
 export draw
 export weights, mean, variance, entropy, log_density_at, prune, truncate, logsumexp
 export FrozenVectorView
-export WeightsDomainError, probability, marginal, truncated_mv_quadrature, CenteredPower, CenteredSquare, GeometricTail
+export WeightsDomainError, probability, marginal, truncated_mv_quadrature, CenteredPower, CenteredSquare, GeometricTail, ExponentialMean
 
 # ================================================================
 # FrozenVectorView{T}
@@ -814,6 +814,14 @@ end
 # claim-EU `optimise{include,withhold}` reaches this through a `beta` create_state.
 expect(p::BetaPrevision, cp::CenteredPower{n}) where n = _beta_central_moment(p.alpha, p.beta, n, cp.μ)
 expect(p::TaggedBetaPrevision, cp::CenteredPower) = expect(p.beta, cp)
+
+# Exact posterior-predictive Exponential mean on a Gamma rate belief (the GeometricTail
+# pattern): E_Gamma[1/λ] = β/(α−1), α > 1. The growth-returns model's score read
+# (belief-derived-valuation design §2b; asserted by test_growth_returns.jl §3).
+function expect(p::GammaPrevision, ::ExponentialMean)
+    p.alpha > 1.0 || error("ExponentialMean diverges for α ≤ 1 (got α=$(p.alpha)); the rate posterior must have α > 1")
+    p.beta / (p.alpha - 1.0)
+end
 expect(p::GaussianPrevision, ::Identity) = p.mu
 expect(p::MvGaussianPrevision, ::Identity) = copy(p.mu)
 expect(p::GammaPrevision, ::Identity) = p.alpha / p.beta
@@ -1035,6 +1043,20 @@ function probability(m::MixtureMeasure, e::TagSet)
     total = 0.0
     for (i, comp) in enumerate(m.components)
         if comp isa TaggedBetaMeasure && comp.tag in e.tags
+            total += w[i]
+        end
+    end
+    total
+end
+
+# Prevision twin of the TagSet mass read (prevision-not-measure: carrier-free — the tag and the
+# weight are Prevision-resident, no carrier data touched). The growth-returns yield observable
+# reads injected-component mass through this (belief-derived-valuation design §2b).
+function probability(p::MixturePrevision, e::TagSet)
+    w = weights(p)
+    total = 0.0
+    for (i, comp) in enumerate(p.components)
+        if comp isa TaggedBetaPrevision && comp.tag in e.tags
             total += w[i]
         end
     end
@@ -2181,6 +2203,7 @@ include("sparse_structure.jl")
 # ================================================================
 include("net_value.jl")
 export net_value  # consumed by net_voc (program_space/perturbation.jl, Phase 5), outside module Ontology
+export growth_value  # the horizon-completed instance (belief-derived-valuation §2a); consumed by exploration.jl + hosts
 
 # ================================================================
 # Stdlib (extracted to stdlib.jl)

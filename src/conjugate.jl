@@ -196,7 +196,11 @@ end
 
 function update(cp::ConjugatePrevision{GammaPrevision, Exponential}, obs)
     r = Float64(obs)
-    r > 0 || error("Exponential observations must be positive, got $r")
+    # r = 0 is admitted: the density λe^{−λ·0} = λ is well-defined and the posterior
+    # Gamma(α+1, β+0) IS Bayes' rule at the boundary. Zero-valued observations are the
+    # dominant case for the growth-returns yield stream (a dedup no-op yields exactly 0;
+    # belief-derived-valuation design §2b, test_growth_returns.jl §4). Negative remains an error.
+    r >= 0 || error("Exponential observations must be non-negative, got $r")
     ConjugatePrevision(GammaPrevision(cp.prior.alpha + 1.0, cp.prior.beta + r), cp.likelihood)
 end
 

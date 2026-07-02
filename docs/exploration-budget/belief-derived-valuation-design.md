@@ -222,3 +222,41 @@ are engine calls (`condition`, `expect`/`mean`, `probability(·, TagSet)`, `grow
   count collapses from ~625 to O(growth ops + a few escape probes); (ii) the never_explore
   headline separates again (growth's isolated value is no longer masked by valuation noise);
   (iii) the AUC gaps vs tuned schedules close or invert. Halt-the-line on failure, as before.
+
+## 8. Build-time addendum (2026-07-02, flagged for ratification)
+
+Three deviations from the ratified text, all forced by the first smoke runs; each is the
+smallest honest response and each is marked PROVISIONAL in `apps/julia/grid_world/host.jl`:
+
+1. **The yield observable is evidence-relative (amends the Q1 form, not its substance).** Raw
+   injected mass is posterior *attention*: at step 1 (empty window) a deepen injected 11,472
+   fresh components that legitimately took ~98% of the PRIOR mass — `−log(1−m)` credited ~4
+   nats of "evidence" for pure prior reallocation, and the returns cell learned "deepen is
+   great" (the §5 Q1 wedge, fatal immediately). Shipped form:
+   `yield = max(0, log((1−m₀)/(1−m)))` with `m₀` the prior counterfactual (the mass the same
+   newcomers would take against an empty window). Empty-window injections yield ~0 exactly;
+   zombies floor at 0; evidence-favoured newcomers yield the genuine log-evidence ratio.
+2. **`:gw_deepen` is provisionally `-Inf`** (amends ratified Q5 for this one op). Deepen is
+   structurally unpriceable in a free per-step argmax: one prior-optimism fire ratchets the
+   GLOBAL enumeration depth (depth-4 candidate enumeration ≈ 225k programs), permanently
+   exploding every subsequent lookahead ~100× — no flat declared price is honest for an op
+   whose compute cost is super-exponential in state. Bounded depth escalation is the drafted
+   escalate-depth design's brief; deepen re-enters the argmax when that lands. Its returns
+   cells stay tracked so re-entry starts informed.
+3. **`:gw_perturb_grammar` is provisionally `-Inf`** (amends §2's "perturbation_voc stays").
+   With the entropy tier gone, voc's treadmill surfaced: an applied REMOVAL adds a cleaned
+   SIBLING grammar whose duplicate programs can never displace the evidence-rich dirty
+   incumbent, so the same removal re-proposes at +log2 forever — 3 ops/step of duplicate
+   injection (the exact shape `perturbation.jl`'s no-op docstring calls "a silent posterior
+   reset — A3", missed for the applied case because entropy always outbid voc). The correct
+   fix is REPLACEMENT semantics for removals — re-key the components to the cleaned grammar,
+   realising the +log2 reclaim in their weights — but that is a **prior-revision write outside
+   `condition`** (a constitutional question: prior re-declaration vs the one-learning-mechanism
+   canalisation) and additionally needs Move 1's OQ-4 sound reference count (the 1%-filtered
+   table lets sub-threshold components keep a "dead" feature alive). Its own design doc;
+   score-blind baselines still execute perturb as before, so the benchmark's baseline
+   semantics are unchanged.
+
+Post-deviation smoke (seed 0): eu_max meta-actions 625 → 10 (two enumerate probes that learn
+zero yield and stop, then 8 growth ops — including explore firings the window-total valuation
+never cleared, and post-regime-change discovery at steps 162/180). Wall-clock restored.

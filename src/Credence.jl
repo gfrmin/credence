@@ -27,6 +27,7 @@ include("program_space/compilation.jl")
 include("program_space/perturbation.jl")
 include("program_space/agent_state.jl")
 include("program_space/exploration.jl")
+include("program_space/growth_returns.jl")
 
 using .Parse
 using .Previsions
@@ -49,7 +50,8 @@ export indicator_kernel, feature_value, BOOLEAN_SPACE
 export Functional, Identity, Projection, NestedProjection, Tabular, LinearCombination, OpaqueClosure, FiringChoice
 export Prevision, TestFunction, Indicator, apply
 export params
-export CenteredPower, CenteredSquare, GeometricTail
+export CenteredPower, CenteredSquare, GeometricTail, ExponentialMean
+export growth_value
 export BetaPrevision, TaggedBetaPrevision, GaussianPrevision, TruncatedGaussianPrevision, GammaPrevision
 export CategoricalPrevision, DirichletPrevision, NormalGammaPrevision, ZeroMeanGammaPrevision, LabelledCategoricalPrevision, RhoCategoricalPrevision
 export ProductPrevision, MixturePrevision, ExchangeablePrevision, decompose
@@ -88,7 +90,8 @@ export compile_kernel, compile_expr, evaluate_predicate
 export analyse_posterior_subtrees, extract_subtrees
 export propose_nonterminal, perturb_grammar, net_voc, compression_exhausted, perturbation_voc
 export ExploreObservation, explore_grammar, explore_features, program_space_observation_kernel, default_thresholds
-export exploration_voi, feature_discovery_voi
+export exploration_voi, feature_discovery_voi, exploration_fit, feature_discovery_fit
+export GrowthReturns, observe_yield!, escape_score, injection_yield_nats
 export expr_equal
 export AgentState, sync_prune!, sync_truncate!, reset_learning_regime!
 export aggregate_grammar_weights, top_k_grammar_ids
