@@ -93,19 +93,41 @@ let
         state.belief = condition(state.belief, k, 1.0)
     end
 
+    state.grammars[g2.id] = g2   # hosts register the grammar before injecting
     n_added = add_programs_to_state!(state, g2, 2; observations = buf, action_space = as)
-    y = injection_yield_nats(state.belief, n_added)
-    # credence-lint: allow — precedent:test-oracle — manual −log(1−mass) oracle for the yield accessor
+    y = injection_yield_nats(state, n_added)
+    # credence-lint: allow — precedent:test-oracle — manual evidence-relative yield oracle
     n = length(state.belief.components)
     mass = probability(state.belief, TagSet(Interval(0.0, 1.0), Set((n - n_added + 1):n)))
-    check("§2 yield == −log(1 − injected posterior mass), exact", y == -log(1.0 - mass),
-          "y=$y mass=$mass")
-    check("§2 yield positive for a real injection", y > 0.0)
+    s0 = sum(exp(complexity_logprior(g2.complexity; λ = log(2)) +
+                 complexity_logprior(state.all_programs[i].complexity; λ = log(2)))
+             for i in (n - n_added + 1):n)
+    m0 = s0 / (1.0 + s0)
+    check("§2 yield == max(0, log((1−m₀)/(1−m))), exact against the oracle",
+          y == max(0.0, log(1.0 - m0) - log(1.0 - mass)), "y=$y mass=$mass m0=$m0")
+
+    # The prior-counterfactual correction (the §5-Q1 wedge): an EMPTY-window injection takes
+    # prior mass by count alone — its EVIDENCE yield must be ~0, not nats of "attention".
+    comps0 = TaggedBetaPrevision[TaggedBetaPrevision(pi, BetaPrevision(1.0, 1.0))
+                                 for pi in eachindex(programs)]
+    lw0 = Float64[complexity_logprior(g1.complexity; λ = log(2)) +
+                  complexity_logprior(p.complexity; λ = log(2)) for p in programs]
+    state0 = AgentState(MixturePrevision(Prevision[comps0...], lw0),
+                        [(g1.id, pi) for pi in eachindex(programs)],
+                        [compile_kernel(p, g1, pi) for (pi, p) in enumerate(programs)],
+                        Program[programs...], Dict{Int, Grammar}(g1.id => g1), 2)
+    g2b = Grammar(Set([:a, :b]), ProductionRule[], 923)
+    state0.grammars[g2b.id] = g2b
+    n0 = add_programs_to_state!(state0, g2b, 2;
+                                observations = ExploreObservation[], action_space = as)
+    y0 = injection_yield_nats(state0, n0)
+    check("§2 empty-window injection yields ~0 (prior mass is not evidence)", y0 <= 1e-12,
+          "y0=$y0")
 
     # Dedup no-op: same grammar again → n_added == 0 → yield exactly 0.0.
     n2 = add_programs_to_state!(state, g2, 2; observations = buf, action_space = as)
     check("§2 dedup no-op yields exactly 0.0",
-          n2 == 0 && injection_yield_nats(state.belief, n2) == 0.0)
+          n2 == 0 && injection_yield_nats(state, n2) == 0.0)
 end
 
 # ── §3  ExponentialMean ──
