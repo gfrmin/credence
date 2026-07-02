@@ -7,7 +7,8 @@
 > different functions. Design-doc-with-code (author-directed fix; the conversation is the review).
 
 **STATUS: implemented on this branch; gate re-run results in
-`apps/julia/dominance_benchmark/results/`.**
+`apps/julia/dominance_benchmark/results/` — see §6 for the outcome and the two named
+follow-up decisions.**
 
 ## 0. The diagnosis (what the gate + priced-VOI experiment proved)
 
@@ -158,3 +159,38 @@ no buffer concept yet — an honest declaration, and the pre-change behaviour).
    normalisations — strictly better than the old ignorant injection, exactly coherent only when
    the buffer witnesses every condition (as grid_world's now does). Closing it means buffering
    episode steps; deferred with this note (no dominance gate on email_agent).
+
+## 6. Gate re-run outcome (2026-07-02, 20 seeds)
+
+**The transition fix is real and large — and the gate still fails, on new grounds.** Every
+policy improved (the dilution was engine-wide: `enumerate_more` resurrects `sync_prune!`-dropped
+components, so even never_explore's ~300 escape ops were injecting ignorantly — its mean AUC
+moved 34.9 → 46.7). eu_max moved 40.96 → 46.49, and the statistically significant deficits
+became noise: vs random_p005 −7.75 [CI < 0] → −3.47 [−9.24, +2.78]; vs best-fixed −10.58
+[CI < 0] → −4.74 [−9.41, +0.17]. Efficiency vs random_p005 flipped decisively positive
+(+56.1 [24.0, 89.7]). But the headline collapsed (eu_max − never_explore = −0.2 [−3.53, +2.99])
+and tuned schedules stay nominally ahead — §3.2 remains undischarged.
+
+Per-step score instrumentation (seed 0) localises the residual mis-specifications, both in the
+valuation, neither in the transition:
+
+1. **The escape tier is mis-priced, twice over.** `enumerate_more` fires ~3/step for entire
+   runs: its `entropy − log 2` score claims up to 3.5 nats while the op's only actual effect is
+   zombie resurrection (dedup blocks everything not pruned), and late-run it keeps firing on
+   ~4e-5-nat scores because posterior entropy asymptotes just above one bit (irreducible
+   near-tie uncertainty no enumeration can reduce). This is precisely the dominance-design §0
+   trigger — "if entropy proves unreliable in the benchmark" — whose ratified fallback is
+   moving the escape ops to a separate, honestly-labelled track outside the unified argmax.
+2. **Growth VOI is horizon-myopic.** `add_feature` behaves correctly (fires ~5×/seed, including
+   after the step-140 regime change; `explore` is worth 0.0 on this task throughout), but its
+   score is window-total past-fit nats (`Δℓ − log 2`), while a feature's realised value accrues
+   per future step over the remaining horizon. With dilution eliminated, growth is nearly free,
+   and brute-force eager growers reap the horizon value the score never counts (fixed_k5:
+   42 ops, final-window rate 0.899 vs eu_max's 0.565). The principled fix is a horizon factor —
+   value ≈ per-step predictive gain × expected persistence (the plateau machinery already
+   carries persistence beliefs) — but that rewrites the ratified Move 3/4/5 valuation semantics
+   and needs ratification before code.
+
+Also observed: the self-relative efficiency metric (steps-to-own-half) rewards early collapse
+(never_explore is "fastest" to half of a trajectory that ends at 0.244 final-window rate);
+worth a metrics note before the next gate.
