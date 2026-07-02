@@ -239,6 +239,22 @@ observed-value grid* (the Move-3 residual-midpoint mechanism, evaluated on the c
 compound thresholds learnable and data-derived, and inherits Move 3's complexity-invariance (the grid is
 not charged; the fineness-Occam rides the marginal likelihood).
 
+> **ADDENDUM (2026-07-02, first code PR — flagged for ratification in that PR's review).**
+> Implementation surfaced a coupling this section and §2's exploration.jl item under-analysed:
+> refining a per-`NumExpr` grid requires knowing *which* compound expressions are in play, and
+> that set is depth-escalation state — `max_num_depth` is an enumeration kwarg, not grammar
+> state, so `explore_grammar` (whose signature carries no numeric depth) cannot yet name the
+> compound candidates to refine. The first code PR therefore ships the floor: compound
+> expressions threshold over the seed grid (`_num_threshold_grid`, enumeration.jl) and are
+> UNREFINABLE by Move 3's Symbol-keyed mechanism — a NAMED, TESTED limitation
+> (`test_feature_arithmetic.jl` §3 pins it consciously), not a silent one. Q4's ratified
+> per-`NumExpr` observed-value grid moves to the **escalate-arithmetic-depth design** (which
+> owns depth residency and therefore the compound-candidate set); the grid-key/storage
+> question (`Grammar.thresholds` is `Symbol`-keyed; a `NumExpr`-keyed extension touches the
+> persistence schema and its commit-pinned fixtures) is an open question of that doc. §4's
+> worked-example threshold `0.25` is reachable only after that lands; at the floor, the
+> example's product is enumerated at the seed grid (`0.3` separates the example's data).
+
 ### Q5 — home: exploration-budget move vs new arc
 *Recommendation: a thematic doc in the exploration-budget arc* (this doc). It is the next rung of that
 arc's own §3.1 escalation ladder and discharges the arc's own parked frontier; the recon confirmed the
