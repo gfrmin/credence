@@ -41,8 +41,16 @@ function colour_only_pool()::Vector{Grammar}
     ]
 end
 
-"""Run one (policy, seed) cell; `factory(seed)` builds a fresh policy closure per run."""
-function run_cell(policy_name::String, factory::Function, seed::Int)::RunSummary
+"""
+Run one (policy, seed) cell; `factory(seed)` builds a fresh policy closure per run.
+
+`exploration_cost` is the declared per-op compute price threaded into the exact VOI tier
+(`exploration_voi`/`feature_discovery_voi` and their matching `explore_grammar`/
+`explore_features` executions). Default 0.0 = the original gate behaviour. A positive value
+is the experimental lever of experiment_priced.jl — NOT a baked default anywhere.
+"""
+function run_cell(policy_name::String, factory::Function, seed::Int;
+                  exploration_cost::Float64 = 0.0)::RunSummary
     growth_log = Tuple{Int, Symbol}[]
     policy = make_recording(factory(seed), growth_log)
     metrics, _state, _pool = run_agent(
@@ -54,6 +62,7 @@ function run_cell(policy_name::String, factory::Function, seed::Int)::RunSummary
         verbose = false,
         rng_seed = seed,
         meta_policy = policy,
+        exploration_cost = exploration_cost,
         respawn = true,
         observe_adjacent = true,
         seed_grammars = colour_only_pool(),

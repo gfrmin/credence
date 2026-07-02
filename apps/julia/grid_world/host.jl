@@ -184,6 +184,7 @@ function score_gw_meta_actions(
     state::AgentState,
     explore_buffer::Vector{ExploreObservation};
     escape_cost::Float64 = GW_ESCAPE_COST_DEFAULT,
+    exploration_cost::Float64 = 0.0,
     voi_cache::Union{Nothing, Dict{NTuple{4, Int}, Float64}} = nothing,
     cache_epoch::Int = 0
 )::Dict{Symbol, Float64}
@@ -216,10 +217,10 @@ function score_gw_meta_actions(
     plateau = plateau_probability(state.learning_regime)
     voi_explore = voi_cache === nothing ?
         exploration_voi(g_top, explore_buffer, state.current_max_depth;
-                        action_space = gw_action_space) :
+                        action_space = gw_action_space, compute_cost = exploration_cost) :
         get!(voi_cache, (1000 + cache_epoch, g_top.id, n_buf, state.current_max_depth)) do
             exploration_voi(g_top, explore_buffer, state.current_max_depth;
-                            action_space = gw_action_space)
+                            action_space = gw_action_space, compute_cost = exploration_cost)
         end
     scored[:gw_explore] = plateau * voi_explore
     if voi_explore > 0.0
@@ -227,10 +228,12 @@ function score_gw_meta_actions(
     else
         fdvoi = voi_cache === nothing ?
             feature_discovery_voi(g_top, explore_buffer, ALL_GW_FEATURES,
-                                  state.current_max_depth; action_space = gw_action_space) :
+                                  state.current_max_depth; action_space = gw_action_space,
+                                  compute_cost = exploration_cost) :
             get!(voi_cache, (2000 + cache_epoch, g_top.id, n_buf, state.current_max_depth)) do
                 feature_discovery_voi(g_top, explore_buffer, ALL_GW_FEATURES,
-                                      state.current_max_depth; action_space = gw_action_space)
+                                      state.current_max_depth; action_space = gw_action_space,
+                                      compute_cost = exploration_cost)
             end
         scored[:gw_add_feature] = plateau * fdvoi
     end
@@ -301,7 +304,8 @@ function execute_gw_meta_action!(
     action::Symbol,
     explore_buffer::Vector{ExploreObservation};
     include_temporal::Bool=false,
-    verbose::Bool=false
+    verbose::Bool=false,
+    exploration_cost::Float64=0.0
 )::Int
     gw_action_space = Symbol[:food, :enemy]
 
@@ -356,7 +360,7 @@ function execute_gw_meta_action!(
         isempty(top) && return 0
         gid = top[1]
         new_g = explore_grammar(state.grammars[gid], explore_buffer, state.current_max_depth;
-                                action_space=gw_action_space)
+                                action_space=gw_action_space, compute_cost=exploration_cost)
         new_g.id == gid && return 0   # no positive-VOI refinement → no-op
         state.grammars[new_g.id] = new_g
         n_added = add_programs_to_state!(state, new_g, state.current_max_depth;
@@ -378,7 +382,7 @@ function execute_gw_meta_action!(
         gid = top[1]
         new_g = explore_features(state.grammars[gid], explore_buffer, ALL_GW_FEATURES,
                                  state.current_max_depth;
-                                 action_space=gw_action_space)
+                                 action_space=gw_action_space, compute_cost=exploration_cost)
         new_g.id == gid && return 0   # no positive-VOI feature → no-op
         state.grammars[new_g.id] = new_g
         n_added = add_programs_to_state!(state, new_g, state.current_max_depth;
@@ -406,6 +410,7 @@ function run_agent(;
     rng_seed::Int=42,
     meta_policy::Function=default_eu_max_policy,
     escape_cost::Float64=GW_ESCAPE_COST_DEFAULT,
+    exploration_cost::Float64=0.0,
     respawn::Bool=false,
     observe_adjacent::Bool=false,
     seed_grammars::Union{Nothing, Vector{Grammar}}=nothing,
@@ -517,12 +522,14 @@ function run_agent(;
                 scored = score_blind(meta_policy) ?
                     Dict{Symbol, Float64}(:gw_do_nothing => 0.0) :
                     score_gw_meta_actions(state, explore_buffer; escape_cost=escape_cost,
+                                          exploration_cost=exploration_cost,
                                           voi_cache=voi_cache, cache_epoch=cache_epoch)
                 chosen = meta_policy(scored, step)::Symbol
                 chosen == :gw_do_nothing && break
 
                 execute_gw_meta_action!(state, chosen, explore_buffer;
-                    include_temporal=include_temporal, verbose=verbose)
+                    include_temporal=include_temporal, verbose=verbose,
+                    exploration_cost=exploration_cost)
                 chosen in (:gw_explore, :gw_add_feature) && (cache_epoch += 1)
                 meta_actions_taken += 1
 
