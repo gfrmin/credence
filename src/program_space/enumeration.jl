@@ -73,12 +73,15 @@ Depth semantics (overall program tree depth, not just predicate depth):
 Predicate depth = program depth - 1. To get AND/OR/NOT predicates (old depth 2),
 use max_depth=3.
 """
-# The enumeration's default arithmetic combinator roster (design §5 Q2): AQ is the default
-# quotient (total, smooth, artifact-free); protected Div is constructible/compilable/priced
-# but enters enumeration only when a caller passes it in `num_ops` (poles opt-in, the x/0
-# artifact documented at compile_num). All entries must be decision-free combinators
-# (precedent decision-free-combinator).
-const NUM_OPS_DEFAULT = (Times, Plus, Minus, AQ, Neg)
+# The arithmetic combinator roster. BOTH quotient operators enumerate (design §5 Q2's
+# operative close: "the complexity prior then selects, per hypothesis, whichever operator
+# is shorter for the data" — selection requires both in the hypothesis space): AQ for
+# artifact-free general ratios, protected Div where a pole is real (the x/0 artifact is
+# documented at compile_num). The roster is NOT a host toggle — which operators the agent
+# may hypothesise with is part of the declared vocabulary, not configuration (§1's
+# configured-vs-earned line). All entries must be decision-free combinators (precedent
+# decision-free-combinator; asserted structurally by test_feature_arithmetic.jl §4).
+const NUM_OPS_DEFAULT = (Times, Plus, Minus, Div, AQ, Neg)
 
 """
     _num_exprs_by_depth(g, max_num_depth, num_ops) → Vector{Vector{NumExpr}}
@@ -130,10 +133,12 @@ function _num_exprs_by_depth(g::Grammar, max_num_depth::Int, num_ops)::Vector{Ve
 end
 
 """Threshold grid for a numeric expression: a bare feature read uses the grammar's
-per-feature grid (Move 3's refinement target); a compound expression uses the default seed
-grid until the explore-path generalisation attaches per-NumExpr observed-value grids
-(design §5 Q4 — the floor choice; the grid is not charged, fineness-Occam rides the
-marginal likelihood)."""
+per-feature grid (Move 3's refinement target). A compound expression uses the seed grid and
+is UNREFINABLE by Move 3's Symbol-keyed mechanism — a named limitation, pinned by
+test_feature_arithmetic.jl §3: per-NumExpr observed-value grids (design §5 Q4) are re-scoped
+to the escalate-arithmetic-depth design, which owns the compound-candidate set (see the Q4
+ADDENDUM in feature-arithmetic-design.md). The grid is not charged; fineness-Occam rides the
+marginal likelihood."""
 _num_threshold_grid(g::Grammar, e::FeatureRef) = g.thresholds[e.feature]
 _num_threshold_grid(::Grammar, ::NumExpr) = THRESHOLDS
 
@@ -141,8 +146,7 @@ function enumerate_programs(g::Grammar, max_depth::Int;
                             include_temporal::Bool=false,
                             min_log_prior::Float64=-20.0,
                             action_space::Vector{Symbol}=Symbol[:classify],
-                            max_num_depth::Int=1,
-                            num_ops=NUM_OPS_DEFAULT)::Vector{Program}
+                            max_num_depth::Int=1)::Vector{Program}
     max_complexity = -min_log_prior - g.complexity  # early pruning threshold
 
     # ── Phase 1: enumerate predicate expressions by depth ──
@@ -153,7 +157,7 @@ function enumerate_programs(g::Grammar, max_depth::Int;
     # the named successor); the kwarg is the enumeration lever that meta-action drives.
 
     atoms = ProgramExpr[]
-    for (d, nums) in enumerate(_num_exprs_by_depth(g, max_num_depth, num_ops))
+    for (d, nums) in enumerate(_num_exprs_by_depth(g, max_num_depth, NUM_OPS_DEFAULT))
         for nexpr in nums
             for t in _num_threshold_grid(g, nexpr)
                 push!(atoms, GTExpr(nexpr, t))
@@ -249,14 +253,12 @@ function enumerate_programs_as_measure(g::Grammar, max_depth::Int;
                                        include_temporal::Bool=false,
                                        min_log_prior::Float64=-20.0,
                                        action_space::Vector{Symbol}=Symbol[:classify],
-                                       max_num_depth::Int=1,
-                                       num_ops=NUM_OPS_DEFAULT)
+                                       max_num_depth::Int=1)
     programs = enumerate_programs(g, max_depth;
                                    include_temporal=include_temporal,
                                    min_log_prior=min_log_prior,
                                    action_space=action_space,
-                                   max_num_depth=max_num_depth,
-                                   num_ops=num_ops)
+                                   max_num_depth=max_num_depth)
     # Program node-count prior: the SPEC §1.3 complexity log-prior (`complexity.jl`) as the
     # two-part MDL code — `g.complexity` defines the dictionary, `p.complexity` describes the
     # program given it (each nonterminal ref costs 1). λ = log(2), pinned by §1.3. The two-call

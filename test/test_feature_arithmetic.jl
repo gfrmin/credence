@@ -16,7 +16,7 @@
 
 push!(LOAD_PATH, joinpath(@__DIR__, "..", "src"))
 using Credence
-using Credence: Grammar, ProductionRule, Program, FeatureRef, GTExpr, LTExpr, AndExpr,
+using Credence: Grammar, ProductionRule, Program, FeatureRef, GTExpr, LTExpr, AndExpr, IfExpr,
                 Times, Plus, Minus, Div, AQ, Neg, NumExpr,
                 show_expr, show_num, num_complexity, expr_complexity, compile_num,
                 enumerate_programs, enumerate_programs_as_measure, weights,
@@ -109,6 +109,22 @@ let
     progs = enumerate_programs(g, 2; action_space = as, max_num_depth = 2)
     check("§3 depth 2 contains product atoms", any(has_product, progs),
           "no (* …) among $(length(progs)) programs")
+
+    # BOTH quotient operators enumerate (§5 Q2's operative close: the prior selects per
+    # hypothesis — which requires both in the hypothesis space).
+    check("§3 depth 2 contains BOTH Div and AQ atoms (Q2 two-operator resolution)",
+          any(p -> occursin("(/ ", show_expr(p.expr)), progs) &&
+          any(p -> occursin("(aq ", show_expr(p.expr)), progs))
+
+    # The NAMED LIMITATION pin (design Q4 ADDENDUM): compound expressions threshold over the
+    # seed grid only — per-NumExpr observed-value grids are re-scoped to the
+    # escalate-arithmetic-depth design. This assertion breaks CONSCIOUSLY when that lands.
+    compound_thresholds = Set(p.expr.predicate.threshold for p in progs
+                              if p.expr isa IfExpr && has_product(p) &&
+                                 (p.expr.predicate isa GTExpr || p.expr.predicate isa LTExpr))
+    check("§3 compound thresholds ⊆ seed grid (the Q4-ADDENDUM limitation, pinned)",
+          issubset(compound_thresholds, Set(Credence.THRESHOLDS)),
+          "off-grid compound threshold found — the escalate-depth grid attachment landed; re-baseline")
 
     # True rule: enemy iff x·y > 0.25 — a hyperbola no single axis-aligned threshold matches:
     # every observation pair below straddles each single feature, but the product separates.
