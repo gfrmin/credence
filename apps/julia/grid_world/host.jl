@@ -209,9 +209,9 @@ function score_gw_meta_actions(
 
     # Exact re-conditioned lookahead tier, regime-marginalised by the plateau soft gate.
     # The lookaheads are PURE functions of (grammar, buffer, depth); the buffer is append-only
-    # between clears, so memoising on (epoch, grammar id, buffer length, depth) is exact — a
-    # cache, not an approximation. The epoch (owned by the run loop, bumped whenever a
-    # buffer-clearing op executes) prevents key collisions across clears.
+    # between window trims, so memoising on (epoch, grammar id, buffer length, depth) is exact —
+    # a cache, not an approximation. The epoch (owned by the run loop, bumped on growth-op
+    # execution and window trims) prevents key collisions across content changes at equal length.
     n_buf = length(explore_buffer)
     plateau = plateau_probability(state.learning_regime)
     voi_explore = voi_cache === nothing ?
@@ -312,6 +312,7 @@ function execute_gw_meta_action!(
             haskey(state.grammars, gid) || continue
             n_added += add_programs_to_state!(state, state.grammars[gid],
                 state.current_max_depth;
+                observations=explore_buffer,
                 action_space=gw_action_space, include_temporal=include_temporal)
         end
         verbose && println("  [Meta: enumerate_more → +$n_added components]")
@@ -328,6 +329,7 @@ function execute_gw_meta_action!(
             new_g = perturb_grammar(state.grammars[gid], freq_table, ALL_GW_FEATURES)
             state.grammars[new_g.id] = new_g
             n_added += add_programs_to_state!(state, new_g, state.current_max_depth;
+                observations=explore_buffer,
                 action_space=gw_action_space, include_temporal=include_temporal)
         end
         verbose && println("  [Meta: perturb_grammar → +$n_added components]")
@@ -341,6 +343,7 @@ function execute_gw_meta_action!(
             haskey(state.grammars, gid) || continue
             n_added += add_programs_to_state!(state, state.grammars[gid],
                 state.current_max_depth;
+                observations=explore_buffer,
                 action_space=gw_action_space, include_temporal=include_temporal)
         end
         verbose && println("  [Meta: deepen → depth=$(state.current_max_depth), +$n_added components]")
@@ -348,10 +351,12 @@ function execute_gw_meta_action!(
 
     elseif action == :gw_explore
         # Belief-aware threshold refinement (Move 3): refine the top grammar's grid by the candidate whose
-        # lookahead VOI (against the residual buffer) clears compute_cost; no-op if none does. The ONLY
-        # meta-action that resets the residual regime — it expands the threshold alphabet, so pre-change
-        # residuals are stale (Q1b, read precisely as "alphabet expansion" — perturb/deepen/enumerate are
-        # within-alphabet and their effects show up in later residuals, so they do NOT reset).
+        # lookahead VOI (against the residual buffer) clears compute_cost; no-op if none does. Resets the
+        # residual REGIME — it expands the threshold alphabet, so pre-change regime residuals are stale
+        # (Q1b, read precisely as "alphabet expansion" — perturb/deepen/enumerate are within-alphabet and
+        # do NOT reset). The BUFFER is retained: raw (features, correct_actions) records are world data,
+        # alphabet-independent — they inform the coherent injection and age out via explore_window only
+        # (coherent-injection-design.md §1, the Q2b amendment).
         top = top_k_grammar_ids(state, 1)
         isempty(top) && return 0
         gid = top[1]
@@ -360,16 +365,17 @@ function execute_gw_meta_action!(
         new_g.id == gid && return 0   # no positive-VOI refinement → no-op
         state.grammars[new_g.id] = new_g
         n_added = add_programs_to_state!(state, new_g, state.current_max_depth;
+            observations=explore_buffer,
             action_space=gw_action_space, include_temporal=include_temporal)
         reset_learning_regime!(state)
-        empty!(explore_buffer)
         verbose && println("  [Meta: explore → grammar $gid→$(new_g.id) (threshold refined), +$n_added components]")
         return n_added
 
     elseif action == :gw_add_feature
         # Feature discovery (Move 4): add the host-furnished feature whose lookahead VOI (two-axis: fit Δℓ
         # MINUS the log2 prior-Occam explore_features charges internally) is greatest; no-op if none clears.
-        # Like explore, an ALPHABET EXPANSION ⇒ resets the residual regime + clears the buffer (Q1b). The
+        # Like explore, an ALPHABET EXPANSION ⇒ resets the residual regime (buffer retained — Q2b
+        # amendment, coherent-injection-design.md §1). The
         # candidate source is ALL_GW_FEATURES — the full superset the host already extracts every step, so a
         # selected feature's value is already in each observation's features Dict (base-feature SELECTION,
         # not construction). The reset re-opens the next explore pass on the NEW feature's grid (the cycle).
@@ -382,9 +388,9 @@ function execute_gw_meta_action!(
         new_g.id == gid && return 0   # no positive-VOI feature → no-op
         state.grammars[new_g.id] = new_g
         n_added = add_programs_to_state!(state, new_g, state.current_max_depth;
+            observations=explore_buffer,
             action_space=gw_action_space, include_temporal=include_temporal)
         reset_learning_regime!(state)
-        empty!(explore_buffer)
         verbose && println("  [Meta: add_feature → grammar $gid→$(new_g.id) (feature acquired), +$n_added components]")
         return n_added
     end
@@ -455,12 +461,15 @@ function run_agent(;
     state = AgentState(belief, metadata, compiled_kernels, all_programs,
                        grammar_dict, program_max_depth)
 
-    # The explore buffer (Move 3): host-side record of observations under the current threshold alphabet
-    # (data, not belief — brain/body split, Q2b). Fed each conditioning step; the lookahead replays it;
-    # cleared on threshold refinement (alphabet expansion).
+    # The explore buffer (Move 3; Q2b as amended by coherent-injection-design.md §1): host-side
+    # record of observations (data, not belief — brain/body split). Fed each conditioning step;
+    # the lookahead replays it; the coherent injection conditions newcomers on it. Never cleared
+    # by growth ops — explore_window aging is the sole trim. Each record's residual is the live
+    # surprise (−log predictive), the incumbents' normalisation ledger the injection re-applies.
     explore_buffer = ExploreObservation[]
     # Exact memoisation of the pure VOI lookaheads (see score_gw_meta_actions): epoch bumps on
-    # any execution of a buffer-clearing op so cleared-buffer lengths never collide with stale keys.
+    # growth-op execution and window trims so equal-length buffers with different content never
+    # collide with stale keys.
     voi_cache = Dict{NTuple{4, Int}, Float64}()
     cache_epoch = 0
 
@@ -599,29 +608,23 @@ function run_agent(;
                     end
                     cache_epoch += 1
                 end
+                # Single condition call. Every condition has its buffer record above — the
+                # ledger contract of coherent injection (agent_state.jl docstring): the buffer
+                # must witness every normalisation the live weights absorb. `observed_type`
+                # requires an adjacent entity on both branches, so nearest !== nothing whenever
+                # evidence exists — the old nearest-less fallback kernel was unreachable and,
+                # having no buffer record, would have broken the contract; removed.
+                k = build_observation_kernel(
+                    state.compiled_kernels, features, temporal_state, true_type)
+                state.belief = condition(state.belief, k, 1.0)
+
+                # Prune and truncate
+                sync_prune!(state; threshold=-30.0)
+                sync_truncate!(state; max_components=2000)
             else
                 surprise = 0.0
                 p_enemy_val = 0.5
             end
-
-            # Build conditioning kernel
-            if nearest !== nothing
-                k = build_observation_kernel(
-                    state.compiled_kernels, features, temporal_state, true_type)
-            else
-                # Fallback: uniform kernel
-                k = Kernel(Interval(0.0, 1.0), Finite([0.0, 1.0]),
-                    _ -> error("not used"),
-                    (θ, o) -> o == 1.0 ? log(max(θ, 1e-300)) : log(max(1.0 - θ, 1e-300));
-                    likelihood_family = BetaBernoulli())
-            end
-
-            # Single condition call
-            state.belief = condition(state.belief, k, 1.0)
-
-            # Prune and truncate
-            sync_prune!(state; threshold=-30.0)
-            sync_truncate!(state; max_components=2000)
 
             # Was our prediction correct?
             prediction_correct = (p_enemy_val > 0.5) == is_enemy

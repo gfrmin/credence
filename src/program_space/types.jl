@@ -356,3 +356,37 @@ end
 SubprogramFrequencyTable(subtrees::Vector{ProgramExpr}, weighted_frequency::Vector{Float64},
                          source_programs::Vector{Vector{Int}}) =
     SubprogramFrequencyTable(subtrees, weighted_frequency, source_programs, nothing, nothing)
+
+# ═══════════════════════════════════════
+# The explore-buffer observation record (evidence window)
+# ═══════════════════════════════════════
+
+"""
+    ExploreObservation(features, temporal_state, correct_actions, residual)
+
+One conditioning event in the explore buffer (host-side DATA, not belief — brain/body split, Q2b). Carries
+exactly what the lookahead replay and coherent injection need:
+- `features` — the feature dict, for (a) proposing threshold candidates at observed values and (b) replay.
+- `temporal_state` — temporal context, threaded to the compiled kernels during replay.
+- `correct_actions` — the outcome(s) that count as "correct" for this obs (a `Set` generalises the
+  single-outcome hosts — `Set([true_type])` — and email_agent's multi-action step). Defines the
+  Beta-update direction per component during the replay's conditioning.
+- `residual` — `−log predictive` of this obs under the belief at conditioning time (the host's already-
+  computed `surprise`). Used to ORDER candidate evaluation (descending residual mass), not as a gate — the
+  residual ranks where to look first, no cutoff (Q2a).
+
+The buffer is the retained evidence window under `explore_window` aging (coherent-injection-design.md §1's
+Q2b amendment): raw `(features, correct_actions)` records are world data, alphabet-independent, and are
+NEVER destroyed by growth ops — an alphabet change resets only the learning-regime residual history
+(`reset_learning_regime!`). Consumed by the exploration lookaheads (`exploration.jl`) and by
+`add_programs_to_state!`'s coherent injection (`agent_state.jl`).
+
+Declared in types.jl (not exploration.jl) because agent_state.jl loads first and its injection
+signature requires the type.
+"""
+struct ExploreObservation
+    features::Dict{Symbol, Float64}
+    temporal_state::Dict{Symbol, Any}
+    correct_actions::Set{Symbol}
+    residual::Float64
+end

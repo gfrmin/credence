@@ -15,7 +15,7 @@ using Credence
 using Credence: Grammar, ProductionRule, SubprogramFrequencyTable, ProgramExpr, Program,
                 AndExpr, GTExpr, LTExpr, ActionExpr, IfExpr,
                 perturb_grammar, analyse_posterior_subtrees, enumerate_programs, compile_kernel,
-                add_programs_to_state!, AgentState, weights, show_expr
+                add_programs_to_state!, ExploreObservation, AgentState, weights, show_expr
 using Credence: TaggedBetaPrevision, BetaPrevision, MixturePrevision, CompiledKernel
 
 function check(name, cond, detail = "")
@@ -70,7 +70,7 @@ let
 
     noop_g = perturb_grammar(g, empty_table())
     state.grammars[noop_g.id] = noop_g
-    n_added = add_programs_to_state!(state, noop_g, 2; action_space=Symbol[:a, :b])
+    n_added = add_programs_to_state!(state, noop_g, 2; observations=ExploreObservation[], action_space=Symbol[:a, :b])
 
     check("no-op perturbation adds ZERO programs (dedup intact)", n_added == 0, "n_added=$n_added")
     check("no-op leaves the component count unchanged (no fresh-Beta duplicates)",

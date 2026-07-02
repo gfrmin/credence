@@ -458,6 +458,7 @@ function execute_meta_action!(
             haskey(state.grammars, gid) || continue
             n_added += add_programs_to_state!(state, state.grammars[gid],
                 state.current_max_depth;
+                observations=explore_buffer,
                 action_space=action_space, min_log_prior=min_log_prior)
         end
         verbose && println("  [Meta: enumerate_more → +$n_added components]")
@@ -474,6 +475,7 @@ function execute_meta_action!(
             new_g = perturb_grammar(state.grammars[gid], freq_table, ALL_EMAIL_FEATURES_EXTENDED)
             state.grammars[new_g.id] = new_g
             n_added += add_programs_to_state!(state, new_g, state.current_max_depth;
+                observations=explore_buffer,
                 action_space=action_space, min_log_prior=min_log_prior)
         end
         verbose && println("  [Meta: perturb_grammar → +$n_added components]")
@@ -487,14 +489,16 @@ function execute_meta_action!(
             haskey(state.grammars, gid) || continue
             n_added += add_programs_to_state!(state, state.grammars[gid],
                 state.current_max_depth;
+                observations=explore_buffer,
                 action_space=action_space, min_log_prior=min_log_prior)
         end
         verbose && println("  [Meta: deepen → depth=$(state.current_max_depth), +$n_added components]")
         return n_added
 
     elseif action == :explore
-        # Belief-aware threshold refinement (Move 3); see grid_world for the canonical shape. The ONLY
-        # meta-action that resets the residual regime (it expands the threshold alphabet — Q1b). compute_cost
+        # Belief-aware threshold refinement (Move 3); see grid_world for the canonical shape. Resets the
+        # residual REGIME only (alphabet expansion — Q1b); the buffer is retained and ages via its window
+        # (coherent-injection-design.md §1, the Q2b amendment). compute_cost
         # is the predictive-log-loss floor (nats) a refinement must clear, distinct from the meta-time cost.
         top = top_k_grammar_ids(state, 1)
         isempty(top) && return 0
@@ -504,9 +508,9 @@ function execute_meta_action!(
         new_g.id == gid && return 0   # no positive-VOI refinement → no-op
         state.grammars[new_g.id] = new_g
         n_added = add_programs_to_state!(state, new_g, state.current_max_depth;
+            observations=explore_buffer,
             action_space=action_space, min_log_prior=min_log_prior)
         reset_learning_regime!(state)
-        empty!(explore_buffer)
         verbose && println("  [Meta: explore → grammar $gid→$(new_g.id) (threshold refined), +$n_added components]")
         return n_added
     end
