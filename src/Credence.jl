@@ -65,7 +65,7 @@ export FamilyCandidate, FamilyBMA, build_family_model, build_family_prior, famil
 export initial_learning_regime, update_learning_regime, plateau_probability
 export RoutingState, EmissionBelief, LatencyBelief, route, route_eu, escalation_next, posterior_accuracy, route_outcome!, decode_correctness, latency_at, route_decide, escalate_decide, routing_belief_readout, reconstruct_latency_from_data, reconstruct_routing_tops_from_data, _ctx_key
 export draw
-export weights, mean, variance, probability, marginal, truncated_mv_quadrature, prune, truncate, logsumexp
+export weights, mean, variance, probability, entropy, marginal, truncated_mv_quadrature, prune, truncate, logsumexp
 export WeightsDomainError
 export save_state, load_state, MigrationError
 export initial_rel_state, initial_cov_state, marginalize_betas, update_beta_state

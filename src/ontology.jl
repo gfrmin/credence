@@ -49,7 +49,7 @@ export SparseStructurePrevision, cell_at
 export condition, expect, push_measure, density, log_predictive, log_marginal, wrap_in_measure
 export ConjugatePrevision, maybe_conjugate, update
 export draw
-export weights, mean, variance, log_density_at, prune, truncate, logsumexp
+export weights, mean, variance, entropy, log_density_at, prune, truncate, logsumexp
 export FrozenVectorView
 export WeightsDomainError, probability, marginal, truncated_mv_quadrature, CenteredPower, CenteredSquare, GeometricTail
 

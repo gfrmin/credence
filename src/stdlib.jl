@@ -107,6 +107,23 @@ weights(p::GammaPrevision) = throw(WeightsDomainError(_WEIGHTS_DOMAIN_MSG))
 weights(p::DirichletPrevision) = p.alpha ./ sum(p.alpha)
 weights(p::NormalGammaPrevision) = throw(WeightsDomainError(_WEIGHTS_DOMAIN_MSG))
 
+"""
+    entropy(p) → Float64
+
+Shannon entropy, in nats, of a discrete Prevision's normalised weights:
+`H = −Σ wᵢ log wᵢ` (with the `0·log 0 = 0` convention). A probabilistic
+property accessor in the `mean`/`variance`/`probability`/`weights` roster —
+consumers that need the belief's concentration read `entropy(p)`; arithmetic
+on `weights(p)` output in consumer code is the `compute-on-weights` violation
+this accessor exists to prevent. Defined wherever `weights(p)` is (continuous
+previsions throw `WeightsDomainError` through the same path).
+Asserted by test/test_entropy.jl.
+"""
+function entropy(p::Prevision)::Float64
+    w = weights(p)
+    -sum(wi > 0.0 ? wi * log(wi) : 0.0 for wi in w; init = 0.0)
+end
+
 function marginal(p::MixturePrevision, indices::Vector{Int})
     w = weights(p)
     marginal_logw = Float64[]
