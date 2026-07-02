@@ -42,7 +42,13 @@ struct WorldConfig
     grid_size::Int
     terrain::Matrix{TerrainType}
     rule_name::Symbol
+    respawn::Bool   # opt-in: consumed entities are replaced (same kind, fresh position) so the
+                    # encounter process is recurrent — the dominance benchmark's staging. Default
+                    # false preserves the historical consume-to-extinction behaviour exactly.
 end
+
+WorldConfig(grid_size::Int, terrain::Matrix{TerrainType}, rule_name::Symbol) =
+    WorldConfig(grid_size, terrain, rule_name, false)
 
 mutable struct WorldState
     config::WorldConfig
@@ -143,38 +149,42 @@ function entity_properties(kind::EntityKind, rule::Symbol)
     end
 end
 
+"""Spawn one entity of `kind` at a rule-appropriate position (shared by initial spawn and respawn)."""
+function spawn_one(kind::EntityKind, rule::Symbol, grid_size::Int)::Entity
+    # Place in interior (avoid walls)
+    x = rand(2:grid_size-1)
+    y = rand(2:grid_size-1)
+    e = create_entity(kind, Pos(x, y), rule)
+
+    # For territorial rule, place enemies near walls, food in centre
+    if rule == :territorial
+        if kind == ENEMY
+            # Near edge
+            if rand() < 0.5
+                e.pos = Pos(2, rand(2:grid_size-1))
+            else
+                e.pos = Pos(grid_size-1, rand(2:grid_size-1))
+            end
+        elseif kind == FOOD
+            cx, cy = div(grid_size, 2) + 1, div(grid_size, 2) + 1
+            e.pos = Pos(cx + rand(-1:1), cy + rand(-1:1))
+        end
+    end
+    e
+end
+
 function spawn_entities(rule::Symbol, grid_size::Int; n_entities::Int=6)
     entities = Entity[]
     kinds = [FOOD, FOOD, ENEMY, ENEMY, NEUTRAL, FOOD]
     for (i, kind) in enumerate(kinds[1:min(n_entities, length(kinds))])
-        # Place in interior (avoid walls)
-        x = rand(2:grid_size-1)
-        y = rand(2:grid_size-1)
-        e = create_entity(kind, Pos(x, y), rule)
-
-        # For territorial rule, place enemies near walls, food in centre
-        if rule == :territorial
-            if kind == ENEMY
-                # Near edge
-                if rand() < 0.5
-                    e.pos = Pos(2, rand(2:grid_size-1))
-                else
-                    e.pos = Pos(grid_size-1, rand(2:grid_size-1))
-                end
-            elseif kind == FOOD
-                cx, cy = div(grid_size, 2) + 1, div(grid_size, 2) + 1
-                e.pos = Pos(cx + rand(-1:1), cy + rand(-1:1))
-            end
-        end
-
-        push!(entities, e)
+        push!(entities, spawn_one(kind, rule, grid_size))
     end
     entities
 end
 
-function create_world(rule::Symbol; grid_size::Int=5, n_entities::Int=6)
+function create_world(rule::Symbol; grid_size::Int=5, n_entities::Int=6, respawn::Bool=false)
     terrain = default_terrain(grid_size)
-    config = WorldConfig(grid_size, terrain, rule)
+    config = WorldConfig(grid_size, terrain, rule, respawn)
     entities = spawn_entities(rule, grid_size; n_entities)
     cx = div(grid_size, 2) + 1
     WorldState(config, entities, Pos(cx, cx), 100.0, 0, nothing, nothing, 42)
@@ -183,7 +193,8 @@ end
 # ── Regime change ──
 
 function set_rule!(state::WorldState, rule::Symbol)
-    new_config = WorldConfig(state.config.grid_size, state.config.terrain, rule)
+    new_config = WorldConfig(state.config.grid_size, state.config.terrain, rule,
+                             state.config.respawn)
     state.config = new_config
     # Re-assign entity properties under new rule
     for e in state.entities
@@ -293,6 +304,11 @@ function world_step!(state::WorldState, action::Action)
             state.last_interaction_entity = best_idx
             state.agent_energy += e.energy
             e.alive = false
+            # Opt-in respawn: replace the consumed entity (same kind, fresh rule-appropriate
+            # position) so the class mix and encounter rate stay stationary within a regime.
+            if state.config.respawn
+                push!(state.entities, spawn_one(e.kind, state.config.rule_name, gs))
+            end
         end
     elseif action == OBSERVE
         state.agent_energy -= 1.0

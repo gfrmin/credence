@@ -462,6 +462,45 @@ let
 end
 println()
 
+# ═══════════════════════════════════════
+# TEST 11: Opt-in respawn — recurrent encounters for the dominance benchmark
+# ═══════════════════════════════════════
+
+println("=" ^ 60)
+println("TEST 11: Opt-in respawn (default off — consume-to-extinction preserved)")
+println("=" ^ 60)
+
+let
+    Random.seed!(7)
+    # Default: consuming an entity reduces the alive count (historical behaviour).
+    w = create_world(:colour_typed)
+    @assert w.config.respawn == false
+    e = first(x for x in w.entities if x.alive)
+    w.agent_pos = e.pos
+    n_before = count(x -> x.alive, w.entities)
+    world_step!(w, INTERACT)
+    @assert count(x -> x.alive, w.entities) == n_before - 1
+    println("PASSED: default consume-to-extinction unchanged")
+
+    # Respawn: the consumed entity is replaced by one of the SAME kind (class mix stationary).
+    w2 = create_world(:colour_typed; respawn=true)
+    e2 = first(x for x in w2.entities if x.alive)
+    kind2 = e2.kind
+    w2.agent_pos = e2.pos
+    n2_before = count(x -> x.alive, w2.entities)
+    kind_count_before = count(x -> x.alive && x.kind == kind2, w2.entities)
+    world_step!(w2, INTERACT)
+    @assert count(x -> x.alive, w2.entities) == n2_before
+    @assert count(x -> x.alive && x.kind == kind2, w2.entities) == kind_count_before
+    println("PASSED: respawn keeps alive count and class mix constant")
+
+    # Regime change preserves the respawn flag.
+    set_rule!(w2, :motion_typed)
+    @assert w2.config.respawn == true
+    println("PASSED: set_rule! preserves respawn")
+end
+println()
+
 println("=" ^ 60)
 println("ALL GRID WORLD TESTS PASSED")
 println("=" ^ 60)

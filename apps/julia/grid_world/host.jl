@@ -252,6 +252,10 @@ function default_eu_max_policy(scored::Dict{Symbol, Float64})::Symbol
     best
 end
 
+# The seam passes the step so schedule-based benchmark baselines (fixed-schedule, clairvoyant)
+# can key on it; the EU-max agent ignores it — its information is the scores.
+default_eu_max_policy(scored::Dict{Symbol, Float64}, ::Int)::Symbol = default_eu_max_policy(scored)
+
 """
     execute_gw_meta_action!(state, action; ...) → Int
 
@@ -366,12 +370,13 @@ function run_agent(;
     verbose::Bool=true,
     rng_seed::Int=42,
     meta_policy::Function=default_eu_max_policy,
-    escape_cost::Float64=GW_ESCAPE_COST_DEFAULT
+    escape_cost::Float64=GW_ESCAPE_COST_DEFAULT,
+    respawn::Bool=false
 )
     Random.seed!(rng_seed)
 
     # 1. INITIALISE
-    world = create_world(world_rules[1])
+    world = create_world(world_rules[1]; respawn=respawn)
 
     grammar_pool = generate_seed_grammars()
     if verbose
@@ -465,7 +470,7 @@ function run_agent(;
             # that waste is exactly what the dominance benchmark measures.
             while meta_actions_taken < max_meta_per_step
                 scored = score_gw_meta_actions(state, explore_buffer; escape_cost=escape_cost)
-                chosen = meta_policy(scored)::Symbol
+                chosen = meta_policy(scored, step)::Symbol
                 chosen == :gw_do_nothing && break
 
                 execute_gw_meta_action!(state, chosen, explore_buffer;
