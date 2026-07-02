@@ -183,7 +183,9 @@ Asserted by test_grid_world_meta.jl.
 function score_gw_meta_actions(
     state::AgentState,
     explore_buffer::Vector{ExploreObservation};
-    escape_cost::Float64 = GW_ESCAPE_COST_DEFAULT
+    escape_cost::Float64 = GW_ESCAPE_COST_DEFAULT,
+    voi_cache::Union{Nothing, Dict{NTuple{4, Int}, Float64}} = nothing,
+    cache_epoch::Int = 0
 )::Dict{Symbol, Float64}
     gw_action_space = Symbol[:food, :enemy]
     scored = Dict{Symbol, Float64}(:gw_do_nothing => 0.0)
@@ -206,14 +208,32 @@ function score_gw_meta_actions(
     scored[:gw_perturb_grammar] = perturbation_voc(g_top, ft)
 
     # Exact re-conditioned lookahead tier, regime-marginalised by the plateau soft gate.
+    # The lookaheads are PURE functions of (grammar, buffer, depth); the buffer is append-only
+    # between clears, so memoising on (epoch, grammar id, buffer length, depth) is exact — a
+    # cache, not an approximation. The epoch (owned by the run loop, bumped whenever a
+    # buffer-clearing op executes) prevents key collisions across clears.
+    n_buf = length(explore_buffer)
     plateau = plateau_probability(state.learning_regime)
-    voi_explore = exploration_voi(g_top, explore_buffer, state.current_max_depth;
-                                  action_space = gw_action_space)
+    voi_explore = voi_cache === nothing ?
+        exploration_voi(g_top, explore_buffer, state.current_max_depth;
+                        action_space = gw_action_space) :
+        get!(voi_cache, (1000 + cache_epoch, g_top.id, n_buf, state.current_max_depth)) do
+            exploration_voi(g_top, explore_buffer, state.current_max_depth;
+                            action_space = gw_action_space)
+        end
     scored[:gw_explore] = plateau * voi_explore
-    scored[:gw_add_feature] = voi_explore > 0.0 ? -Inf :
-        plateau * feature_discovery_voi(g_top, explore_buffer, ALL_GW_FEATURES,
-                                        state.current_max_depth;
-                                        action_space = gw_action_space)
+    if voi_explore > 0.0
+        scored[:gw_add_feature] = -Inf
+    else
+        fdvoi = voi_cache === nothing ?
+            feature_discovery_voi(g_top, explore_buffer, ALL_GW_FEATURES,
+                                  state.current_max_depth; action_space = gw_action_space) :
+            get!(voi_cache, (2000 + cache_epoch, g_top.id, n_buf, state.current_max_depth)) do
+                feature_discovery_voi(g_top, explore_buffer, ALL_GW_FEATURES,
+                                      state.current_max_depth; action_space = gw_action_space)
+            end
+        scored[:gw_add_feature] = plateau * fdvoi
+    end
 
     # Escape-mass heuristic tier, saturation-ordered strictly below any positive exact VOI (§0):
     # eligible only once the exact tier is non-positive, then scored by posterior entropy against
@@ -371,14 +391,20 @@ function run_agent(;
     rng_seed::Int=42,
     meta_policy::Function=default_eu_max_policy,
     escape_cost::Float64=GW_ESCAPE_COST_DEFAULT,
-    respawn::Bool=false
+    respawn::Bool=false,
+    observe_adjacent::Bool=false,
+    seed_grammars::Union{Nothing, Vector{Grammar}}=nothing,
+    explore_window::Int=typemax(Int)
 )
     Random.seed!(rng_seed)
 
     # 1. INITIALISE
     world = create_world(world_rules[1]; respawn=respawn)
 
-    grammar_pool = generate_seed_grammars()
+    # The starting hypothesis-space vocabulary is task DATA the caller may declare (the
+    # dominance benchmark starts from an impoverished basis so discovery is load-bearing);
+    # default is the full stock pool.
+    grammar_pool = seed_grammars === nothing ? generate_seed_grammars() : seed_grammars
     if verbose
         println("Generated $(length(grammar_pool)) seed grammars")
     end
@@ -418,6 +444,10 @@ function run_agent(;
     # (data, not belief — brain/body split, Q2b). Fed each conditioning step; the lookahead replays it;
     # cleared on threshold refinement (alphabet expansion).
     explore_buffer = ExploreObservation[]
+    # Exact memoisation of the pure VOI lookaheads (see score_gw_meta_actions): epoch bumps on
+    # any execution of a buffer-clearing op so cleared-buffer lengths never collide with stale keys.
+    voi_cache = Dict{NTuple{4, Int}, Float64}()
+    cache_epoch = 0
 
     # Temporal state
     temporal_window = TemporalWindow(max_history=10)
@@ -469,12 +499,14 @@ function run_agent(;
             # baselines (random, fixed-schedule) may deliberately act on non-positive scores —
             # that waste is exactly what the dominance benchmark measures.
             while meta_actions_taken < max_meta_per_step
-                scored = score_gw_meta_actions(state, explore_buffer; escape_cost=escape_cost)
+                scored = score_gw_meta_actions(state, explore_buffer; escape_cost=escape_cost,
+                                               voi_cache=voi_cache, cache_epoch=cache_epoch)
                 chosen = meta_policy(scored, step)::Symbol
                 chosen == :gw_do_nothing && break
 
                 execute_gw_meta_action!(state, chosen, explore_buffer;
                     include_temporal=include_temporal, verbose=verbose)
+                chosen in (:gw_explore, :gw_add_feature) && (cache_epoch += 1)
                 meta_actions_taken += 1
 
                 sync_prune!(state; threshold=-30.0)
@@ -492,14 +524,29 @@ function run_agent(;
         # Execute action
         feedback = world_step!(world, action)
 
-        # If we got feedback, condition belief
+        # Evidence for conditioning. An interaction's outcome labels the entity by its energy
+        # sign (the historical channel). With the opt-in adjacent-inspection sensor
+        # (observe_adjacent), the nearest entity's type is observed whenever the agent ends the
+        # step adjacent to it, interaction or not — a host-provided observation (the task's
+        # sensor model; the host's constitutional job is providing observations). It decouples
+        # evidence flow from the energy decision: without it, two early negative interactions
+        # freeze the myopic interact rule and the belief never receives data again.
         prediction_correct = false
         surprise = 0.0
         energy_delta = feedback !== nothing ? feedback : 0.0
 
+        observed_type = nothing
         if feedback !== nothing
-            is_enemy = feedback < 0
-            true_type = is_enemy ? :enemy : :food
+            observed_type = feedback < 0 ? :enemy : :food
+        elseif observe_adjacent && nearest !== nothing && nearest[2].alive &&
+               abs(nearest[2].pos.x - world.agent_pos.x) +
+               abs(nearest[2].pos.y - world.agent_pos.y) <= 1
+            observed_type = nearest[2].kind == ENEMY ? :enemy : :food
+        end
+
+        if observed_type !== nothing
+            is_enemy = observed_type == :enemy
+            true_type = observed_type
 
             # Compute P(enemy) and surprise before conditioning
             if nearest !== nothing
@@ -523,6 +570,18 @@ function run_agent(;
                 push!(explore_buffer, ExploreObservation(features,
                     Dict{Symbol, Any}(:recent => copy(get(temporal_state, :recent, Dict{Symbol, Float64}[]))),
                     Set([true_type]), surprise))
+                # The residual record's span is host task data (like TemporalWindow's
+                # max_history): under non-stationarity an unbounded record mixes regimes and
+                # the prequential mll correctly scores a stationary grammar as unable to
+                # explain the whole sequence — suppressing discovery of the CURRENT regime's
+                # predictor. Trimming shifts content at constant length, so the memo epoch
+                # advances (stale (length, depth) keys must not hit).
+                if length(explore_buffer) > explore_window
+                    while length(explore_buffer) > explore_window
+                        popfirst!(explore_buffer)
+                    end
+                    cache_epoch += 1
+                end
             else
                 surprise = 0.0
                 p_enemy_val = 0.5
@@ -587,7 +646,9 @@ function run_agent(;
         print_summary(metrics; last_n=20)
     end
 
-    (metrics, state, collect(values(state.grammars)))
+    # 4th element (additive; callers destructuring three names are unaffected): the explore
+    # buffer, for benchmark/diagnostic observability of the residual record.
+    (metrics, state, collect(values(state.grammars)), explore_buffer)
 end
 
 # ═══════════════════════════════════════

@@ -501,6 +501,35 @@ let
 end
 println()
 
+# ═══════════════════════════════════════
+# TEST 12: Opt-in adjacent-inspection sensor — evidence decoupled from interaction
+# ═══════════════════════════════════════
+
+println("=" ^ 60)
+println("TEST 12: observe_adjacent sensor (default off)")
+println("=" ^ 60)
+
+let
+    # Default: evidence only via interaction outcomes — the myopic interact rule freezes
+    # after the first few labels, so observation count stays tiny (the historical behaviour).
+    m_off, _, _ = run_agent(world_rules=[:colour_typed], max_steps=30, program_max_depth=2,
+                            max_meta_per_step=1, verbose=false, rng_seed=0, respawn=true)
+    n_off = count(s -> s > 0, m_off.surprise)
+
+    # Sensor on: the adjacent entity's type is observed each step ⇒ evidence flows
+    # continuously and the belief actually learns the regime.
+    m_on, _, _ = run_agent(world_rules=[:colour_typed], max_steps=30, program_max_depth=2,
+                           max_meta_per_step=1, verbose=false, rng_seed=0, respawn=true,
+                           observe_adjacent=true)
+    n_on = count(s -> s > 0, m_on.surprise)
+
+    @assert n_off <= 4 "default channel should stay interaction-gated (got $n_off)"
+    @assert n_on >= 15 "inspection sensor should observe most steps (got $n_on)"
+    @assert last(m_on.cumulative_energy) > 0.0 "a learning agent on a respawning food task accrues energy"
+    println("PASSED: sensor off → $n_off observations; on → $n_on, energy $(last(m_on.cumulative_energy))")
+end
+println()
+
 println("=" ^ 60)
 println("ALL GRID WORLD TESTS PASSED")
 println("=" ^ 60)
