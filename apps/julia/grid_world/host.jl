@@ -33,7 +33,10 @@ using Credence: SubprogramFrequencyTable
 using Credence: explore_grammar, explore_features, ExploreObservation
 using Credence: update_learning_regime, plateau_probability, reset_learning_regime!
 # Dominance move — the real single-currency argmax at the selection seam.
-using Credence: exploration_voi, feature_discovery_voi, perturbation_voc, entropy
+using Credence: exploration_voi, feature_discovery_voi, perturbation_voc
+# Belief-derived valuation — horizon-completed growth + the learned returns-to-growth model.
+using Credence: exploration_fit, feature_discovery_fit, growth_value, complexity_logprior
+using Credence: GrowthReturns, observe_yield!, escape_score, injection_yield_nats
 
 include("simulation.jl")
 include("terminals.jl")
@@ -46,19 +49,23 @@ using Random
 # ═══════════════════════════════════════
 
 # Tie order is load-bearing: the selection argmax resolves ties by first-listed. Enumerate
-# (breadth) precedes deepen (depth) so equal escape-mass scores take the cheaper op first
-# (dominance-design §5.1's named refinement — entropy does not distinguish them — deferred).
+# (breadth) precedes deepen (depth) so ties at the shared returns prior take the cheaper op
+# first (ratified Q4 — equal priors, the tie order does the breadth-before-depth work; evidence
+# differentiates the cells from the first firing on).
 const GW_META_ACTIONS = [:gw_enumerate_more, :gw_perturb_grammar, :gw_deepen, :gw_explore,
                          :gw_add_feature, :gw_do_nothing]
-# One currency — Δ log-evidence, nats (Move 5) — and one declared price. The escape-mass ops
-# (:gw_enumerate_more/:gw_deepen) have no exact VOI: their value is the un-entertained tail's,
-# myopic-unreachable by construction, so they are scored by posterior entropy (a NAMED HEURISTIC,
-# dominance-design §0/§5.1) against this compute price: one bit. It is utility DATA — the
-# caller's declared price of search compute, overridable via run_agent(escape_cost=…) — not a
-# decision mechanism. Every proxy constant of the pre-dominance scheme (BASE/COST/VOI_FLOOR and
-# the inline confidence arithmetic) is retired; the exact and surrogate tiers price their own
-# compute through the engine's compute_cost kwargs (default 0.0).
-const GW_ESCAPE_COST_DEFAULT = log(2.0)
+# One currency — Δ log-evidence, nats (Move 5) — and one declared PRICE. The escape ops'
+# VALUE side is no longer hand-written (the entropy heuristic is retired,
+# belief-derived-valuation §2b): it is the learned returns-to-growth posterior's expected next
+# yield. What remains declared is only this compute price — utility DATA, the caller's price of
+# search compute, overridable via run_agent(op_compute_cost=…) — never a value claim (ratified
+# Q6). The exact and surrogate tiers price their own compute through the engine's compute_cost
+# kwargs (default 0.0).
+const GW_OP_COMPUTE_COST_DEFAULT = log(2.0)
+# The one-time prior-Occam charge of admitting one feature symbol (Δcomplexity = +1), charged at
+# the score seam exactly as the engine's _best_feature_addition charges it internally — the two
+# sites agree by both calling complexity_logprior(1; λ = log 2).
+const GW_FEATURE_PRIOR_TERM = complexity_logprior(1; λ = log(2.0))
 
 # ═══════════════════════════════════════
 # Build the observation kernel
@@ -151,39 +158,52 @@ end
 # ═══════════════════════════════════════
 
 """
-    score_gw_meta_actions(state, explore_buffer; escape_cost) → Dict{Symbol, Float64}
+    score_gw_meta_actions(state, explore_buffer, returns, changed; op_compute_cost, horizon)
+        → Dict{Symbol, Float64}
 
 Score every grid-world meta-action in the ONE currency — Δ log-evidence, nats
-(Move 5; dominance-design §4). Each op is priced at its own fidelity:
+(Move 5; belief-derived-valuation §2). Every score is a posterior expectation or a declared
+datum — no hand-written value claims:
 
-    :gw_explore          plateau · exploration_voi          exact re-conditioned lookahead
-    :gw_add_feature      plateau · feature_discovery_voi    exact lookahead; hard-gated on
-                                                            thresholds-exhausted (attribution)
-    :gw_perturb_grammar  perturbation_voc                   prior-only surrogate, never
-                                                            re-conditioned (§5.3 cascade)
-    :gw_enumerate_more,  entropy(belief) − escape_cost      escape-mass HEURISTIC (named, §0),
-    :gw_deepen                                              eligible only when the exact tier
-                                                            is non-positive (saturation-ordered
-                                                            strictly below any positive exact VOI)
-    :gw_do_nothing       0.0                                the act-now reference
+    :gw_explore          growth_value(fit, n_buf, plateau, H)             horizon-completed exact
+                                                                          lookahead (§2a)
+    :gw_add_feature      growth_value(fit, …; prior_term = −log 2)        as above + the one-time
+                                                                          Occam charge; hard-gated
+                                                                          on thresholds-exhausted
+                                                                          (attribution, unchanged)
+    :gw_perturb_grammar  -Inf (PROVISIONAL)                               removal-consumption
+                                                                          redesign pending — see
+                                                                          the inline comment
+    :gw_enumerate_more,  escape_score(returns, op, changed)               LEARNED returns-to-growth
+    :gw_deepen                                                            posterior (§2b) minus the
+                                                                          declared compute price;
+                                                                          competes FREELY (the
+                                                                          saturation-ordering gate
+                                                                          retired, ratified Q5)
+    :gw_do_nothing       0.0                                              the act-now reference
 
-`plateau` is the regime-marginalised soft gate (Move 2): with probability `plateau` the
-residual is a persistent plateau and the measured Δℓ is real; with probability 1−plateau
-the agent is still learning and the residual decays on its own (VOI ≈ 0) — so
-E[VOI] = plateau·Δℓ. Never a hard threshold. threshold_exhausted stays HARD on
-:gw_add_feature with zero constants: a feature Δℓ measured against a coarse grid is
-confounded — inflated by residual that refinement would ALSO capture — so the
-un-confounded baseline exists iff no positive-VOI refinement remains, i.e. the already-
-computed exploration score is ≤ 0. Recomputed each call, never carried (the ladder is
-cyclic). The compression rung stays soft (#174 PR 2): perturbation_voc competes in the
-argmax at its own prior-only score, no veto in either direction.
+`plateau` keeps its Move-2 semantics (*whether* the measured gain is real); `horizon` is the
+expected remaining conditioning events (*how long* it pays) — declared episode data × the
+observed event rate, host bookkeeping. `nothing` ⇒ the window-total valuation (H = n_buf,
+the pre-move behaviour). The `fit_explore > 0` hard gate on :gw_add_feature is the attribution
+argument (a feature Δℓ measured against a coarse grid is confounded by residual refinement
+would also capture) — a measurement concern, valuation-independent, so it gates on FIT.
+
+Score/edit consistency (Invariant 3, host level): with `compute_cost = 0` the engine's
+edit-application floor (`fit > 0` at defaults) and this score's positivity
+(`plateau·fit·(H/n) > 0` for `plateau, H > 0`) are the SAME predicate, so a chosen growth op
+never no-ops and a no-op is never chosen (except the H = 0 last step, where the score is 0 and
+the floor already keeps do_nothing).
 
 Asserted by test_grid_world_meta.jl.
 """
 function score_gw_meta_actions(
     state::AgentState,
-    explore_buffer::Vector{ExploreObservation};
-    escape_cost::Float64 = GW_ESCAPE_COST_DEFAULT,
+    explore_buffer::Vector{ExploreObservation},
+    returns::GrowthReturns,
+    changed::Dict{Symbol, Bool};
+    op_compute_cost::Float64 = GW_OP_COMPUTE_COST_DEFAULT,
+    horizon::Union{Nothing, Float64} = nothing,
     voi_cache::Union{Nothing, Dict{NTuple{4, Int}, Float64}} = nothing,
     cache_epoch::Int = 0
 )::Dict{Symbol, Float64}
@@ -199,52 +219,67 @@ function score_gw_meta_actions(
     end
     g_top = state.grammars[top[1]]
 
-    # Prior-only surrogate (the cheap fidelity): best compression net-VOC over the posterior
-    # subtree table. Never re-conditioned at selection (§5.3 — real VOI replaces proxy-for-exact
-    # on the exploration ops ONLY; flattening the cascade would delete its EU-optimal
-    # evaluation-cost ordering, Move 5 §4/§6).
-    ft = analyse_posterior_subtrees(state.all_programs, weights(state.belief);
-                                    min_frequency = 0.01, min_complexity = 2)
-    scored[:gw_perturb_grammar] = perturbation_voc(g_top, ft)
+    # PROVISIONAL (flagged for ratification, like :gw_deepen below): :gw_perturb_grammar is
+    # scored -Inf, not by perturbation_voc. Empirically (2026-07-02 smoke), voc is a surrogate
+    # execution falsifies: an applied REMOVAL adds a cleaned SIBLING grammar whose duplicate
+    # programs can never displace the evidence-rich dirty incumbent, so the same removal
+    # re-proposes at +log2 forever — a 3-ops/step treadmill of duplicate injection (the exact
+    # shape perturbation.jl's own no-op docstring calls "a silent posterior reset — A3", missed
+    # for the applied case because the old entropy tier always outbid voc). The correct fix is
+    # REPLACEMENT semantics for removals (re-key components to the cleaned grammar, realising
+    # the prior reclaim in their weights) — but that is a prior-revision write outside
+    # `condition` and needs its own design doc (plus the Move-1 OQ-4 sound reference count).
+    # Until that lands, perturb is out of the agent's argmax; score-blind baselines still
+    # execute it as before.
+    scored[:gw_perturb_grammar] = -Inf
 
-    # Exact re-conditioned lookahead tier, regime-marginalised by the plateau soft gate.
-    # The lookaheads are PURE functions of (grammar, buffer, depth); the buffer is append-only
-    # between window trims, so memoising on (epoch, grammar id, buffer length, depth) is exact —
-    # a cache, not an approximation. The epoch (owned by the run loop, bumped on growth-op
-    # execution and window trims) prevents key collisions across content changes at equal length.
+    # Exact lookahead tier, horizon-completed (belief-derived-valuation §2a). The FIT halves are
+    # PURE functions of (grammar, buffer, depth) — the memoisable component; the per-step
+    # valuation (plateau, H) is applied through the engine's growth_value functional. The epoch
+    # (owned by the run loop, bumped on growth-op execution and window trims) prevents key
+    # collisions across content changes at equal length.
     n_buf = length(explore_buffer)
     plateau = plateau_probability(state.learning_regime)
-    voi_explore = voi_cache === nothing ?
-        exploration_voi(g_top, explore_buffer, state.current_max_depth;
+    h = horizon === nothing ? Float64(n_buf) : horizon
+    fit_explore = voi_cache === nothing ?
+        exploration_fit(g_top, explore_buffer, state.current_max_depth;
                         action_space = gw_action_space) :
         get!(voi_cache, (1000 + cache_epoch, g_top.id, n_buf, state.current_max_depth)) do
-            exploration_voi(g_top, explore_buffer, state.current_max_depth;
+            exploration_fit(g_top, explore_buffer, state.current_max_depth;
                             action_space = gw_action_space)
         end
-    scored[:gw_explore] = plateau * voi_explore
-    if voi_explore > 0.0
+    scored[:gw_explore] = growth_value(fit_explore, n_buf, plateau, h)
+    if fit_explore > 0.0
         scored[:gw_add_feature] = -Inf
     else
-        fdvoi = voi_cache === nothing ?
-            feature_discovery_voi(g_top, explore_buffer, ALL_GW_FEATURES,
+        fit_feature = voi_cache === nothing ?
+            feature_discovery_fit(g_top, explore_buffer, ALL_GW_FEATURES,
                                   state.current_max_depth; action_space = gw_action_space) :
             get!(voi_cache, (2000 + cache_epoch, g_top.id, n_buf, state.current_max_depth)) do
-                feature_discovery_voi(g_top, explore_buffer, ALL_GW_FEATURES,
+                feature_discovery_fit(g_top, explore_buffer, ALL_GW_FEATURES,
                                       state.current_max_depth; action_space = gw_action_space)
             end
-        scored[:gw_add_feature] = plateau * fdvoi
+        scored[:gw_add_feature] = growth_value(fit_feature, n_buf, plateau, h;
+                                               prior_term = GW_FEATURE_PRIOR_TERM)
     end
 
-    # Escape-mass heuristic tier, saturation-ordered strictly below any positive exact VOI (§0):
-    # eligible only once the exact tier is non-positive, then scored by posterior entropy against
-    # the declared compute price. :gw_enumerate_more with every top grammar already enumerated at
-    # the current depth provably adds no hypothesis (add_programs_to_state! dedup) — but knowing
-    # that costs the enumeration itself, so both ops carry the same H − cost and ties resolve by
-    # GW_META_ACTIONS order (breadth before depth).
-    exact_max = max(scored[:gw_explore], scored[:gw_add_feature])
-    escape = exact_max > 0.0 ? -Inf : entropy(state.belief) - escape_cost
-    scored[:gw_enumerate_more] = escape
-    scored[:gw_deepen] = escape
+    # Learned returns tier (belief-derived-valuation §2b): the posterior-predictive expected
+    # next yield of each escape op in its (op, changed-since-last-fire) context, net of the
+    # declared compute price. No eligibility gate (ratified Q5) — bounded prior optimism decays
+    # under zero-yield evidence, which the old entropy score never did. Ties at the shared prior
+    # resolve by GW_META_ACTIONS order (breadth before depth, ratified Q4).
+    scored[:gw_enumerate_more] = escape_score(returns, :gw_enumerate_more,
+                                              get(changed, :gw_enumerate_more, true);
+                                              compute_cost = op_compute_cost)
+    # PROVISIONAL (flagged for ratification — amends ratified Q5 for this one op): :gw_deepen
+    # is scored -Inf, not by its learned returns. Empirically (2026-07-02 smoke), deepen is
+    # structurally unpriceable in a free per-step argmax: one prior-optimism fire ratchets the
+    # GLOBAL enumeration depth, exploding every subsequent lookahead ~100× (depth-4 candidate
+    # enumeration ≈ 225k programs) — no flat declared price is honest for an op whose compute
+    # cost is super-exponential in state. Bounded depth escalation is the drafted
+    # escalate-depth design's brief (docs/escalate-depth branch); deepen re-enters the argmax
+    # when that lands. Its returns cells stay tracked (harmless) for that day.
+    scored[:gw_deepen] = -Inf
 
     scored
 end
@@ -411,7 +446,7 @@ function run_agent(;
     verbose::Bool=true,
     rng_seed::Int=42,
     meta_policy::Function=default_eu_max_policy,
-    escape_cost::Float64=GW_ESCAPE_COST_DEFAULT,
+    op_compute_cost::Float64=GW_OP_COMPUTE_COST_DEFAULT,
     respawn::Bool=false,
     observe_adjacent::Bool=false,
     seed_grammars::Union{Nothing, Vector{Grammar}}=nothing,
@@ -467,11 +502,23 @@ function run_agent(;
     # by growth ops — explore_window aging is the sole trim. Each record's residual is the live
     # surprise (−log predictive), the incumbents' normalisation ledger the injection re-applies.
     explore_buffer = ExploreObservation[]
-    # Exact memoisation of the pure VOI lookaheads (see score_gw_meta_actions): epoch bumps on
+    # Exact memoisation of the pure lookahead FITS (see score_gw_meta_actions): epoch bumps on
     # growth-op execution and window trims so equal-length buffers with different content never
-    # collide with stale keys.
+    # collide with stale keys. The per-step valuation (plateau, horizon) is applied outside the
+    # cache through growth_value.
     voi_cache = Dict{NTuple{4, Int}, Float64}()
     cache_epoch = 0
+
+    # The learned returns-to-growth belief (belief-derived-valuation §2b) + its bookkeeping DATA:
+    # space_epoch counts hypothesis-space changes (any injection, any depth change);
+    # last_fire_epoch records the epoch each escape op last fired under — the (op,
+    # changed-since-last-fire) context bit. n_cond_events counts conditioning events for the
+    # declared-horizon estimate H = event rate × remaining steps (ratified Q2: episodic hosts
+    # declare; max_steps is this host's episode length).
+    growth_returns = GrowthReturns(Symbol[:gw_enumerate_more, :gw_deepen])
+    space_epoch = 0
+    last_fire_epoch = Dict{Symbol, Int}()
+    n_cond_events = 0
 
     # Temporal state
     temporal_window = TemporalWindow(max_history=10)
@@ -523,17 +570,37 @@ function run_agent(;
             # baselines (random, fixed-schedule) may deliberately act on non-positive scores —
             # that waste is exactly what the dominance benchmark measures.
             while meta_actions_taken < max_meta_per_step
+                # The declared-horizon estimate (ratified Q2): observed conditioning-event rate
+                # × declared remaining episode steps. Bookkeeping counts — data, not beliefs.
+                h_events = (n_cond_events / step) * (max_steps - step)
+                changed = Dict{Symbol, Bool}(
+                    op => get(last_fire_epoch, op, -1) != space_epoch
+                    for op in (:gw_enumerate_more, :gw_deepen))
                 scored = score_blind(meta_policy) ?
                     Dict{Symbol, Float64}(:gw_do_nothing => 0.0) :
-                    score_gw_meta_actions(state, explore_buffer; escape_cost=escape_cost,
+                    score_gw_meta_actions(state, explore_buffer, growth_returns, changed;
+                                          op_compute_cost=op_compute_cost, horizon=h_events,
                                           voi_cache=voi_cache, cache_epoch=cache_epoch)
                 chosen = meta_policy(scored, step)::Symbol
                 chosen == :gw_do_nothing && break
 
-                execute_gw_meta_action!(state, chosen, explore_buffer;
+                n_added_meta = execute_gw_meta_action!(state, chosen, explore_buffer;
                     include_temporal=include_temporal, verbose=verbose)
                 chosen in (:gw_explore, :gw_add_feature) && (cache_epoch += 1)
                 meta_actions_taken += 1
+
+                # The realised yield is an OBSERVATION (belief-derived-valuation §2b): measured
+                # BEFORE prune/truncate (they may drop the very components), conditioned into the
+                # returns belief at the context the op fired under. The op's own effect then
+                # bumps the space epoch — other ops see a changed space; the op itself does not
+                # (its post-fire epoch is recorded post-bump).
+                if chosen in (:gw_enumerate_more, :gw_deepen)
+                    y = injection_yield_nats(state, n_added_meta)
+                    observe_yield!(growth_returns, chosen, changed[chosen], y)
+                end
+                (n_added_meta > 0 || chosen == :gw_deepen) && (space_epoch += 1)
+                chosen in (:gw_enumerate_more, :gw_deepen) &&
+                    (last_fire_epoch[chosen] = space_epoch)
 
                 sync_prune!(state; threshold=-30.0)
                 sync_truncate!(state; max_components=2000)
@@ -593,6 +660,7 @@ function run_agent(;
                 state.learning_regime = update_learning_regime(state.learning_regime,
                                                                state.last_residual, surprise)
                 state.last_residual = surprise
+                n_cond_events += 1   # the horizon estimate's event count (declared-Q2 bookkeeping)
                 push!(explore_buffer, ExploreObservation(features,
                     Dict{Symbol, Any}(:recent => copy(get(temporal_state, :recent, Dict{Symbol, Float64}[]))),
                     Set([true_type]), surprise))

@@ -76,22 +76,40 @@ function escape_score(gr::GrowthReturns, op::Symbol, changed::Bool; compute_cost
 end
 
 """
-    injection_yield_nats(belief, n_added) → Float64
+    injection_yield_nats(state, n_added) → Float64
 
-The realised yield of an injection, in nats: `−log(1 − mass)` where `mass` is the posterior
-mass captured by the `n_added` most recently appended components (their tags are the trailing
-positions — the `add_programs_to_state!` re-tag discipline). Exactly `0.0` for a dedup no-op.
-With coherent injection this is exact and instantaneous: newcomers arrive at
-evidence-conditioned weights, so the mass they hold IS how much the posterior credits what the
-op admitted (zombie resurrections re-enter evidence-crushed and self-report as worthless).
-Measure it BEFORE `sync_prune!`/`sync_truncate!` — they may drop the very components.
+The realised EVIDENCE yield of an injection, in nats:
 
-The ratified Q1 observable; the realised next-window predictive delta is the named finer
-fidelity (design §5 Q1).
+    max(0, log((1 − m₀) / (1 − m)))
+
+where `m` is the posterior mass captured by the `n_added` most recently appended components
+(their tags are the trailing positions — the `add_programs_to_state!` re-tag discipline) and
+`m₀` is the PRIOR COUNTERFACTUAL — the mass the same newcomers would hold had they been
+injected against an empty window (`S/(1+S)`, `S = Σ exp(complexity prior)`, incumbents
+normalised to unit mass). The subtraction is load-bearing: raw injected mass measures posterior
+*attention*, and a large fresh injection takes large PRIOR mass by count alone — crediting that
+as evidence is the wedge design §5 Q1 named, and it is fatal at step 1 (an empty window makes
+any big op look like ~4 nats of "value"). Baseline-corrected: an empty-window injection yields
+~0 exactly, evidence-favoured newcomers yield the genuine log-evidence ratio, and
+evidence-crushed zombies floor at 0. Exactly `0.0` for a dedup no-op. Measure BEFORE
+`sync_prune!`/`sync_truncate!` — they may drop the very components.
+
+The ratified Q1 observable (evidence-relative form); the realised next-window predictive delta
+is the named finer fidelity.
 """
-function injection_yield_nats(belief::MixturePrevision, n_added::Int)
+function injection_yield_nats(state::AgentState, n_added::Int)
     n_added <= 0 && return 0.0
-    n = length(belief.components)
-    mass = probability(belief, TagSet(Interval(0.0, 1.0), Set((n - n_added + 1):n)))
-    -log(1.0 - min(mass, 1.0 - 1e-12))
+    n = length(state.belief.components)
+    mass = probability(state.belief, TagSet(Interval(0.0, 1.0), Set((n - n_added + 1):n)))
+    # The prior counterfactual: recompute the newcomers' complexity priors from the retained
+    # program/grammar records (the same arithmetic add_programs_to_state! used to seed them).
+    s0 = 0.0
+    for i in (n - n_added + 1):n
+        gid = state.metadata[i][1]
+        g = state.grammars[gid]
+        s0 += exp(complexity_logprior(g.complexity; λ = log(2)) +
+                  complexity_logprior(state.all_programs[i].complexity; λ = log(2)))
+    end
+    m0 = s0 / (1.0 + s0)
+    max(0.0, log(max(1.0 - m0, 1e-300)) - log(max(1.0 - mass, 1e-300)))
 end

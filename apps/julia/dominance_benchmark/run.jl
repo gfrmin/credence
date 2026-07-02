@@ -12,10 +12,11 @@ Manually run, out of the fast suite (like credence_router's test_live.py):
     julia apps/julia/dominance_benchmark/run.jl
 
 Gate (§7):
-  - CI on eu_max − random and eu_max − best-tuned fixed_schedule excludes 0 on BOTH
-    realised value (AUC) and sample efficiency (steps-to-own-half, sign-flipped);
+  - CI on eu_max − random and eu_max − best-tuned fixed_schedule excludes 0 on ALL of
+    realised value (AUC), the final-window rate (co-primary, §2c), and sample efficiency
+    (steps to the shared per-seed level, sign-flipped);
   - eu_max − never_explore reported as the HEADLINE (exploration's isolated value,
-    the escape-mass heuristic held constant on both sides) and its CI excludes 0;
+    the learned-returns escape ops held constant on both sides) and its CI excludes 0;
   - never_explore ≤ eu_max ≤ clairvoyant on mean AUC (the first is a hypothesis under
     test — on failure, diagnose the task's non-stationarity before blaming the policy;
     the second is a true sanity check);
@@ -86,12 +87,25 @@ function main(; n_seeds::Int = DB_N_SEEDS)
     println("best-tuned fixed schedule: $best_fixed; best-tuned random: $best_random")
 
     eu = results["eu_max"]
+
+    # Shared-reference efficiency (belief-derived-valuation §2c): one bar per seed — half the
+    # per-seed BEST policy's final total — so collapsing early cannot look "efficient" (the
+    # self-relative steps-to-own-half is retained in the tables for reporting only).
+    all_names = collect(keys(results))
+    level = Dict{Int, Float64}()
+    for i in eachindex(eu)
+        level[i] = 0.5 * maximum(results[nm][i].ce[end] for nm in all_names)
+    end
+    stl(rs::Vector{RunSummary}) = Float64[Float64(steps_to_level(rs[i], level[i])) for i in eachindex(rs)]
+
     gaps = Dict{String, Dict{Symbol, Tuple{Float64, Float64, Float64}}}()
     for base in [best_random, best_fixed, "never_explore"]
         gaps[base] = Dict(
             :auc => bootstrap_ci(paired(eu, results[base], r -> r.auc)),
-            # efficiency: fewer steps to own half-total is better ⇒ gap = baseline − eu_max.
-            :efficiency => bootstrap_ci(paired(results[base], eu, r -> Float64(r.steps_to_half))),
+            # co-primary realised-value gate (§2c): the end-state rate, not just the area.
+            :final_window => bootstrap_ci(paired(eu, results[base], r -> r.final_window_mean)),
+            # efficiency: fewer steps to the SHARED level is better ⇒ gap = baseline − eu_max.
+            :efficiency => bootstrap_ci(stl(results[base]) .- stl(eu)),
         )
     end
 
@@ -129,16 +143,18 @@ function main(; n_seeds::Int = DB_N_SEEDS)
                         "$(round(mean_of(rs, r -> Float64(r.steps_to_half)), digits=1)) | " *
                         "$(round(mean_of(rs, r -> Float64(r.n_meta)), digits=1)) |")
         end
-        println(io, "\n## Paired gaps (eu_max − baseline; efficiency sign-flipped so + favours eu_max)\n")
-        println(io, "| baseline | AUC gap [95% CI] | efficiency gap [95% CI] | worst-seed AUC gap |")
-        println(io, "|---|---|---|---|")
+        println(io, "\n## Paired gaps (eu_max − baseline; efficiency = steps to the shared per-seed")
+        println(io, "level, sign-flipped so + favours eu_max — belief-derived-valuation §2c)\n")
+        println(io, "| baseline | AUC gap [95% CI] | final-window gap [95% CI] | efficiency gap [95% CI] | worst-seed AUC gap |")
+        println(io, "|---|---|---|---|---|")
         for base in [best_random, best_fixed, "never_explore"]
-            a = gaps[base][:auc]; e = gaps[base][:efficiency]
+            a = gaps[base][:auc]; fw = gaps[base][:final_window]; e = gaps[base][:efficiency]
             println(io, "| $base | $(round(a[1], digits=2)) [$(round(a[2], digits=2)), $(round(a[3], digits=2))] " *
+                        "| $(round(fw[1], digits=3)) [$(round(fw[2], digits=3)), $(round(fw[3], digits=3))] " *
                         "| $(round(e[1], digits=1)) [$(round(e[2], digits=1)), $(round(e[3], digits=1))] " *
                         "| $(round(worst_gap[base], digits=2)) |")
         end
-        println(io, "\n`eu_max − never_explore` is the headline: the escape-mass heuristic is " *
+        println(io, "\n`eu_max − never_explore` is the headline: the learned-returns escape ops are " *
                     "identical on both sides, so this gap is exploration's isolated value.\n")
         println(io, "## Behaviour-verified inversions\n")
         for line in inversions[1:min(10, length(inversions))]
@@ -155,8 +171,10 @@ function main(; n_seeds::Int = DB_N_SEEDS)
     for base in [best_random, best_fixed]
         gaps[base][:auc][2] > 0.0 ||
             push!(failures, "CI(eu_max − $base) on AUC includes 0: $(gaps[base][:auc])")
+        gaps[base][:final_window][2] > 0.0 ||
+            push!(failures, "CI(eu_max − $base) on final-window rate includes 0: $(gaps[base][:final_window])")
         gaps[base][:efficiency][2] > 0.0 ||
-            push!(failures, "CI(eu_max − $base) on efficiency includes 0: $(gaps[base][:efficiency])")
+            push!(failures, "CI(eu_max − $base) on shared-level efficiency includes 0: $(gaps[base][:efficiency])")
         worst_gap[base] >= 0.0 ||
             push!(failures, "minimax regret vs $base: worst-seed AUC gap $(worst_gap[base]) < 0")
     end
