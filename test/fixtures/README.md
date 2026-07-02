@@ -190,3 +190,14 @@ Size: ~1.8 MB total. Larger than the KB-range ceiling the "Rules" section below 
 - Fixtures are **never regenerated** to fix loading bugs. The fix goes in load code.
 - A new schema version (v3, v4, …) gets a new set of fixtures captured at the SHA that introduced that version. Old fixtures remain to verify backward-compat load.
 - Fixture binary blobs are checked into git. They should be small (KB range, not MB); if a fixture grows large, that signals it's capturing too much — split it.
+
+## feature_arithmetic_lift_v1.tsv (feature-arithmetic move — capture-before-refactor)
+
+The pre-change semantic projection of the `GTExpr(feature::Symbol, t)` enumeration
+(feature-arithmetic-design.md §3): 1850 programs of the canonical `{:a,:b}`+`HOT` grammar at
+depth 3 — per-program `show_expr` canonical string, complexity, prior log-weight, and
+posterior weight after a fixed 6-observation conditioning sequence. Captured at commit
+**3af9077** (the `exploration-budget/feature-arithmetic` fork point, PRE-NumExpr) by
+`generate_feature_arithmetic_lift.jl` (checked in beside it). `test_feature_arithmetic.jl`
+asserts the lifted enumeration (`max_num_depth = 1`) reproduces every column `==`. Never
+regenerate to fix a failing lift — fix the lift.
