@@ -190,7 +190,7 @@ collect_feature_refs!(acc::Set{Symbol}, e::IfExpr) =
 # ═══════════════════════════════════════
 
 """
-    _compression_payoff(table) → Union{Tuple{ProductionRule, Int}, Nothing}
+    _compression_payoff(table[, defined_nonterminals]) → Union{Tuple{ProductionRule, Int}, Nothing}
 
 The best `:add_rule` candidate and its description-length payoff (symbols saved), or `nothing` if no
 posterior subtree compresses (payoff ≤ 0). Defining the most-frequent subtree `s` as a nonterminal
@@ -201,10 +201,33 @@ the rule once (cost `1 + expr_complexity(s)`):
 
 This is the two-part-MDL saving (CLAUDE.md §1.3). It is the single home of the payoff arithmetic,
 shared by `propose_nonterminal` (the gate) and `net_voc` (the value), so the two never drift.
+
+`defined_nonterminals` — the TARGET grammar's rule names — restricts the argmax to subtrees whose
+`NonterminalRef`s all resolve in that grammar. The frequency table spans the posterior over ALL
+grammars, so the globally best subtree may reference a nonterminal defined only in its ORIGIN
+grammar's rules; installing it elsewhere creates a dangling reference and every later enumeration
+of that lineage crashes in `compile_expr` ("Undefined nonterminal" — the 2026-07-03 gate-run
+regression). `nothing` preserves the un-targeted legacy form (`propose_nonterminal`'s surface).
+Asserted by test_perturb_consumption.jl §6.
 """
-function _compression_payoff(table::SubprogramFrequencyTable)::Union{Tuple{ProductionRule, Int}, Nothing}
+function _compression_payoff(table::SubprogramFrequencyTable,
+                             defined_nonterminals::Union{Nothing, Set{Symbol}} = nothing
+                            )::Union{Tuple{ProductionRule, Int}, Nothing}
     isempty(table.subtrees) && return nothing
-    best_idx = argmax(table.weighted_frequency)
+    best_idx = 0
+    if defined_nonterminals === nothing
+        best_idx = argmax(table.weighted_frequency)
+    else
+        best_w = -Inf
+        for i in eachindex(table.subtrees)
+            table.weighted_frequency[i] > best_w || continue
+            refs = collect_nonterminal_refs!(Set{Symbol}(), table.subtrees[i])
+            issubset(refs, defined_nonterminals) || continue
+            best_idx = i
+            best_w = table.weighted_frequency[i]
+        end
+        best_idx == 0 && return nothing
+    end
     best_expr = table.subtrees[best_idx]
     n_sources = length(table.source_programs[best_idx])
     expr_c = expr_complexity(best_expr)
@@ -367,10 +390,15 @@ function _best_compression_candidate(g::Grammar, freq_table::SubprogramFrequency
                                      compute_cost::Float64 = 0.0)::Union{Nothing, PerturbationCandidate}
     best = nothing  # the running argmax (a PerturbationCandidate); see _candidate_better
 
-    add = _compression_payoff(freq_table)
+    # Target-scoped :add selection: only subtrees whose NonterminalRefs resolve in THIS grammar
+    # are candidates (the dangling-reference guard — _compression_payoff docstring). Because the
+    # validity filter lives here in the shared core, perturb_grammar (the transition),
+    # perturbation_voc (the score), and compression_exhausted (the signal) agree by construction.
+    rule_names = Set(r.name for r in g.rules)
+    add = _compression_payoff(freq_table, rule_names)
     if !isnothing(add)
         rule, net_payoff = add
-        if !(rule.name in Set(r.name for r in g.rules))         # idempotence guard (already-present name)
+        if !(rule.name in rule_names)                           # idempotence guard (already-present name)
             v = net_voc(net_payoff, compute_cost)               # VOC gate (forward compute priced in)
             v > 0 && (best = _pick_better(best, PerturbationCandidate(v, false, string(rule.name), :add, rule)))
         end
