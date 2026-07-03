@@ -1,266 +1,262 @@
-# Winner's-curse pricing — growth valuation as Bayesian model comparison
+# Winner's-curse pricing — the lookahead as a virtual injection (the machinery applied to itself)
 
 > Exploration-budget arc, follow-up to removal consumption (#192/#193) and the §8 measure–utility
 > alignment (#194). Design-doc-before-code; ratify before any code lands. Constitutional
 > grounding: `CONSTITUTION.md` (Tractatus Credentiae, 2nd ed.), cited inline as T-x.y. The
 > acceptance criteria were **fixed in advance** by dominance-design §8: worst-seed (minimax)
 > mean-rate gap ≥ 0 and the q10 gap vs `random_p005` and `fixed_k50`, with mean-parity CIs and
-> the passing headline preserved. Authored 2026-07-04; **revised 2026-07-04 after constitutional
-> review** — the first draft's spike-and-slab mechanism is REJECTED and recorded as such in §5
-> Q1; the revision derives the score from the machinery the agent already has.
+> the passing headline preserved. Authored 2026-07-04; **revision 3**. The revision history is
+> part of the design's argument and is kept in §0.
 
 ---
 
+## 0. Revision history (the argument, compressed)
+
+- **Draft 1 (rejected):** a bespoke spike-and-slab over candidate rates with uniform π, in a new
+  file — a second inference mechanism, stipulated rather than derived. The constitutional review
+  (author + pixel6) demolished it: the posterior it reached for is the marginal likelihood under
+  the complexity prior; the BMA **sum** prices selection/multiplicity (Scott & Berger — a proper
+  prior over model space *is* the multiplicity correction); `2^{−Δ|G|}` *is* the spike (uniform π
+  discards the informative prior odds); and the reflective-boundary cover belongs to the
+  **un-entertained** ops only (escape — learned returns are the honest floor there) — growth
+  candidates are enumerated and fit, so exact model comparison is available and mandatory
+  (T-2.32). Bellwether stakes: admit one bespoke corrector and a bespoke drift detector follows;
+  the framework dies of a thousand locally-reasonable patches.
+- **Revision 2 (superseded):** derived the right *formulas* — (A) evidence as the
+  marginal-likelihood ratio `log(π̃ + Σ_c π̃_c e^{fit_c})`, (B) flow as the posterior-weighted
+  per-event gain — but implemented them as hand arithmetic beside the engine: a hand-rolled
+  logsumexp over hand-normalised grammar priors, feeding the old valuation seam. The author's
+  follow-up challenge ("can't we use the Bayesian machinery of the credence engine on itself?")
+  exposes the residue: π̃ over the entertained grammar set is still a stipulated normalisation,
+  and the formulas duplicate — outside the engine — computations the engine already performs.
+- **Revision 3 (this document):** the formulas dissolve into **engine queries**. The lookahead
+  becomes a *virtual coherent injection* on a scratch state — the same Tier-1 code path as the
+  transition — and every score component is an existing canalised read (`log_predictive`,
+  `probability(·, TagSet)`, `expect`, `injection_yield_nats`). No new inference mechanism, no
+  grammar-prior normalisation (programs are the atoms; the two-part complexity prior is already
+  total over them), and score/transition unity holds **by construction** because the score is
+  computed by running the transition virtually.
+
 ## 1. Purpose
 
-Replace the growth ops' point-max-extrapolation score with the **Bayesian model comparison the
-agent already performs everywhere else**, so that `:gw_explore` / `:gw_add_feature` carry an
-honest posterior expectation into the meta-argmax. This is the round-4 gate's named remaining
-failure: the tails (worst-seed mean-rate gap −0.5 / −0.381, q10 −0.476 / −0.333 vs the tuned
-baselines) are early growth fires on tiny windows (the instrumented shape: `add_feature` at steps
-4–8), while the means are ties and the headline passes.
+Make the growth ops (`:gw_explore`, `:gw_add_feature`) score and transition through **one pass of
+the machinery the agent already trusts**, eliminating the point-max-extrapolation score whose
+three implicit inferences drive the round-4 gate's remaining tail failures (worst-seed mean-rate
+gap −0.5 / −0.381, q10 −0.476 / −0.333; the instrumented shape: `add_feature` fires at steps 4–8
+on 2–6-event windows).
 
-**The bug, precisely located.** The growth score is (belief-derived-valuation §2a):
+**The bug (diagnosis unchanged since draft 1).** The current score
+`plateau · (max_c fit_c / n_buf) · H + prior_term − cost` performs, with unearned certainty:
+**(1) selection** — the scored fit is an order statistic over K chance-fitting candidates (a max
+where Bayes says sum); **(2) extrapolation** — a realised log Bayes factor over 2–6 events treated
+as the known future per-event rate and multiplied by H ≈ 200 (independent of selection: a K = 1
+chance fit of 1.1 nats scores ~26 nats and fires); **(3) collapse** — the op installs the argmax
+candidate scored at face value ("pick the winning grammar" — the `average-not-collapse` error at
+the meta seam).
 
-    score = plateau · (fit / n_buf) · H + prior_term − compute_cost
+**The fix (rev 3): the lookahead IS a virtual injection.** The agent already possesses the exact
+machinery for "what would I believe if I entertained these candidates?" — it is the coherent
+injection (#187): build the candidates' programs, seed them at their **two-part complexity
+prior** (`2^{−|G|−|p|}` — the general prior, total over programs, no grammar-level normalisation
+to stipulate), condition them on the evidence window through Tier-1 `condition` (the two-ledger
+replay), and hold the union posterior that the counterfactual union-from-start agent would hold.
+The growth score is then **queries against that virtual state**, and the transition — if the op
+fires — is **keeping it**:
 
-where `fit` is the **window-realised Δℓ of the argmax candidate** — `_best_threshold_refinement` /
-`_best_feature_addition` evaluate every candidate's marginal-log-loss reduction over the buffer and
-keep the max. Three inferences are performed implicitly, with certainty, and all three fail exactly
-when the window is small:
+    1. SCRATCH:  st′ = copy(state);  add_programs_to_state!(st′, candidates…, observations = buffer)
+                 — the union belief, coherently conditioned; the SAME code path as the transition.
+    2. SCORE:    evidence = injection_yield_nats(st′, n_added)          [the ratified observable]
+                 flow     = expect-based per-event predictive gain of st′.belief over state.belief
+                            on the window's feature records              [the ×H license, §1b]
+                 score    = plateau · flow · H − compute_cost           [growth_value, unchanged]
+    3. FIRE:     state ← st′  (adopt the scratch — zero recompute; score ≡ transition, T-3.55
+                 by construction, not by a shared candidate function)
 
-1. **Selection (max where the machinery says sum).** The scored fit is an order statistic over K
-   candidates. `E[max of K noisy fits] > max of K true rates` — on a window of 3–4 outcomes,
-   *every* candidate chance-fits, and the argmax fit is large because it was selected. The mll's
-   Occam prices each candidate's fit *given that candidate*; nothing prices the argmax across them.
-2. **Extrapolation (a Bayes factor treated as a rate).** `fit/n_buf` — a realised log Bayes factor
-   over as few as 2–6 events — is treated as the *known* future per-event rate and multiplied by
-   `H ≈ 200`. Evidence about a rate is not the rate; asserting otherwise is a T-1.3 violation
-   hiding in a multiplication. This error is independent of selection: even a K = 1 candidate with
-   a chance-level 1.1-nat window fit scores `0.5 · (1.1/4) · 195 ≈ 26` nats and fires.
-3. **Collapse (install-one scored as if certain).** The op installs the argmax candidate and the
-   score credits that candidate's fit at face value — "pick the winning grammar", the
-   `average-not-collapse` error applied at the meta-action seam.
+**Why each pathology dies, and by whose hand:**
 
-**The fix is a deletion, not an addition (the constitutional review's finding, adopted).** The
-first draft of this document built a bespoke two-group (spike-and-slab) posterior with a uniform π
-in a new file — a second inference mechanism, stipulated rather than derived, reasoning *about*
-the reasoner's lookaheads from outside it. The review's demolition is recorded in §5 Q1 and
-accepted in full; its core is worth restating because it scopes the whole move:
+- **Selection** is priced by the **program-level complexity prior + likelihood**, with no π̃: all
+  K candidates' programs enter *one* mixture; duplicates dedup (the existing `expr_equal`
+  discipline — threshold refinements share most of their language); each genuinely-new program
+  arrives at `2^{−|G|−|p|}` and earns only the mass the window likelihood grants it. A lucky
+  program among thousands holds a lucky-program-sized posterior share — the multiplicity
+  correction is the mixture's normalisation doing its ordinary job. The max-over-K *disappears
+  as a mechanism*: there is no per-candidate argmax to curse, because the candidates are not
+  compared — they are **carried** (`average-not-collapse`, applied to the transition itself).
+- **Extrapolation** is licensed by the posterior, not the window rate. The flow is the
+  posterior-weighted expected per-event predictive gain of the union belief over the incumbent
+  belief — an `expect` query against declared functionals on the window's feature records (the
+  declared event measure, §5 Q2). Its incumbent-side term is **negative** (carrying junk hedges
+  the predictions — the real cost the tail seeds pay), so on a chance window, where newcomers
+  hold ≈ prior mass, the flow sits near zero-or-negative and no ×H amplifies it. The conjugate
+  smoothing bounds what any tiny window can prove (a "perfect" 4-event program's Bayes factor is
+  ≈ e^{1.6}, not e^{26}).
+- **Collapse** dies because nothing is collapsed: the transition adopts the union. "Install the
+  argmax candidate" (the current transition, and rev 2's Q2 recommendation) is revealed as an
+  `argmax_m P(m|D)` collapse the constitution already names illegal for decisions; the engine-
+  native transition lets `condition` arbitrate and the **existing** hygiene (`sync_prune!`,
+  `sync_truncate!`, and #193's replacement consumption for features that go dead) clean up —
+  no new mechanism there either.
 
-- The posterior the draft reached for **already has a name**: the marginal likelihood of the
-  enlarged hypothesis space under the complexity prior. `P(D | G⁺) = Σ_m π_m · P(D | G_m)` with
-  `π_m ∝ 2^{−complexity(G_m)}` prices *everything* the spike-and-slab stipulated: **selection** is
-  priced because the marginal likelihood *sums* over candidates where the score *maxes* — a proper
-  prior over model space is the multiplicity correction (Scott & Berger; Jeffreys), the K−1 losers
-  doing their work inside the integral rather than inside a bespoke empirical null; **the
-  spike** is the complexity prior itself (`2^{−Δ|G|}` is the honest, informative prior odds the
-  uniform π threw away); **asymptotic convergence** is the Bayes factor growing with n — derived,
-  not engineered.
-- The first draft's reflective-boundary argument (imported from the escape ops) was **scope
-  abuse**: the boundary is real for *un-entertained* hypotheses (`:gw_enumerate_more` /
-  `:gw_deepen`, where learned returns are the honest floor), but growth candidates are
-  **enumerated and fit** — the K marginal likelihoods are in hand. That is not the reflective
-  boundary; it is bog-standard Bayesian model comparison with an exact answer. Conflating the two
-  is how a stipulated mechanism acquires constitutional cover it has not earned.
-- The bellwether stakes: if a bespoke corrector gets in for the winner's curse, a bespoke detector
-  gets in for drift, and the framework dies of a thousand locally-reasonable patches. The wager is
-  that axioms + grammar + perturbation + the complexity prior are enough; holding this line is the
-  rehearsal for the non-stationarity work.
+**The GrowthReturns symmetry (T-3.53, now exact).** Escape ops (`enumerate_more`, `deepen`)
+cannot enumerate what they would find — the genuine reflective boundary — so they **learn** their
+yield posterior (Gamma × Exponential cells, #189). Growth ops **can** enumerate their candidates,
+so they **compute** the same yield observable exactly, by virtually performing the injection.
+One observable (`injection_yield_nats`), one currency, two fidelities — learned where the exact
+is unreachable, exact where it is affordable. The first draft's corrector stood exactly where
+this symmetry belongs.
 
-**The two derived components of the honest score.** Stress-testing the model-comparison fix
-against the tail arithmetic shows it must carry both parts — the sum alone closes error 1 but not
-error 2 (§4 traces the numbers):
-
-**(A) The evidence term — sum, not max.** The window evidence for growth is the marginal-likelihood
-ratio of the enlarged space:
-
-    bma_fit = log P(D | G⁺) − log P(D | G)
-            = log( π̃_inc · 1 + Σ_c π̃_c · e^{fit_c} )      [nats]
-
-computed **from numbers the existing argmax loops already produce** (`fit_c = baseline − mll_c`;
-the K fits are currently discarded except the max), with `π̃` the complexity prior over the
-entertained set `{G} ∪ {G_c}` normalised (`π_c/π_inc = 2^{−Δcomplexity_c}`; for features
-Δcomplexity = +1, so the former `prior_term = −log 2` **moves inside the sum** and must not be
-double-charged — §2). One lucky candidate at `e^{1.3}` among K rivals sharing normalised prior
-mass contributes little; a genuine candidate at `e^{6}` dominates the sum and recovers the raw
-score. No new file, no new prior, no new mechanism: replace a `max` with a prior-weighted
-`logsumexp`.
-
-**(B) The flow term — the posterior licenses the horizon, not the window rate.** `bma_fit` is a
-*stock* (nats of realised window evidence); the score needs a *flow* (nats/event × H). The current
-`fit/n_buf` is the window rate — the object error 2 lives in. The honest flow is the
-**posterior-weighted expected per-event gain**, `average-not-collapse` applied to valuation:
-
-    flow = Σ_m P(G_m | D) · E_{x ~ P_m}[ log P_{G⁺}(x | D) − log P_G(x | D) ]      [nats/event]
-
-— for each entertained grammar-hypothesis m (incumbent included), the expected next-event
-log-predictive advantage of holding the enlarged posterior, *if m is true*, weighted by m's
-posterior. Every factor is machinery: `P(G_m | D)` from the same `fit_c`/`π̃` arithmetic as (A);
-the inner expectations are `expect` against posterior predictives on the window's empirical
-feature distribution (the declared event measure — a §5 question). This object has teeth in both
-directions: the incumbent-is-true term is *negative* (carrying junk hedges your predictions —
-the real cost the tail seeds pay), the candidate-is-true terms are positive — so on a chance
-window, where the posterior barely leaves the incumbent, `flow ≈ small-or-negative` and no `×H`
-can amplify it; on an informed window the candidate's posterior share carries its genuine rate.
-The score becomes:
-
-    score = plateau · flow · H − compute_cost
-
-with `plateau` unchanged (it prices *whether the stream still improves* — a property of the
-trajectory; `flow` prices *what the entertained posterior expects per event* — a property of the
-candidates; independent failure modes, no double count).
-
-**Fidelity note (T-3.53, the metareasoning door).** (A) is free (the mlls are computed). (B) costs
-K+1 posterior-predictive passes over the window — the same order as the lookahead's existing K
-mll replays; the exact form is affordable at the window sizes where it matters. If a host ever
-finds it dear, the legitimate response is an approximation *to this quantity*, selected by the
-compute cascade — never a different quantity with a flatter prior.
+**Compute (why this is not dearer).** Today the lookahead runs K *separate* full-mixture replays
+(`_grammar_marginal_log_loss` per candidate — Σ_c |G_c| component-events). The virtual injection
+runs **one** replay over the deduped union of the candidates' *new* programs (threshold siblings
+share most of their language; the union is far smaller than Σ_c |G_c|), and the newcomers-only
+replay is the #187 construction (incumbents are already conditioned). For large candidate sets
+the scratch state's own `sync_truncate!` bounds the mixture — mass-based truncation as the
+metareasoned fidelity knob (T-3.53), an existing discipline, not a new cap. If a host still finds
+it dear, the legitimate exit is an approximation *to this object* selected by the compute
+cascade — never a different quantity.
 
 ## 2. Files touched
 
-- **`src/program_space/exploration.jl`** (modification, ~60 lines net; **no new file** — the
-  first draft's `selection_pricing.jl` is not written).
-  - `_best_threshold_refinement` / `_best_feature_addition`: the candidate loops already compute
-    every `fit_c`; collect them (currently discarded). Selection of *which* candidate to install
-    stays the raw-fit argmax (§5 Q2). The returned valuation becomes
-    `growth_value(flow · n_buf, n_buf, plateau, h; compute_cost)` — i.e. the `fit` slot carries
-    `flow · n_buf` so `growth_value`'s interface and the host seam are unchanged. The `prior_term`
-    kwarg is **no longer passed by the feature path** (the complexity prior now enters through
-    `π̃` inside the sum — passing both would double-charge; the kwarg itself stays for other
-    callers).
-  - New internal helpers (beside the loops, same file): `_entertained_posterior(fits, Δcs)` — the
-    normalised posterior over `{G} ∪ {G_c}` from the window fits and complexity deltas (the (A)
-    arithmetic); `_growth_flow(...)` — the (B) expectation, `expect`-canalised against the
-    compiled kernels on the window's feature records. Docstrings carry the §1 derivations and
-    name the tests.
-- **`apps/julia/grid_world/host.jl`**: **no change** (signatures preserved; the cached fit is the
-  flow-based fit, still pure in (grammar, buffer, depth)).
-- **`test/test_growth_bma.jl`** (new, ~6 sections): §1 the sum-vs-max pin — a chance-shaped
-  ensemble (K fits at chance scale) yields `bma_fit` ≪ max fit, against a hand-built logsumexp
-  oracle; §2 the flow's sign teeth — an incumbent-dominated posterior gives `flow ≤ 0` (the hedge
-  cost), a candidate-dominated one gives `flow` within tolerance of the candidate's true rate;
-  §3 the seed-6 regression — the §4 fixture scores below the fire floor at H = 195 where the old
-  score fired at ~26 nats; §4 asymptotic identity — fixed true separation, growing n: score →
-  the raw-fit score (the current behaviour is the limit); §5 no-double-charge — the feature
-  path's score equals the explicit two-axis arithmetic with the prior inside `π̃` (== against
-  the manual oracle); §6 purity + determinism (same inputs ⇒ identical score; no state).
+- **`src/program_space/exploration.jl`** (modification; net **negative** or near-zero lines —
+  the deletion is the point).
+  - `_best_threshold_refinement` / `_best_feature_addition` (the per-candidate mll argmax loops)
+    are **retired from the scoring path**: replaced by `_virtual_injection(state, candidate_gs,
+    buffer; …) → (scratch_state, n_added)` — a thin orchestration of `copy` +
+    `add_programs_to_state!` (both existing) over the candidate grammars (`_threshold_candidates`
+    → `_refine_grammar` per midpoint; `_feature_candidates` → `_add_feature` — generators
+    unchanged), and `_growth_flow(scratch, state, buffer) → Float64` — the `expect`-canalised
+    per-event predictive-gain query (§5 Q2 fixes its declared functional form).
+  - `exploration_voi` / `exploration_fit` / `feature_discovery_voi` / `feature_discovery_fit`
+    keep their signatures (host seam unchanged); internally they project the virtual-injection
+    score. `explore_grammar` / `explore_features` (the transition surface) return the union-
+    bearing edit rather than the single winner — the host adopts the scratch (§5 Q1 fixes the
+    exact hand-off shape; the parallel arrays make "adopt" a field swap).
+  - Deleted: the per-candidate argmax bookkeeping and rev 2's would-be logsumexp/π̃ arithmetic
+    (never written). `selection_pricing.jl` (draft 1) is never written.
+- **`apps/julia/grid_world/host.jl`** (modification, small): the growth branches of
+  `execute_gw_meta_action!` adopt the scratch state instead of installing one candidate grammar;
+  the per-fire op log gains the `(yield, flow, P_newcomers)` triple (§7's mechanism claim reads
+  it). Score seam (`score_gw_meta_actions`) unchanged.
+- **`test/test_virtual_injection.jl`** (new, ~6 sections): §1 score/transition identity — the
+  scored scratch and the adopted state are the same object (`===` on the belief; the T-3.55 pin
+  is now an identity, not an equality); §2 the seed-6 regression — the §4 fixture's chance window
+  scores below the fire floor at H = 195 (old score ~26 nats; counter-oracle pinned); §3 the
+  informed fire — a genuinely separating candidate's flow within tolerance of its true rate
+  (the step-90 case; the headline's fires preserved); §4 multiplicity-by-mixture — K chance
+  candidates' union earns no more mass than one chance candidate's (the dedup + prior arithmetic,
+  against a hand-built oracle); §5 commutation inheritance — the virtual injection is
+  `add_programs_to_state!`, so #187's §1 equality covers it (asserted on the scratch);
+  §6 hygiene — a spurious fired union's dead features become #193 replacement candidates once
+  their programs' mass collapses (the self-healing loop, end-to-end).
 - **`test/test_threshold_explore.jl`, `test/test_feature_discovery.jl`,
-  `test/test_grid_world_meta.jl`** (re-baselines): pins asserting exact small-window voi values
-  move to the new score; each re-baselined pin annotated. Structural assertions (gates, no-op
-  floors, argmax identity) unchanged.
+  `test/test_grid_world_meta.jl`** (re-baselines): score pins move to the new form; structural
+  assertions (gates, floors, no-op identity) unchanged. The §1-of-meta pins re-derive from the
+  virtual-injection oracle.
 
 ## 3. Behaviour preserved
 
-- **Selection identity:** which candidate an op installs when it fires is bit-identical (raw-fit
-  argmax, unchanged — §5 Q2). Only *whether* the meta-argmax lets growth fire moves.
-- **Asymptotic identity:** when one candidate's evidence dominates the entertained posterior, the
-  score converges to the current raw score (`test_growth_bma.jl` §4 pins the convergence; the
-  informed mid-episode fires that drive the headline's 19–1 are expected unmoved, verified by the
-  gate re-run's mean-tier CIs).
+- **The no-op paths:** empty buffer / no candidates / score below floor ⇒ state untouched,
+  bit-identical (the scratch is discarded; `copy` never mutates the original — pinned).
+- **Commutation:** the virtual injection is the #187 code path; `test_coherent_injection.jl` §1's
+  equality is inherited, asserted again on the scratch (§2's test file, §5).
+- **Asymptotic identity:** when one candidate's evidence dominates, the union's posterior
+  concentrates on it and the flow approaches that candidate's realised rate — the current score's
+  informed-fire behaviour is the limit (pinned §3). The headline's mid-episode fires are expected
+  unmoved (gate re-run verifies via the mean-tier CIs).
 - All non-growth scoring (escape cells, perturb replacement value, do-nothing floor): bit-stable;
   `test_growth_returns.jl`, `test_replacement.jl`, conjugate/threshold suites pass untouched.
-- Skin wire, persistence, benchmark harness: untouched (measures fixed by §8 — this move is
-  judged against them, it does not get to move them).
+- Skin wire, persistence schema, benchmark harness: untouched (§8 measures fixed; this move is
+  judged against them).
 
 ## 4. Worked end-to-end example
 
-The tail-seed shape (seed 6's instrumented fire: `add_feature` at step 6, final rate gap −0.381),
-traced through both components — including the stress-test that shows why (A) alone is not enough.
+The tail-seed shape (seed 6: `add_feature` at step 6, final rate gap −0.381), traced through the
+virtual injection.
 
-1. **Step 6, buffer n = 4, K = 5 feature candidates.** On 4 events every candidate's refreshed
-   program space contains chance-consistent splits: window fits come back at chance scale, say
-   `{1.1, 0.9, 1.3, 1.0, 1.2}` nats (illustrative; the test fixture uses captured values). The
-   conjugate smoothing caps what 4 events can prove — a "perfect" program's Bayes factor is
-   `(1/2·2/3·3/4·4/5)/(1/2)⁴ ≈ e^{1.6}` — so these are exactly the magnitudes selection luck
-   produces. **Today:** `fit = 1.3`, `H ≈ 195`, `plateau ≈ 0.5` ⇒ score ≈ 26 nats — fires, installs
-   a wrong feature, injects ~80 diluted components, and the seed never recovers.
-2. **(A) alone — the honest failure of the first-order fix.** `π̃_c/π̃_inc = 1/2` each (one symbol);
-   `bma_fit = log[(1 + Σ_c ½e^{f_c})/(1 + K/2)] ≈ log[(1+3.1)/(3.5)] ≈ 0.16` nats — the sum
-   correctly refuses the max's 1.3. But fed to the *old* flow, `0.5 · (0.16/4) · 195 ≈ 3.9` nats —
-   **still fires** (the floor is ~0.7). And with K = 1 the sum degenerates entirely and the old
-   26-nat fire returns. The extrapolation error is independent of the selection error; the sum
-   closes only the latter. This arithmetic is why (B) is load-bearing, and it is pinned as
-   `test_growth_bma.jl` §3's counter-oracle.
-3. **(B) on the same window.** The entertained posterior from those fits:
-   `P(inc|D) ≈ 1/(1+3.1) ≈ 0.24`, each candidate ≈ 0.12–0.19. The flow: *if the incumbent is
-   true*, holding the union hedges every prediction with ~0.7 posterior mass of junk — the inner
-   expectation is **negative** (≈ −0.15 nats/event on the fixture); *if candidate c is true*, the
-   union predicts better, but c's programs hold only their earned share of the union predictive —
-   the inner expectation is small-positive (≈ +0.1). The posterior-weighted sum lands near zero
-   (the fixture: `flow ≈ +0.01` nats/event) ⇒ `score ≈ 0.5 · 0.01 · 195 − log 2 ≈ 0.3` nats —
-   **below the floor; the op waits.** No spike, no π, no ensemble null: the incumbent's posterior
-   share and the hedging cost — both machinery-computed — do all the work.
-4. **Step ~90, n = 30, regime 2 (`:speed` genuinely predicts).** Fits `{6.2, 0.4, 0.7, 0.3, 0.5}`:
-   the winner dominates the sum (`bma_fit ≈ 5.4`), its posterior share ≈ 0.95, the flow ≈ its true
-   per-event rate ≈ 0.2 nats/event ⇒ score ≈ current score ⇒ the informed fire (the one behind the
-   headline's 19–1) is preserved.
-5. Ownership: everything lives where the lookahead already lives (`exploration.jl`); `growth_value`
-   and the host seam untouched; the event measure for (B)'s expectations is the window's feature
-   records (data, host-provided — the brain does the arithmetic).
+1. **Step 6, buffer n = 4, K = 5 feature candidates.** `_virtual_injection` builds the five
+   feature-added grammars' enumerations, dedups against the incumbents and each other, and
+   coherently injects the genuinely-new programs (~300 after dedup) into a scratch copy at their
+   two-part complexity priors, replaying the 4-event window through Tier-1 `condition`. The
+   conjugate smoothing caps every newcomer's Bayes factor at ≈ e^{1.6} on 4 events; the
+   complexity prior starts each at `2^{−|G|−|p|}`. Result: the newcomers' collective posterior
+   mass barely exceeds their prior counterfactual — `injection_yield_nats(scratch) ≈ 0.3` nats
+   (the ratified evidence-relative observable, computed exactly instead of learned).
+2. **The flow query.** `_growth_flow` asks, via `expect` on the window's feature records: by the
+   union's own posterior, how much better per event does the union predict than the incumbent —
+   weighted by who is probably right? The incumbent-dominated posterior (newcomers at ≈ prior
+   mass) makes the hedging term dominate: `flow ≈ +0.01` nats/event (the fixture pins the exact
+   value). `score = 0.5 · 0.01 · 195 − log 2 ≈ 0.3` nats — **below the floor. The op waits.**
+   Under the old score: `0.5 · (1.3/4) · 195 − 2·log 2 ≈ 26` nats — fired, installed `:speed`,
+   diluted the posterior, and the seed never recovered.
+3. **Step ~90, n = 30, regime 2 (`:speed` genuinely predicts).** The same virtual injection now
+   finds the `:speed` programs earning e^{6} Bayes factors over 30 events; the union posterior
+   concentrates on them; `flow ≈ 0.2` nats/event ⇒ score ≈ the current score ⇒ **fires** — and
+   firing means *adopting the already-computed scratch*: the belief the score priced is the
+   belief the agent now holds. No re-enumeration, no re-conditioning, no winner to pick — the
+   wrong-but-entertained sibling candidates ride along at their (tiny) earned mass and are pruned
+   by the existing hygiene within a few steps; a feature that goes dead later is consumed by
+   #193's replacement machinery. The system self-heals through mechanisms that already shipped.
+4. Ownership: candidate generation (`exploration.jl`, unchanged generators); the injection and
+   its ledgers (`agent_state.jl`, #187, unchanged); the yield read (`growth_returns.jl`, #189,
+   unchanged); the flow query (`exploration.jl`, new — the only genuinely new computation, and it
+   is an `expect` call); adoption (host, a field swap).
 
 ## 5. Open design questions
 
-1. **[RESOLVED against the first draft — recorded per T-4.5's spirit].** The spike-and-slab
-   ensemble-null mechanism (a bespoke two-group posterior, uniform π, new file) is rejected: it
-   stipulated a second inference mechanism where the marginal likelihood under the complexity
-   prior already computes the same quantity with a *better* prior (`2^{−Δ|G|}` is the honest prior
-   odds; uniform π discards it); its multiplicity correction re-implemented what the BMA sum does
-   inside the integral (Scott & Berger); and its constitutional cover (the reflective boundary)
-   belongs to the *un-entertained* ops only — growth candidates are enumerated and fit, so exact
-   model comparison is available and mandatory (T-2.32). A tractable approximation may only ever
-   be *derived from* the exact object with the complexity prior in place, selected by the compute
-   cascade (T-3.53) — never a different quantity with a flatter prior.
-2. **The transition under an uncertain posterior — install the winner, or the union?** The score
-   (B) values *holding the enlarged posterior*; the op today installs the argmax candidate only.
-   Recommended: **install the winner, unchanged, this move** — the flow's incumbent-share teeth
-   already suppress fires when the posterior is genuinely spread (precisely the case where
-   install-one would collapse), so the score/transition gap is small exactly when it matters, and
-   the blast radius stays contained. **Install-the-union** (inject all positive-posterior
-   candidates, coherently, and let conditioning arbitrate — the full `average-not-collapse` form)
-   is named as the finer fidelity: it is the greater-EU action when candidate uncertainty is real,
-   at K× enumeration compute, and choosing between the two is itself an EU decision. Counter-
-   position to argue at ratification: T-3.55 wants score = transition *now*, which favours either
-   scoring only the winner's marginal contribution (weaker multiplicity pricing — the rivals'
-   role shrinks to the posterior normalisation) or installing the union immediately (dearer).
-3. **The event measure in (B)'s inner expectations.** The window's empirical feature distribution
-   is the recommended declared measure (it is data the host already provides; no model of the
-   feature process is invented). Alternatives: the temporal-recency-weighted window (privileges
-   the current regime; adds a weighting choice that smells like a tunable), or a declared
-   grid over feature space (invents a measure the world didn't provide). Recommend the plain
-   window; revisit only if the gate shows regime-boundary staleness.
-4. **Does the flow-based fit feed the `add_feature` attribution gate too?** Same recommendation
-   as the first draft, now with the right object: **yes, one fit** — the gate's `fit_explore > 0`
-   consults the same flow-based quantity the score uses; two circulating numbers named `fit` is
-   the T-3.55 split. (The gate's attribution argument is about *real* fit, which the flow
-   estimates better than the raw window max.)
+1. **The adopt hand-off shape.** The scratch state must become the live state without copying
+   costs or aliasing hazards. Options: (a) `execute_gw_meta_action!` receives the scratch from
+   the scorer via the host's memo (the voi_cache pattern, keyed by epoch — zero recompute,
+   recommended); (b) recompute the injection at execute time (pays the replay twice, but
+   stateless — the fallback if (a)'s cache-epoch discipline gets hairy). The T-3.55 identity test
+   (§2 file, §1) is written against whichever is ratified.
+2. **The flow functional's declared form.** `flow = Σ_events w · [log P_union(o|·) −
+   log P_inc(o|·)]` under the union's posterior — the event measure is the window's feature
+   records (data the host already provides; recommended), vs recency-weighted (adds a tunable —
+   smells like a knob) vs a declared feature grid (invents a measure). The inner reads are
+   per-component firing evaluations — the `FiringChoice` family; the doc wants ratification that
+   the window records are the honest declared measure (they are the same records the injection
+   replays — one event measure everywhere).
+3. **Union breadth for thresholds.** Feature candidates are few (K ≈ 5); threshold candidates can
+   be tens of midpoints. Inject all (the pure form; dedup + truncate bound it) vs a mass-based
+   pre-screen (the residual-ordering already ranks candidates; injecting the top-m by residual
+   mass with m set by the compute price is a T-3.53 fidelity decision, not a value decision).
+   Recommend: all, measured; pre-screen only if the gate's wall-clock says so (and then as a
+   priced fidelity, logged).
+4. **Does `GW_FEATURE_PRIOR_TERM` survive?** No — the −log 2 prior charge is now carried by each
+   newcomer's own complexity prior inside the mixture (the injection arithmetic), so the explicit
+   `prior_term` at the score seam would double-charge. It is deleted with a no-double-charge pin
+   (the §2 test's §4 oracle covers it). Named here because it retires a ratified #188 coordinate:
+   the ratification of THIS doc supersedes it.
 
 ## 6. Risk + mitigation
 
-- **Under-exploration (over-shrink).** The flow's negative incumbent-term could suppress genuine
-  early discovery. Mitigation: the asymptotic-identity pin (§3) bounds the informed regime; the
-  headline assertion (rate CI vs never_explore > 0) is the acceptance-side tripwire; halt-the-line
-  if the headline degrades. Note the flow is *derived*, not tuned — if it over-shrinks, the
-  finding is about the model (e.g. the event measure, §5 Q3), and the response is a derivation
-  fix, not a knob.
-- **Compute.** (B) adds K+1 predictive passes over the window per growth evaluation — same order
-  as the existing K mll replays; the voi_cache memoisation (pure in grammar/buffer/depth) applies
-  unchanged. If profiling disagrees, the T-3.53 door (§1 fidelity note) is the only exit.
-- **Double-charging the prior.** The feature path currently passes `prior_term = −log 2` to
-  `growth_value` while (A) carries the same odds inside `π̃`. `test_growth_bma.jl` §5 pins the
-  no-double-charge equality against a manual oracle; the kwarg is dropped at the call site in the
-  same commit that adds the sum.
-- **Score/transition gap under install-winner** (§5 Q2's accepted residual): small exactly when
-  fires happen (dominated posterior), real when the posterior is spread — but spread posteriors
-  now score near the floor, so the gap governs decisions that no longer occur. The union
-  fidelity is the named successor if the gate's op logs show otherwise.
-- **Benchmark comparability.** Only eu_max (and clairvoyant's fallback) read scores; score-blind
-  baselines unchanged. Per-policy deltas vs round 4 attributable to the scoring change alone.
+- **Under-exploration (over-shrink).** The flow's hedging term could suppress genuine early
+  fires. Mitigation: the asymptotic-identity pin (§3); the headline CI as the acceptance
+  tripwire; halt-the-line on degrade. The flow is derived, not tuned — if it over-shrinks, the
+  finding is about the declared event measure (§5 Q2), and the response is a derivation fix.
+- **State-size growth from union adoption.** Firing injects the union (~hundreds of components),
+  not one candidate's (~80). Mitigation: `sync_truncate!`'s existing mass-based cap; junk
+  candidates' programs sit at ≈ prior mass and are first out; #193 consumes features that go
+  dead. §4 of the test file pins that K chance candidates earn no more collective mass than one.
+  Residual risk: transiently larger mixtures between fire and prune — measured in the gate
+  re-run's wall-clock, priced via §5 Q3 if real.
+- **Cache/epoch discipline for the adopt hand-off** (§5 Q1's risk): a stale scratch adopted after
+  the state moved would violate coherence. Mitigation: the voi_cache epoch already invalidates on
+  every space change; the scratch memo keys on the same epoch; the §2-file §1 identity test runs
+  through the host seam, not just the engine.
+- **Compute regression.** One deduped union replay vs K separate replays — expected cheaper, not
+  dearer, but *measured* (the benchmark logs per-policy wall-clock; the ~2.5-min suite budget is
+  the tripwire). The T-3.53 exit (§5 Q3) is specified in advance.
+- **Benchmark comparability.** The growth ops' *transition* changes for every policy (fixed
+  schedules and random fire the same ops). Same situation as #193: a fresh baseline, stated in
+  the results commit; the falsifiable claims are mechanism-level, measure set fixed by §8.
 
 ## 7. Verification cadence
 
-    julia test/test_growth_bma.jl               # new — sum-vs-max, flow teeth, seed-6 regression,
-                                                #   asymptotic identity, no-double-charge, purity
+    julia test/test_virtual_injection.jl        # new — score≡transition identity, seed-6
+                                                #   regression, informed fire, multiplicity-by-
+                                                #   mixture, commutation inheritance, self-healing
+    julia test/test_coherent_injection.jl       # untouched pass (the inherited §1 equality)
     julia test/test_threshold_explore.jl        # re-baselined pins
     julia test/test_feature_discovery.jl        # re-baselined pins
     julia test/test_grid_world_meta.jl          # re-baselined score pins
@@ -272,9 +268,12 @@ traced through both components — including the stress-test that shows why (A) 
 Gate re-run (20 seeds, background), judged against the §8 measure set **fixed before this design**:
 
 - **Target claims:** minimax worst-seed mean-rate gap vs `random_p005` and `fixed_k50` rises from
-  −0.5/−0.381 toward ≥ 0; q10 from −0.476/−0.333 toward ≥ 0. Falsifiable mechanism claim: **no
-  eu_max growth fire whose entertained posterior was incumbent-dominated** (checkable from the op
-  log's new per-fire (bma_fit, flow, P(inc|D)) triple, which the run logs).
+  −0.5/−0.381 toward ≥ 0; q10 from −0.476/−0.333 toward ≥ 0. Falsifiable mechanism claims:
+  **(i)** no eu_max growth fire whose virtual union was incumbent-dominated (the op log's
+  per-fire `(yield, flow, P_newcomers)` triple); **(ii)** post-fire mixtures return to within the
+  truncation cap within a bounded number of steps (the self-healing claim, from the component
+  logs).
 - **Must-not-degrade:** the headline (rate +0.150 CI > 0, 19–1) holds; mean-tier CIs vs the tuned
-  baselines do not become significantly negative; the bracket holds.
+  baselines do not become significantly negative; the bracket holds; suite wall-clock within
+  budget.
 - Halt-the-line on any degrade; results commit honestly either way.
