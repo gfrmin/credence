@@ -24,6 +24,10 @@ Gate (§7):
   - behaviour-verified inversions extracted (concrete steps where eu_max grows and a
     baseline does not).
 
+Beyond the asserted gate, summary.md carries a REPORTED panel of alternative dominance
+measures (win rate + exact sign test, median gap, 10th-percentile gap, final-regime rate)
+so the dominance claim can be located precisely without moving the gate.
+
 All statistics here are arithmetic on realised world outcomes (energy trajectories),
 never on beliefs; the paired bootstrap resamples seed indices with a fixed RNG.
 """
@@ -57,6 +61,46 @@ end
 
 paired(a::Vector{RunSummary}, b::Vector{RunSummary}, f::Function) =
     Float64[f(a[i]) - f(b[i]) for i in eachindex(a)]
+
+# ── Alternative dominance measures (REPORTED, not asserted) ──────────────────
+# The gate's asserted measures (mean-gap bootstrap CIs + minimax) are kept for comparability;
+# this panel reports complementary dominance notions on the same per-seed paired gaps so the
+# §3.2 claim can be located precisely (author steer, 2026-07-03: "you can try different
+# dominance measures"). All arithmetic on realised world outcomes.
+
+median_of(v::Vector{Float64}) = begin
+    s = sort(v); n = length(s)
+    isodd(n) ? s[(n + 1) ÷ 2] : 0.5 * (s[n ÷ 2] + s[n ÷ 2 + 1])
+end
+
+# Nearest-rank lower quantile (q ∈ (0,1]) — the tail-regret measure softer than minimax.
+quantile_of(v::Vector{Float64}, q::Float64) = sort(v)[clamp(ceil(Int, q * length(v)), 1, length(v))]
+
+"""
+    sign_test_p(deltas) → Float64
+
+Exact two-sided sign-test p-value on the per-seed paired gaps (H₀: median gap = 0; ties
+dropped). Distribution-free — the win-rate's significance without the bootstrap mean's
+sensitivity to the winner's-curse outlier seeds.
+"""
+function sign_test_p(deltas::Vector{Float64})
+    pos = count(>(0.0), deltas)
+    neg = count(<(0.0), deltas)
+    m = pos + neg
+    m == 0 && return 1.0
+    k = min(pos, neg)
+    tail = sum(binomial(BigInt(m), BigInt(j)) for j in 0:k) / BigInt(2)^m
+    min(1.0, 2.0 * Float64(tail))
+end
+
+# Realised per-step energy rate over the FINAL regime only: the converged-behaviour measure —
+# an exploring policy pays early to earn late, so area over the whole run (AUC) charges
+# exploration's tuition while this rate reads what it bought. The regime change applies at the
+# TOP of the `step == DB_REGIME_STEPS[end]` iteration (grid_world host loop), so that step is
+# the final regime's FIRST step (typically its worst): the window is ce[end] − ce[change − 1]
+# over (n − change + 1) steps, not the off-by-one that would drop it (adversarial-review fix).
+rate_final_regime(r::RunSummary) =
+    (r.ce[end] - r.ce[DB_REGIME_STEPS[end] - 1]) / (length(r.ce) - DB_REGIME_STEPS[end] + 1)
 
 # ── Report writing ────────────────────────────────────────────────────────────
 
@@ -156,7 +200,30 @@ function main(; n_seeds::Int = DB_N_SEEDS)
         end
         println(io, "\n`eu_max − never_explore` is the headline: the learned-returns escape ops are " *
                     "identical on both sides, so this gap is exploration's isolated value.\n")
-        println(io, "## Behaviour-verified inversions\n")
+        println(io, "## Alternative dominance measures (reported, not asserted)\n")
+        println(io, "Complementary dominance notions on the same per-seed paired gaps: per-seed win")
+        println(io, "rate with an exact two-sided sign test (distribution-free — robust to the")
+        println(io, "winner's-curse outlier seeds the mean bootstrap is sensitive to), the median")
+        println(io, "gap, the 10th-percentile gap (tail regret softer than minimax), and the")
+        println(io, "final-regime rate (converged behaviour: AUC charges exploration's tuition over")
+        println(io, "the whole run; this reads what it bought after the last change).\n")
+        println(io, "| baseline | metric | mean gap | median gap | win rate | sign-test p | q10 gap |")
+        println(io, "|---|---|---|---|---|---|---|")
+        for base in [best_random, best_fixed, "never_explore"]
+            for (label, f) in [("AUC", r -> r.auc),
+                               ("final-window rate", r -> r.final_window_mean),
+                               ("final-regime rate", rate_final_regime)]
+                d = paired(eu, results[base], f)
+                wins = count(>(0.0), d)
+                losses = count(<(0.0), d)
+                println(io, "| $base | $label | $(round(sum(d) / length(d), digits=3)) " *
+                            "| $(round(median_of(d), digits=3)) " *
+                            "| $(wins)–$(losses) of $(length(d)) " *
+                            "| $(round(sign_test_p(d), digits=4)) " *
+                            "| $(round(quantile_of(d, 0.1), digits=3)) |")
+            end
+        end
+        println(io, "\n## Behaviour-verified inversions\n")
         for line in inversions[1:min(10, length(inversions))]
             println(io, "- $line")
         end
