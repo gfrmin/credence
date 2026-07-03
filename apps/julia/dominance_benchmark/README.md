@@ -30,19 +30,28 @@ requires re-discovery.
 ## What dominance means
 
 Paired-seed percentile bootstrap (10 000 resamples) on per-seed gaps. The gate, asserted by
-`run.jl` (running it IS the check):
+`run.jl` (running it IS the check), on the measure set fixed by dominance-design.md **§8**
+(measure–utility alignment, ratified 2026-07-03 — the primary realised-value measure is the
+**mean per-step energy rate** `ce[end]/n`, the uniform-weight statistic the agent's declared
+utility maximises; AUC of the cumulative trajectory is front-loaded and reported-only):
 
-- CI of `eu_max − random` and `eu_max − best fixed` excludes 0 on **both** realised value
-  (AUC of cumulative interaction energy) and sample efficiency (steps to the run's own
-  half-total);
-- **headline:** CI of `eu_max − never_explore` excludes 0 — both sides share the identical
-  learned-returns escape ops, so this gap is exploration's isolated value, uncontaminated
-  by the policy's one heuristic score;
-- bracket `never_explore ≤ eu_max ≤ clairvoyant` on mean AUC (the left inequality is a
+- CI of `eu_max − random` and `eu_max − best fixed` excludes 0 on ALL of the **mean rate**
+  (primary), the **final-window rate** (co-primary), and **shared-level sample efficiency**;
+  best-tuned baselines are selected on the primary measure (anti-strawman follows the
+  asserted measure);
+- **headline:** CI of `eu_max − never_explore` excludes 0 on the mean rate and the
+  final-window rate — both sides share the identical learned-returns escape ops, so this
+  gap is exploration's isolated value; the final-regime exact sign test is reported beside
+  it;
+- bracket `never_explore ≤ eu_max ≤ clairvoyant` on the mean rate (the left inequality is a
   hypothesis under test; the right is a sanity check that must always hold);
-- minimax regret: the worst-seed AUC gap vs random and vs best fixed is ≥ 0;
+- minimax regret: the worst-seed mean-rate gap vs random and vs best fixed is ≥ 0 (the
+  winner's-curse pricing move's target, with the q10 gap reported beside it);
 - behaviour-verified inversions: concrete steps where `eu_max` grows grammar/feature and a
   baseline does not.
+
+`summary.md` also carries a reported-only panel (win rate + exact sign test, median gap,
+q10 gap, AUC, final-regime rate) locating the claim without moving the gate.
 
 ## Running
 

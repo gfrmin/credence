@@ -232,3 +232,40 @@ ranks below any positive exact VOI.
 - **Halt-the-line:** any test failure, any non-`==` on Phase 2's captured grammars, or any gate
   assertion failing on a task whose non-stationarity has been confirmed adequate, is a halt to
   investigate — not to patch forward.
+
+## 8. Amendment — measure–utility alignment (ratified 2026-07-03)
+
+The original §7 gate asserted **AUC of the cumulative energy trajectory** as the primary
+realised-value measure. That statistic expands to `Σ_s e_s·(n−s+1)/n`: a step-1 unit of energy
+weighs ≈ 1, a step-210 unit weighs 1/210 — an almost entirely front-loaded discount. The agent's
+ratified valuation (`growth_value` with the declared horizon `H`, belief-derived-valuation §2a)
+prices growth by its payoff over the **remaining episode** — the agent maximises uniform-weight
+total episode energy. Asserting dominance under a discount curve the agent does not optimise makes
+the gate broken in both directions: the policy can be exactly EU-optimal and "fail", and a
+fixed-cadence baseline that front-loads cheap exploration (fixed_k25) "wins" a game nobody
+declared. Three gate rounds ran against this mismatch before the alternative-measures panel
+(author steer) exposed it. The general rule is recorded as design-time discipline: **asserted
+measures derive from the agent's declared utility, in the design doc, before the first run.**
+
+Ratified changes (author sign-off 2026-07-03 — measure matched to declared utility, tail
+assertions kept so the winner's-curse pricing move retains a hard target):
+
+- **Primary realised-value measure: the mean per-step energy rate** `ce[end]/n` — the
+  uniform-weight statistic the declared utility maximises (total episode energy, normalised).
+  The CI gates vs best-tuned random / best-tuned fixed assert this measure; best-tuned baselines
+  are selected on it (the anti-strawman selection follows the asserted measure).
+- **Co-primaries kept:** the final-window rate (last 20% — converged end-state) and shared-level
+  efficiency (unchanged from belief-derived-valuation §2c).
+- **Tail assertions kept, re-based:** worst-seed (minimax) gap on the PRIMARY measure ≥ 0, with
+  the 10th-percentile gap reported beside it. These are the winner's-curse move's target;
+  softening them would delete it.
+- **Headline (`eu_max − never_explore`) re-based** to the primary-rate CI + final-window CI, with
+  the final-regime-rate exact sign test reported beside it (the converged-dominance localiser the
+  measures panel surfaced: 18–2, p = 0.0004 under replacement semantics).
+- **AUC demoted to reported-only** (the alternative-measures panel), retained for cross-round
+  comparability with rounds 1–3, never asserted.
+- **Bracket checks** (`never_explore ≤ eu_max ≤ clairvoyant`) move to the primary measure.
+
+No change to the task, seeds, baselines, sweeps, bootstrap, or the halt-the-line discipline. The
+measure set above is fixed BEFORE the round-4 gate run; subsequent moves are judged against it
+unchanged.

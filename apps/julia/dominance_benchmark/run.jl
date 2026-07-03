@@ -11,22 +11,28 @@ Manually run, out of the fast suite (like credence_router's test_live.py):
 
     julia apps/julia/dominance_benchmark/run.jl
 
-Gate (§7):
+Gate (§7 as amended by §8, measure–utility alignment, ratified 2026-07-03 — the PRIMARY
+realised-value measure is the mean per-step energy rate ce[end]/n, the uniform-weight
+statistic the agent's declared utility maximises; AUC of the cumulative trajectory is
+front-loaded ≈ (n−s+1)/n per step-s unit and is demoted to reported-only):
   - CI on eu_max − random and eu_max − best-tuned fixed_schedule excludes 0 on ALL of
-    realised value (AUC), the final-window rate (co-primary, §2c), and sample efficiency
-    (steps to the shared per-seed level, sign-flipped);
-  - eu_max − never_explore reported as the HEADLINE (exploration's isolated value,
-    the learned-returns escape ops held constant on both sides) and its CI excludes 0;
-  - never_explore ≤ eu_max ≤ clairvoyant on mean AUC (the first is a hypothesis under
-    test — on failure, diagnose the task's non-stationarity before blaming the policy;
-    the second is a true sanity check);
-  - minimax regret: the worst-seed AUC gap vs random and vs best fixed is ≥ 0;
+    the mean rate (primary), the final-window rate (co-primary, §2c), and sample
+    efficiency (steps to the shared per-seed level, sign-flipped);
+  - eu_max − never_explore is the HEADLINE (exploration's isolated value, the
+    learned-returns escape ops held constant on both sides): its mean-rate CI and
+    final-window CI exclude 0; the final-regime sign test is reported beside it;
+  - never_explore ≤ eu_max ≤ clairvoyant on the mean rate (the first is a hypothesis
+    under test — on failure, diagnose the task's non-stationarity before blaming the
+    policy; the second is a true sanity check);
+  - minimax regret: the worst-seed mean-rate gap vs random and vs best fixed is ≥ 0
+    (the winner's-curse pricing move's target — kept hard, q10 reported beside it);
   - behaviour-verified inversions extracted (concrete steps where eu_max grows and a
     baseline does not).
 
 Beyond the asserted gate, summary.md carries a REPORTED panel of alternative dominance
-measures (win rate + exact sign test, median gap, 10th-percentile gap, final-regime rate)
-so the dominance claim can be located precisely without moving the gate.
+measures (win rate + exact sign test, median gap, 10th-percentile gap, AUC for
+cross-round comparability, final-regime rate) so the dominance claim can be located
+precisely without moving the gate.
 
 All statistics here are arithmetic on realised world outcomes (energy trajectories),
 never on beliefs; the paired bootstrap resamples seed indices with a fixed RNG.
@@ -102,13 +108,21 @@ end
 rate_final_regime(r::RunSummary) =
     (r.ce[end] - r.ce[DB_REGIME_STEPS[end] - 1]) / (length(r.ce) - DB_REGIME_STEPS[end] + 1)
 
+# The PRIMARY realised-value measure (§8 amendment, ratified 2026-07-03): the mean per-step
+# energy rate over the whole episode — ce[end]/n, i.e. total episode energy normalised. This is
+# the uniform-weight statistic the agent's declared utility maximises (growth_value prices ops
+# by remaining-episode payoff); the former primary, AUC of the CUMULATIVE trajectory
+# (Σ_t ce[t]/n = Σ_s e_s·(n−s+1)/n), weighs a step-1 unit ≈ n× a step-n unit — a front-loaded
+# discount nobody declared. AUC stays in the reported panel for cross-round comparability.
+mean_rate(r::RunSummary) = r.ce[end] / length(r.ce)
+
 # ── Report writing ────────────────────────────────────────────────────────────
 
 function write_results_tsv(path::String, results::Dict{String, Vector{RunSummary}})
     open(path, "w") do io
-        println(io, "policy\tseed\tauc\tfinal_window_mean\tsteps_to_half\tn_meta\tn_grammars\tn_growth_ops")
+        println(io, "policy\tseed\tmean_rate\tauc\tfinal_window_mean\tsteps_to_half\tn_meta\tn_grammars\tn_growth_ops")
         for name in sort(collect(keys(results))), r in results[name]
-            println(io, "$(r.policy)\t$(r.seed)\t$(r.auc)\t$(r.final_window_mean)\t" *
+            println(io, "$(r.policy)\t$(r.seed)\t$(mean_rate(r))\t$(r.auc)\t$(r.final_window_mean)\t" *
                         "$(r.steps_to_half)\t$(r.n_meta)\t$(r.n_grammars)\t$(length(r.growth_steps))")
         end
     end
@@ -123,11 +137,12 @@ function main(; n_seeds::Int = DB_N_SEEDS)
             "task = $(DB_WORLD_RULES) with changes at $(DB_REGIME_STEPS), respawn on")
     results = run_benchmark(n_seeds = n_seeds)
 
-    # Best-tuned baselines by mean AUC (anti-strawman: each family gets its best knob).
+    # Best-tuned baselines by the PRIMARY measure (anti-strawman selection follows the asserted
+    # measure — §8): each family gets its best knob on the mean per-step rate.
     fixed_names = ["fixed_k$(k)" for k in DB_K_SWEEP]
-    best_fixed = fixed_names[argmax([mean_of(results[f], r -> r.auc) for f in fixed_names])]
+    best_fixed = fixed_names[argmax([mean_of(results[f], mean_rate) for f in fixed_names])]
     random_names = ["random_p$(replace(string(p), "." => ""))" for p in DB_P_SWEEP]
-    best_random = random_names[argmax([mean_of(results[f], r -> r.auc) for f in random_names])]
+    best_random = random_names[argmax([mean_of(results[f], mean_rate) for f in random_names])]
     println("best-tuned fixed schedule: $best_fixed; best-tuned random: $best_random")
 
     eu = results["eu_max"]
@@ -145,17 +160,22 @@ function main(; n_seeds::Int = DB_N_SEEDS)
     gaps = Dict{String, Dict{Symbol, Tuple{Float64, Float64, Float64}}}()
     for base in [best_random, best_fixed, "never_explore"]
         gaps[base] = Dict(
-            :auc => bootstrap_ci(paired(eu, results[base], r -> r.auc)),
-            # co-primary realised-value gate (§2c): the end-state rate, not just the area.
+            # PRIMARY (§8): the mean per-step rate — the declared utility's own statistic.
+            :rate => bootstrap_ci(paired(eu, results[base], mean_rate)),
+            # co-primary realised-value gate (§2c): the end-state rate.
             :final_window => bootstrap_ci(paired(eu, results[base], r -> r.final_window_mean)),
             # efficiency: fewer steps to the SHARED level is better ⇒ gap = baseline − eu_max.
             :efficiency => bootstrap_ci(stl(results[base]) .- stl(eu)),
         )
     end
 
-    mean_auc = Dict(name => mean_of(rs, r -> r.auc) for (name, rs) in results)
-    worst_gap = Dict(base => minimum(paired(eu, results[base], r -> r.auc))
+    mean_rate_by = Dict(name => mean_of(rs, mean_rate) for (name, rs) in results)
+    # Tail assertions on the PRIMARY measure (§8: the winner's-curse move's target, kept hard;
+    # q10 reported beside minimax).
+    worst_gap = Dict(base => minimum(paired(eu, results[base], mean_rate))
                      for base in [best_random, best_fixed, "never_explore"])
+    q10_gap = Dict(base => quantile_of(paired(eu, results[base], mean_rate), 0.1)
+                   for base in [best_random, best_fixed, "never_explore"])
 
     # Behaviour-verified inversions: concrete growth decisions eu_max made that the
     # de-confounded floor cannot make, on the same seeds.
@@ -166,7 +186,7 @@ function main(; n_seeds::Int = DB_N_SEEDS)
         push!(inversions,
               "seed $(eu[i].seed): eu_max takes $(op) at step $(step) " *
               "(never_explore: growth vetoed by construction; " *
-              "auc gap $(round(eu[i].auc - results["never_explore"][i].auc, digits=2)))")
+              "rate gap $(round(mean_rate(eu[i]) - mean_rate(results["never_explore"][i]), digits=3)))")
     end
 
     # ── Artefacts ──
@@ -178,25 +198,30 @@ function main(; n_seeds::Int = DB_N_SEEDS)
         println(io, "Task: `$(DB_WORLD_RULES)`, regime changes at `$(DB_REGIME_STEPS)`, " *
                     "$(DB_MAX_STEPS) steps, respawn on, $n_seeds seeds, " *
                     "paired-seed percentile bootstrap (10 000 resamples).\n")
-        println(io, "| policy | mean AUC | mean final-window rate | mean steps-to-half | mean meta-actions |")
-        println(io, "|---|---|---|---|---|")
+        println(io, "Primary realised-value measure (§8, ratified 2026-07-03): the mean per-step " *
+                    "energy rate `ce[end]/n` — the uniform-weight statistic the agent's declared " *
+                    "utility maximises. AUC of the cumulative trajectory (front-loaded) is " *
+                    "reported-only, for cross-round comparability.\n")
+        println(io, "| policy | mean rate | mean final-window rate | mean AUC (reported) | mean steps-to-half | mean meta-actions |")
+        println(io, "|---|---|---|---|---|---|")
         for name in sort(collect(keys(results)))
             rs = results[name]
-            println(io, "| $name | $(round(mean_of(rs, r -> r.auc), digits=2)) | " *
+            println(io, "| $name | $(round(mean_of(rs, mean_rate), digits=3)) | " *
                         "$(round(mean_of(rs, r -> r.final_window_mean), digits=3)) | " *
+                        "$(round(mean_of(rs, r -> r.auc), digits=2)) | " *
                         "$(round(mean_of(rs, r -> Float64(r.steps_to_half)), digits=1)) | " *
                         "$(round(mean_of(rs, r -> Float64(r.n_meta)), digits=1)) |")
         end
         println(io, "\n## Paired gaps (eu_max − baseline; efficiency = steps to the shared per-seed")
         println(io, "level, sign-flipped so + favours eu_max — belief-derived-valuation §2c)\n")
-        println(io, "| baseline | AUC gap [95% CI] | final-window gap [95% CI] | efficiency gap [95% CI] | worst-seed AUC gap |")
-        println(io, "|---|---|---|---|---|")
+        println(io, "| baseline | rate gap [95% CI] | final-window gap [95% CI] | efficiency gap [95% CI] | worst-seed rate gap | q10 rate gap |")
+        println(io, "|---|---|---|---|---|---|")
         for base in [best_random, best_fixed, "never_explore"]
-            a = gaps[base][:auc]; fw = gaps[base][:final_window]; e = gaps[base][:efficiency]
-            println(io, "| $base | $(round(a[1], digits=2)) [$(round(a[2], digits=2)), $(round(a[3], digits=2))] " *
+            a = gaps[base][:rate]; fw = gaps[base][:final_window]; e = gaps[base][:efficiency]
+            println(io, "| $base | $(round(a[1], digits=3)) [$(round(a[2], digits=3)), $(round(a[3], digits=3))] " *
                         "| $(round(fw[1], digits=3)) [$(round(fw[2], digits=3)), $(round(fw[3], digits=3))] " *
                         "| $(round(e[1], digits=1)) [$(round(e[2], digits=1)), $(round(e[3], digits=1))] " *
-                        "| $(round(worst_gap[base], digits=2)) |")
+                        "| $(round(worst_gap[base], digits=3)) | $(round(q10_gap[base], digits=3)) |")
         end
         println(io, "\n`eu_max − never_explore` is the headline: the learned-returns escape ops are " *
                     "identical on both sides, so this gap is exploration's isolated value.\n")
@@ -210,7 +235,8 @@ function main(; n_seeds::Int = DB_N_SEEDS)
         println(io, "| baseline | metric | mean gap | median gap | win rate | sign-test p | q10 gap |")
         println(io, "|---|---|---|---|---|---|---|")
         for base in [best_random, best_fixed, "never_explore"]
-            for (label, f) in [("AUC", r -> r.auc),
+            for (label, f) in [("mean rate (primary)", mean_rate),
+                               ("AUC (front-loaded, reported-only)", r -> r.auc),
                                ("final-window rate", r -> r.final_window_mean),
                                ("final-regime rate", rate_final_regime)]
                 d = paired(eu, results[base], f)
@@ -227,36 +253,40 @@ function main(; n_seeds::Int = DB_N_SEEDS)
         for line in inversions[1:min(10, length(inversions))]
             println(io, "- $line")
         end
-        println(io, "\nBracket: never_explore $(round(mean_auc["never_explore"], digits=2)) ≤ " *
-                    "eu_max $(round(mean_auc["eu_max"], digits=2)) ≤ " *
-                    "clairvoyant $(round(mean_auc["clairvoyant"], digits=2))")
+        println(io, "\nBracket (mean rate): never_explore $(round(mean_rate_by["never_explore"], digits=3)) ≤ " *
+                    "eu_max $(round(mean_rate_by["eu_max"], digits=3)) ≤ " *
+                    "clairvoyant $(round(mean_rate_by["clairvoyant"], digits=3))")
     end
     println("wrote $(joinpath(resdir, "results.tsv")) and summary.md")
 
-    # ── Assertions (running this file IS the gate) ──
+    # ── Assertions (running this file IS the gate; measures per §8) ──
     failures = String[]
     for base in [best_random, best_fixed]
-        gaps[base][:auc][2] > 0.0 ||
-            push!(failures, "CI(eu_max − $base) on AUC includes 0: $(gaps[base][:auc])")
+        gaps[base][:rate][2] > 0.0 ||
+            push!(failures, "CI(eu_max − $base) on the mean rate (primary) includes 0: $(gaps[base][:rate])")
         gaps[base][:final_window][2] > 0.0 ||
             push!(failures, "CI(eu_max − $base) on final-window rate includes 0: $(gaps[base][:final_window])")
         gaps[base][:efficiency][2] > 0.0 ||
             push!(failures, "CI(eu_max − $base) on shared-level efficiency includes 0: $(gaps[base][:efficiency])")
         worst_gap[base] >= 0.0 ||
-            push!(failures, "minimax regret vs $base: worst-seed AUC gap $(worst_gap[base]) < 0")
+            push!(failures, "minimax regret vs $base: worst-seed mean-rate gap $(worst_gap[base]) < 0 " *
+                            "(q10 $(q10_gap[base]) — the winner's-curse pricing target)")
     end
-    gaps["never_explore"][:auc][2] > 0.0 ||
-        push!(failures, "HEADLINE CI(eu_max − never_explore) on AUC includes 0: " *
-                        "$(gaps["never_explore"][:auc]) — before blaming the policy, interrogate " *
+    gaps["never_explore"][:rate][2] > 0.0 ||
+        push!(failures, "HEADLINE CI(eu_max − never_explore) on the mean rate includes 0: " *
+                        "$(gaps["never_explore"][:rate]) — before blaming the policy, interrogate " *
                         "whether the task's non-stationarity is strong enough to reward " *
                         "exploration (dominance-design §6: the regime-shift magnitude is " *
                         "load-bearing for this gate meaning anything)")
-    mean_auc["never_explore"] <= mean_auc["eu_max"] ||
-        push!(failures, "bracket: never_explore mean AUC $(mean_auc["never_explore"]) > " *
-                        "eu_max $(mean_auc["eu_max"]) (hypothesis under test — diagnose the task)")
-    mean_auc["eu_max"] <= mean_auc["clairvoyant"] ||
-        push!(failures, "SANITY: eu_max mean AUC $(mean_auc["eu_max"]) > clairvoyant " *
-                        "$(mean_auc["clairvoyant"]) — must always hold, investigate")
+    gaps["never_explore"][:final_window][2] > 0.0 ||
+        push!(failures, "HEADLINE CI(eu_max − never_explore) on final-window rate includes 0: " *
+                        "$(gaps["never_explore"][:final_window])")
+    mean_rate_by["never_explore"] <= mean_rate_by["eu_max"] ||
+        push!(failures, "bracket: never_explore mean rate $(mean_rate_by["never_explore"]) > " *
+                        "eu_max $(mean_rate_by["eu_max"]) (hypothesis under test — diagnose the task)")
+    mean_rate_by["eu_max"] <= mean_rate_by["clairvoyant"] ||
+        push!(failures, "SANITY: eu_max mean rate $(mean_rate_by["eu_max"]) > clairvoyant " *
+                        "$(mean_rate_by["clairvoyant"]) — must always hold, investigate")
     isempty(inversions) &&
         push!(failures, "no behaviour-verified inversions: eu_max never took a growth op")
 
