@@ -30,13 +30,13 @@ using Credence: aggregate_grammar_weights, top_k_grammar_ids, add_programs_to_st
 using Credence: next_grammar_id, reset_grammar_counter!
 using Credence: show_expr, FeatureRef, GTExpr, LTExpr, AndExpr, OrExpr, NotExpr, NonterminalRef, ActionExpr, IfExpr
 using Credence: SubprogramFrequencyTable
-# Move 3 — the belief-aware exploration budget (threshold refinement) + the Move-2 saturation signal.
-using Credence: explore_grammar, explore_features, ExploreObservation
-using Credence: update_learning_regime, plateau_probability, reset_learning_regime!
-# Dominance move — the real single-currency argmax at the selection seam.
-using Credence: exploration_voi, feature_discovery_voi
+# Moves 3–4 as re-founded by the winners-curse design: the growth lookahead is a virtual
+# injection; score and transition share ONE GrowthProposal (T-3.55 as identity).
+using Credence: GrowthProposal, threshold_growth_proposal, feature_growth_proposal, adopt!
+using Credence: ExploreObservation
+using Credence: update_learning_regime, reset_learning_regime!
 # Belief-derived valuation — horizon-completed growth + the learned returns-to-growth model.
-using Credence: exploration_fit, feature_discovery_fit, growth_value, complexity_logprior
+using Credence: net_value
 using Credence: GrowthReturns, observe_yield!, escape_score, injection_yield_nats
 
 include("simulation.jl")
@@ -63,10 +63,10 @@ const GW_META_ACTIONS = [:gw_enumerate_more, :gw_perturb_grammar, :gw_deepen, :g
 # Q6). The exact and surrogate tiers price their own compute through the engine's compute_cost
 # kwargs (default 0.0).
 const GW_OP_COMPUTE_COST_DEFAULT = log(2.0)
-# The one-time prior-Occam charge of admitting one feature symbol (Δcomplexity = +1), charged at
-# the score seam exactly as the engine's _best_feature_addition charges it internally — the two
-# sites agree by both calling complexity_logprior(1; λ = log 2).
-const GW_FEATURE_PRIOR_TERM = complexity_logprior(1; λ = log(2.0))
+# (GW_FEATURE_PRIOR_TERM is RETIRED — winners-curse design §5 Q4: the one-time prior-Occam
+# charge of a feature symbol is carried by each newcomer's own complexity prior INSIDE the
+# union mixture; charging it again at the score seam would double-count. Pinned by
+# test_virtual_injection.jl §1.)
 
 # ═══════════════════════════════════════
 # Build the observation kernel
@@ -159,6 +159,40 @@ end
 # ═══════════════════════════════════════
 
 """
+    gw_growth_proposal(op, state, explore_buffer, growth_cache, cache_epoch; include_temporal)
+        → Union{Nothing, GrowthProposal}
+
+The ONE candidate function score and transition share (T-3.55): the growth class's virtual
+injection for the current top grammar, memoised in `growth_cache` under
+(op, cache_epoch, gid, n_buf, depth). `score_gw_meta_actions` prices what this returns;
+`execute_gw_meta_action!` adopts the same object's scratch. With `growth_cache === nothing`
+(engine tests, score-blind execute paths) the proposal is computed directly.
+"""
+function gw_growth_proposal(
+    op::Symbol,
+    state::AgentState,
+    explore_buffer::Vector{ExploreObservation},
+    growth_cache::Union{Nothing, Dict{Tuple{Symbol, Int, Int, Int, Int}, Union{Nothing, GrowthProposal}}},
+    cache_epoch::Int;
+    include_temporal::Bool = false
+)::Union{Nothing, GrowthProposal}
+    gw_action_space = Symbol[:food, :enemy]
+    top = top_k_grammar_ids(state, 1)
+    isempty(top) && return nothing
+    g_top = state.grammars[top[1]]
+    compute() = op === :explore ?
+        threshold_growth_proposal(state, g_top, explore_buffer;
+                                  action_space = gw_action_space,
+                                  include_temporal = include_temporal) :
+        feature_growth_proposal(state, g_top, explore_buffer, ALL_GW_FEATURES;
+                                action_space = gw_action_space,
+                                include_temporal = include_temporal)
+    growth_cache === nothing && return compute()
+    get!(compute, growth_cache,
+         (op, cache_epoch, g_top.id, length(explore_buffer), state.current_max_depth))
+end
+
+"""
     score_gw_meta_actions(state, explore_buffer, returns, changed; op_compute_cost, horizon)
         → Dict{Symbol, Float64}
 
@@ -166,12 +200,19 @@ Score every grid-world meta-action in the ONE currency — Δ log-evidence, nats
 (Move 5; belief-derived-valuation §2). Every score is a posterior expectation or a declared
 datum — no hand-written value claims:
 
-    :gw_explore          growth_value(fit, n_buf, plateau, H)             horizon-completed exact
-                                                                          lookahead (§2a)
-    :gw_add_feature      growth_value(fit, …; prior_term = −log 2)        as above + the one-time
-                                                                          Occam charge; hard-gated
-                                                                          on thresholds-exhausted
-                                                                          (attribution, unchanged)
+    :gw_explore          net_value(prop.yield_nats, op_compute_cost)      the VIRTUAL INJECTION
+                                                                          (winners-curse §8.2):
+    :gw_add_feature      as :gw_explore — NO prior term (Q4: the Occam    the union of ALL
+                         charge rides inside the mixture); gated -Inf     candidates coherently
+                         iff the threshold proposal's own score clears    injected on a scratch;
+                         the floor (refinement fires first — §8.4)        the yield IS the union-
+                                                                          over-incumbent window
+                                                                          Bayes factor; fire when
+                                                                          realised evidence clears
+                                                                          the declared price (no
+                                                                          flow, no ×H, no plateau
+                                                                          — §8.2's wait-option
+                                                                          argument)
     :gw_perturb_grammar  max over top-k gids of                           the exact realised
                          replacement_value(state, gid; compute_cost)      Δ log-evidence of
                                                                           consuming the best dead
@@ -185,18 +226,21 @@ datum — no hand-written value claims:
                                                                           retired, ratified Q5)
     :gw_do_nothing       0.0                                              the act-now reference
 
-`plateau` keeps its Move-2 semantics (*whether* the measured gain is real); `horizon` is the
-expected remaining conditioning events (*how long* it pays) — declared episode data × the
-observed event rate, host bookkeeping. `nothing` ⇒ the window-total valuation (H = n_buf,
-the pre-move behaviour). The `fit_explore > 0` hard gate on :gw_add_feature is the attribution
-argument (a feature Δℓ measured against a coarse grid is confounded by residual refinement
-would also capture) — a measurement concern, valuation-independent, so it gates on FIT.
+No horizon, no plateau at this seam (winners-curse §8.2): the wait-option argument cancels
+the horizon-extrapolated term (the far-term value is common to adopt-now and
+wait-and-re-decide), and the yield is realised posterior evidence — multiplying by P(plateau)
+would charge the reality-of-gain doubt twice. The regime belief stays maintained (Move 2's
+signal; the reset discipline is unchanged) but no longer multiplies scores.
 
-Score/edit consistency (Invariant 3, host level): with `compute_cost = 0` the engine's
-edit-application floor (`fit > 0` at defaults) and this score's positivity
-(`plateau·fit·(H/n) > 0` for `plateau, H > 0`) are the SAME predicate, so a chosen growth op
-never no-ops and a no-op is never chosen (except the H = 0 last step, where the score is 0 and
-the floor already keeps do_nothing).
+Score/edit consistency (T-3.55, now an IDENTITY): the growth score prices a GrowthProposal —
+the union scratch itself — memoised in `growth_cache` keyed by (op, cache_epoch, gid, n_buf,
+depth); `execute_gw_meta_action!` reads the SAME cache entry and ADOPTS the scratch (a field
+swap, zero recompute — ratified §5 Q1). The cache epoch bumps on EVERY hypothesis-space change
+(not just growth fires — the proposal depends on the live belief, unlike the retired pure-fit
+cache) and on window trims, so a stale scratch can never be priced or adopted. The execute-time
+apply floor is `prop.yield_nats > 0`; the score's positivity (`yield > cost ≥ 0`) is strictly
+stronger, so a chosen growth op never no-ops. Score-blind baselines execute without a prior
+score — the same proposal is computed at execute time (the §5 Q1 fallback path).
 
 Asserted by test_grid_world_meta.jl.
 """
@@ -206,9 +250,9 @@ function score_gw_meta_actions(
     returns::GrowthReturns,
     changed::Dict{Symbol, Bool};
     op_compute_cost::Float64 = GW_OP_COMPUTE_COST_DEFAULT,
-    horizon::Union{Nothing, Float64} = nothing,
-    voi_cache::Union{Nothing, Dict{Tuple{Symbol, Int, Int, Int, Int}, Float64}} = nothing,
-    cache_epoch::Int = 0
+    growth_cache::Union{Nothing, Dict{Tuple{Symbol, Int, Int, Int, Int}, Union{Nothing, GrowthProposal}}} = nothing,
+    cache_epoch::Int = 0,
+    include_temporal::Bool = false
 )::Dict{Symbol, Float64}
     gw_action_space = Symbol[:food, :enemy]
     scored = Dict{Symbol, Float64}(:gw_do_nothing => 0.0)
@@ -237,34 +281,25 @@ function score_gw_meta_actions(
         replacement_value(state, gid; compute_cost = op_compute_cost)
         for gid in top_k_grammar_ids(state, 3) if haskey(state.grammars, gid))
 
-    # Exact lookahead tier, horizon-completed (belief-derived-valuation §2a). The FIT halves are
-    # PURE functions of (grammar, buffer, depth) — the memoisable component; the per-step
-    # valuation (plateau, H) is applied through the engine's growth_value functional. The epoch
-    # (owned by the run loop, bumped on growth-op execution and window trims) prevents key
-    # collisions across content changes at equal length.
-    n_buf = length(explore_buffer)
-    plateau = plateau_probability(state.learning_regime)
-    h = horizon === nothing ? Float64(n_buf) : horizon
-    fit_explore = voi_cache === nothing ?
-        exploration_fit(g_top, explore_buffer, state.current_max_depth;
-                        action_space = gw_action_space) :
-        get!(voi_cache, (:explore, cache_epoch, g_top.id, n_buf, state.current_max_depth)) do
-            exploration_fit(g_top, explore_buffer, state.current_max_depth;
-                            action_space = gw_action_space)
-        end
-    scored[:gw_explore] = growth_value(fit_explore, n_buf, plateau, h)
-    if fit_explore > 0.0
+    # The virtual-injection tier (winners-curse §8.2): each growth class's GrowthProposal is
+    # the union scratch, memoised so the fire adopts the very object the score priced (T-3.55
+    # as identity). The score is the realised evidence net of the declared price — the yield
+    # IS the union-over-incumbent window Bayes factor; nothing multiplies by a horizon.
+    prop_explore = gw_growth_proposal(:explore, state, explore_buffer,
+                                      growth_cache, cache_epoch;
+                                      include_temporal = include_temporal)
+    scored[:gw_explore] = net_value(
+        prop_explore === nothing ? 0.0 : prop_explore.yield_nats, op_compute_cost)
+    if scored[:gw_explore] > 0.0
+        # Refinement fires first (§8.4): the attribution gate re-expressed — features wait
+        # only while the threshold class itself clears its price, not on any positive fit.
         scored[:gw_add_feature] = -Inf
     else
-        fit_feature = voi_cache === nothing ?
-            feature_discovery_fit(g_top, explore_buffer, ALL_GW_FEATURES,
-                                  state.current_max_depth; action_space = gw_action_space) :
-            get!(voi_cache, (:add_feature, cache_epoch, g_top.id, n_buf, state.current_max_depth)) do
-                feature_discovery_fit(g_top, explore_buffer, ALL_GW_FEATURES,
-                                      state.current_max_depth; action_space = gw_action_space)
-            end
-        scored[:gw_add_feature] = growth_value(fit_feature, n_buf, plateau, h;
-                                               prior_term = GW_FEATURE_PRIOR_TERM)
+        prop_feature = gw_growth_proposal(:add_feature, state, explore_buffer,
+                                          growth_cache, cache_epoch;
+                                          include_temporal = include_temporal)
+        scored[:gw_add_feature] = net_value(
+            prop_feature === nothing ? 0.0 : prop_feature.yield_nats, op_compute_cost)
     end
 
     # Learned returns tier (belief-derived-valuation §2b): the posterior-predictive expected
@@ -337,13 +372,22 @@ Execute a grid-world meta-action. `n_added` is the number of programs added (the
 observable); `applied_replacement` is true iff a `:gw_perturb_grammar` replacement actually fired —
 a hypothesis-space change that adds ZERO components, so the run loop's `n_added > 0` epoch trigger
 alone would miss it (removal-consumption design §2).
+
+The growth branches (:gw_explore, :gw_add_feature) ADOPT the memoised GrowthProposal's scratch
+(`growth_cache`/`cache_epoch` — the same cache the score seam filled, ratified §5 Q1): the
+belief the score priced becomes, by identity, the belief the agent holds. Score-blind callers
+(no prior score, cache miss) compute the same proposal at execute time — the Q1 fallback. The
+apply floor is `prop.yield_nats > 0` (strictly weaker than any positive net score, so a
+chosen op always applies; a blind fire on an evidence-free union is a structural no-op).
 """
 function execute_gw_meta_action!(
     state::AgentState,
     action::Symbol,
     explore_buffer::Vector{ExploreObservation};
     include_temporal::Bool=false,
-    verbose::Bool=false
+    verbose::Bool=false,
+    growth_cache::Union{Nothing, Dict{Tuple{Symbol, Int, Int, Int, Int}, Union{Nothing, GrowthProposal}}}=nothing,
+    cache_epoch::Int=0
 )::NamedTuple{(:n_added, :applied_replacement), Tuple{Int, Bool}}
     gw_action_space = Symbol[:food, :enemy]
 
@@ -399,50 +443,27 @@ function execute_gw_meta_action!(
         verbose && println("  [Meta: deepen → depth=$(state.current_max_depth), +$n_added components]")
         return (n_added = n_added, applied_replacement = false)
 
-    elseif action == :gw_explore
-        # Belief-aware threshold refinement (Move 3): refine the top grammar's grid by the candidate whose
-        # lookahead VOI (against the residual buffer) clears compute_cost; no-op if none does. Resets the
-        # residual REGIME — it expands the threshold alphabet, so pre-change regime residuals are stale
-        # (Q1b, read precisely as "alphabet expansion" — perturb/deepen/enumerate are within-alphabet and
-        # do NOT reset). The BUFFER is retained: raw (features, correct_actions) records are world data,
-        # alphabet-independent — they inform the coherent injection and age out via explore_window only
-        # (coherent-injection-design.md §1, the Q2b amendment).
-        top = top_k_grammar_ids(state, 1)
-        isempty(top) && return (n_added = 0, applied_replacement = false)
-        gid = top[1]
-        new_g = explore_grammar(state.grammars[gid], explore_buffer, state.current_max_depth;
-                                action_space=gw_action_space)
-        new_g.id == gid && return (n_added = 0, applied_replacement = false)   # no positive-VOI refinement → no-op
-        state.grammars[new_g.id] = new_g
-        n_added = add_programs_to_state!(state, new_g, state.current_max_depth;
-            observations=explore_buffer,
-            action_space=gw_action_space, include_temporal=include_temporal)
+    elseif action == :gw_explore || action == :gw_add_feature
+        # The growth transition (winners-curse §1, FIRE): adopt the virtual injection's scratch —
+        # the union of ALL candidates' deduped programs, coherently conditioned on the window.
+        # No winner is installed (install-the-argmax was an argmax_m P(m|D) collapse,
+        # average-not-collapse applied to the transition): junk candidates ride at the mass the
+        # window granted them and the existing hygiene (sync_prune!/sync_truncate!, #193's
+        # replacement consumption) self-heals. Resets the residual REGIME — an alphabet
+        # expansion, so pre-change regime residuals are stale (Q1b; perturb/deepen/enumerate are
+        # within-alphabet and do NOT reset). The BUFFER is retained: raw records are world data,
+        # alphabet-independent (coherent-injection-design.md §1, the Q2b amendment).
+        op = action == :gw_explore ? :explore : :add_feature
+        prop = gw_growth_proposal(op, state, explore_buffer, growth_cache, cache_epoch;
+                                  include_temporal = include_temporal)
+        (prop === nothing || prop.yield_nats <= 0.0) &&
+            return (n_added = 0, applied_replacement = false)   # no evidence-bearing union → no-op
+        adopt!(state, prop.scratch)
         reset_learning_regime!(state)
-        verbose && println("  [Meta: explore → grammar $gid→$(new_g.id) (threshold refined), +$n_added components]")
-        return (n_added = n_added, applied_replacement = false)
-
-    elseif action == :gw_add_feature
-        # Feature discovery (Move 4): add the host-furnished feature whose lookahead VOI (two-axis: fit Δℓ
-        # MINUS the log2 prior-Occam explore_features charges internally) is greatest; no-op if none clears.
-        # Like explore, an ALPHABET EXPANSION ⇒ resets the residual regime (buffer retained — Q2b
-        # amendment, coherent-injection-design.md §1). The
-        # candidate source is ALL_GW_FEATURES — the full superset the host already extracts every step, so a
-        # selected feature's value is already in each observation's features Dict (base-feature SELECTION,
-        # not construction). The reset re-opens the next explore pass on the NEW feature's grid (the cycle).
-        top = top_k_grammar_ids(state, 1)
-        isempty(top) && return (n_added = 0, applied_replacement = false)
-        gid = top[1]
-        new_g = explore_features(state.grammars[gid], explore_buffer, ALL_GW_FEATURES,
-                                 state.current_max_depth;
-                                 action_space=gw_action_space)
-        new_g.id == gid && return (n_added = 0, applied_replacement = false)   # no positive-VOI feature → no-op
-        state.grammars[new_g.id] = new_g
-        n_added = add_programs_to_state!(state, new_g, state.current_max_depth;
-            observations=explore_buffer,
-            action_space=gw_action_space, include_temporal=include_temporal)
-        reset_learning_regime!(state)
-        verbose && println("  [Meta: add_feature → grammar $gid→$(new_g.id) (feature acquired), +$n_added components]")
-        return (n_added = n_added, applied_replacement = false)
+        verbose && println("  [Meta: $(op) → union adopted, +$(prop.n_added) programs " *
+                           "(yield $(round(prop.yield_nats, digits=3)) nats, " *
+                           "P_newcomers $(round(prop.p_newcomers, digits=4)))]")
+        return (n_added = prop.n_added, applied_replacement = false)
     end
     (n_added = 0, applied_replacement = false)
 end
@@ -517,25 +538,25 @@ function run_agent(;
     # by growth ops — explore_window aging is the sole trim. Each record's residual is the live
     # surprise (−log predictive), the incumbents' normalisation ledger the injection re-applies.
     explore_buffer = ExploreObservation[]
-    # Exact memoisation of the pure lookahead FITS (see score_gw_meta_actions): epoch bumps on
-    # growth-op execution and window trims so equal-length buffers with different content never
-    # collide with stale keys; the op lives in the key as a Symbol (a typed field, not an
-    # arithmetic offset — offsets like 1000+epoch vs 2000+epoch collide across ops once the
-    # epoch passes their spacing, e.g. any run with ≳1000 window trims). The per-step valuation
-    # (plateau, horizon) is applied outside the cache through growth_value.
-    voi_cache = Dict{Tuple{Symbol, Int, Int, Int, Int}, Float64}()
+    # Memoisation of the growth PROPOSALS (see gw_growth_proposal): the score prices the
+    # cached scratch and the fire adopts it (T-3.55 as identity). Unlike the retired pure-fit
+    # cache, a proposal depends on the LIVE BELIEF, so the epoch bumps on EVERY hypothesis-
+    # space change (any injection, deepen, replacement — wherever space_epoch bumps) and on
+    # window trims — a stale scratch must never be priced or adopted (winners-curse §6 risk 3;
+    # conditioning between steps is covered by n_buf in the key + the trim bump). The op lives
+    # in the key as a Symbol (a typed field, not an arithmetic offset). The score is applied
+    # outside the cache through net_value against the declared price.
+    growth_cache = Dict{Tuple{Symbol, Int, Int, Int, Int}, Union{Nothing, GrowthProposal}}()
     cache_epoch = 0
 
     # The learned returns-to-growth belief (belief-derived-valuation §2b) + its bookkeeping DATA:
     # space_epoch counts hypothesis-space changes (any injection, any depth change);
     # last_fire_epoch records the epoch each escape op last fired under — the (op,
-    # changed-since-last-fire) context bit. n_cond_events counts conditioning events for the
-    # declared-horizon estimate H = event rate × remaining steps (ratified Q2: episodic hosts
-    # declare; max_steps is this host's episode length).
+    # changed-since-last-fire) context bit. (The declared-horizon event counter retired with
+    # the growth seam's ×H — winners-curse §8.4; nothing consumed it.)
     growth_returns = GrowthReturns(Symbol[:gw_enumerate_more, :gw_deepen])
     space_epoch = 0
     last_fire_epoch = Dict{Symbol, Int}()
-    n_cond_events = 0
 
     # Temporal state
     temporal_window = TemporalWindow(max_history=10)
@@ -587,24 +608,22 @@ function run_agent(;
             # baselines (random, fixed-schedule) may deliberately act on non-positive scores —
             # that waste is exactly what the dominance benchmark measures.
             while meta_actions_taken < max_meta_per_step
-                # The declared-horizon estimate (ratified Q2): observed conditioning-event rate
-                # × declared remaining episode steps. Bookkeeping counts — data, not beliefs.
-                h_events = (n_cond_events / step) * (max_steps - step)
                 changed = Dict{Symbol, Bool}(
                     op => get(last_fire_epoch, op, -1) != space_epoch
                     for op in (:gw_enumerate_more, :gw_deepen))
                 scored = score_blind(meta_policy) ?
                     Dict{Symbol, Float64}(:gw_do_nothing => 0.0) :
                     score_gw_meta_actions(state, explore_buffer, growth_returns, changed;
-                                          op_compute_cost=op_compute_cost, horizon=h_events,
-                                          voi_cache=voi_cache, cache_epoch=cache_epoch)
+                                          op_compute_cost=op_compute_cost,
+                                          growth_cache=growth_cache, cache_epoch=cache_epoch,
+                                          include_temporal=include_temporal)
                 chosen = meta_policy(scored, step)::Symbol
                 chosen == :gw_do_nothing && break
 
                 meta_result = execute_gw_meta_action!(state, chosen, explore_buffer;
-                    include_temporal=include_temporal, verbose=verbose)
+                    include_temporal=include_temporal, verbose=verbose,
+                    growth_cache=growth_cache, cache_epoch=cache_epoch)
                 n_added_meta = meta_result.n_added
-                chosen in (:gw_explore, :gw_add_feature) && (cache_epoch += 1)
                 meta_actions_taken += 1
 
                 # The realised yield is an OBSERVATION (belief-derived-valuation §2b): measured
@@ -618,8 +637,11 @@ function run_agent(;
                     y = injection_yield_nats(state, n_added_meta)
                     observe_yield!(growth_returns, chosen, changed[chosen], y)
                 end
+                # Any hypothesis-space change stales both the (op, changed) context bits AND
+                # every cached growth proposal (its scratch was copied from the pre-change
+                # belief) — the two epochs advance together.
                 (n_added_meta > 0 || chosen == :gw_deepen ||
-                 meta_result.applied_replacement) && (space_epoch += 1)
+                 meta_result.applied_replacement) && (space_epoch += 1; cache_epoch += 1)
                 chosen in (:gw_enumerate_more, :gw_deepen) &&
                     (last_fire_epoch[chosen] = space_epoch)
 
@@ -681,7 +703,6 @@ function run_agent(;
                 state.learning_regime = update_learning_regime(state.learning_regime,
                                                                state.last_residual, surprise)
                 state.last_residual = surprise
-                n_cond_events += 1   # the horizon estimate's event count (declared-Q2 bookkeeping)
                 push!(explore_buffer, ExploreObservation(features,
                     Dict{Symbol, Any}(:recent => copy(get(temporal_state, :recent, Dict{Symbol, Float64}[]))),
                     Set([true_type]), surprise))
