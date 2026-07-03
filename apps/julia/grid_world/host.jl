@@ -24,7 +24,8 @@ using Credence: density, log_density_at, prune, truncate
 using Credence: AgentState, sync_prune!, sync_truncate!
 using Credence: Grammar, Program, CompiledKernel, ProductionRule
 using Credence: enumerate_programs, compile_kernel
-using Credence: analyse_posterior_subtrees, perturb_grammar
+# Removal consumption — replacement semantics for applied removals (the #189 deviation-3 discharge).
+using Credence: replacement_value, best_replacement, replace_grammar_in_state!
 using Credence: aggregate_grammar_weights, top_k_grammar_ids, add_programs_to_state!
 using Credence: next_grammar_id, reset_grammar_counter!
 using Credence: show_expr, FeatureRef, GTExpr, LTExpr, AndExpr, OrExpr, NotExpr, NonterminalRef, ActionExpr, IfExpr
@@ -33,7 +34,7 @@ using Credence: SubprogramFrequencyTable
 using Credence: explore_grammar, explore_features, ExploreObservation
 using Credence: update_learning_regime, plateau_probability, reset_learning_regime!
 # Dominance move — the real single-currency argmax at the selection seam.
-using Credence: exploration_voi, feature_discovery_voi, perturbation_voc
+using Credence: exploration_voi, feature_discovery_voi
 # Belief-derived valuation — horizon-completed growth + the learned returns-to-growth model.
 using Credence: exploration_fit, feature_discovery_fit, growth_value, complexity_logprior
 using Credence: GrowthReturns, observe_yield!, escape_score, injection_yield_nats
@@ -171,9 +172,11 @@ datum — no hand-written value claims:
                                                                           Occam charge; hard-gated
                                                                           on thresholds-exhausted
                                                                           (attribution, unchanged)
-    :gw_perturb_grammar  -Inf (PROVISIONAL)                               removal-consumption
-                                                                          redesign pending — see
-                                                                          the inline comment
+    :gw_perturb_grammar  max over top-k gids of                           the exact realised
+                         replacement_value(state, gid; compute_cost)      Δ log-evidence of
+                                                                          consuming the best dead
+                                                                          item (removal-
+                                                                          consumption design §1)
     :gw_enumerate_more,  escape_score(returns, op, changed)               LEARNED returns-to-growth
     :gw_deepen                                                            posterior (§2b) minus the
                                                                           declared compute price;
@@ -219,19 +222,20 @@ function score_gw_meta_actions(
     end
     g_top = state.grammars[top[1]]
 
-    # PROVISIONAL (flagged for ratification, like :gw_deepen below): :gw_perturb_grammar is
-    # scored -Inf, not by perturbation_voc. Empirically (2026-07-02 smoke), voc is a surrogate
-    # execution falsifies: an applied REMOVAL adds a cleaned SIBLING grammar whose duplicate
-    # programs can never displace the evidence-rich dirty incumbent, so the same removal
-    # re-proposes at +log2 forever — a 3-ops/step treadmill of duplicate injection (the exact
-    # shape perturbation.jl's own no-op docstring calls "a silent posterior reset — A3", missed
-    # for the applied case because the old entropy tier always outbid voc). The correct fix is
-    # REPLACEMENT semantics for removals (re-key components to the cleaned grammar, realising
-    # the prior reclaim in their weights) — but that is a prior-revision write outside
-    # `condition` and needs its own design doc (plus the Move-1 OQ-4 sound reference count).
-    # Until that lands, perturb is out of the agent's argmax; score-blind baselines still
-    # execute it as before.
-    scored[:gw_perturb_grammar] = -Inf
+    # Removal consumption (the #189 deviation-3 discharge; removal-consumption design §2): perturb
+    # competes at the exact realised Δ log-evidence of the best replacement over the top-k
+    # grammars — log1p((e^Δ − 1)·W_G) net of the declared price, where the transition is
+    # REPLACEMENT (the cleaned grammar consumes its ancestor: components re-keyed, the reclaim
+    # realised in their weights, the ancestor unregistered — so the same edit can never
+    # re-propose; the sibling-injection treadmill is unrepresentable). The score and the executed
+    # edit share one candidate function (`best_replacement`), T-3.55. A grammar with no dead item
+    # scores 0.0 and loses to the act-now floor.
+    # (No init: every metadata gid is registered — top_k_grammar_ids cannot yield an unregistered
+    # gid, so the generator is non-empty whenever `top` was; an empty maximum failing loud is the
+    # invariant check. A negative max is honest: worth less than acting now.)
+    scored[:gw_perturb_grammar] = maximum(
+        replacement_value(state, gid; compute_cost = op_compute_cost)
+        for gid in top_k_grammar_ids(state, 3) if haskey(state.grammars, gid))
 
     # Exact lookahead tier, horizon-completed (belief-derived-valuation §2a). The FIT halves are
     # PURE functions of (grammar, buffer, depth) — the memoisable component; the per-step
@@ -327,9 +331,12 @@ score_blind(::Function) = false
 score_blind(::ScoreBlind) = true
 
 """
-    execute_gw_meta_action!(state, action; ...) → Int
+    execute_gw_meta_action!(state, action; ...) → (n_added::Int, applied_replacement::Bool)
 
-Execute a grid-world meta-action. Returns the number of programs added.
+Execute a grid-world meta-action. `n_added` is the number of programs added (the injection-yield
+observable); `applied_replacement` is true iff a `:gw_perturb_grammar` replacement actually fired —
+a hypothesis-space change that adds ZERO components, so the run loop's `n_added > 0` epoch trigger
+alone would miss it (removal-consumption design §2).
 """
 function execute_gw_meta_action!(
     state::AgentState,
@@ -337,7 +344,7 @@ function execute_gw_meta_action!(
     explore_buffer::Vector{ExploreObservation};
     include_temporal::Bool=false,
     verbose::Bool=false
-)::Int
+)::NamedTuple{(:n_added, :applied_replacement), Tuple{Int, Bool}}
     gw_action_space = Symbol[:food, :enemy]
 
     if action == :gw_enumerate_more
@@ -351,24 +358,32 @@ function execute_gw_meta_action!(
                 action_space=gw_action_space, include_temporal=include_temporal)
         end
         verbose && println("  [Meta: enumerate_more → +$n_added components]")
-        return n_added
+        return (n_added = n_added, applied_replacement = false)
 
     elseif action == :gw_perturb_grammar
-        w = weights(state.belief)
-        freq_table = analyse_posterior_subtrees(state.all_programs, w;
-                                                min_frequency=0.01, min_complexity=2)
-        top_gids = top_k_grammar_ids(state, 3)
-        n_added = 0
-        for gid in top_gids
+        # Replacement semantics (removal-consumption design §2): consume the top-k grammar whose
+        # best replacement carries the greatest realised Δ log-evidence. The gid argmax uses the
+        # cost-free values (the declared price is a constant across gids, so the argmax is
+        # unchanged); the strict > 0 floor makes a blind fire (score-blind baselines) a no-op
+        # when nothing is dead. The applied candidate is `best_replacement`'s — the SAME candidate
+        # the score priced (T-3.55). Replacement adds no components (re-description, not
+        # exploration — T-3.52); pure prior re-description still jolts the predictive stream the
+        # residual regime models, so the regime resets (the Q1b caused-change-point rationale).
+        best_gid = 0
+        best_v = 0.0
+        for gid in top_k_grammar_ids(state, 3)
             haskey(state.grammars, gid) || continue
-            new_g = perturb_grammar(state.grammars[gid], freq_table, ALL_GW_FEATURES)
-            state.grammars[new_g.id] = new_g
-            n_added += add_programs_to_state!(state, new_g, state.current_max_depth;
-                observations=explore_buffer,
-                action_space=gw_action_space, include_temporal=include_temporal)
+            v = replacement_value(state, gid)
+            v > best_v && (best_v = v; best_gid = gid)
         end
-        verbose && println("  [Meta: perturb_grammar → +$n_added components]")
-        return n_added
+        best_gid == 0 && return (n_added = 0, applied_replacement = false)  # nothing dead → no-op
+        cand = best_replacement(state, best_gid)
+        new_g = replace_grammar_in_state!(state, cand)
+        reset_learning_regime!(state)
+        verbose && println("  [Meta: perturb_grammar → grammar $(best_gid)→$(new_g.id) consumed " *
+                           "($(cand.kind) $(cand.kind === :remove_rule ? cand.payload.name : cand.payload), " *
+                           "Δ = $(round(log(2.0) * cand.payoff_symbols, digits=4)) nats)]")
+        return (n_added = 0, applied_replacement = true)
 
     elseif action == :gw_deepen
         state.current_max_depth += 1
@@ -382,7 +397,7 @@ function execute_gw_meta_action!(
                 action_space=gw_action_space, include_temporal=include_temporal)
         end
         verbose && println("  [Meta: deepen → depth=$(state.current_max_depth), +$n_added components]")
-        return n_added
+        return (n_added = n_added, applied_replacement = false)
 
     elseif action == :gw_explore
         # Belief-aware threshold refinement (Move 3): refine the top grammar's grid by the candidate whose
@@ -393,18 +408,18 @@ function execute_gw_meta_action!(
         # alphabet-independent — they inform the coherent injection and age out via explore_window only
         # (coherent-injection-design.md §1, the Q2b amendment).
         top = top_k_grammar_ids(state, 1)
-        isempty(top) && return 0
+        isempty(top) && return (n_added = 0, applied_replacement = false)
         gid = top[1]
         new_g = explore_grammar(state.grammars[gid], explore_buffer, state.current_max_depth;
                                 action_space=gw_action_space)
-        new_g.id == gid && return 0   # no positive-VOI refinement → no-op
+        new_g.id == gid && return (n_added = 0, applied_replacement = false)   # no positive-VOI refinement → no-op
         state.grammars[new_g.id] = new_g
         n_added = add_programs_to_state!(state, new_g, state.current_max_depth;
             observations=explore_buffer,
             action_space=gw_action_space, include_temporal=include_temporal)
         reset_learning_regime!(state)
         verbose && println("  [Meta: explore → grammar $gid→$(new_g.id) (threshold refined), +$n_added components]")
-        return n_added
+        return (n_added = n_added, applied_replacement = false)
 
     elseif action == :gw_add_feature
         # Feature discovery (Move 4): add the host-furnished feature whose lookahead VOI (two-axis: fit Δℓ
@@ -415,21 +430,21 @@ function execute_gw_meta_action!(
         # selected feature's value is already in each observation's features Dict (base-feature SELECTION,
         # not construction). The reset re-opens the next explore pass on the NEW feature's grid (the cycle).
         top = top_k_grammar_ids(state, 1)
-        isempty(top) && return 0
+        isempty(top) && return (n_added = 0, applied_replacement = false)
         gid = top[1]
         new_g = explore_features(state.grammars[gid], explore_buffer, ALL_GW_FEATURES,
                                  state.current_max_depth;
                                  action_space=gw_action_space)
-        new_g.id == gid && return 0   # no positive-VOI feature → no-op
+        new_g.id == gid && return (n_added = 0, applied_replacement = false)   # no positive-VOI feature → no-op
         state.grammars[new_g.id] = new_g
         n_added = add_programs_to_state!(state, new_g, state.current_max_depth;
             observations=explore_buffer,
             action_space=gw_action_space, include_temporal=include_temporal)
         reset_learning_regime!(state)
         verbose && println("  [Meta: add_feature → grammar $gid→$(new_g.id) (feature acquired), +$n_added components]")
-        return n_added
+        return (n_added = n_added, applied_replacement = false)
     end
-    0
+    (n_added = 0, applied_replacement = false)
 end
 
 # ═══════════════════════════════════════
@@ -586,8 +601,9 @@ function run_agent(;
                 chosen = meta_policy(scored, step)::Symbol
                 chosen == :gw_do_nothing && break
 
-                n_added_meta = execute_gw_meta_action!(state, chosen, explore_buffer;
+                meta_result = execute_gw_meta_action!(state, chosen, explore_buffer;
                     include_temporal=include_temporal, verbose=verbose)
+                n_added_meta = meta_result.n_added
                 chosen in (:gw_explore, :gw_add_feature) && (cache_epoch += 1)
                 meta_actions_taken += 1
 
@@ -595,12 +611,15 @@ function run_agent(;
                 # BEFORE prune/truncate (they may drop the very components), conditioned into the
                 # returns belief at the context the op fired under. The op's own effect then
                 # bumps the space epoch — other ops see a changed space; the op itself does not
-                # (its post-fire epoch is recorded post-bump).
+                # (its post-fire epoch is recorded post-bump). An applied replacement changes the
+                # space while adding ZERO components (re-description), so it carries its own
+                # trigger (removal-consumption design §2).
                 if chosen in (:gw_enumerate_more, :gw_deepen)
                     y = injection_yield_nats(state, n_added_meta)
                     observe_yield!(growth_returns, chosen, changed[chosen], y)
                 end
-                (n_added_meta > 0 || chosen == :gw_deepen) && (space_epoch += 1)
+                (n_added_meta > 0 || chosen == :gw_deepen ||
+                 meta_result.applied_replacement) && (space_epoch += 1)
                 chosen in (:gw_enumerate_more, :gw_deepen) &&
                     (last_fire_epoch[chosen] = space_epoch)
 
