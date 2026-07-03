@@ -111,6 +111,185 @@ function top_k_grammar_ids(state::AgentState, k::Int)::Vector{Int}
 end
 
 # ═══════════════════════════════════════
+# Replacement semantics — removal consumption
+# (docs/exploration-budget/removal-consumption-design.md; the #189 deviation-3 discharge)
+#
+# The state-aware half of the replacement path. The declared candidate type (`ReplacementCandidate`)
+# lives in perturbation.jl beside its sibling `PerturbationCandidate`; the functions live HERE because
+# they take `AgentState`, which is defined after perturbation.jl loads (a residence constraint, not a
+# design choice — the design doc's §2 places them in perturbation.jl).
+# ═══════════════════════════════════════
+
+"""
+    replacement_candidates(state, gid) → Vector{ReplacementCandidate}
+
+The SOUND, group-local, live-state dead-item enumeration (removal-consumption design §2, the
+Move-1 OQ-4 discharge). Reference sets are collected over **every** component of group
+`G = {i : metadata[i] = (gid, ·)}` — NO weight cut of any kind — unioned with the grammar's own
+rule bodies (the #174 transitive device), via the existing full-depth `collect_nonterminal_refs!` /
+`collect_feature_refs!` walks. A rule/feature is a candidate iff NOTHING in the group references it.
+
+Why not the `SubprogramFrequencyTable`'s reference sets: that walk cuts support at `w > 1e-15` — a
+*value*-appropriate screen but not a soundness guarantee (post-prune live components can sit below
+it: prune keeps relative-to-max mass > e⁻³⁰ while normalisation divides by the full component
+count). Re-keying a component whose program references the removed item would put a program outside
+its grammar's language — unsound, not merely suboptimal — so the soundness predicate is exact and
+does not share a representation with the frequency estimate (Invariant 3). Group-local is also
+*sharper*: a feature referenced only by another grammar's programs is dead FOR THIS grammar.
+Asserted by test_replacement.jl §3 (the sub-1e-15 case that defeats the table-based check).
+
+Feature candidates are sorted for a deterministic vector (the `_feature_removal_payoff` discipline).
+"""
+function replacement_candidates(state::AgentState, gid::Int)::Vector{ReplacementCandidate}
+    haskey(state.grammars, gid) || return ReplacementCandidate[]
+    g = state.grammars[gid]
+    nt_refs = Set{Symbol}()
+    feat_refs = Set{Symbol}()
+    for i in eachindex(state.metadata)
+        state.metadata[i][1] == gid || continue
+        collect_nonterminal_refs!(nt_refs, state.all_programs[i].expr)
+        collect_feature_refs!(feat_refs, state.all_programs[i].expr)
+    end
+    for r in g.rules
+        collect_nonterminal_refs!(nt_refs, r.body)
+        collect_feature_refs!(feat_refs, r.body)
+    end
+    cands = ReplacementCandidate[]
+    for r in g.rules
+        r.name in nt_refs && continue
+        push!(cands, ReplacementCandidate(:remove_rule, r, 1 + expr_complexity(r.body), gid))
+    end
+    for f in sort(collect(g.feature_set))
+        f in feat_refs && continue
+        push!(cands, ReplacementCandidate(:remove_feature, f, 1, gid))
+    end
+    cands
+end
+
+"""
+    _cleaned_grammar_parts(g, cand) → (feature_set, rules, thresholds)
+
+The candidate's edit as grammar-constructor data — the SINGLE home of the cleaning arithmetic,
+shared by `_replacement_delta` (the score's Δ) and `replace_grammar_in_state!` (the transition's
+`g′`), so the priced edit and the applied edit cannot drift (T-3.55). Thresholds are threaded
+through (the Move-3 grid-survival discipline): `:remove_rule` keeps every grid; `:remove_feature`
+drops exactly the dead feature's grid. A fresh Dict per call (grids shared by reference, the
+`_add_feature` idiom) so the successor never aliases the consumed grammar's Dict.
+"""
+function _cleaned_grammar_parts(g::Grammar, cand::ReplacementCandidate)
+    if cand.kind === :remove_rule
+        name = (cand.payload::ProductionRule).name
+        (g.feature_set, [r for r in g.rules if r.name != name],
+         Dict{Symbol, Vector{Float64}}(f => grid for (f, grid) in g.thresholds))
+    elseif cand.kind === :remove_feature
+        feat = cand.payload::Symbol
+        (Set(f for f in g.feature_set if f != feat), g.rules,
+         Dict{Symbol, Vector{Float64}}(f => grid for (f, grid) in g.thresholds if f != feat))
+    else
+        error("unknown ReplacementCandidate kind: $(cand.kind)")
+    end
+end
+
+# Δ = λ·(complexity(g) − complexity(g′)) in nats, λ pinned to log 2 (SPEC §1.3) — computed from the
+# two ACTUAL complexities (the same `compute_grammar_complexity` the Grammar constructor uses), never
+# from the candidate's assumed payoff. `payoff_symbols == Δ/λ` by the MDL arithmetic; the score and
+# the transition both route through this, so they agree bit-for-bit with the constructed `g′`.
+function _replacement_delta(g::Grammar, cand::ReplacementCandidate)::Float64
+    (nf, nr, _) = _cleaned_grammar_parts(g, cand)
+    log(2.0) * (g.complexity - compute_grammar_complexity(nf, nr))
+end
+
+# Total order for the deterministic argmax: (1) larger reclaim (score-monotone: all of a gid's
+# candidates share W_G, and the score is increasing in Δ); (2) on a tie, lexicographically smaller
+# name (version-stable, the `_candidate_better` discipline). test_replacement.jl §5.
+_replacement_name(c::ReplacementCandidate) =
+    c.kind === :remove_rule ? string((c.payload::ProductionRule).name) : string(c.payload::Symbol)
+function _replacement_better(a::ReplacementCandidate, b::ReplacementCandidate)
+    a.payoff_symbols != b.payoff_symbols && return a.payoff_symbols > b.payoff_symbols
+    return _replacement_name(a) < _replacement_name(b)
+end
+
+"""
+    best_replacement(state, gid) → Union{ReplacementCandidate, Nothing}
+
+The deterministic argmax over `replacement_candidates(state, gid)` (see `_replacement_better`), or
+`nothing` when the grammar has no dead item — the consumed-grammar/no-op signal. Both the score
+(`replacement_value`) and the host's transition route through this, so the scored candidate IS the
+applied candidate (T-3.55; test_replacement.jl §5 pins `===` across calls).
+"""
+function best_replacement(state::AgentState, gid::Int)::Union{ReplacementCandidate, Nothing}
+    best = nothing
+    for c in replacement_candidates(state, gid)
+        (best === nothing || _replacement_better(c, best)) && (best = c)
+    end
+    best
+end
+
+"""
+    replacement_value(state, gid; compute_cost = 0.0) → Float64
+
+The realised Δ log-evidence of firing the best replacement, against the current posterior
+(removal-consumption design §1):
+
+    net_value(log1p((e^Δ − 1)·W_G), compute_cost),    W_G = posterior mass of group G
+
+with `W_G` read canalised as `probability(state.belief, TagSet(group tags))` (the Prevision-level
+mass read). Exactly the log-evidence the transition realises (test_replacement.jl §4 measures the
+equality); the prior-only `net_voc` surrogate is this score's `W_G → 1` limit and overstates by the
+mass the group does not hold — the exact form self-extinguishes on zombie lineages (`W_G → 0`).
+`0.0` when the grammar has no dead item (the no-op is worth nothing; the host's act-now floor is
+strict, so a 0.0 never fires).
+"""
+function replacement_value(state::AgentState, gid::Int; compute_cost::Float64 = 0.0)::Float64
+    cand = best_replacement(state, gid)
+    cand === nothing && return 0.0
+    delta = _replacement_delta(state.grammars[gid], cand)
+    tags = Set(i for i in eachindex(state.metadata) if state.metadata[i][1] == gid)
+    mass = Ontology.probability(state.belief, Ontology.TagSet(Ontology.Interval(0.0, 1.0), tags))
+    net_value(log1p((exp(delta) - 1.0) * mass), compute_cost)
+end
+
+"""
+    replace_grammar_in_state!(state, cand::ReplacementCandidate) → Grammar
+
+Apply a replacement: build `g′` from the candidate (thresholds threaded), re-key group `G`'s
+metadata to `g′.id`, shift the group's log-weights by `Δ = λ·(complexity(g) − complexity(g′))`,
+delete the consumed grammar from the registry, register `g′`. Tags, Beta posteriors, kernels and
+programs are untouched — strictly less invasive than `sync_prune!`. Returns `g′`.
+
+**This is the constitutional write** (`coherent-space-edit` precedent, docs/precedents.md): a
+mixture log-weight write outside `condition`, legal because it is the UNIQUE map under which
+replacement commutes with conditioning. Derivation (removal-consumption design §1): every live
+component of `G` has a program expressible unchanged in `g′` (that is what *dead* means, under
+`replacement_candidates`' sound walk) with an identical compiled kernel, hence identical likelihood
+on the entire observation history; the counterfactual agent that started with `g′` in place of `g`
+therefore holds, after the same history, exactly `lw′ᵢ = lwᵢ + Δ·1[i ∈ G]` — every likelihood term
+cancels in the ratio and only the grammar-complexity prior term differs. Exact for the FULL history
+(no window replay needed — stronger than injection's two-ledger construction, because here the
+likelihoods cancel identically). The commutation equality is asserted by **test_replacement.jl §1**
+(the precedent's named test). The `MixturePrevision` constructor re-normalises; the shift is
+cross-group, which is the point — the group's reclaim is realised against everyone else's mass.
+"""
+function replace_grammar_in_state!(state::AgentState, cand::ReplacementCandidate)::Grammar
+    haskey(state.grammars, cand.gid) ||
+        error("replace_grammar_in_state!: grammar $(cand.gid) is not registered (stale candidate?)")
+    g = state.grammars[cand.gid]
+    (nf, nr, nt) = _cleaned_grammar_parts(g, cand)
+    g2 = Grammar(nf, nr, nt, next_grammar_id())
+    delta = log(2.0) * (g.complexity - g2.complexity)   # == _replacement_delta (same arithmetic)
+    lw = copy(state.belief.log_weights)
+    for i in eachindex(state.metadata)
+        state.metadata[i][1] == cand.gid || continue
+        state.metadata[i] = (g2.id, state.metadata[i][2])
+        lw[i] += delta
+    end
+    state.belief = Ontology.MixturePrevision(state.belief.components, lw)
+    delete!(state.grammars, cand.gid)
+    state.grammars[g2.id] = g2
+    g2
+end
+
+# ═══════════════════════════════════════
 # Add programs to state (with deduplication)
 # ═══════════════════════════════════════
 
