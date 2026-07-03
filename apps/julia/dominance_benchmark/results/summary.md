@@ -4,27 +4,48 @@ Task: `[:colour_typed, :motion_typed, :territorial]`, regime changes at `[70, 14
 
 | policy | mean AUC | mean final-window rate | mean steps-to-half | mean meta-actions |
 |---|---|---|---|---|
-| clairvoyant | 47.59 | 0.875 | 51.8 | 32.2 |
-| eu_max | 47.23 | 0.881 | 52.1 | 26.1 |
-| fixed_k10 | 49.21 | 0.875 | 73.8 | 21.0 |
-| fixed_k25 | 51.23 | 0.518 | 62.0 | 8.0 |
-| fixed_k5 | 51.06 | 0.899 | 64.1 | 42.0 |
-| fixed_k50 | 48.61 | 0.792 | 62.3 | 4.0 |
+| clairvoyant | 47.59 | 0.875 | 51.8 | 33.0 |
+| eu_max | 47.23 | 0.881 | 52.1 | 27.0 |
+| fixed_k10 | 48.22 | 0.72 | 67.6 | 21.0 |
+| fixed_k25 | 50.51 | 0.488 | 52.8 | 8.0 |
+| fixed_k5 | 48.49 | 0.667 | 57.6 | 42.0 |
+| fixed_k50 | 49.79 | 0.869 | 76.8 | 4.0 |
 | never_explore | 47.11 | 0.125 | 28.9 | 2.0 |
-| random_p005 | 49.96 | 0.583 | 101.0 | 12.3 |
-| random_p015 | 48.45 | 0.887 | 72.2 | 37.7 |
-| random_p04 | 49.07 | 0.696 | 51.4 | 131.0 |
+| random_p005 | 51.08 | 1.006 | 86.6 | 12.3 |
+| random_p015 | 49.71 | 0.875 | 85.9 | 37.7 |
+| random_p04 | 46.65 | 0.75 | 51.6 | 131.0 |
 
 ## Paired gaps (eu_max − baseline; efficiency = steps to the shared per-seed
 level, sign-flipped so + favours eu_max — belief-derived-valuation §2c)
 
 | baseline | AUC gap [95% CI] | final-window gap [95% CI] | efficiency gap [95% CI] | worst-seed AUC gap |
 |---|---|---|---|---|
-| random_p005 | -2.72 [-6.84, 1.44] | 0.298 [-0.274, 0.863] | -3.2 [-12.4, 5.6] | -16.6 |
-| fixed_k25 | -4.0 [-7.15, -0.8] | 0.363 [-0.095, 0.839] | -5.6 [-14.9, 3.6] | -19.67 |
-| never_explore | 0.12 [-2.86, 3.0] | 0.756 [0.363, 1.125] | 12.0 [3.0, 21.6] | -16.19 |
+| random_p005 | -3.85 [-8.15, 0.54] | -0.125 [-0.625, 0.363] | -3.6 [-13.2, 5.6] | -20.81 |
+| fixed_k25 | -3.28 [-6.3, -0.35] | 0.393 [-0.071, 0.857] | -2.1 [-10.2, 5.6] | -19.67 |
+| never_explore | 0.12 [-2.86, 3.0] | 0.756 [0.363, 1.125] | 11.4 [2.4, 21.0] | -16.19 |
 
 `eu_max − never_explore` is the headline: the learned-returns escape ops are identical on both sides, so this gap is exploration's isolated value.
+
+## Alternative dominance measures (reported, not asserted)
+
+Complementary dominance notions on the same per-seed paired gaps: per-seed win
+rate with an exact two-sided sign test (distribution-free — robust to the
+winner's-curse outlier seeds the mean bootstrap is sensitive to), the median
+gap, the 10th-percentile gap (tail regret softer than minimax), and the
+final-regime rate (converged behaviour: AUC charges exploration's tuition over
+the whole run; this reads what it bought after the last change).
+
+| baseline | metric | mean gap | median gap | win rate | sign-test p | q10 gap |
+|---|---|---|---|---|---|---|
+| random_p005 | AUC | -3.848 | -4.464 | 7–13 of 20 | 0.2632 | -16.595 |
+| random_p005 | final-window rate | -0.125 | -0.357 | 9–11 of 20 | 0.8238 | -1.786 |
+| random_p005 | final-regime rate | -0.074 | -0.423 | 9–11 of 20 | 0.8238 | -1.127 |
+| fixed_k25 | AUC | -3.276 | -2.393 | 6–14 of 20 | 0.1153 | -14.857 |
+| fixed_k25 | final-window rate | 0.393 | 0.476 | 12–8 of 20 | 0.5034 | -1.071 |
+| fixed_k25 | final-regime rate | 0.225 | 0.317 | 13–7 of 20 | 0.2632 | -0.775 |
+| never_explore | AUC | 0.121 | 0.143 | 10–10 of 20 | 1.0 | -10.595 |
+| never_explore | final-window rate | 0.756 | 0.774 | 15–2 of 20 | 0.0023 | -0.476 |
+| never_explore | final-regime rate | 0.627 | 0.599 | 18–2 of 20 | 0.0004 | -0.07 |
 
 ## Behaviour-verified inversions
 
