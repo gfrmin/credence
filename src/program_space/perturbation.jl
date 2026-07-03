@@ -377,6 +377,23 @@ function _candidate_better(a::PerturbationCandidate, b::PerturbationCandidate)
 end
 _pick_better(best, cand) = (best === nothing || _candidate_better(cand, best)) ? cand : best
 
+# A replacement candidate — a kind-tagged removal-class grammar edit with REPLACEMENT semantics
+# (docs/exploration-budget/removal-consumption-design.md §2): the cleaned grammar replaces its
+# ancestor, re-keying the ancestor's components and realising the MDL reclaim in their weights.
+# First-class declared type (Invariant 2), mirroring `PerturbationCandidate`. `payload` is the typed
+# edit target — the dead `ProductionRule` (`:remove_rule`) or the dead feature `Symbol`
+# (`:remove_feature`); `payoff_symbols` the description-length reclaim; `gid` the ancestor grammar.
+# Constructed only by `replacement_candidates` (agent_state.jl — the state-aware walk needs
+# `AgentState`, defined after this file loads); ONE candidate object feeds both the score
+# (`replacement_value`) and the transition (`replace_grammar_in_state!`) — T-3.55 score/transition
+# unity by construction, pinned by test_replacement.jl §5.
+struct ReplacementCandidate
+    kind::Symbol                              # :remove_rule | :remove_feature
+    payload::Union{ProductionRule, Symbol}    # rule (:remove_rule) | feature (:remove_feature)
+    payoff_symbols::Int                       # description-length reclaim (== Δcomplexity, asserted §5)
+    gid::Int                                  # the ancestor grammar this candidate consumes
+end
+
 """
     _best_compression_candidate(g, freq_table; compute_cost = 0.0) → Union{Nothing, PerturbationCandidate}
 
