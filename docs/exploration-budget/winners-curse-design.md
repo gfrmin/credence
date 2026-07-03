@@ -115,6 +115,22 @@ metareasoned fidelity knob (T-3.53), an existing discipline, not a new cap. If a
 it dear, the legitimate exit is an approximation *to this object* selected by the compute
 cascade — never a different quantity.
 
+**What this move does not touch — the fixed horizon (recorded stationarity assumption).** The
+`× H` multiplier is deliberately left unchanged: with an honest, shrunk `flow`, the horizon no
+longer over-amplifies a chance window (the flow sits at zero-or-negative there and no multiplier
+rescues it), so the winner's-curse scope ends at what flows *into* `growth_value`. But `H ≈ 200`
+is a **gain-stationarity assumption wearing a constant's clothes**: `flow · H` asserts that the
+per-event gain just measured persists for two hundred events, and in a changing world a regime
+change invalidates the feature long before the horizon elapses — every discovery is over-valued
+by the ratio of the fixed horizon to the expected time-until-it-stops-paying. Whether `H` is a
+hardcoded scalar or a host-given task length does not change the conclusion: the correct
+multiplier is the **effective horizon**, `E[events until the next change-point]`, which is
+belief-derived, not stipulated. That is the seam where the deferred ρ-as-latent / change-point
+machinery attaches — the same anti-stipulation discipline as this document, one level up (regime
+as latent structure, marginal likelihood adjudicating switches, horizon falling out of the change
+belief rather than a constant). Recorded here as the named successor residual so the fixed `H`
+cannot ossify into received truth; this move is not held for it.
+
 ## 2. Files touched
 
 - **`src/program_space/exploration.jl`** (modification; net **negative** or near-zero lines —
