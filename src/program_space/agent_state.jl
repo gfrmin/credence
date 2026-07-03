@@ -369,39 +369,165 @@ function add_programs_to_state!(
         push!(new_progs, p)
     end
 
-    if !isempty(new_components)
-        # Coherent injection: replay the evidence window through the newcomers-only mixture
-        # via Tier-1 condition, then restore the cross-group scale (docstring above; the
-        # constructor normalises, so the replay's and the incumbents' normalisation
-        # constants are re-applied via the two ledgers).
-        if !isempty(observations)
-            # De-normalisation ledger: the newcomers' prior normaliser + every replay-step
-            # predictive (accumulated BEFORE each condition, prequentially).
-            denorm = Ontology.logsumexp(new_lw)
-            nm = Ontology.MixturePrevision(Prevision[new_components...], new_lw)
-            for obs in observations
-                k = program_space_observation_kernel(new_ck, obs.features,
-                                                     obs.temporal_state, obs.correct_actions)
-                denorm += Ontology.log_predictive(nm, k, 1.0)
-                nm = Ontology.condition(nm, k, 1.0)
-            end
-            # Incumbent ledger: the surprises the live trajectory recorded are exactly the
-            # normalisers its weights absorbed over the same window.
-            ledger = sum(obs.residual for obs in observations)
-            new_components = TaggedBetaPrevision[c for c in nm.components]
-            new_lw = nm.log_weights .+ (denorm + ledger)
-        end
-        offset = length(state.compiled_kernels)
-        retagged = TaggedBetaPrevision[Ontology.TaggedBetaPrevision(offset + i, c.beta)
-                                       for (i, c) in enumerate(new_components)]
-        all_comps = Prevision[state.belief.components..., retagged...]
-        all_lw = Float64[state.belief.log_weights..., new_lw...]
-        state.belief = Ontology.MixturePrevision(all_comps, all_lw)
-        append!(state.metadata, new_meta)
-        append!(state.compiled_kernels, new_ck)
-        append!(state.all_programs, new_progs)
-    end
+    isempty(new_components) ||
+        _inject_coherently!(state, new_components, new_lw, new_meta, new_ck, new_progs,
+                            observations)
     n_added
+end
+
+# The shared injection arithmetic (extracted verbatim from the single-grammar method above;
+# both entry points differ only in how they COLLECT newcomers — dedup scope — never in how
+# they inject). Replays the window through the newcomers-only mixture via Tier-1 condition,
+# then restores the cross-group scale via the two ledgers (see the docstring above); appends
+# to the parallel arrays under the re-tag discipline.
+function _inject_coherently!(
+    state::AgentState,
+    new_components::Vector{TaggedBetaPrevision},
+    new_lw::Vector{Float64},
+    new_meta::Vector{Tuple{Int, Int}},
+    new_ck::Vector{CompiledKernel},
+    new_progs::Vector{Program},
+    observations::Vector{ExploreObservation}
+)
+    # Coherent injection: replay the evidence window through the newcomers-only mixture
+    # via Tier-1 condition, then restore the cross-group scale (the constructor normalises,
+    # so the replay's and the incumbents' normalisation constants are re-applied via the
+    # two ledgers).
+    if !isempty(observations)
+        # De-normalisation ledger: the newcomers' prior normaliser + every replay-step
+        # predictive (accumulated BEFORE each condition, prequentially).
+        denorm = Ontology.logsumexp(new_lw)
+        nm = Ontology.MixturePrevision(Prevision[new_components...], new_lw)
+        for obs in observations
+            k = program_space_observation_kernel(new_ck, obs.features,
+                                                 obs.temporal_state, obs.correct_actions)
+            denorm += Ontology.log_predictive(nm, k, 1.0)
+            nm = Ontology.condition(nm, k, 1.0)
+        end
+        # Incumbent ledger: the surprises the live trajectory recorded are exactly the
+        # normalisers its weights absorbed over the same window.
+        ledger = sum(obs.residual for obs in observations)
+        new_components = TaggedBetaPrevision[c for c in nm.components]
+        new_lw = nm.log_weights .+ (denorm + ledger)
+    end
+    offset = length(state.compiled_kernels)
+    retagged = TaggedBetaPrevision[Ontology.TaggedBetaPrevision(offset + i, c.beta)
+                                   for (i, c) in enumerate(new_components)]
+    all_comps = Prevision[state.belief.components..., retagged...]
+    all_lw = Float64[state.belief.log_weights..., new_lw...]
+    state.belief = Ontology.MixturePrevision(all_comps, all_lw)
+    append!(state.metadata, new_meta)
+    append!(state.compiled_kernels, new_ck)
+    append!(state.all_programs, new_progs)
+    state
+end
+
+"""
+    add_programs_to_state!(state, grammars::Vector{Grammar}, max_depth; observations, ...) → Int
+
+The UNION injection (winners-curse design §1): enumerate every candidate grammar, collect the
+deduped union of their genuinely-new programs, and inject them as ONE coherent injection — one
+newcomers-only replay, one two-ledger scale restoration, one construction. This is the virtual
+transition the growth lookahead scores and, on a fire, adopts.
+
+Dedup scope differs from the single-grammar method, deliberately: the union dedups by
+expression GLOBALLY — against every incumbent program (any grammar) and across the candidates
+(first occurrence in the given order wins). Sibling candidates are all derived from one
+incumbent and share most of their language; an expr-equal program is the same hypothesis (the
+same compiled kernel), and injecting it once per sibling would multiply one hypothesis's prior
+mass by K — exactly the double-count the mixture's multiplicity pricing forbids. The
+single-grammar method keeps its per-grammar-id dedup (re-enumeration of independently DECLARED
+grammars is a different situation: those duplicates are distinct BMA members by declaration).
+
+Candidate grammars must already be registered in `state.grammars` (the yield read and the
+parallel-array discipline need them). One joint injection — not K sequential calls — is
+load-bearing for exactness: `MixturePrevision` normalises on construction, so sequential
+injections against the same window would misalign each later group's ledger by the earlier
+groups' normalisation shifts; the joint replay has no such drift. Commutation is inherited
+from the single-injection theorem (test_virtual_injection.jl §5 asserts it for this method).
+
+Returns the count of programs added (the union size after dedup).
+"""
+function add_programs_to_state!(
+    state::AgentState,
+    grammars::Vector{Grammar},
+    max_depth::Int;
+    observations::Vector{ExploreObservation},
+    action_space::Vector{Symbol}=Symbol[:classify],
+    min_log_prior::Float64=-20.0,
+    include_temporal::Bool=false
+)::Int
+    for g in grammars
+        haskey(state.grammars, g.id) ||
+            error("union injection requires candidate grammar $(g.id) registered in state.grammars")
+    end
+
+    # Global dedup base: every incumbent expression, any grammar.
+    existing_exprs = [p.expr for p in state.all_programs]
+
+    n_added = 0
+    new_components = TaggedBetaPrevision[]
+    new_lw = Float64[]
+    new_meta = Tuple{Int, Int}[]
+    new_ck = CompiledKernel[]
+    new_progs = Program[]
+
+    for g in grammars
+        programs = enumerate_programs(g, max_depth;
+                                      action_space=action_space,
+                                      min_log_prior=min_log_prior,
+                                      include_temporal=include_temporal)
+        for (pi, p) in enumerate(programs)
+            any(e -> expr_equal(e, p.expr), existing_exprs) && continue
+            any(q -> expr_equal(q.expr, p.expr), new_progs) && continue
+            n_added += 1
+            push!(new_components, Ontology.TaggedBetaPrevision(
+                n_added, Ontology.BetaPrevision(1.0, 1.0)))
+            push!(new_lw, complexity_logprior(g.complexity; λ = log(2)) +
+                          complexity_logprior(p.complexity; λ = log(2)))
+            push!(new_meta, (g.id, pi))
+            push!(new_ck, compile_kernel(p, g, pi))
+            push!(new_progs, p)
+        end
+    end
+
+    isempty(new_components) ||
+        _inject_coherently!(state, new_components, new_lw, new_meta, new_ck, new_progs,
+                            observations)
+    n_added
+end
+
+"""
+    copy_agent_state(state) → AgentState
+
+The scratch copy the virtual injection mutates: fresh parallel arrays and grammar Dict (the
+mutable containers), shared immutable leaves (the belief, Programs, CompiledKernels — every
+in-place mutation in this file goes through `append!`/rebinding on the containers, never
+through the leaves). The live state and the scratch evolve independently after the copy.
+"""
+copy_agent_state(state::AgentState) =
+    AgentState(state.belief, copy(state.metadata), copy(state.compiled_kernels),
+               copy(state.all_programs), copy(state.grammars), state.current_max_depth,
+               state.learning_regime, state.last_residual)
+
+"""
+    adopt!(state, scratch) → state
+
+The growth-op transition (winners-curse design §1, FIRE): the scored scratch BECOMES the live
+state — a field swap, zero recompute. The belief the score priced is, by identity (`===`), the
+belief the agent now holds: score ≡ transition holds by construction, not by a shared candidate
+function (T-3.55 as an identity; test_virtual_injection.jl §1).
+"""
+function adopt!(state::AgentState, scratch::AgentState)
+    state.belief = scratch.belief
+    state.metadata = scratch.metadata
+    state.compiled_kernels = scratch.compiled_kernels
+    state.all_programs = scratch.all_programs
+    state.grammars = scratch.grammars
+    state.current_max_depth = scratch.current_max_depth
+    state.learning_regime = scratch.learning_regime
+    state.last_residual = scratch.last_residual
+    state
 end
 
 # ═══════════════════════════════════════

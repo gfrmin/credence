@@ -89,8 +89,9 @@ export enumerate_programs, enumerate_programs_as_measure
 export compile_kernel, compile_expr, evaluate_predicate
 export analyse_posterior_subtrees, extract_subtrees
 export propose_nonterminal, perturb_grammar, net_voc, compression_exhausted, perturbation_voc
-export ExploreObservation, explore_grammar, explore_features, program_space_observation_kernel, default_thresholds
-export exploration_voi, feature_discovery_voi, exploration_fit, feature_discovery_fit
+export ExploreObservation, program_space_observation_kernel, default_thresholds
+export GrowthProposal, threshold_growth_proposal, feature_growth_proposal
+export copy_agent_state, adopt!
 export GrowthReturns, observe_yield!, escape_score, injection_yield_nats
 export expr_equal
 export AgentState, sync_prune!, sync_truncate!, reset_learning_regime!
