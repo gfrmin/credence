@@ -3,7 +3,8 @@
 # "behaviour shift is intended"): every score is a posterior expectation or declared data.
 #
 # What survives from the dominance gate structure, re-asserted in the new valuation:
-#   - compression stays SOFT: perturbation_voc competes at its prior-only score, no veto (§1);
+#   - compression stays SOFT: perturb competes at its exact replacement value, no veto (§1 —
+#     re-baselined by the removal-consumption move: the #189 -Inf provisional pin retired);
 #   - threshold_exhausted stays HARD on :gw_add_feature, gating on FIT (attribution is a
 #     measurement concern, valuation-independent) (§3);
 #   - the act-now floor and the GW_META_ACTIONS tie order (§6).
@@ -15,8 +16,9 @@
 #     decays under zero-yield evidence (§5).
 #
 # Sections:
-#   §1  compressible state, empty buffer — perturb -Inf at the seam (provisional; engine voc
-#       still prices the reclaim); explore exactly 0.
+#   §1  compressible state, empty buffer — perturb scores its exact replacement value at the
+#       seam (removal-consumption re-entry: score == the engine's replacement_value on the top
+#       grammar — one candidate function, T-3.55); explore exactly 0.
 #   §2  fresh returns prior — escape scores prior-optimism − price at BOTH contexts; a
 #       zero-yield-collapsed cell loses to the do-nothing floor (the entropy score never did).
 #   §3  refinable buffer — explore == growth_value(fit, n, plateau, H); horizon scaling exact;
@@ -36,7 +38,7 @@ using Credence: Grammar, ProductionRule, Program, FeatureRef, GTExpr, AndExpr, I
                 compile_kernel, update_learning_regime, plateau_probability,
                 analyse_posterior_subtrees, compression_exhausted, ExploreObservation,
                 exploration_voi, exploration_fit, feature_discovery_voi, feature_discovery_fit,
-                perturbation_voc, growth_value, weights,
+                growth_value, weights, best_replacement, replacement_value,
                 GrowthReturns, observe_yield!, escape_score
 
 include(joinpath(@__DIR__, "..", "apps", "julia", "grid_world", "host.jl"))
@@ -80,21 +82,22 @@ println("="^64)
 println("grid-world meta scores — belief-derived valuation")
 println("="^64)
 
-# ── §1  compressible state, empty buffer: perturb scores its REAL prior-only VOC ──
+# ── §1  compressible state, empty buffer: perturb scores its exact replacement value ──
 let
     state = compressible_state()
-    ft = analyse_posterior_subtrees(state.all_programs, weights(state.belief);
-                                    min_frequency = 0.01, min_complexity = 2)
-    check("§1 precondition: compression NOT exhausted (dead rule present)",
-          compression_exhausted(state.grammars[1], ft) == false)
+    check("§1 precondition: the dead rule is a replacement candidate",
+          best_replacement(state, 1) !== nothing)
 
     scored = score_gw_meta_actions(state, ExploreObservation[], fresh_returns(), allchanged())
-    # PROVISIONAL pin (see host.jl): perturb is out of the argmax pending the removal-consumption
-    # redesign; the engine's voc accessor itself still prices the reclaim (asserted directly).
-    check("§1 :gw_perturb_grammar == -Inf at the seam (provisional exclusion)",
-          scored[:gw_perturb_grammar] == -Inf)
-    check("§1 the engine's perturbation_voc still prices the reclaim (> 0)",
-          perturbation_voc(state.grammars[1], ft) > 0.0)
+    # Removal-consumption re-entry (the #189 deviation-3 discharge): perturb competes at the
+    # exact realised Δ log-evidence of consuming the top grammar's dead item, net of the declared
+    # price — the same candidate function the executor applies (score = transition, T-3.55).
+    check("§1 :gw_perturb_grammar == replacement_value at the seam (max over top-k gids)",
+          scored[:gw_perturb_grammar] ==
+          replacement_value(state, 1; compute_cost = GW_OP_COMPUTE_COST_DEFAULT),
+          "scored=$(scored[:gw_perturb_grammar])")
+    check("§1 the reclaim is positive (a 2-symbol dead rule at W_G = 1 outbids the one-bit price)",
+          scored[:gw_perturb_grammar] > 0.0, "scored=$(scored[:gw_perturb_grammar])")
     # Empty buffer ⇒ the exact lookahead has nothing to price ⇒ exactly 0, NOT a veto (-Inf):
     # compression availability never gates exploration (#174 PR 2, re-asserted).
     check("§1 :gw_explore == 0.0 exactly on an empty buffer (no compression veto)",
