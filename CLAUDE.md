@@ -412,10 +412,13 @@ filenames.
                                   named in the slug index above.
       posture-3/, posture-4/      Per-branch master-plan.md +
                                   DESIGN-DOC-TEMPLATE.md + per-move docs.
-    papers/                       Publication drafts + PAPERS-STRATEGY.md.
     tools/credence-lint/          Precedent-slug lint; corpus self-test
                                   + `check apps/` pass run in CI.
     data/                         Eval output artefacts (gitignored).
+                                  (Publication drafts moved to
+                                  ~/git/research/credence/ — see that repo's
+                                  CLAUDE.md; its scripts read this repo's
+                                  apps/julia/qa_benchmark/ via CREDENCE_ROOT.)
     SPEC.md                       Authoritative architecture spec.
     pyproject.toml                uv workspace root (4 members under
                                   apps/python/).
