@@ -372,6 +372,13 @@ W3′ and W4′ are hours; W1′ is the phase.
 
 ## 7. Exit criteria
 
+> **DECIDED 2026-07-22 — WAIT.** All four workstreams have reported. W1′ passed
+> its pre-stated bar; the fragment route has not landed. This is the outcome the
+> spec anticipated below, reached for the anticipated reason. **Phase 1 does not
+> start.** Full results:
+> `2026-07-22-w1-prime-prestatement.md` (+ Amendments 1–2) and
+> `2026-07-22-w1-prime-results.md`.
+
 **Proceed to Phase 1** if W1′ shows `p1` discriminating on real governance
 features **and** the fragment route has landed on the wire. Both are required:
 discrimination without the fragment route means the engine reads context but
@@ -387,6 +394,74 @@ issue is the lever that schedules it.
 closes on evidence until the feature encoding changes, and Credence stays primary
 everywhere. Note this is now a verdict about *our* encoding, not about the
 engine — the engine's structural capacity is established.
+
+### 7.1 The decision as taken
+
+**WAIT**, on both required conditions:
+
+| condition | status |
+|---|---|
+| `p1` discriminates on real governance features | **met** — decision-rule outcome 3, PASS on the pre-stated bar |
+| fragment route landed on the wire | **not met** — proplang #19 open, no disposition |
+
+**What W1′ actually established.** The engine discriminates when threat features
+are *declared to it*: p5 of 20 pinned draws = +0.001482 against a null q95 of
++0.000421, all 20 draws positive (p ≈ 1.8e-4 against the empirical null sign rate
+of 0.65). The result rests on **direction, not magnitude** — `S` spans 0.0015 to
+0.702 and 9 of 20 draws fall below the null's own maximum, so no point estimate
+from it should be quoted.
+
+**And it established something the spec did not anticipate at all**, which is the
+more consequential half. The control arm returned `S_ctl = 0.000000` on every
+draw, with a single `p1` value across 1,320 probes — because through the current
+wire, with the six waste features held, **an attack context and a benign context
+encode to a byte-identical vector.** Not "hard to separate." The same point. All
+nine threat-bearing features are projected out at the handshake by the epoch-1
+waste scope. So the third exit branch ("Stop — a verdict about our encoding") was
+nearly the right diagnosis and would have been reached for nearly the right
+reason; what the two-arm design added was the ability to say *which* of the
+engine and the encoding was at fault, instead of guessing.
+
+**The blocker list therefore grew by one, and it is ours, not proplang's.**
+Phase 1 now requires:
+
+1. **proplang #19** — the fragment route, so 0.96 is reachable over the wire.
+   Filed, open, no disposition. Not ours to close.
+2. **The namespace projection** — the threat features must cross the handshake or
+   a `said@1` shadow measures nothing. This is an epoch-1 scope decision
+   (HOSTS_PLAN 2.1) and the author's. **New: this was not in the spec.**
+
+**One live doubt carried forward.** W1′'s pass is measured at 100 training ticks.
+The post-hoc saturation sweep does not reproduce the collapse round 2 wrongly
+reported, but it does show concentration setting in — distinct `p1` falling
+44 → 42 → 12 and max `p1` climbing 0.746 → 0.776 → 0.798 toward the 0.9 rung
+between 100 and 1000 ticks — while the retired live shadow, at ~95k ticks, sat at
+**two** distinct values with 98.7% at 0.9. Same direction, not yet arrived, and
+the deployment regime is unmeasured. **Any Phase-1 shadow must re-measure `S` at
+deployment tick counts rather than inherit this number.**
+
+### 7.2 Process record
+
+Worth keeping, because the phase's methodology failed twice before it worked and
+both failures were caught by the design rather than by luck:
+
+- **Round 1** fired the confound gate (`S_ctl = +0.370` vs a +0.000181 bar) and
+  both arms were discarded per the committed rule, against my stated expectation.
+  Cause: a fifth fixture artifact (`parent-tool-call-name = none`, 0.75 attack vs
+  0.006 field).
+- **Round 2** was retracted entirely: the corpus was never pinned. `corpus.field()`
+  re-read the live, growing log, so a fixed seed drew different data each run —
+  the same configuration produced 0.000311, 0.228573, and 0.566410. That bug also
+  exposed a wrong bar: a permutation null shuffles labels with the sample held
+  fixed, so it is structurally blind to sample-noise, which dominates here by
+  three orders of magnitude.
+- **Round 3** pinned the corpus (sha256 `0833f9b9…`, n = 130,799) and replaced the
+  bar with a sample-aware one requiring the 5th percentile of 20 draws to clear
+  the null.
+
+The transferable lesson is the cheap one: **pinning the seed is not pinning the
+data.** This repo's own convention already said so (`CLAUDE.md`, commit-pinned
+fixtures); it simply was not applied to a live log.
 
 ## 8. Explicitly out of scope
 
