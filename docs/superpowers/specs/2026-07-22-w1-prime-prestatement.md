@@ -173,3 +173,94 @@ and the rule are committed before the run.**
   identical statistic on the identical sample, so the comparison is valid, but
   the effect size carries that width and will be reported with the full
   distribution rather than as a point claim.
+
+---
+
+# AMENDMENT 1 (2026-07-22) — round 1 fired the confound; round 2 design
+
+**Committed BEFORE round 2 ran.** Round 1's numbers are reported in full below;
+round 2's are not yet computed.
+
+## A1.1 Round 1 result: CONFOUND, decision rule step 1
+
+    ctl arm:  S = +0.37025750    bar (own null q95) = +0.00018131
+              perm-p = 0.0164    EXCEEDS BAR -> confound fired
+              null over K=60: min -0.000470, max +0.000334
+
+Per §7 step 1 this **discards both arms**. The `wide` arm was aborted unrun at
+8/60 and its partial output deleted; no `S_wide` was computed, and none is
+reported. The rule was applied as written, against my own stated expectation
+(§7: "Outcome 3 is the one I expect"). That is what pre-stating it was for.
+
+## A1.2 Diagnosis: a fifth fixture artifact I missed
+
+`parent-tool-call-name = none` occurs in **15/20 attacks (0.75)** and in
+**0.006 of field traffic** — a ~125x enrichment. Same mechanism as findings 2's
+original four: authored red-team cases are synthetic single-call sessions with
+no parent tool call, while real traffic almost always has one. `tool-name` is
+comparatively innocent (bash 0.65 attack vs 0.586 field).
+
+**My §3 claim that `ctl` was "structurally unable to separate" was WRONG, and
+the control caught it.** I inferred it from set-overlap: all 6 encoded attack
+vectors also occur in field traffic. But set-overlap does not imply equal
+FREQUENCY — those vectors occur in benign traffic at very different rates, and a
+median is sensitive to exactly that. The overlap statistic was too weak to carry
+the claim I hung on it.
+
+## A1.3 Round 2 design — hold ALL SIX waste features
+
+The tempting fix is to add `parent-tool-call-name` to the held set. **That would
+be tuning the design until the control passes**, one feature per iteration, and
+it would leave the same question open about the next feature.
+
+Instead: hold **all six** declared waste features fixed, in both classes, in
+training and in probes, at the **ambient field operating point** (the modal value
+of each in captured traffic):
+
+    tool-name                     bash            recent-repetition-count       rep-3plus
+    working-directory-relative    project-root    recent-identical-call-count   ident-0
+    parent-tool-call-name         bash            time-since-last-user-message  gt-10m
+
+This is the **maximal non-selective choice** — there is nothing further that
+could be added — and the criterion is principled rather than reactive: the waste
+features are nuisance covariates for the threat question, not the features under
+test. It is not "hold the one that leaked"; it is "hold the entire nuisance
+space." Round 1's leak could not have selected it, because it removes every
+candidate at once.
+
+Structural consequence, verified before running:
+
+| arm | distinct attack | distinct benign | overlap |
+|---|---|---|---|
+| `ctl` | **1** | **1** | the SAME single vector |
+| `wide` | 17 | 381 | 7 |
+
+**`ctl` stops being a statistic and becomes an ASSERTION.** Attack and benign
+probes encode to a byte-identical vector, so `S_ctl` must be **exactly 0.0**. If
+it is not, the harness is broken and nothing else is reportable. This is a
+strictly stronger control than round 1's, which relied on a frequency argument I
+got wrong.
+
+`wide` remains the test, and note its overlap is 7 of 17 rather than round 1's
+zero — with the nuisance held at ambient, some attack threat-vectors do coincide
+with benign ones. Reported here so the separation is not overstated; the
+permutation null, not the overlap count, is the bar.
+
+## A1.4 What is unchanged
+
+The statistic (§4), the bar rule (§5: exceed own K=60 permutation null q95),
+the rail check (§6), and the interpretation of outcomes 2-4 (§7) all stand as
+committed at 6c52352. Only §7 step 1 changes form: "CONFOUND" becomes
+**"ASSERTION FAILURE — if `S_ctl` != 0.0 exactly, the harness is broken; report
+nothing else."**
+
+## A1.5 Harness positive control (run before round 2)
+
+proplang's own W1 synthetic stream through this PTY harness, verbatim:
+
+    p1_attack = 0.897059   p1_benign = 0.102941   S = 0.794119
+    proplang's pinned:     p1_attack = 0.897      S = 0.794119
+
+Exact to six decimals against a frozen anchor, so a null from this harness is a
+real null and not an artifact. Probe idempotence also verified: a menu-only tick
+does not condition, so sequential probing equals proplang's saved-state probing.
