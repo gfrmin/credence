@@ -180,13 +180,28 @@ revision 1 got right.
    (issue #17). At governor-corpus scale this is probably tolerable; that is a
    thing to measure, not to assume.
 
-**Interpretation.** A discriminating `p1` on real features means the engine reads
-governance context and the H post-mortem's graver finding is fully dead. A
-near-constant `p1` on real features *despite* `S = 0.794` synthetically would
-mean the governor's features carry no signal the guard families can find — a
-**feature-encoding verdict, not an engine verdict**, pointing at the adapter
-rather than at proplang. Revision 1 could not have drawn that distinction; the
-synthetic result is what makes it available.
+**Interpretation — now a three-way, not a two-way.** A discriminating `p1` on
+real features means the engine reads governance context and the H post-mortem's
+graver finding is fully dead. A near-constant `p1` *despite* `S = 0.794`
+synthetically would have meant the governor's features carry no signal the guard
+families can find — a **feature-encoding verdict, not an engine verdict**,
+pointing at the adapter rather than at proplang. Revision 1 could not have drawn
+that distinction; the synthetic result is what makes it available.
+
+**W3′ added a third arm, and it is the one that must be ruled out first.** A
+near-constant `p1` can also be **the ceiling** — the posterior saturating at
+`thetaPoints`' top rung and sitting there, which is precisely what the shadow did
+on 98.7% of 190k real governance decisions. That is neither a feature verdict nor
+an engine verdict; it is the wire's grid, and it would say nothing about the
+governor's features at all. **So W1′ must report the full `p1` distribution and
+explicitly check for rail-at-0.9 before interpreting any flat result** — a
+summary statistic alone cannot tell the three arms apart, and `S ≈ 0` is what all
+three produce. Concretely: if `p1` takes few distinct values and the modal one is
+`0.8999999999999999`, the run has measured the ceiling and the feature question
+remains open behind it. This is also the strongest argument that W1′'s bar must
+be derived from the corpus's *observed achievable* separation rather than
+assumed — the achievable separation may be capped by the grid before the features
+ever get a say.
 
 ### W2′ — The fragment route: purchase is in the library, not on the wire
 
@@ -241,23 +256,60 @@ where the bracket reads as interim and nothing is scheduled to end it. Asking a
 project to close its own open-ended interim is a stronger move than asking it to
 build something.
 
-### W3′ — Resolve the govhost binary's provenance *(housekeeping, unchanged)*
+### W3′ — Resolve the govhost binary's provenance *(no longer housekeeping)*
+
+> **DONE 2026-07-22 — `credence-governor/docs/membrane-shadow.md` §6** (items
+> 18–29), plus a dated pointer in §0 so the falsified half of the stated
+> prediction cannot be read as standing. This stopped being housekeeping the
+> moment the shadow's own output was counted.
 
 `~/.local/bin/proplang-govhost` (sha256 `96ec3de7…`, built 2026-07-10) is what
-`credence-governor`'s live shadow runs, pinned in `deploy/membrane.conf`, built
-from tag `d-close` (`6afa24f`) whose source is not on master. The source is *not*
-lost — the tag carries the full tree and the binary is rebuildable. Drift, not
-loss, exactly as revision 1's correction established.
+`credence-governor`'s live shadow runs, pinned in `deploy/membrane.conf`. Two
+corrections to what this spec previously claimed, both from re-deriving against
+proplang's current tree:
 
-The case for acting has strengthened: the shadow is now **four boundaries**
-behind (wire, W3, W4, R), and the wire it speaks (`table@1`/`latent@1`) is dead —
-current `proplang-host` accepts only `said@1` (`Host.hs:248`).
+- **The source IS on master.** `d-close` = `6afa24f`, and
+  `git merge-base --is-ancestor d-close master` returns true. Rebuild is
+  `git checkout d-close && cabal build proplang-govhost`.
+- **This is not drift — it is a deliberate upstream retirement.** Commit
+  `3eb291a` (step-3 Phase B, D3 retirements) removed the `proplang-govhost`
+  executable, `host-governor/`, and `test-govhost/` together, stating "THE
+  HOST-LESS WINDOW … in their place"; `proplang-host` arrived later (`c4aa9bb`)
+  as a *different* executable on a different wire. There is no refresh path,
+  because there is nothing to refresh it to. Wire divergence is total:
+  `Host.hs:252` accepts `said@1` and nothing else.
 
-**Deliverable:** a provenance note in `credence-governor/docs/membrane-shadow.md`
-— tag, sha256, rebuild command, wire divergence — plus an explicit keep-or-retire
-decision. Leaving it undecided is the one option to close off, because its output
-is currently being read as though it described current proplang. It does not, by
-four boundaries.
+**The field reading is the actual result, and it was not anticipated.** Over
+189,858 shadow records (94,988 `latent@1` + 94,936 `table@1`):
+
+| form | action | `p1` | `entropy_bits` | `sensitivity` |
+|---|---|---|---|---|
+| `latent@1` | `block` × **100%** | {0.9, 0.4975} | one value | `false` × 100% |
+| `table@1` | `ask` × **100%** | {0.9, 0.4975} | one value | — |
+
+`latent@1`'s stated prediction held exactly. But `table@1` — deployed and
+documented as *"the non-degenerate challenger policy the Phase-1 outcome bench
+scores"* — **is also degenerate**, because `p1` rails at `thetaPoints`' top rung
+of 0.9 and stays there. Across 190k live governance decisions the wire produced
+two `p1` values and one value of every other readout. That falsifies the premise
+of Phase 2's exit criterion: the comparison window is 95k decisions long and has
+nothing in it to compare.
+
+**Why this transfers.** `thetaPoints = 0.1 :| [0.2 … 0.9]` is byte-identical at
+`d-close` (`Enumerate.hs:95-96`) and at master (`Enumerate.hs:127`) — unchanged
+across all four boundaries. Everything else here measures a retired binary, but
+the mechanism producing the rail is the one current `proplang-host` still uses.
+**These 190k decisions are proplang issue #19 observed rather than argued**: the
+issue says the 0.9 ceiling blocks a 0.96-threshold host in principle; this is
+that block, in the field.
+
+**Decision: retire the shadow, keep the binary and the reading** (§6.3, flagged
+for the author per the register's convention). Both forms have returned their
+readings and both readings are constants; further ticks re-observe a constant
+while costing worker time, log volume, and the standing respawn-drop posture.
+Retire is a drop-in deletion + restart. The successor is not another `table@1`
+window — it is a `said@1` shadow against current `proplang-host`, which is
+Phase 1, gated on W1′ and on #19.
 
 ### W4′ — Reconcile the issue tracker with the ledger *(housekeeping)*
 
