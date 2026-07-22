@@ -1,8 +1,9 @@
 # Phase 0 — the proplang migration decision gate
 
-**Status:** revision 2, awaiting review
-**Date:** 2026-07-20, revised 2026-07-21
+**Status:** CLOSED 2026-07-22 — decision **WAIT** (§7.1). All four workstreams reported.
+**Date:** 2026-07-20, revised 2026-07-21, executed and closed 2026-07-22
 **Scope:** measurement only. This phase migrates nothing.
+**Results:** `2026-07-22-w1-prime-prestatement.md` (+ Amendments 1–2) · `2026-07-22-w1-prime-results.md`
 
 > **Revision note (2026-07-21).** Between revision 1 and this one, proplang
 > executed four boundaries — the wire opening, W3 (arity), W4 (priced grammar),
@@ -151,11 +152,36 @@ to happen.
 
 **The narrowed survivor. This is the whole phase; the rest is hours of work.**
 
-**Method.** Drive `proplang-host` over JSON-lines stdio: one `said@1` handshake,
-then tick lines carrying feature streams from the governor's captured corpus (the
-RED_TEAM / BENIGN / captured-benign split at `HOSTS_PLAN.md:376-384`). Report the
-same statistic proplang reports — `S = median p1(attack) − median p1(benign)` —
-plus full per-class distributions, not a summary alone.
+> **EXECUTED 2026-07-22 — and the method below was SUPERSEDED before it ran.**
+> The straight attack-vs-benign contrast specified here would have produced a
+> **confounded pass**: the red-team fixtures are constant on five of the six
+> features the wire can see, at values field traffic does not share, so a large
+> `S` would have meant *"synthetic fixture vs real session"* and read as success.
+> What actually ran is a two-arm matched design with a pre-stated,
+> permutation-derived, sample-aware bar. Read
+> `2026-07-22-w1-prime-prestatement.md` (+ Amendments 1–2) and
+> `2026-07-22-w1-prime-results.md` **instead of** this method paragraph; it is
+> kept for provenance, not as instructions.
+
+**Method (as originally specified — superseded, see above).** Drive
+`proplang-host` over JSON-lines stdio: one `said@1` handshake, then tick lines
+carrying feature streams from the governor's captured corpus. Report the same
+statistic proplang reports — `S = median p1(attack) − median p1(benign)` — plus
+full per-class distributions, not a summary alone.
+
+*Citation repaired:* revisions 1 and 2 cited "the RED_TEAM / BENIGN /
+captured-benign split at `HOSTS_PLAN.md:376-384`" without naming the repo, which
+made it unfindable from here — the file is **proplang's** `HOSTS_PLAN.md`, and
+the split is described at **lines 400-401**, not 376-384. (The `HOSTS_PLAN 2.1`
+citations elsewhere in these docs, for the epoch-1 waste-only scope, are correct:
+`### 2.1 Scope`, line 236.)
+
+That plan describes running the governor's `posterior_eval` harness twice over
+those corpora. The executed run did not use it. Its concrete sources were the 20
+authored cases in `credence-governor`'s `training/red_team.py`
+(`RED_TEAM_CASES`) for the attack side, and captured `tool-proposed` records
+from `~/.credence-governor/observations.jsonl` — pinned to a frozen snapshot —
+for the benign side.
 
 **Reuse their gate discipline, not their gate value.** `S ≥ 0.4` was derived as
 half the achievable separation *on a perfectly-informative synthetic stream*.
