@@ -190,7 +190,11 @@ synthetic result is what makes it available.
 
 ### W2′ — The fragment route: purchase is in the library, not on the wire
 
-**This is the new blocker. It has no issue and no ledger row of its own.**
+> **DONE 2026-07-22 — filed as [proplang#19](https://github.com/gfrmin/proplang/issues/19).**
+> Named consumer `credence-governor`, stated threshold `p* = 0.96`, classed with
+> #16. Filed with the exit-shaped ask below rather than a bare demand.
+
+**This was the new blocker. It had no issue and no ledger row of its own.**
 
 `PropLang.Purchase` and `PropLang.Lattice` are real shipped modules with real
 bodies — 24/24 green, every frozen anchor byte-stable, zero alphabet productions.
@@ -221,6 +225,22 @@ and rider notes travel to boundaries that have not been scheduled. An issue with
 a named consumer and a stated threshold is precisely what turned issue #4 into
 boundary R. Cheap, and nothing else in this phase is blocked on it.
 
+**Filed. The lever the filing actually used** was sharper than "please schedule
+this," and is worth recording for reuse. `R_SCOPE.md:190-196` brackets the
+ceiling with *"Until R closes: … hosts binding at thresholds above the ceiling
+(0.95/0.96/0.9942 registered) are OUT OF SCOPE."* **R has closed** —
+`r1-freeze-r1`, OB-9 and OB-17 both discharged. The bracket's stated condition is
+satisfied and the bracket does not lift, because what would lift it for a wire
+host is not what R1 landed. So the bracket now has no exit condition at all.
+
+The ask was therefore put as a fork, both arms usable: schedule the route (ledger
+row, target boundary, Rider 2's re-measurement homed to it), **or** re-state the
+bracket as *permanent for wire hosts* — a declared limitation with a named heir,
+in the `R-D23` shape proplang already uses. The unusable state is the current one,
+where the bracket reads as interim and nothing is scheduled to end it. Asking a
+project to close its own open-ended interim is a stronger move than asking it to
+build something.
+
 ### W3′ — Resolve the govhost binary's provenance *(housekeeping, unchanged)*
 
 `~/.local/bin/proplang-govhost` (sha256 `96ec3de7…`, built 2026-07-10) is what
@@ -240,6 +260,10 @@ is currently being read as though it described current proplang. It does not, by
 four boundaries.
 
 ### W4′ — Reconcile the issue tracker with the ledger *(housekeeping)*
+
+> **DONE 2026-07-22.** All eight closed with dispositions written. Open tracker is
+> now #7, #10–#14 (`RULING-PENDING` + stale-docs), #15–#18 (nethack-beater wire
+> defects), #19 (the fragment route). Every open issue is now genuinely open.
 
 proplang's `OBLIGATIONS.md` records eight of our fourteen issues as answered, but
 **all fourteen are still open on GitHub.** The ledger says "closes"; nothing
@@ -263,6 +287,22 @@ stay open.
 **Where a disposition is a refusal (#1 half 2, #4), the close must record the
 ground, not just the state.** Those grounds are the wire's doctrine, and we will
 be reasoning against them again.
+
+**What the closes recorded, now that they are written.** Both refusals are the
+same asymmetry in different clothing, and the pair is more instructive than
+either alone: `cgrid` — a constant grid over *declared preferences* — shipped,
+while both a grid over θ (#4) and a world-declared `P(evidence | utility-param)`
+(#1 half 2) were refused. Same mechanism, opposite direction. The line is not how
+much structure the world may declare; it is whether the declaration is about the
+world's values or about the agent's inference.
+
+#4's close states plainly that the compatibility-shaped design revision 1 was
+proudest of answered an objection nobody raised. #5's close carries its residue
+rather than closing clean: what is discharged is the structural half, and the
+real-corpus half is named as a consumer-side measurement that cannot be a
+proplang obligation — which is exactly W1′'s warrant, now on the record in
+proplang's own tracker. #8's close names #19 and #16 as its wire residue, so a
+host blocked by the myopic wire is not misled by a green ledger row.
 
 ---
 
