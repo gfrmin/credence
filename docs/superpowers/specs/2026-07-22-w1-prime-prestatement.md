@@ -264,3 +264,99 @@ proplang's own W1 synthetic stream through this PTY harness, verbatim:
 Exact to six decimals against a frozen anchor, so a null from this harness is a
 real null and not an artifact. Probe idempotence also verified: a menu-only tick
 does not condition, so sequential probing equals proplang's saved-state probing.
+
+---
+
+# AMENDMENT 2 (2026-07-22) — round 2 was contaminated; the corpus was never pinned
+
+**Committed BEFORE round 3 ran. Round 2's numbers are RETRACTED.**
+
+## A2.1 The bug
+
+`corpus.field()` re-read `~/.credence-governor/observations.jsonl` on every
+invocation and shuffled the result under a fixed seed. **The governor is live and
+that log grows.** Within this session the `tool-proposed` count went
+129,519 → 130,543 → 130,787 → 130,799. Shuffling a list whose LENGTH changes
+under a fixed seed yields a **different sample every time**, so each process drew
+a different benign train/probe set.
+
+I pinned the seed and never pinned the data. The repo's own convention says
+exactly this (`CLAUDE.md`: "Test fixtures are commit-pinned … capture fixtures
+from a specific named SHA"), and I did not apply it to a live log.
+
+## A2.2 How bad — the same "seeded" configuration, three times
+
+    gate run (round 2)   S_wide = +0.228573
+    decay sweep, N=100   S_wide = +0.000311
+    5x repeat check      S_wide = +0.566410  (5/5 bit-identical within one process)
+
+Three values spanning **0.0003 to 0.566** from a configuration that differed only
+in which benign records the log happened to hold at that moment.
+
+The engine is NOT the source: held to one sample it is **perfectly deterministic**
+(5 consecutive runs bit-identical). Everything unstable here is mine.
+
+## A2.3 What this invalidates, and one thing it does not
+
+RETRACTED: round 2's `S_wide = +0.228573`, its `perm-p`, its "54x the null max",
+the outcome-3 PASS, the 100-vs-1000-tick decay table, and both sweeps. All are
+moved to `contaminated/` and none is reported as a result.
+
+STANDS: `S_ctl = 0.000000` exactly. The control assertion holds under ANY sample,
+because with all six waste features held, attack and benign encode to a
+byte-identical vector — a structural identity, not a sampling claim. Also stands:
+the harness positive control against proplang's frozen anchor, and probe
+idempotence.
+
+## A2.4 The deeper methodological error the bug exposed
+
+The permutation null shuffles LABELS with the sample held fixed. It therefore
+measures label-noise **conditional on one draw** and is structurally blind to
+sample-noise. With 6 attack probes and 60 benign probes, sample-noise turns out
+to dominate — the spread in A2.2 is far larger than any null (max +0.004223).
+
+**A bar built only on the permutation null was the wrong bar**, independently of
+the pinning bug. It would have certified an effect whose sample-to-sample spread
+is three orders of magnitude wider than the null it was compared against.
+
+## A2.5 Round 3 design
+
+**Corpus pinned**: `field_pinned.json`, n = **130,799**, sha256
+`0833f9b9440fcecad548b81cb738cac7bf43edf275f7f727594484c36aab8337`. The loader
+asserts the count and never touches the live log again. Attack corpus is the 20
+code-derived `red_team.py` cases (stable by construction).
+
+Held features, hold values, statistic, and the rail check are UNCHANGED from
+Amendment 1.
+
+**The bar is amended to cover sample-noise.** For each of **B = 20** independent
+field draws b (distinct seeds, from the pinned pool), compute `S_wide(b)` and
+`S_ctl(b)`. Compute the K = 60 permutation null on draw b = 0.
+
+> **BAR (amended): the arm passes iff the 5th percentile of {S_wide(b)}_{b=1..20}
+> exceeds the permutation null's q95.**
+
+That is strictly stronger than the round-2 bar: the effect must clear the
+label-null not on a lucky draw but on 19 draws out of 20. A point estimate from a
+single draw is no longer sufficient for a PASS, and the full B-distribution is
+reported whatever the outcome.
+
+**Assertion (unchanged in force):** `S_ctl(b)` must be exactly 0.0 for every b.
+
+**Decision rule** as amended in A1.4, with step 3 now reading "the 5th percentile
+of the B-distribution exceeds the null q95" in place of "the real-label S exceeds
+the null q95".
+
+## A2.6 Status of the decay finding
+
+Round 2 suggested `S` collapses to 0 by 1000 training ticks. **That is retracted
+too** — both sweeps ran on drifting samples. It is additionally suspect for a
+second, independent reason: the training stream alternates attack/benign by slot
+with `t = i+1`, so `t`-parity predicts the label perfectly, and a short
+"label = `t` is odd" program can outcompete context-sensitive ones as evidence
+accumulates. Since all probes share one `t`, that alone would drive `S → 0`. The
+confound is inherited from proplang's own W1 stream, which alternates identically;
+it does not bite at their 60 ticks.
+
+Round 3 re-runs the decay check on the pinned corpus with **shuffled slot order**,
+so `t`-parity carries no label information. Reported as post-hoc, outside the gate.
