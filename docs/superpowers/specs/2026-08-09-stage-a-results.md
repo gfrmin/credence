@@ -70,7 +70,11 @@ evidence, i.e. the prior.
 > 143,036 `tool-proposed` lines. Nothing here turns on the difference; it is
 > reconciled so two adjacent merged documents do not carry two counts.
 
-Running gap against the full stream each form saw, at decide checkpoints:
+Running gap against the stream each form saw, at decide checkpoints. `latent@1`
+also receives the 8 verdict ticks (`replay_contexts` runs for **both** forms,
+`membrane.py:410-411`); they are omitted from its column because 8 further ones
+on a ~99,867-tick stream move the rate in the seventh decimal. Noted so the
+column is not read as an architecture claim.
 
 ```
 latent@1 (warm + outcome)          table@1 (warm + human)
