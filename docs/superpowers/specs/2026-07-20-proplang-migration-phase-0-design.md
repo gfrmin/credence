@@ -5,6 +5,18 @@
 **Scope:** measurement only. This phase migrates nothing.
 **Results:** `2026-07-22-w1-prime-prestatement.md` (+ Amendments 1–2) · `2026-07-22-w1-prime-results.md`
 
+> **[SUPERSEDED IN PART 2026-08-09 — read `2026-08-09-proplang-replan-post-19.md`
+> first.]** proplang closed the `#19` sitting on 2026-08-08 and **both** of this
+> spec's §7 exit blockers are discharged — the θ ceiling by dissolution, the
+> namespace projection by loss of authority (`HOSTS_PLAN` is archived and binds
+> on nothing current). Neither discharge unblocks the migration: Stage A of the
+> replan measured every evidence channel the shadow engine was fed at **0.99+**,
+> so the constant `p1` was a correct convergence on a degenerate channel, not a
+> ceiling artifact — and lifting the ceiling now makes the reading *worse*. Two
+> diagnoses inside this document are corrected in place below (the W3′ section),
+> with the falsified words quoted. The **decision** (WAIT) stands; its stated
+> **reasons** do not.
+
 > **Revision note (2026-07-21).** Between revision 1 and this one, proplang
 > executed four boundaries — the wire opening, W3 (arity), W4 (priced grammar),
 > and boundary R (R0 + R1, the joint purchase increment). Three of this spec's
@@ -321,6 +333,21 @@ two `p1` values and one value of every other readout. That falsifies the premise
 of Phase 2's exit criterion: the comparison window is 95k decisions long and has
 nothing in it to compare.
 
+> **[DIAGNOSIS CORRECTED 2026-08-09 — Stage A, `2026-08-09-stage-a-results.md`.]**
+> The operational conclusion above stands: a challenger that asks on 100% of
+> ticks cannot serve the Phase-2 comparison, and the window is empty. The
+> **diagnosis** is wrong. The falsified words are *"`table@1` … **is also
+> degenerate**, because `p1` rails at `thetaPoints`' top rung"* — attributing
+> the constant to the policy and to proplang's grid. Measured: every evidence
+> channel the engine was fed runs at 0.99+ (warm prior 39,314 @ 0.990945;
+> outcome good-bit 71,867 @ 0.999471, after discarding 49.3% of outcome records
+> as ambiguous; human verdict 8 @ 1.0). Against a grid capped at 0.9, 0.9 is the
+> **KL-nearest rung** — so `p1` was correct, and the policy was faithfully
+> reporting a **degenerate channel**, not being a degenerate policy. The gap
+> `|p1 − rate|` equals `rate − 0.9` at every checkpoint. `table@1` additionally
+> received **eight** live evidence ticks across 95,031 decides, so its `p1` is
+> the warm prior's projection and nothing more.
+
 **Why this transfers.** `thetaPoints = 0.1 :| [0.2 … 0.9]` is byte-identical at
 `d-close` (`Enumerate.hs:95-96`) and at master (`Enumerate.hs:127`) — unchanged
 across all four boundaries. Everything else here measures a retired binary, but
@@ -328,6 +355,19 @@ the mechanism producing the rail is the one current `proplang-host` still uses.
 **These 190k decisions are proplang issue #19 observed rather than argued**: the
 issue says the 0.9 ceiling blocks a 0.96-threshold host in principle; this is
 that block, in the field.
+
+> **[SUPERSEDED 2026-08-09 on both halves.]** *(a)* The transfer argument has
+> expired: `thetaPoints` has **zero occurrences** in proplang `src/` since
+> `c2ca82c` (2026-07-25). The emission grid is required consumer-declared hello
+> data (`Host.hs:260`), so the quoted line no longer exists at master and the
+> ceiling changed owner rather than dissolving. *(b)* The claim *"These 190k
+> decisions are proplang issue #19 observed rather than argued"* is **wrong as
+> written**. #19 was about a hard-wired grid and an unrouted fragment; what
+> these records observe is our **own** evidence channel sitting above the
+> ceiling. Stage A prices the counterfactual: extending the grid upward moves
+> `p1` from 0.9 to 0.999 on this data — a more confident report of the same
+> degenerate channel, at ~3× the per-tick cost. The ceiling bound here, but it
+> was not the binding constraint.
 
 **Decision: retire the shadow, keep the binary and the reading** (§6.3, flagged
 for the author per the register's convention). Both forms have returned their
