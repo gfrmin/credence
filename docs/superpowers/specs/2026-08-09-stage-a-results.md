@@ -60,6 +60,16 @@ survives is 71,829 ones against **38** zeros.
 The 0.4975 value is the post-boot cold plateau — a respawned agent before
 evidence, i.e. the prior.
 
+> **Count reconciliation.** Phase 0 and `deploy/membrane.conf` record **190,102**
+> shadow records (95,072 / 95,030); this document says **190,104**. The raw log
+> holds **190,106** `membrane-shadow` lines (95,074 `latent@1` / 95,032
+> `table@1`), of which one event id (`evt_11b088b4`) is emitted twice per form —
+> so 190,104 is the distinct-(form, event) count and is what the pin carries.
+> Phase 0's figure is low by two per form. The same duplication, plus a second
+> id (`evt_12ed978c`), accounts for the joined event count of 143,034 against
+> 143,036 `tool-proposed` lines. Nothing here turns on the difference; it is
+> reconciled so two adjacent merged documents do not carry two counts.
+
 Running gap against the full stream each form saw, at decide checkpoints:
 
 ```
