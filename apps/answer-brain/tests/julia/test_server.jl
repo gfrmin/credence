@@ -328,6 +328,20 @@ let port = 8792
     end
 end
 
+# ── wire backcompat: the §4.2 competition field (foundations §14, 2026-08-17) ────────────
+# An older bridge that omits `competition_factor` must decide byte-identically to one that
+# sends the neutral 1.0 (the temper-off direction is the safe version skew); a sent factor
+# must reach the Obs.
+let base = Dict("reports" => 0, "group" => 0, "authority" => 0.9,
+                "subject_factor" => 1.0, "time_factor" => 1.0)
+    check("wire: absent competition_factor parses as the neutral 1.0",
+          Server._obs(base).competition_factor == 1.0)
+    check("wire: absent ≡ explicit 1.0 (identical Obs)",
+          Server._obs(base) == Server._obs(merge(base, Dict("competition_factor" => 1.0))))
+    check("wire: a sent competition_factor reaches the Obs",
+          Server._obs(merge(base, Dict("competition_factor" => 0.5))).competition_factor == 0.5)
+end
+
 println("\n", "="^64)
 println("answer-brain Stage-2a: $(length(PASSED)) checks PASSED · $(length(data.cases)) wire-parity cases")
 println("="^64)

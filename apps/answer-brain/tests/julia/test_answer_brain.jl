@@ -287,6 +287,38 @@ let case = first(data.cases),
           detail = "got $rebuilt want $direct")
 end
 
+# ── 4. The §4.2 competing-values temper (foundations §14, registered 2026-08-17) ────────
+# Parity-by-identity: competition multiplies r exactly where authority does, on both sides
+# (host `lookup_posterior` covariate; brain `observation_densities`) — so the existing
+# authority-pinning parity cases carry the cross-side guarantee, and this identity check
+# pins the Julia side's composition.
+let k = 2, rho = 0.8, cp = CANONICAL_CHANNEL
+    competed = AnswerBrain.observation_densities(Obs(0, 0, 0.5, 1.0, 1.0, 0.5), k, rho, 1.0, cp)
+    halved   = AnswerBrain.observation_densities(Obs(0, 0, 0.25, 1.0, 1.0), k, rho, 1.0, cp)
+    check("temper: competition_factor 0.5 ≡ authority halved (r-composition identity)",
+          all(all(approx(competed[i][j], halved[i][j]) for j in 1:k) for i in 1:(k + 1));
+          detail = "got $competed want $halved")
+end
+
+# Behavioural: the run-8 wrong-commit regime (one grounded obs, leader ≈ 0.926 at the
+# folded Ū's bar ≈ 0.898) commits uncontested and withholds when the quote window carries
+# a same-shape competitor (factor 0.5 ⇒ leader ≈ 0.823 — the q2-090/q2-105 flip).
+let k = 1, rho = 0.535,
+    ubar = Dict("u_correct" => 1.0, "u_wrong" => -8.83, "u_hedged" => 0.4,
+                "u_abstain" => 0.0, "lambda_int" => 1.0)
+
+    clean = candidate_posterior(k, Obs[Obs(0, 0, 1.0, 1.0, 1.0)], rho)
+    act_clean, _ = terminal_decide(clean, k, ubar)
+    check("temper: the uncontested single-obs 0.926 regime still reports",
+          act_clean == "report"; detail = "got $act_clean w=$(weights(clean))")
+    competed = candidate_posterior(k, Obs[Obs(0, 0, 1.0, 1.0, 1.0, 0.5)], rho)
+    act_comp, _ = terminal_decide(competed, k, ubar)
+    check("temper: a quote-window competitor pulls the same regime below the bar",
+          act_comp != "report"; detail = "got $act_comp w=$(weights(competed))")
+    check("temper: the competed leader stays a live sub-bar lead (not erased to prior)",
+          weights(competed)[1] > 0.75; detail = "w=$(weights(competed))")
+end
+
 println("\n", "="^64)
 println("answer-brain Stage-1: $(length(PASSED)) checks PASSED · $(length(data.cases)) parity cases")
 println("="^64)

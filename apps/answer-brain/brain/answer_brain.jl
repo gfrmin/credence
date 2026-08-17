@@ -60,7 +60,16 @@ struct Obs
     authority::Float64    # §4.1 source-authority prior
     subject_factor::Float64   # §4.1 doc_subject covariate on aᵢ (1.0 = no covariate)
     time_factor::Float64      # §4.1 doc_date covariate on aᵢ (1.0 = no covariate)
+    competition_factor::Float64  # §4.2 competing-values temper on aᵢ (1.0 = uncontested;
+    #                              a same-shape value in the extractor's quote window
+    #                              halves it — foundations §14, registered 2026-08-17)
 end
+
+# Backward-compatible construction: an observation without the competition field is an
+# uncontested one (the temper-off direction — a version-skewed bridge stays safe).
+Obs(reports::Int, group::Int, authority::Float64, subject_factor::Float64,
+    time_factor::Float64) = Obs(reports, group, authority, subject_factor,
+                                time_factor, 1.0)
 
 # ── The §4.2 lineage temper (pure; mirrors lookup.temper_scales, keyed on group) ────────
 """
@@ -89,12 +98,12 @@ end
     observation_densities(o, k, rho, scale, cp) -> Vector{Vector{Float64}}
 
 Rows are the K candidate hypotheses + NONE (last); columns the K reported-candidate atoms.
-With reliability `r = rho · authority · subject · time`, a match carries
+With reliability `r = rho · authority · subject · time · competition`, a match carries
 `scale·log(r + (1-r)/A)` and any miss `scale·log((1-r)/A)`; NONE misses everything.
 """
 function observation_densities(o::Obs, k::Int, rho::Float64, scale::Float64,
                                cp::ChannelParams)::Vector{Vector{Float64}}
-    r = rho * o.authority * o.subject_factor * o.time_factor
+    r = rho * o.authority * o.subject_factor * o.time_factor * o.competition_factor
     log_match = scale * log(max(r + (1.0 - r) / cp.a_alternatives, cp.prob_eps))
     log_miss  = scale * log(max((1.0 - r) / cp.a_alternatives, cp.prob_eps))
     rows = [[t == j ? log_match : log_miss for t in 0:(k - 1)] for j in 0:(k - 1)]

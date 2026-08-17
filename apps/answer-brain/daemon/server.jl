@@ -70,6 +70,9 @@ _obs(o::AbstractDict)::Obs = Obs(
     Float64(o["authority"]),
     Float64(o["subject_factor"]),
     Float64(o["time_factor"]),
+    # §4.2 competing-values temper; absent (an older bridge) ⇒ uncontested — the
+    # temper-off direction is the safe skew
+    Float64(get(o, "competition_factor", 1.0)),
 )
 
 # Optional per-request channel override; defaults to the operator-set CANONICAL_CHANNEL. The body
