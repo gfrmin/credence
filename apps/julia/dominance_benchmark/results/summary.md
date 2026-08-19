@@ -6,25 +6,25 @@ Primary realised-value measure (§8, ratified 2026-07-03): the mean per-step ene
 
 | policy | mean rate | mean final-window rate | mean AUC (reported) | mean steps-to-half | mean meta-actions |
 |---|---|---|---|---|---|
-| clairvoyant | 0.429 | 0.875 | 47.59 | 51.8 | 33.0 |
-| eu_max | 0.424 | 0.881 | 47.23 | 52.1 | 27.0 |
-| fixed_k10 | 0.393 | 0.72 | 48.22 | 67.6 | 21.0 |
-| fixed_k25 | 0.401 | 0.488 | 50.51 | 52.8 | 8.0 |
-| fixed_k5 | 0.388 | 0.667 | 48.49 | 57.6 | 42.0 |
-| fixed_k50 | 0.45 | 0.869 | 49.79 | 76.8 | 4.0 |
+| clairvoyant | 0.38 | 0.69 | 46.29 | 58.0 | 19.1 |
+| eu_max | 0.38 | 0.69 | 46.29 | 58.0 | 13.1 |
+| fixed_k10 | 0.433 | 0.75 | 49.48 | 75.5 | 21.0 |
+| fixed_k25 | 0.408 | 0.524 | 50.74 | 55.0 | 8.0 |
+| fixed_k5 | 0.517 | 0.929 | 52.9 | 70.8 | 42.0 |
+| fixed_k50 | 0.431 | 0.732 | 49.69 | 69.8 | 4.0 |
 | never_explore | 0.274 | 0.125 | 47.11 | 28.9 | 2.0 |
-| random_p005 | 0.489 | 1.006 | 51.08 | 86.6 | 12.3 |
-| random_p015 | 0.445 | 0.875 | 49.71 | 85.9 | 37.7 |
-| random_p04 | 0.373 | 0.75 | 46.65 | 51.6 | 131.0 |
+| random_p005 | 0.449 | 0.893 | 50.32 | 70.2 | 12.3 |
+| random_p015 | 0.402 | 0.75 | 48.58 | 69.2 | 37.7 |
+| random_p04 | 0.407 | 0.833 | 46.31 | 75.0 | 131.0 |
 
 ## Paired gaps (eu_max − baseline; efficiency = steps to the shared per-seed
 level, sign-flipped so + favours eu_max — belief-derived-valuation §2c)
 
 | baseline | rate gap [95% CI] | final-window gap [95% CI] | efficiency gap [95% CI] | worst-seed rate gap | q10 rate gap |
 |---|---|---|---|---|---|
-| random_p005 | -0.065 [-0.193, 0.061] | -0.125 [-0.625, 0.363] | -3.6 [-13.2, 5.6] | -0.5 | -0.476 |
-| fixed_k50 | -0.026 [-0.117, 0.064] | 0.012 [-0.339, 0.375] | -7.0 [-16.4, 3.4] | -0.381 | -0.333 |
-| never_explore | 0.15 [0.062, 0.235] | 0.756 [0.363, 1.125] | 11.4 [2.4, 21.0] | -0.381 | 0.024 |
+| random_p005 | -0.069 [-0.189, 0.057] | -0.202 [-0.702, 0.339] | -1.8 [-12.9, 9.8] | -0.452 | -0.452 |
+| fixed_k5 | -0.137 [-0.254, -0.017] | -0.238 [-0.845, 0.393] | -9.8 [-20.8, 0.6] | -0.714 | -0.571 |
+| never_explore | 0.106 [0.004, 0.21] | 0.565 [0.149, 1.018] | 16.0 [5.6, 26.6] | -0.452 | -0.095 |
 
 `eu_max − never_explore` is the headline: the learned-returns escape ops are identical on both sides, so this gap is exploration's isolated value.
 
@@ -39,30 +39,30 @@ the whole run; this reads what it bought after the last change).
 
 | baseline | metric | mean gap | median gap | win rate | sign-test p | q10 gap |
 |---|---|---|---|---|---|---|
-| random_p005 | mean rate (primary) | -0.065 | -0.083 | 8–11 of 20 | 0.6476 | -0.476 |
-| random_p005 | AUC (front-loaded, reported-only) | -3.848 | -4.464 | 7–13 of 20 | 0.2632 | -16.595 |
-| random_p005 | final-window rate | -0.125 | -0.357 | 9–11 of 20 | 0.8238 | -1.786 |
-| random_p005 | final-regime rate | -0.074 | -0.423 | 9–11 of 20 | 0.8238 | -1.127 |
-| fixed_k50 | mean rate (primary) | -0.026 | 0.012 | 10–9 of 20 | 1.0 | -0.333 |
-| fixed_k50 | AUC (front-loaded, reported-only) | -2.555 | -3.262 | 9–11 of 20 | 0.8238 | -16.619 |
-| fixed_k50 | final-window rate | 0.012 | -0.238 | 8–12 of 20 | 0.5034 | -0.952 |
-| fixed_k50 | final-regime rate | -0.039 | -0.141 | 8–12 of 20 | 0.5034 | -0.634 |
-| never_explore | mean rate (primary) | 0.15 | 0.119 | 19–1 of 20 | 0.0 | 0.024 |
-| never_explore | AUC (front-loaded, reported-only) | 0.121 | 0.143 | 10–10 of 20 | 1.0 | -10.595 |
-| never_explore | final-window rate | 0.756 | 0.774 | 15–2 of 20 | 0.0023 | -0.476 |
-| never_explore | final-regime rate | 0.627 | 0.599 | 18–2 of 20 | 0.0004 | -0.07 |
+| random_p005 | mean rate (primary) | -0.069 | -0.06 | 9–11 of 20 | 0.8238 | -0.452 |
+| random_p005 | AUC (front-loaded, reported-only) | -4.037 | -4.381 | 7–13 of 20 | 0.2632 | -22.238 |
+| random_p005 | final-window rate | -0.202 | -0.179 | 7–12 of 20 | 0.3593 | -1.786 |
+| random_p005 | final-regime rate | -0.032 | 0.035 | 10–9 of 20 | 1.0 | -1.197 |
+| fixed_k5 | mean rate (primary) | -0.137 | -0.167 | 5–15 of 20 | 0.0414 | -0.571 |
+| fixed_k5 | AUC (front-loaded, reported-only) | -6.614 | -5.774 | 4–16 of 20 | 0.0118 | -24.429 |
+| fixed_k5 | final-window rate | -0.238 | -0.357 | 8–12 of 20 | 0.5034 | -2.143 |
+| fixed_k5 | final-regime rate | -0.299 | -0.387 | 6–13 of 20 | 0.1671 | -1.972 |
+| never_explore | mean rate (primary) | 0.106 | 0.06 | 12–8 of 20 | 0.5034 | -0.095 |
+| never_explore | AUC (front-loaded, reported-only) | -0.825 | -1.25 | 9–11 of 20 | 0.8238 | -22.238 |
+| never_explore | final-window rate | 0.565 | 0.417 | 13–5 of 20 | 0.0963 | -0.714 |
+| never_explore | final-regime rate | 0.528 | 0.317 | 17–3 of 20 | 0.0026 | -0.141 |
 
 ## Behaviour-verified inversions
 
-- seed 0: eu_max takes gw_add_feature at step 95 (never_explore: growth vetoed by construction; rate gap 0.024)
-- seed 1: eu_max takes gw_add_feature at step 79 (never_explore: growth vetoed by construction; rate gap 0.429)
-- seed 2: eu_max takes gw_add_feature at step 91 (never_explore: growth vetoed by construction; rate gap 0.095)
-- seed 3: eu_max takes gw_add_feature at step 88 (never_explore: growth vetoed by construction; rate gap 0.119)
-- seed 4: eu_max takes gw_add_feature at step 98 (never_explore: growth vetoed by construction; rate gap 0.286)
-- seed 5: eu_max takes gw_add_feature at step 91 (never_explore: growth vetoed by construction; rate gap 0.5)
-- seed 6: eu_max takes gw_add_feature at step 6 (never_explore: growth vetoed by construction; rate gap -0.381)
-- seed 7: eu_max takes gw_add_feature at step 4 (never_explore: growth vetoed by construction; rate gap 0.024)
-- seed 8: eu_max takes gw_add_feature at step 8 (never_explore: growth vetoed by construction; rate gap 0.024)
-- seed 9: eu_max takes gw_add_feature at step 89 (never_explore: growth vetoed by construction; rate gap 0.048)
+- seed 0: eu_max takes gw_add_feature at step 96 (never_explore: growth vetoed by construction; rate gap 0.31)
+- seed 1: eu_max takes gw_add_feature at step 84 (never_explore: growth vetoed by construction; rate gap -0.024)
+- seed 2: eu_max takes gw_add_feature at step 96 (never_explore: growth vetoed by construction; rate gap 0.643)
+- seed 3: eu_max takes gw_add_feature at step 98 (never_explore: growth vetoed by construction; rate gap -0.095)
+- seed 4: eu_max takes gw_add_feature at step 100 (never_explore: growth vetoed by construction; rate gap -0.048)
+- seed 5: eu_max takes gw_add_feature at step 110 (never_explore: growth vetoed by construction; rate gap 0.357)
+- seed 6: eu_max takes gw_add_feature at step 89 (never_explore: growth vetoed by construction; rate gap -0.452)
+- seed 7: eu_max takes gw_add_feature at step 95 (never_explore: growth vetoed by construction; rate gap 0.071)
+- seed 8: eu_max takes gw_add_feature at step 90 (never_explore: growth vetoed by construction; rate gap 0.238)
+- seed 9: eu_max takes gw_add_feature at step 89 (never_explore: growth vetoed by construction; rate gap -0.048)
 
-Bracket (mean rate): never_explore 0.274 ≤ eu_max 0.424 ≤ clairvoyant 0.429
+Bracket (mean rate): never_explore 0.274 ≤ eu_max 0.38 ≤ clairvoyant 0.38

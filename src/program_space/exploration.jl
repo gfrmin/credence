@@ -1,21 +1,23 @@
 """
-    exploration.jl — the belief-aware exploration budget: compute-budgeted lookahead VOI for
-    threshold refinement (exploration-budget Move 3).
+    exploration.jl — the belief-aware exploration budget: the growth lookahead as a virtual
+    injection (exploration-budget Moves 3–4, re-founded by the winners-curse design rev 3).
 
-The belief-aware sibling of prior-only `perturbation.jl`. Where `perturb_grammar` prices the COMPRESSION
-class depth-one in prior nats (`net_voc`), `explore_grammar` prices the GENERATIVE-CHANGE class — here,
-threshold refinement — by **lookahead against the belief's predictive residual** (master plan §2): a
-threshold is complexity-invariant (zero prior signal, all fit), so the only honest valuation is to
-*actually* refine the grid, re-enumerate, re-condition the buffer, and measure the realised marginal
-log-loss reduction `Δℓ` (Q3a — predictive nats). The fineness-Occam is carried by that marginal
-likelihood, NOT the prior (SPEC §1.3 margin; Q1(b)≡Q3(a)) — a noise-fitting split does not improve the
-predictive, so refinement self-limits.
+The belief-aware sibling of prior-only `perturbation.jl`. Where `perturb_grammar` prices the
+COMPRESSION class depth-one in prior nats (`net_voc`), the growth classes here — threshold
+refinement and feature discovery — are priced by **virtually performing the transition**: copy
+the state, coherently inject ALL candidates' deduped programs at their two-part complexity
+priors, condition on the evidence window (the coherent-injection code path, verbatim), and
+read the score off the scratch through an existing canalised op: `injection_yield_nats` —
+the union-over-incumbent window Bayes factor under the complexity prior (design §8.2), netted
+against the declared compute price. Firing ADOPTS the scratch (score ≡ transition, T-3.55,
+as an identity).
+Selection, extrapolation and collapse are priced by the mixture itself — candidates are
+CARRIED at the mass the window likelihood grants them, never compared by an argmax
+(average-not-collapse, applied to the transition; see the design doc §1 for the three
+pathologies of the retired per-candidate marginal-log-loss argmax).
 
-Architecture (code-time refinement of the ratified `explore_grammar(belief, g, observations)` signature):
-self-contained in `src/` so the mll accumulation (probability arithmetic feeding the explore decision)
-stays out of `apps/` (Invariant 1, spatial). Belief-awareness flows through the buffer's per-observation
-`residual` (where the belief mispredicts — the screen ORDER, Q2a) and the counterfactual replay (mll under
-each candidate grammar), not a live belief argument — the lookahead reconstructs beliefs per grammar.
+Architecture: self-contained in `src/` so the replay and yield arithmetic (probability
+arithmetic feeding the growth decision) stays out of `apps/` (Invariant 1, spatial).
 """
 
 using .Ontology
@@ -159,305 +161,129 @@ function program_space_observation_kernel(
 end
 
 # ═══════════════════════════════════════
-# The lookahead — counterfactual marginal log-loss of the buffer under a grammar
+# The lookahead as a virtual injection (winners-curse design §1)
+#
+# A growth op is scored by VIRTUALLY PERFORMING its transition: copy the state, coherently
+# inject ALL candidates' deduped programs at their two-part complexity priors, condition on
+# the window (the coherent-injection code path, verbatim, via the union method of
+# add_programs_to_state!), and read the score off the scratch through existing canalised ops.
+# Firing ADOPTS the scratch (adopt!), so score ≡ transition holds as an identity (T-3.55).
+#
+# What died here, and by whose hand (design §1): the per-candidate marginal-log-loss argmax
+# (_grammar_marginal_log_loss / _best_threshold_refinement / _best_feature_addition) — the
+# max-over-K was an order statistic over chance-fitting candidates (selection unpriced), its
+# window rate was treated as a known future rate (extrapolation unlicensed), and installing
+# the winner was an argmax_m P(m|D) collapse (average-not-collapse, applied to the transition).
+# All three pathologies are priced by the mixture itself: candidates are CARRIED, not compared.
 # ═══════════════════════════════════════
 
 """
-    _grammar_marginal_log_loss(g, observations, max_depth, action_space) → Float64
+    GrowthProposal — one virtual injection, projected by score and transition (Invariant 3)
 
-The prequential marginal log-loss of the buffer under grammar `g`: enumerate `g`'s programs at
-`max_depth`, build the fresh complexity-prior belief the host would (Beta(1,1) per program, two-part-MDL
-log-weights), and replay the buffer — accumulating `−log_predictive` and conditioning each step through
-the Tier-1 mixture `condition`. This is `Σ_t −log P(obs_t | obs_<t, g)`, the evidence for `g` on the
-buffer; the marginal likelihood's parameter integration IS the Bayesian Occam that makes leaving the
-prior fineness-blind sound (Q1(b)≡Q3(a)). All arithmetic is canalised through `log_predictive`/`condition`
-(Invariant 1). A grammar that enumerates nothing returns `Inf` (it predicts nothing).
+The declared result of a growth lookahead. One computation produces it; the score seam reads
+`yield_nats` (through `net_value` against the declared compute price — design §8.2), the op
+log reads `(yield_nats, p_newcomers)` (the per-fire mechanism pair), and the transition adopts
+`scratch`. No projection can drift from another because there is only one object.
+
+    scratch       the union state: incumbents + every candidate's deduped programs, coherently
+                  conditioned on the window (the counterfactual union-from-start agent)
+    n_added       programs injected (the union size after global dedup)
+    yield_nats    injection_yield_nats(scratch, n_added) — the ratified evidence-relative
+                  observable = the union-over-incumbent window Bayes factor under the
+                  complexity prior (design §8.2), computed exactly where the escape ops learn
+                  it (T-3.53: one observable, one currency, ONE SCORE FORM, two fidelities)
+    p_newcomers   the newcomers' posterior mass in the scratch (the incumbent-domination read;
+                  gate mechanism claim (i))
 """
-function _grammar_marginal_log_loss(g::Grammar, observations::Vector{ExploreObservation},
-                                    max_depth::Int, action_space::Vector{Symbol})::Float64
-    progs = enumerate_programs(g, max_depth; action_space = action_space)
-    isempty(progs) && return Inf
-    cks = CompiledKernel[compile_kernel(p, g, i) for (i, p) in enumerate(progs)]
-    components = TaggedBetaPrevision[TaggedBetaPrevision(i, BetaPrevision(1.0, 1.0))
-                                     for i in eachindex(progs)]
-    logw = Float64[complexity_logprior(g.complexity; λ = log(2)) +
-                   complexity_logprior(p.complexity; λ = log(2)) for p in progs]
-    belief = MixturePrevision(components, logw)
-
-    mll = 0.0
-    for obs in observations
-        k = program_space_observation_kernel(cks, obs.features, obs.temporal_state, obs.correct_actions)
-        mll += -log_predictive(belief, k, 1.0)
-        belief = condition(belief, k, 1.0)
-    end
-    mll
+struct GrowthProposal
+    scratch::AgentState
+    n_added::Int
+    yield_nats::Float64
+    p_newcomers::Float64
 end
 
 """
-    _candidate_residual_mass(feat, t, observations) → Float64
+    _virtual_injection(state, candidate_gs, observations; action_space, include_temporal)
+        → (scratch, n_added)
 
-The residual screen ORDER (Q2a): the summed predictive residual of the observations bracketing the split
-`t` on feature `feat` (those at the nearest observed value below and above `t`). Higher mass ⇒ the split
-sits where the current belief mispredicts most ⇒ evaluate first. This ORDERS evaluation; it never gates
-(no cutoff). Because `explore_grammar` then evaluates the full finite candidate set and takes the argmax,
-the order is the screen and the argmax is the decision — no positive-VOI candidate is skipped (Q3b,
-one-sided). The order becomes load-bearing only if a future move adds budget-limited early termination.
+Copy the state, register the candidate grammars, and union-inject their deduped programs
+coherently against the window — the growth op's transition, performed on a scratch. The same
+code path the adoption keeps (add_programs_to_state!'s union method); commutation with
+conditioning is inherited (test_virtual_injection.jl §5).
 """
-function _candidate_residual_mass(feat::Symbol, t::Float64,
-                                  observations::Vector{ExploreObservation})::Float64
-    below = -Inf
-    above = Inf
-    for obs in observations
-        haskey(obs.features, feat) || continue
-        v = obs.features[feat]
-        v < t && v > below && (below = v)
-        v > t && v < above && (above = v)
+function _virtual_injection(state::AgentState, candidate_gs::Vector{Grammar},
+                            observations::Vector{ExploreObservation};
+                            action_space::Vector{Symbol} = Symbol[:classify],
+                            include_temporal::Bool = false)
+    scratch = copy_agent_state(state)
+    for g in candidate_gs
+        scratch.grammars[g.id] = g
     end
-    mass = 0.0
-    for obs in observations
-        haskey(obs.features, feat) || continue
-        v = obs.features[feat]
-        (v == below || v == above) && (mass += obs.residual)
-    end
-    mass
+    n_added = add_programs_to_state!(scratch, candidate_gs, scratch.current_max_depth;
+                                     observations = observations, action_space = action_space,
+                                     include_temporal = include_temporal)
+    (scratch, n_added)
 end
 
-# ═══════════════════════════════════════
-# explore_grammar — the belief-aware threshold-refinement meta-action (Q2-master: forced separate entry)
-# ═══════════════════════════════════════
-
-"""
-    explore_grammar(g, observations, max_depth; action_space, compute_cost = 0.0) → Grammar
-
-Refine `g`'s threshold grid by the single candidate whose compute-budgeted lookahead VOI is greatest,
-applied iff that VOI clears `compute_cost`; otherwise a structural no-op (the input `g` unchanged). The
-belief-aware sibling of prior-only `perturb_grammar`: the value of a threshold is invisible to depth-one
-prior `net_voc` (complexity-invariant — all fit, no prior signal), so this *actually* refines, re-enumerates,
-re-conditions the buffer, and measures the realised marginal-log-loss reduction.
-
-Mechanism (Q2a/Q3a/Q3b):
-- Candidates = midpoints between adjacent observed values (`_threshold_candidates`) — the complete finite
-  set, no proposer (master plan §3.1).
-- Evaluated in descending residual-mass order (the screen ORDERS; it never gates).
-- VOI of a candidate = `net_value(Δℓ, compute_cost)` where `Δℓ = mll(buffer|g) − mll(buffer|g')` is the
-  predictive-log-loss reduction (the SAME nats the saturation residual is measured in). `compute_cost`
-  prices the lookahead spend; raising it suppresses refinement smoothly (no cliff, no hard cap — Q3b).
-- The full finite candidate set is evaluated and the argmax taken (one-sided: no positive-VOI candidate is
-  skipped — Q3b's provable form, not a heuristic early-stop). Returns `g` unchanged when none clears.
-
-One refinement per call (like `perturb_grammar` adds one rule): the host applies it, resets the residual
-regime (the alphabet changed — Move 2 Q1b), accrues more data, and may explore again.
-"""
-explore_grammar(g::Grammar, observations::Vector{ExploreObservation}, max_depth::Int;
-                action_space::Vector{Symbol} = Symbol[:classify], compute_cost::Float64 = 0.0,
-                plateau::Float64 = 1.0, horizon::Union{Nothing, Float64} = nothing)::Grammar =
-    _best_threshold_refinement(g, observations, max_depth;
-                               action_space = action_space, compute_cost = compute_cost,
-                               plateau = plateau, horizon = horizon)[1]
-
-"""
-    exploration_voi(g, observations, max_depth; action_space, compute_cost = 0.0,
-                    plateau = 1.0, horizon = nothing) → Float64
-
-The scalar value of the best threshold refinement — `growth_value(Δℓ, n_buf, plateau, horizon;
-compute_cost)` for the argmax candidate, or `0.0` when none clears (the no-op floor, matching
-`explore_grammar`'s structural no-op). `plateau`/`horizon` are the belief-derived-valuation §2a
-coordinates; the defaults (`plateau = 1`, `horizon = n_buf`) reduce bit-exactly to the pre-move
-window-total `net_value(Δℓ, compute_cost)`. Shares `_best_threshold_refinement` with
-`explore_grammar` exactly, so the ranked value and the applied edit can never disagree
-(Invariant 3). Asserted by test_threshold_explore.jl §3g and test_growth_returns.jl §6.
-"""
-exploration_voi(g::Grammar, observations::Vector{ExploreObservation}, max_depth::Int;
-                action_space::Vector{Symbol} = Symbol[:classify], compute_cost::Float64 = 0.0,
-                plateau::Float64 = 1.0, horizon::Union{Nothing, Float64} = nothing)::Float64 =
-    _best_threshold_refinement(g, observations, max_depth;
-                               action_space = action_space, compute_cost = compute_cost,
-                               plateau = plateau, horizon = horizon)[2]
-
-"""
-    exploration_fit(g, observations, max_depth; action_space) → Float64
-
-The raw window-total Δℓ of the best refinement candidate (`0.0` when no candidate improves the
-baseline) — the valuation-free fit component, PURE in `(grammar, buffer, depth)` and therefore
-the memoisable half of the score (hosts cache this and apply `growth_value` per step with the
-step's plateau/horizon). Thresholds carry no prior term, so at defaults
-`exploration_fit == exploration_voi`.
-"""
-exploration_fit(g::Grammar, observations::Vector{ExploreObservation}, max_depth::Int;
-                action_space::Vector{Symbol} = Symbol[:classify])::Float64 =
-    _best_threshold_refinement(g, observations, max_depth; action_space = action_space)[3]
-
-# The shared core: the threshold-refinement argmax, returning the winning grammar, its
-# horizon-completed value, and its raw fit. Selection is by FIT (the value transform is strictly
-# monotone in fit — plateau/horizon/cost are candidate-uniform — so fit-argmax == value-argmax);
-# the no-op floor is on the VALUE. `explore_grammar` projects the grammar (apply the edit),
-# `exploration_voi` the value (rank the meta-action), `exploration_fit` the fit (the cacheable
-# component). One computation, three projections — Invariant 3, no drift between "which
-# refinement", "how much it's worth", and "how well it fits". Returns `(g, 0.0, best_fit)` on the
-# no-op paths (empty buffer / no candidate / value fails the floor).
-function _best_threshold_refinement(g::Grammar, observations::Vector{ExploreObservation}, max_depth::Int;
-                                    action_space::Vector{Symbol} = Symbol[:classify],
-                                    compute_cost::Float64 = 0.0,
-                                    plateau::Float64 = 1.0,
-                                    horizon::Union{Nothing, Float64} = nothing)::Tuple{Grammar, Float64, Float64}
-    isempty(observations) && return (g, 0.0, 0.0)
-    candidates = _threshold_candidates(g, observations)
-    isempty(candidates) && return (g, 0.0, 0.0)
-
-    masses = Float64[_candidate_residual_mass(feat, t, observations) for (feat, t) in candidates]
-    order = sortperm(masses, rev = true)   # stable: residual order, deterministic tie-break
-
-    baseline = _grammar_marginal_log_loss(g, observations, max_depth, action_space)
-
-    best_fit = 0.0   # a candidate must improve the baseline (fit > 0) to be considered
-    best = g
-    for idx in order
-        feat, t = candidates[idx]
-        g_cand = _refine_grammar(g, feat, t)
-        mll = _grammar_marginal_log_loss(g_cand, observations, max_depth, action_space)
-        fit = baseline - mll
-        if fit > best_fit
-            best_fit = fit
-            best = g_cand
-        end
-    end
-
-    n = length(observations)
-    h = horizon === nothing ? Float64(n) : horizon
-    value = growth_value(best_fit, n, plateau, h; compute_cost = compute_cost)
-    value > 0.0 ? (best, value, best_fit) : (g, 0.0, best_fit)
+# The shared proposal core: virtually inject the candidate set, read the mechanism pair off
+# the scratch. Returns `nothing` when there is nothing to propose (no candidates, or the whole
+# union dedups away) — the score seam's act-now floor handles it. `yield_nats` is measured
+# HERE, immediately post-injection, before any prune/truncate can drop the very components
+# (growth_returns.jl discipline).
+function _growth_proposal(state::AgentState, candidate_gs::Vector{Grammar},
+                          observations::Vector{ExploreObservation};
+                          action_space::Vector{Symbol} = Symbol[:classify],
+                          include_temporal::Bool = false)::Union{Nothing, GrowthProposal}
+    isempty(candidate_gs) && return nothing
+    scratch, n_added = _virtual_injection(state, candidate_gs, observations;
+                                          action_space = action_space,
+                                          include_temporal = include_temporal)
+    n_added == 0 && return nothing
+    n = length(state.belief.components) + n_added
+    p_new = probability(scratch.belief,
+                        TagSet(Interval(0.0, 1.0), Set((n - n_added + 1):n)))
+    GrowthProposal(scratch, n_added, injection_yield_nats(scratch, n_added), p_new)
 end
 
-# ═══════════════════════════════════════
-# explore_features — the belief-aware feature-discovery meta-action (Move 4; sibling of explore_grammar)
-# ═══════════════════════════════════════
+"""
+    threshold_growth_proposal(state, g, observations; action_space, include_temporal)
+        → Union{Nothing, GrowthProposal}
+
+The threshold-refinement class under the virtual injection: candidates are ALL midpoint
+refinements of `g` against the observed values (`_threshold_candidates` — the complete finite
+set, ratified §5 Q3: inject all; a mass-based top-m pre-screen is a T-3.53 priced-fidelity
+decision to be taken only if measured wall-clock demands it, and logged). Returns `nothing`
+when the buffer is empty or no candidate exists.
+"""
+function threshold_growth_proposal(state::AgentState, g::Grammar,
+                                   observations::Vector{ExploreObservation};
+                                   action_space::Vector{Symbol} = Symbol[:classify],
+                                   include_temporal::Bool = false)::Union{Nothing, GrowthProposal}
+    isempty(observations) && return nothing
+    cands = _threshold_candidates(g, observations)
+    _growth_proposal(state, Grammar[_refine_grammar(g, feat, t) for (feat, t) in cands],
+                     observations;
+                     action_space = action_space, include_temporal = include_temporal)
+end
 
 """
-    explore_features(g, observations, available_features, max_depth; action_space, compute_cost = 0.0) → Grammar
+    feature_growth_proposal(state, g, observations, available_features; action_space,
+                            include_temporal) → Union{Nothing, GrowthProposal}
 
-Grow `g`'s FEATURE alphabet by the single host-furnished candidate whose compute-budgeted lookahead VOI is
-greatest, applied iff that VOI clears the bar; otherwise a structural no-op (the input `g` unchanged). The
-one-rung-up sibling of `explore_grammar`: where threshold refinement sharpens an existing feature's grid,
-feature discovery admits a feature the grammar did not use. Base-feature discovery is pure EU-max
-**selection** — the host already extracts the full feature superset (`_feature_candidates` =
-`available_features \\ g.feature_set`), so a candidate's value is already in every observation's `features`
-Dict; the lookahead ranks the host-provided candidates. (Composed/arithmetic features — *construction* — are
-the deferred §3.1 frontier.)
-
-**The two-axis valuation (Q2 — the keystone, and the converse of Move 3's Q1(b)).** A feature is valued on
-BOTH axes:
-
-    voi = net_value( Δℓ + complexity_logprior(Δcomplexity; λ = log 2), compute_cost )
-        = (mll(buffer|g) − mll(buffer|g')) − log2·Δcomplexity − compute_cost            [nats]
-
-where `g'` = `g` with the candidate feature added and `Δcomplexity = g'.complexity − g.complexity = +1`. The
-fit term `Δℓ` is the SAME marginal-log-loss reduction Move 3 measures (`_grammar_marginal_log_loss`, reused
-verbatim). The prior term is the subtle part: the grammar-complexity prior is a per-grammar CONSTANT added
-to every component's log-weight, so it **cancels inside the normalized marginal log-loss** (`log_predictive`
-/`condition` normalize the mixture — a uniform shift to all weights cancels). Reusing the mll alone would
-therefore price a feature on the fit axis only — exactly what Move 3 does for thresholds, and exactly what
-Q2 says is WRONG for features. So the `−log2·Δcomplexity` prior-Occam penalty is charged **explicitly here,
-at the argmax**. This is the literal mechanical content of the Q1(b)≡Q2 duality: a finer threshold adds no
-symbol (Δcomplexity = 0 ⇒ the term vanishes ⇒ Move 3's `explore_grammar` is the Δcomplexity = 0 special
-case); a new feature adds a symbol (Δcomplexity = +1 ⇒ the feature must repay `log2` nats of prior the
-threshold never owed). fine-before-coarse, made endogenous: the cheap rung clears while it pays; the dear
-rung waits until it doesn't. Asserted by test_feature_discovery.jl §4 (the boundary sits at Δℓ − log2, not Δℓ).
-
-**Move 5 (one currency, two fidelities).** This two-axis sum *is* the **exact, general instance** of the
-single **Δ log-evidence** VOC — `Δlog P(data|g)` (fit) plus `Δlog P(g)` (prior) in one `net_value`, which
-is *why* the `+` is coherent: both are log-evidence nats, not two currencies. `explore_grammar` is the
-`Δprior = 0` instance of the same functional; compression's `net_voc` (`perturbation.jl`) is the cheap
-**prior-only surrogate** (the likelihood term dropped — its prior-only signature cannot afford to measure
-it). The fidelity gap between the surrogate and this exact re-conditioned eval — *not* a currency gap — is
-the arc's permanent frontier; the two-tier cascade (cheap screen → exact lookahead) orders it and is
-itself EU-max (Russell–Wefald). See `docs/exploration-budget/move-5-design.md`.
-
-Soundness is trivial for `:add_feature` — enlarging the alphabet can only ADD representable programs, never
-break an existing one — so no reference count is needed (contrast `:remove_feature`, the MDL-compression
-partner). Full-eval argmax over the (small, host-furnished) candidate set in sorted order: deterministic, no
-rand, one feature per call (the host applies it, resets the residual regime — an alphabet expansion, Move 2
-Q1b — and may explore again, including re-opening threshold refinement on the new feature's grid — the cyclic
-ladder of §8.4).
+The feature-discovery class under the virtual injection: candidates are ALL host-furnished
+features `g` does not yet use (`_feature_candidates`), each as a feature-added grammar. The
+one-time Occam charge (−log 2 per feature symbol) is carried by each newcomer's own complexity
+prior INSIDE the mixture — there is no explicit prior term at the score seam (ratified §5 Q4:
+charging it there again would double-count; test_virtual_injection.jl §1 pins the identity).
 """
-explore_features(g::Grammar, observations::Vector{ExploreObservation},
-                 available_features::Set{Symbol}, max_depth::Int;
-                 action_space::Vector{Symbol} = Symbol[:classify], compute_cost::Float64 = 0.0,
-                 plateau::Float64 = 1.0, horizon::Union{Nothing, Float64} = nothing)::Grammar =
-    _best_feature_addition(g, observations, available_features, max_depth;
-                           action_space = action_space, compute_cost = compute_cost,
-                           plateau = plateau, horizon = horizon)[1]
-
-"""
-    feature_discovery_voi(g, observations, available_features, max_depth; action_space,
-                          compute_cost = 0.0, plateau = 1.0, horizon = nothing) → Float64
-
-The scalar value of the best feature addition — `growth_value(Δℓ, n_buf, plateau, horizon;
-prior_term = complexity_logprior(Δc; λ=log2), compute_cost)` for the argmax candidate, or `0.0`
-when none clears. Both axes of the one Δ log-evidence currency (Move 5): the fit is
-horizon-completed (per-event gain × expected remaining events, belief-derived-valuation §2a);
-the prior-Occam charge is ONE-TIME, never horizon-multiplied. Defaults reduce bit-exactly to the
-pre-move window-total `net_value(Δℓ + logprior, compute_cost)`. Shares `_best_feature_addition`
-with `explore_features` exactly (Invariant 3, no drift). Asserted by test_feature_discovery.jl
-and test_growth_returns.jl §6.
-"""
-feature_discovery_voi(g::Grammar, observations::Vector{ExploreObservation},
-                      available_features::Set{Symbol}, max_depth::Int;
-                      action_space::Vector{Symbol} = Symbol[:classify], compute_cost::Float64 = 0.0,
-                      plateau::Float64 = 1.0, horizon::Union{Nothing, Float64} = nothing)::Float64 =
-    _best_feature_addition(g, observations, available_features, max_depth;
-                           action_space = action_space, compute_cost = compute_cost,
-                           plateau = plateau, horizon = horizon)[2]
-
-"""
-    feature_discovery_fit(g, observations, available_features, max_depth; action_space) → Float64
-
-The raw window-total Δℓ of the best feature candidate (`0.0` when none improves the baseline) —
-the valuation-free fit component, PURE in `(grammar, buffer, features, depth)` and therefore the
-memoisable half of the score (hosts cache this and apply `growth_value` per step, charging the
-one-time `−log 2` prior term as `prior_term`). `feature_discovery_voi` at defaults equals
-`max(0, fit − log 2)`.
-"""
-feature_discovery_fit(g::Grammar, observations::Vector{ExploreObservation},
-                      available_features::Set{Symbol}, max_depth::Int;
-                      action_space::Vector{Symbol} = Symbol[:classify])::Float64 =
-    _best_feature_addition(g, observations, available_features, max_depth;
-                           action_space = action_space)[3]
-
-# The shared core: the feature-addition argmax, returning the winning grammar, its
-# horizon-completed two-axis value, and its raw fit. Selection is by FIT (the prior term is
-# candidate-uniform — every addition costs one symbol — so fit-argmax == value-argmax); the
-# no-op floor is on the VALUE. Three projections, one computation (Invariant 3). Returns
-# `(g, 0.0, best_fit)` on the no-op paths.
-function _best_feature_addition(g::Grammar, observations::Vector{ExploreObservation},
-                                available_features::Set{Symbol}, max_depth::Int;
-                                action_space::Vector{Symbol} = Symbol[:classify],
-                                compute_cost::Float64 = 0.0,
-                                plateau::Float64 = 1.0,
-                                horizon::Union{Nothing, Float64} = nothing)::Tuple{Grammar, Float64, Float64}
-    isempty(observations) && return (g, 0.0, 0.0)
-    candidates = _feature_candidates(g, available_features)
-    isempty(candidates) && return (g, 0.0, 0.0)
-
-    baseline = _grammar_marginal_log_loss(g, observations, max_depth, action_space)
-
-    best_fit = 0.0   # a candidate must improve the baseline (fit > 0) to be considered
-    best = g
-    best_prior = 0.0
-    for feat in candidates                              # sorted ⇒ deterministic argmax
-        g_cand = _add_feature(g, feat)
-        mll = _grammar_marginal_log_loss(g_cand, observations, max_depth, action_space)
-        fit = baseline - mll
-        if fit > best_fit
-            best_fit = fit
-            best = g_cand
-            # The explicit prior-Occam penalty (the grammar-complexity prior cancels inside the
-            # normalized mll, so it is charged here). Δcomplexity = +1 ⇒ −log2 nats. One-time.
-            best_prior = complexity_logprior(g_cand.complexity - g.complexity; λ = log(2))
-        end
-    end
-
-    n = length(observations)
-    h = horizon === nothing ? Float64(n) : horizon
-    value = growth_value(best_fit, n, plateau, h; prior_term = best_prior, compute_cost = compute_cost)
-    value > 0.0 ? (best, value, best_fit) : (g, 0.0, best_fit)
+function feature_growth_proposal(state::AgentState, g::Grammar,
+                                 observations::Vector{ExploreObservation},
+                                 available_features::Set{Symbol};
+                                 action_space::Vector{Symbol} = Symbol[:classify],
+                                 include_temporal::Bool = false)::Union{Nothing, GrowthProposal}
+    isempty(observations) && return nothing
+    _growth_proposal(state,
+                     Grammar[_add_feature(g, f) for f in _feature_candidates(g, available_features)],
+                     observations;
+                     action_space = action_space, include_temporal = include_temporal)
 end

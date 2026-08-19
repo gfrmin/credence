@@ -1,26 +1,30 @@
-# test_feature_discovery.jl — exploration-budget Move 4: feature-discovery lookahead VOI (`:add_feature`).
-# The belief-aware sibling of Move 3's threshold refinement, one rung up the fine-before-coarse ladder:
-# grow the agent's FEATURE alphabet by EU-max SELECTION over a host-furnished candidate set
-# (`available_features \ feature_set`), valued by the same compute-budgeted lookahead.
+# test_feature_discovery.jl — exploration-budget Move 4 (re-baselined by the winners-curse
+# design revs 3–4: the lookahead is a virtual injection; the score is the yield rule §8.2).
+# Grow the agent's FEATURE alphabet from a host-furnished candidate set, ALL candidates carried
+# in one union (no per-candidate argmax — average-not-collapse applied to the transition).
 #
 # Sections:
 #   §1  candidate generation — the host-furnished set `available_features \ feature_set` (sorted).
 #   §2  _add_feature — surgery: feature added, default grid for it, OTHER features' grids preserved,
 #       fresh id, complexity +1 (a feature IS a description-length unit — Q2, unlike a threshold).
-#   §3  discovery: a grammar missing the predictive feature acquires it; no-op when nothing helps;
-#       cap-free graceful boundary; determinism; empty.
-#   §4  Q2 — the two-axis pricing is MECHANIZED. The grammar-complexity prior CANCELS inside the
-#       normalized marginal log-loss (a per-grammar constant), so the prior-Occam penalty is charged
-#       EXPLICITLY at the argmax (`+ complexity_logprior(Δcomplexity; λ=log2)`). The boundary sits at
-#       Δℓ − log2, NOT at Δℓ — the signature distinguishing Move 4 (features, dearer) from Move 3
-#       (thresholds, complexity-invariant). This is the literal mechanical content of Q1(b)≡Q2's converse.
+#   §3  discovery via the virtual injection: the predictive feature's programs earn the union's
+#       mass and the yield clears the price; no-op when nothing helps; determinism; empty paths.
+#   §4  Q2 under the union mechanism: the prior-Occam charge lives INSIDE the mixture (each
+#       newcomer arrives at 2^{−|G|−|p|} with the feature's +1 complexity — winners-curse Q4:
+#       no explicit prior term anywhere), so the realised yield is strictly below the fit-axis
+#       Δℓ, and a same-window threshold-class union (complexity-invariant candidates) is not so
+#       charged. The prior axis is priced, mechanically, with no seam arithmetic.
 #
 # Run: julia test/test_feature_discovery.jl
 
 push!(LOAD_PATH, joinpath(@__DIR__, "..", "src"))
 using Credence
-using Credence: Grammar, ProductionRule, ExploreObservation, THRESHOLDS,
-                next_grammar_id, reset_grammar_counter!, explore_grammar
+using Credence: Grammar, ProductionRule, Program, CompiledKernel, ExploreObservation, THRESHOLDS,
+                next_grammar_id, reset_grammar_counter!, enumerate_programs,
+                AgentState, MixturePrevision, TaggedBetaPrevision, BetaPrevision, Prevision,
+                compile_kernel, complexity_logprior, program_space_observation_kernel,
+                condition, log_predictive, net_value, weights, show_expr,
+                feature_growth_proposal, adopt!
 
 function check(name, cond, detail = "")
     cond ? println("PASSED: $name") : (println("FAILED: $name — $detail"); error("fail: $name"))
@@ -70,11 +74,36 @@ let
     check("§2 the grammar gets a fresh id", g2.id != g_ref.id, "got $(g2.id)")
 end
 
-# ── §3  discovery: a grammar missing the predictive feature acquires it via EU-max selection ──
+# ── shared fixture machinery (the test_coherent_injection idiom) ──
+function mk_live_state(g::Grammar, AS::Vector{Symbol})
+    progs = enumerate_programs(g, 2; action_space = AS)
+    comps = TaggedBetaPrevision[TaggedBetaPrevision(i, BetaPrevision(1.0, 1.0))
+                                for i in eachindex(progs)]
+    lw = Float64[complexity_logprior(g.complexity; λ = log(2)) +
+                 complexity_logprior(p.complexity; λ = log(2)) for p in progs]
+    AgentState(MixturePrevision(Prevision[comps...], lw),
+               [(g.id, i) for i in eachindex(progs)],
+               CompiledKernel[compile_kernel(p, g, i) for (i, p) in enumerate(progs)],
+               Program[progs...], Dict{Int, Grammar}(g.id => g), 2)
+end
+function live!(state, raw)
+    buf = ExploreObservation[]
+    for obs in raw
+        k = program_space_observation_kernel(state.compiled_kernels, obs.features,
+                                             obs.temporal_state, obs.correct_actions)
+        res = -log_predictive(state.belief, k, 1.0)
+        push!(buf, ExploreObservation(obs.features, obs.temporal_state,
+                                      obs.correct_actions, res))
+        state.belief = condition(state.belief, k, 1.0)
+    end
+    buf
+end
+
+# ── §3  discovery via the virtual injection ──
 #
 # Scenario: the label depends ONLY on :wall_dist (< 0.5 ⇒ :a, ≥ 0.5 ⇒ :b); :colour is uncorrelated noise.
-# The colour-only grammar provably cannot separate the classes (no colour program beats chance). Adding
-# :wall_dist admits `IF (lt :wall_dist 0.5) :a :b` — a PERFECT separator the colour grammar could not reach.
+# The colour-only grammar provably cannot separate the classes. The union injection carries the
+# :wall_dist candidate's programs; `IF (lt :wall_dist 0.5) :a :b` earns the evidence.
 let
     AS = Symbol[:a, :b]
     mk(wall, col, label) = ExploreObservation(
@@ -88,71 +117,67 @@ let
     g = Grammar(Set([:colour]), ProductionRule[], next_grammar_id())
     available = Set([:colour, :wall_dist])
 
-    # The lookahead: adding :wall_dist gives strictly lower marginal log-loss than the colour-only baseline.
-    baseline = Credence._grammar_marginal_log_loss(g, data, 2, AS)
-    g_wall = Credence._add_feature(g, :wall_dist)
-    mll_wall = Credence._grammar_marginal_log_loss(g_wall, data, 2, AS)
-    dl = baseline - mll_wall
-    check("§3 Δℓ > 0: adding :wall_dist beats the colour-only baseline", dl > 0.0,
-          "baseline=$baseline mll_wall=$mll_wall Δℓ=$dl")
-    check("§3 Δℓ clears the prior-Occam bar (Δℓ > log2 — a strong feature is worth a symbol)",
-          dl > log(2), "Δℓ=$dl log2=$(log(2))")
+    s = mk_live_state(g, AS)
+    buf = live!(s, data)
+    prop = feature_growth_proposal(s, g, buf, available; action_space = AS)
+    check("§3 the lookahead proposes (the :wall_dist union is non-empty)",
+          prop !== nothing && prop.n_added > 0)
 
-    # §3a Discovery: explore_features selects :wall_dist (the EU-max selection over host-furnished features).
-    g2 = Credence.explore_features(g, data, available, 2; action_space = AS, compute_cost = 0.0)
-    check("§3a discovery: the predictive feature is acquired (colour grammar could not reach this)",
-          :wall_dist in g2.feature_set, "feature_set=$(g2.feature_set)")
-    check("§3a discovery: returns a fresh grammar (not the input)", g2.id != g.id, "got input unchanged")
-    check("§3a discovery: exactly the one feature added (selection, not construction)",
-          g2.feature_set == Set([:colour, :wall_dist]), "got $(g2.feature_set)")
+    # §3a Discovery: the yield is decisive and the union's mass concentrates on :wall_dist programs.
+    check("§3a the yield clears the declared price (v = yield − log2 > 0)",
+          net_value(prop.yield_nats, log(2.0)) > 0.0, "yield = $(prop.yield_nats)")
+    n_inc = length(s.belief.components)
+    w = weights(prop.scratch.belief)
+    best_new = argmax(i -> w[i], (n_inc + 1):length(w))
+    best_expr = show_expr(prop.scratch.all_programs[best_new].expr)
+    check("§3a the top-weighted newcomer is a :wall_dist program (colour could not reach it)",
+          occursin("wall_dist", best_expr), "top newcomer: $best_expr")
+    check("§3a the union posterior concentrates on the newcomers", prop.p_newcomers > 0.5,
+          "p_newcomers = $(prop.p_newcomers)")
 
-    # §3b No-op when no candidate feature helps: constant-label data is already fit by the constant
-    # program, so no feature improves the marginal likelihood ⇒ Δℓ ≈ 0 < log2 ⇒ rejected (the prior bar).
+    # §3b No evidence ⇒ the yield stays under the price: constant-label data is already fit by
+    # the constant program, so the newcomers earn ≈ nothing and the score floor keeps act-now.
     flat = ExploreObservation[mk(0.2, 0.1, :a), mk(0.8, 0.9, :a), mk(0.5, 0.5, :a), mk(0.3, 0.7, :a)]
-    g_flat = Credence.explore_features(g, flat, available, 2; action_space = AS, compute_cost = 0.0)
-    check("§3b no-op when no feature helps (constant label ⇒ Δℓ < log2 ⇒ prior bar rejects)",
-          g_flat === g, "expected the input grammar; got id $(g_flat.id)")
+    s_flat = mk_live_state(g, AS)
+    buf_flat = live!(s_flat, flat)
+    p_flat = feature_growth_proposal(s_flat, g, buf_flat, available; action_space = AS)
+    check("§3b constant label ⇒ the yield stays under the price (act-now floor holds)",
+          p_flat === nothing || net_value(p_flat.yield_nats, log(2.0)) <= 0.0,
+          p_flat === nothing ? "" : "yield = $(p_flat.yield_nats)")
 
-    # §3c Empty candidate set ⇒ no-op (every available feature already in the grammar).
-    check("§3c empty candidate set ⇒ no-op",
-          Credence.explore_features(g_wall, data, Set([:colour, :wall_dist]), 2;
-                                    action_space = AS, compute_cost = 0.0) === g_wall,
-          "expected no-op when feature_set ⊇ available")
+    # §3c Empty candidate set ⇒ no proposal (every available feature already in the grammar).
+    g_full = Credence._add_feature(g, :wall_dist)
+    s_full = mk_live_state(g_full, AS)
+    buf_full = live!(s_full, data)
+    check("§3c empty candidate set ⇒ no proposal",
+          feature_growth_proposal(s_full, g_full, buf_full, Set([:colour, :wall_dist]);
+                                  action_space = AS) === nothing)
 
-    # §3d Empty buffer ⇒ no-op.
-    check("§3d empty buffer ⇒ no-op",
-          Credence.explore_features(g, ExploreObservation[], available, 2; action_space = AS) === g,
-          "expected no-op on empty buffer")
+    # §3d Empty buffer ⇒ no proposal.
+    check("§3d empty buffer ⇒ no proposal",
+          feature_growth_proposal(mk_live_state(g, AS), g, ExploreObservation[], available;
+                                  action_space = AS) === nothing)
 
-    # §3e Determinism: identical inputs ⇒ identical result (no rand; deterministic argmax).
-    ga = Credence.explore_features(g, data, available, 2; action_space = AS, compute_cost = 0.0)
-    gb = Credence.explore_features(g, data, available, 2; action_space = AS, compute_cost = 0.0)
-    check("§3e determinism: identical inputs ⇒ identical feature_set",
-          ga.feature_set == gb.feature_set, "a=$(ga.feature_set) b=$(gb.feature_set)")
-
-    # §3f feature_discovery_voi — the scalar the selection layer ranks by; shares _best_feature_addition with
-    # explore_features (Invariant 3). The two-axis Δ log-evidence: fit Δℓ minus the prior-Occam log2 (Δc=+1) —
-    # the boundary §4 mechanizes (Δℓ − log2, not Δℓ).
-    check("§3f feature_discovery_voi == dl − log2 (the two-axis VOI of the winning feature)",
-          Credence.feature_discovery_voi(g, data, available, 2; action_space = AS, compute_cost = 0.0) == dl - log(2),
-          "got $(Credence.feature_discovery_voi(g, data, available, 2; action_space = AS, compute_cost = 0.0)) vs dl−log2=$(dl - log(2))")
-    check("§3f feature_discovery_voi == 0.0 when no feature clears the bar (no-op floor)",
-          Credence.feature_discovery_voi(g, flat, available, 2; action_space = AS, compute_cost = 0.0) == 0.0,
-          "got $(Credence.feature_discovery_voi(g, flat, available, 2; action_space = AS, compute_cost = 0.0))")
-    check("§3f feature_discovery_voi == 0.0 on empty buffer",
-          Credence.feature_discovery_voi(g, ExploreObservation[], available, 2; action_space = AS) == 0.0,
-          "got $(Credence.feature_discovery_voi(g, ExploreObservation[], available, 2; action_space = AS))")
+    # §3e Determinism: identical inputs ⇒ identical proposal.
+    sa = mk_live_state(g, AS); bufa = live!(sa, data)
+    sb = mk_live_state(g, AS); bufb = live!(sb, data)
+    pa = feature_growth_proposal(sa, g, bufa, available; action_space = AS)
+    pb = feature_growth_proposal(sb, g, bufb, available; action_space = AS)
+    check("§3e determinism: identical inputs ⇒ identical yield and union",
+          pa.yield_nats == pb.yield_nats && pa.n_added == pb.n_added,
+          "a = $(pa.yield_nats), b = $(pb.yield_nats)")
 end
 
-# ── §4  Q2 MECHANIZED: the prior-Occam term is charged EXPLICITLY (boundary at Δℓ − log2, not Δℓ) ──
+# ── §4  Q2 under the union mechanism: the prior axis is priced INSIDE the mixture ──
 #
-# The grammar-complexity prior is a per-grammar CONSTANT added to every component's log-weight, so it
-# CANCELS inside the normalized marginal log-loss (`log_predictive`/`condition` normalize). Reusing
-# `_grammar_marginal_log_loss` verbatim would therefore price a feature on the FIT axis alone — violating
-# Q2. `explore_features` charges the prior penalty `complexity_logprior(Δcomplexity; λ=log2) = −log2`
-# explicitly at the argmax. The decisive test: a compute_cost just ABOVE `Δℓ − log2` must no-op. Were the
-# log2 term absent (Move-3 thresholds, complexity-invariant), the boundary would sit at Δℓ and that same
-# compute_cost would still ADD. The no-op proves the prior axis is priced.
+# Each feature newcomer arrives at 2^{−|G′|−|p|} with |G′| = |G| + 1 — the −log2 Occam charge is
+# in its prior BEFORE any evidence flows (winners-curse Q4: no explicit prior term at any seam;
+# double-charging is structurally impossible because there is no second site). The observable
+# consequence pinned here: on the SAME evidence, the feature union's prior counterfactual mass —
+# and hence its realised yield — is strictly depressed relative to what complexity-invariant
+# candidates (thresholds, Move 3) would enjoy; and the realised yield is strictly below the
+# fit-axis Δℓ the retired mechanism would have credited (the mixture prices what the argmax
+# gave away free).
 let
     AS = Symbol[:a, :b]
     mk(wall, col, label) = ExploreObservation(
@@ -166,22 +191,36 @@ let
     g = Grammar(Set([:colour]), ProductionRule[], next_grammar_id())
     available = Set([:colour, :wall_dist])
 
-    baseline = Credence._grammar_marginal_log_loss(g, data, 2, AS)
-    g_wall = Credence._add_feature(g, :wall_dist)
-    dl = baseline - Credence._grammar_marginal_log_loss(g_wall, data, 2, AS)
+    s = mk_live_state(g, AS)
+    buf = live!(s, data)
+    prop = feature_growth_proposal(s, g, buf, available; action_space = AS)
 
-    # Boundary at compute_cost = Δℓ − log2: just below ⇒ add; just above ⇒ no-op.
-    below = Credence.explore_features(g, data, available, 2; action_space = AS, compute_cost = dl - log(2) - 0.1)
-    above = Credence.explore_features(g, data, available, 2; action_space = AS, compute_cost = dl - log(2) + 0.1)
-    check("§4 compute_cost just below Δℓ−log2 ⇒ feature added", :wall_dist in below.feature_set,
-          "expected add at cost $(dl - log(2) - 0.1)")
-    check("§4 compute_cost just above Δℓ−log2 ⇒ NO-OP (the log2 prior term is charged; boundary ≠ Δℓ)",
-          above === g, "expected no-op at cost $(dl - log(2) + 0.1); got id $(above.id)")
-
-    # The contrast that makes §4 decisive: cost just above Δℓ−log2 is still WELL below Δℓ, so a
-    # fit-axis-only valuation (no log2) would have ADDED here. The no-op above is the proof.
-    check("§4 the no-op cost is strictly below Δℓ (a fit-only rule would have added — it didn't)",
-          dl - log(2) + 0.1 < dl, "cost=$(dl - log(2) + 0.1) Δℓ=$dl")
+    # The retired fit-axis Δℓ (counter-oracle, hand-replayed through canalised ops).
+    # credence-lint: allow — precedent:test-oracle — counter-oracle for the retired fit axis
+    function mll_fresh(g2::Grammar)
+        progs = enumerate_programs(g2, 2; action_space = AS)
+        cks = CompiledKernel[compile_kernel(p, g2, i) for (i, p) in enumerate(progs)]
+        comps = TaggedBetaPrevision[TaggedBetaPrevision(i, BetaPrevision(1.0, 1.0))
+                                    for i in eachindex(progs)]
+        lw = Float64[complexity_logprior(g2.complexity; λ = log(2)) +
+                     complexity_logprior(p.complexity; λ = log(2)) for p in progs]
+        belief = MixturePrevision(Prevision[comps...], lw)
+        mll = 0.0
+        for obs in buf
+            k = program_space_observation_kernel(cks, obs.features, obs.temporal_state,
+                                                 obs.correct_actions)
+            mll += -log_predictive(belief, k, 1.0)
+            belief = condition(belief, k, 1.0)
+        end
+        mll
+    end
+    dl = mll_fresh(g) - mll_fresh(Credence._add_feature(g, :wall_dist))
+    check("§4 the fit axis alone is decisive on this data (Δℓ > log2 — the retired credit)",
+          dl > log(2), "Δℓ = $dl")
+    check("§4 the realised yield is strictly below the fit-axis Δℓ (the mixture prices the prior axis)",
+          prop.yield_nats < dl, "yield = $(prop.yield_nats), Δℓ = $dl")
+    check("§4 and still clears the declared price (a strong feature is worth its symbol)",
+          net_value(prop.yield_nats, log(2.0)) > 0.0, "yield = $(prop.yield_nats)")
 end
 
 println("="^64)
