@@ -1,0 +1,19 @@
+[Unit]
+Description=Answer-brain decision daemon (credence/Julia, :8799) — life-agent ask read-path
+Documentation=https://github.com/gfrmin/life-agent
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/git/credence
+# julia + (for any engine shim) the user bin; mirrors credence-governor.service.
+Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=/usr/bin/julia --project=. apps/answer-brain/daemon/main.jl
+Restart=on-failure
+RestartSec=10
+# Give the Julia daemon room to precompile on a cold boot before restart logic kicks in.
+TimeoutStartSec=300
+
+[Install]
+WantedBy=default.target
