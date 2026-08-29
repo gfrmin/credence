@@ -59,6 +59,7 @@ app), then the end-to-end eval + gate, and with it the model-choice-under-PII re
 
 ```
 julia --project=. apps/answer-brain/tests/julia/test_answer_brain.jl
+julia --project=. apps/answer-brain/tests/julia/test_extra_actions.jl
 ```
 
 Asserts, on `tests/fixtures/stage0_parity.json` (life-agent `c1a781f`): the native brain
@@ -66,3 +67,9 @@ reproduces Stage-0's posterior weights, chosen effector, and EU to `atol=1e-9` a
 (ancestry/model tempering, the subject/time covariates, every terminal action as a winner);
 the `net_voi` gate prices a perfect probe above a useless one; and observation-log replay
 reconstructs the posterior exactly.
+
+`test_extra_actions.jl` covers the body-priced terminal rows (`extra_actions` on `/decide`):
+the body declares `{name, act, values}` rows over the same K+1 atoms and the engine ranks them
+by the same `optimise` call. The daemon does no arithmetic on them — their loss is declared
+once on the body's side, where it is also graded. An absent block is byte-identical to every
+reading before the field existed.

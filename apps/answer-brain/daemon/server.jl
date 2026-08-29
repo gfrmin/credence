@@ -17,7 +17,7 @@ body to *display* the withheld leader, not to select an action.
 Routes:
   POST /decide   {question_id?, observations[], candidates[], rho, u_bar, channel?,
                   era_split?, owner_scoped?, applied_probes?, transforms?,
-                  sensors?, grow?}
+                  sensors?, grow?, extra_actions?}
              →   {effector, report_index, value, probe, target, credences[], p_none, eu,
                   grow_g?}
 
@@ -34,6 +34,15 @@ per-actuator g for the body's gather-outcome log.
 `GET /manifest` serves the body's effector/feature vocabulary, parsed from `bdsl/*.bdsl` by the ONE
 library parser (`manifest.jl`); the body verifies its registered impls against it and has no parser
 of its own (move-4-design §0, §5 Q1).
+
+`extra_actions?` (life-agent r30b) is a list of `{name, act, values}` — BODY-PRICED terminal
+rows over the same K+1 atoms, ranked beside the built-in ones by the same `optimise` call.
+The daemon does no arithmetic on them: their loss is declared once on the body's side, where
+it is also graded, so a second spelling here would let the body be graded on a loss it did not
+decide under. `act` names the SPEECH ACT the row belongs to (`report`, `abstain`, …) so the
+registry's eligibility predicates — the owner-scoped attribution guard, the §2-A rescue gate —
+keep asking "did this commit?" rather than matching a wire name. `effector` may then be a row's
+own name; the body maps it back to the act it declared. Absent ⇒ byte-identical to before.
 
 The `era_split?`/`owner_scoped?`/`applied_probes?` fields drive the Move-4 gather branch
 (`AnswerBrain.gather_decide`); absent ⇒ the Stage-2a terminal decision, unchanged. `effector` may
@@ -144,6 +153,14 @@ function decide_response(req::AbstractDict)::Dict{String, Any}
         end
     end
 
+    # Body-priced terminal rows (r30b). Parsed, never priced: the daemon checks only that a row
+    # spans the atoms it will be ranked over (`decision_fpa` asserts the length).
+    extra = Tuple{String, String, Vector{Float64}}[]
+    for a in get(req, "extra_actions", [])
+        push!(extra, (String(a["name"]), String(get(a, "act", "report")),
+                      Float64[Float64(v) for v in a["values"]]))
+    end
+
     post = candidate_posterior(k, obs, rho; cp = cp)
     w = weights(post)                                  # length k+1: candidates then NONE
     # The menu is data: when the body declares a `transforms` list (Slice 2 — e.g. the corroborate
@@ -154,15 +171,15 @@ function decide_response(req::AbstractDict)::Dict{String, Any}
         if haskey(req, "transforms")
             reg = registry_from_wire(req["transforms"]; cp = cp)
             ctx = ScheduleCtx(era_split, owner_scoped, gather_rho, gather_cost, applied)
-            schedule_decide(post, k, u_bar, reg, ctx; cp = cp, grows = grows)
+            schedule_decide(post, k, u_bar, reg, ctx; cp = cp, grows = grows, extra = extra)
         else
             gather_decide(post, k, u_bar; era_split = era_split, owner_scoped = owner_scoped,
                           gather_rho = gather_rho, gather_cost = gather_cost,
-                          applied_probes = applied, cp = cp, grows = grows)
+                          applied_probes = applied, cp = cp, grows = grows, extra = extra)
         end
 
     resp = Dict{String, Any}(
-        "effector"     => effector,                    # report | hedge | ask_clarify | abstain | gather
+        "effector"     => effector,                    # report | hedge | ask_clarify | abstain | gather | an extra row's name
         "report_index" => report_index,                # 0-based candidate idx (report), or nothing → null
         "value"        => report_index === nothing ? nothing : candidates[report_index + 1],
         "probe"        => probe,                        # the gather probe (e.g. "recency"), or null
