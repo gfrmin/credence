@@ -34,6 +34,7 @@ import Main.Credence: grow_value, best_grow
 
 export Obs, ChannelParams, CANONICAL_CHANNEL,
        candidate_posterior, terminal_decide, decide_full, decision_fpa, voi_gather,
+       terminal_class,
        grow_value, best_grow,
        provisional_leader, gather_decide,
        Transform, ScheduleCtx, default_registry, registry_from_wire, schedule_decide
@@ -136,22 +137,33 @@ function candidate_posterior(k::Int, obs::Vector{Obs}, rho::Float64;
     state
 end
 
-# ── The decision: optimise over {report_j × K, hedge, ask_clarify, abstain} ──────────────
+# ── The decision: optimise over {report_j × K, hedge, ask_clarify, abstain, extras…} ─────
 # action keys (deterministic numeric order = the skin's _sorted_action_keys semantics):
 #   1..k       report_j        reward candidate (j-1), every other atom + NONE = u_wrong
 #   k+1        hedge           the named-set value; misleads only when the truth is NONE
 #   k+2        ask_clarify     the oracle price (NOT a u_assert outcome)
 #   k+3        abstain         the gauge zero
+#   k+3+i      extra[i]        a BODY-SUPPLIED tabular row over the same K+1 atoms
+#
+# The extras (life-agent r30b) are the generic form of what `report_scoped_j` has always been
+# on the skin lane: a row whose VALUE the body computed and whose RANKING the engine owns.
+# The daemon does no arithmetic on them — it cannot, and must not: their loss (life-agent's
+# `core.decide`) is declared once, on the side that also grades it, so a second spelling here
+# would let the body be graded on a loss it did not decide under. Invariant 1 is unchanged:
+# the effector still comes from `optimise`, never from reading `weights`.
 """
-    decision_fpa(k, u_bar; cp=CANONICAL_CHANNEL) -> (order, fpa)
+    decision_fpa(k, u_bar; cp=CANONICAL_CHANNEL, extra=[]) -> (order, fpa)
 
 The terminal preference: an ordered action-key vector and a `Dict` of `Tabular` utility
 vectors over the K+1 atoms. Pure declarative construction of the §4.4 utility (the argmax
 over candidates is left to `optimise` via the K `report_j` actions — Invariant 1).
-`u_bar` is the owner's utility posterior mean Ū, supplied by the body.
+`u_bar` is the owner's utility posterior mean Ū, supplied by the body. `extra` is a vector of
+`(name, values)` pairs — body-priced rows over the same K+1 atoms, appended in the given
+order. Empty `extra` ⇒ byte-identical to every reading before it existed.
 """
 function decision_fpa(k::Int, u_bar::AbstractDict;
-                      cp::ChannelParams = CANONICAL_CHANNEL)
+                      cp::ChannelParams = CANONICAL_CHANNEL,
+                      extra::AbstractVector = Tuple{String, String, Vector{Float64}}[])
     u_c = Float64(u_bar["u_correct"]); u_w = Float64(u_bar["u_wrong"])
     u_h = Float64(u_bar["u_hedged"]);  u_ab = Float64(u_bar["u_abstain"])
     lam = Float64(u_bar["lambda_int"])
@@ -164,16 +176,45 @@ function decision_fpa(k::Int, u_bar::AbstractDict;
     fpa[k + 1] = Tabular(vcat(fill(u_h, k), [u_w]));           push!(order, k + 1)  # hedge
     fpa[k + 2] = Tabular(fill(cp.oracle_p * u_c - lam, k + 1)); push!(order, k + 2)  # ask
     fpa[k + 3] = Tabular(fill(u_ab, k + 1));                    push!(order, k + 3)  # abstain
+    for (i, row) in enumerate(extra)
+        values = row[3]
+        length(values) == k + 1 ||
+            error("extra action row must span the K+1 atoms (got $(length(values)), want $(k + 1))")
+        fpa[k + 3 + i] = Tabular(collect(Float64, values)); push!(order, k + 3 + i)
+    end
     (order, fpa)
 end
 
+function _action_name(act::Int, k::Int, extra::AbstractVector)::String
+    act <= k && return "report"
+    act == k + 1 && return "hedge"
+    act == k + 2 && return "ask_clarify"
+    act == k + 3 && return "abstain"
+    String(extra[act - k - 3][1])              # a body-supplied row answers by its own name
+end
+
 _action_name(act::Int, k::Int)::String =
-    act <= k ? "report" : act == k + 1 ? "hedge" : act == k + 2 ? "ask_clarify" : "abstain"
+    _action_name(act, k, Tuple{String, String, Vector{Float64}}[])
+
+"""
+    terminal_class(action, extra) -> String
+
+The SPEECH ACT an action belongs to, for the eligibility predicates the transform registry
+ranks over. A body-supplied row names its own class (`report` / `abstain` / …) because the
+engine cannot know whether a body's row asserts or withholds — and the guards that defend
+out-of-model risks (the owner-scoped attribution guard) and the §2-A rescue gate are both
+keyed on "did this commit?", not on the row's wire name.
+"""
+function terminal_class(action::AbstractString, extra::AbstractVector)::String
+    i = findfirst(r -> String(r[1]) == String(action), extra)
+    i === nothing ? String(action) : String(extra[i][2])
+end
 
 # Shared decision: `optimise` over the terminal action set; returns the chosen action KEY + its EU.
 # The argmax is the single decision mechanism — no `weights` are read to select behaviour.
-function _decide(state::CategoricalMeasure, k::Int, u_bar::AbstractDict, cp::ChannelParams)
-    order, fpa = decision_fpa(k, u_bar; cp = cp)
+function _decide(state::CategoricalMeasure, k::Int, u_bar::AbstractDict, cp::ChannelParams;
+                 extra::AbstractVector = Tuple{String, String, Vector{Float64}}[])
+    order, fpa = decision_fpa(k, u_bar; cp = cp, extra = extra)
     act = optimise(state, order, fpa)          # argmax_a expect(state, fpa[a]) (single decision mech.)
     eu  = value(state, order, fpa)             # = EU of the chosen action
     (act, Float64(eu))
@@ -186,9 +227,10 @@ end
 `"report"`. Returns the Stage-0 action vocabulary so parity compares like-for-like.
 """
 function terminal_decide(state::CategoricalMeasure, k::Int, u_bar::AbstractDict;
-                         cp::ChannelParams = CANONICAL_CHANNEL)
-    act, eu = _decide(state, k, u_bar, cp)
-    (_action_name(act, k), eu)
+                         cp::ChannelParams = CANONICAL_CHANNEL,
+                         extra::AbstractVector = Tuple{String, String, Vector{Float64}}[])
+    act, eu = _decide(state, k, u_bar, cp; extra = extra)
+    (_action_name(act, k, extra), eu)
 end
 
 """
@@ -201,10 +243,11 @@ mechanism's own choice, not an `argmax(weights)` — the wire surface (`daemon/s
 reported value while keeping the Invariant-1 promise that no caller reads `weights` to pick an action.
 """
 function decide_full(state::CategoricalMeasure, k::Int, u_bar::AbstractDict;
-                     cp::ChannelParams = CANONICAL_CHANNEL)
-    act, eu = _decide(state, k, u_bar, cp)
+                     cp::ChannelParams = CANONICAL_CHANNEL,
+                     extra::AbstractVector = Tuple{String, String, Vector{Float64}}[])
+    act, eu = _decide(state, k, u_bar, cp; extra = extra)
     report_index = act <= k ? act - 1 : nothing
-    (_action_name(act, k), report_index, eu)
+    (_action_name(act, k, extra), report_index, eu)
 end
 
 # ── The forward capability: VOI-priced gather/ask (NEW; no Stage-0 parity counterpart) ──
@@ -218,8 +261,12 @@ priced against the SAME terminal preference, so gather competes with answer/abst
 """
 function voi_gather(state::CategoricalMeasure, k::Int, u_bar::AbstractDict,
                     probe_kernel::Kernel, possible_obs, cost::Float64;
-                    cp::ChannelParams = CANONICAL_CHANNEL)::Float64
-    order, fpa = decision_fpa(k, u_bar; cp = cp)
+                    cp::ChannelParams = CANONICAL_CHANNEL,
+                    extra::AbstractVector = Tuple{String, String, Vector{Float64}}[])::Float64
+    # `extra` rides here deliberately: VOI is the expected gain in `value`, and `value` must be
+    # taken over the SAME action set the terminal decision is taken over, or a probe is priced
+    # against a decision problem the agent is not solving.
+    order, fpa = decision_fpa(k, u_bar; cp = cp, extra = extra)
     Float64(net_voi(state, probe_kernel, order, fpa, possible_obs, cost))
 end
 
@@ -374,22 +421,25 @@ with no `grows` returns exactly `decide_full`'s terminal tuple. Grow self-gates 
 function schedule_decide(state::CategoricalMeasure, k::Int, u_bar::AbstractDict,
                   registry::Vector{Transform}, ctx::ScheduleCtx;
                   cp::ChannelParams = CANONICAL_CHANNEL,
-                  grows::AbstractVector = Tuple{String, Float64, Float64}[])
-    action, report_index, eu = decide_full(state, k, u_bar; cp = cp)
+                  grows::AbstractVector = Tuple{String, Float64, Float64}[],
+                  extra::AbstractVector = Tuple{String, String, Vector{Float64}}[])
+    action, report_index, eu = decide_full(state, k, u_bar; cp = cp, extra = extra)
+    klass = terminal_class(action, extra)   # a body row's speech act, else the action itself
     leader() = provisional_leader(state, k, u_bar; cp = cp)
     # Guards first: mandatory, registry order. A guard prices an out-of-model risk VOI is blind to.
     for t in registry
         t.kind === :guard || continue
         t.probe in ctx.applied_probes && continue
-        t.applies(action, ctx) && return ("gather", nothing, t.probe, leader(), eu)
+        t.applies(klass, ctx) && return ("gather", nothing, t.probe, leader(), eu)
     end
     # :voi transforms: price each eligible, unapplied one; keep the net_voi argmax if > 0.
     best = nothing; best_nv = 0.0
     for t in registry
         t.kind === :voi || continue
         t.probe in ctx.applied_probes && continue
-        t.applies(action, ctx) || continue
-        nv = voi_gather(state, k, u_bar, t.kernel_fn(k, cp), collect(Float64, 0:(k - 1)), t.cost; cp = cp)
+        t.applies(klass, ctx) || continue
+        nv = voi_gather(state, k, u_bar, t.kernel_fn(k, cp), collect(Float64, 0:(k - 1)), t.cost;
+                        cp = cp, extra = extra)
         nv > best_nv && (best_nv = nv; best = t)
     end
     # Grow actuators: the engine gather VOI over the unapplied ones; one EU comparison vs :voi.
@@ -418,11 +468,12 @@ function gather_decide(state::CategoricalMeasure, k::Int, u_bar::AbstractDict;
                        gather_cost::Float64 = 0.0,
                        applied_probes::AbstractVector{<:AbstractString} = String[],
                        cp::ChannelParams = CANONICAL_CHANNEL,
-                       grows::AbstractVector = Tuple{String, Float64, Float64}[])
+                       grows::AbstractVector = Tuple{String, Float64, Float64}[],
+                       extra::AbstractVector = Tuple{String, String, Vector{Float64}}[])
     reg = default_registry(; gather_rho = gather_rho, gather_cost = gather_cost)
     ctx = ScheduleCtx(era_split, owner_scoped, gather_rho, gather_cost,
                       collect(String, applied_probes))
-    schedule_decide(state, k, u_bar, reg, ctx; cp = cp, grows = grows)
+    schedule_decide(state, k, u_bar, reg, ctx; cp = cp, grows = grows, extra = extra)
 end
 
 end # module AnswerBrain
