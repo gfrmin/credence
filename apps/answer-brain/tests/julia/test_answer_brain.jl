@@ -316,7 +316,7 @@ let k = 1, rho = 0.535,
     check("temper: a quote-window competitor pulls the same regime below the bar",
           act_comp != "report"; detail = "got $act_comp w=$(weights(competed))")
     check("temper: the competed leader stays a live sub-bar lead (not erased to prior)",
-          weights(competed)[1] > 0.75; detail = "w=$(weights(competed))")
+          weights(competed)[1] > 0.75; detail = "w=$(weights(competed))")  # credence-lint: allow — precedent:test-oracle — manual oracle: the tempered leader must stay a live sub-bar lead, not decay to the prior
 end
 
 println("\n", "="^64)
