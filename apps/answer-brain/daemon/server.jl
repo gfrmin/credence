@@ -191,6 +191,11 @@ function decide_response(req::AbstractDict)::Dict{String, Any}
     # Per-actuator g, exposed only when the body sent a grow block — for the body's
     # gather-outcome log (Invariant 1: display/logging, never selection — the daemon already chose).
     haskey(req, "grow") && (resp["grow_g"] = grow_g)
+    # Echo how many body rows were actually RANKED. A daemon predating this field ignores an
+    # `extra_actions` key silently, and a body that cannot tell the difference would measure
+    # the old action set while believing it measured the new one; the echo is what lets the
+    # body refuse. Present only when the body sent the block (older bodies unchanged).
+    haskey(req, "extra_actions") && (resp["n_extra_actions"] = length(extra))
     resp
 end
 

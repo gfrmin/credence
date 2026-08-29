@@ -116,9 +116,11 @@ let req = Dict{String, Any}(
     check("the wire returns the winning row's own name", resp["effector"] == "interval_0_1")
     check("a body row carries no report_index", resp["report_index"] === nothing)
     check("a body row carries no candidate value", resp["value"] === nothing)
+    check("the reply echoes how many body rows were RANKED", resp["n_extra_actions"] == 1)
     # and the same request WITHOUT the block is unchanged
     resp0 = Server.decide_response(Dict(k => v for (k, v) in req if k != "extra_actions"))
     check("absent extra_actions ⇒ the pre-r30b reply", resp0["effector"] == "abstain")
+    check("absent extra_actions ⇒ no echo key", !haskey(resp0, "n_extra_actions"))
 end
 
 println()
