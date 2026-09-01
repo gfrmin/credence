@@ -9,9 +9,12 @@
 #   §3  ExponentialMean guards and closed form.
 #   §4  zero-yield observations condition cleanly (the relaxed r ≥ 0 Exponential guard —
 #       density λe^{−λ·0} = λ is well-defined; posterior Gamma(α+1, β+0) IS Bayes).
-#   §5  growth_value: the horizon-completed Δ log-evidence functional; defaults reduce
+#   §5  growth_value: the horizon-completed Δ log-evidence functional (stdlib; the grid host's
+#       growth seam no longer calls it — winners-curse §8.2 — but the functional's arithmetic
+#       stays pinned for consumers with an honest persistent-rate claim); defaults reduce
 #       BIT-EXACTLY to net_value(fit + prior, cost) (behaviour-preserving pin).
-#   §6  score/edit pairing: exploration accessors under (plateau, horizon) kwargs — the ranked
+#   §6  ONE SCORE FORM (T-3.53, winners-curse §8.2): escape ops score net_value(E[next yield],
+#       cost) — learned; growth ops score net_value(computed yield, cost) — exact. The ranked
 #       value and the applied edit share one core (positive value ⟺ grammar applied).
 #
 # Run: julia test/test_growth_returns.jl
@@ -25,8 +28,10 @@ using Credence: GrowthReturns, observe_yield!, escape_score, injection_yield_nat
                 add_programs_to_state!, ExploreObservation, program_space_observation_kernel,
                 enumerate_programs, compile_kernel, complexity_logprior,
                 TaggedBetaPrevision, BetaPrevision, Prevision, MixturePrevision, log_predictive,
-                exploration_voi, exploration_fit, explore_grammar,
-                feature_discovery_voi, feature_discovery_fit, explore_features
+                Program, CompiledKernel, AgentState, MixturePrevision, TaggedBetaPrevision,
+                BetaPrevision, Prevision, compile_kernel, complexity_logprior,
+                program_space_observation_kernel, condition, log_predictive,
+                enumerate_programs, threshold_growth_proposal, feature_growth_proposal
 
 function check(name, cond, detail = "")
     cond ? println("PASSED: $name") : (println("FAILED: $name — $detail"); error("fail: $name"))
@@ -168,56 +173,65 @@ let
     check("§5 empty window is worthless", growth_value(0.0, 0, 1.0, 100.0) == 0.0)
 end
 
-# ── §6  score/edit pairing under (plateau, horizon) ──
+# ── §6  one score form: escape learns the yield, growth computes it (T-3.53, §8.2) ──
 let
-    # A refinement inexpressible at the default grid: rule fires at :a > 0.62. With few
-    # observations the window-total Δℓ is small; a long horizon amplifies it.
-    g = Grammar(Set([:a]), ProductionRule[], 923)
     as = Symbol[:food, :enemy]
-    obs = ExploreObservation[]
-    for (av, correct) in [(0.65, :food), (0.60, :enemy), (0.66, :food), (0.58, :enemy),
-                          (0.70, :food), (0.61, :enemy)]
-        push!(obs, ExploreObservation(Dict(:a => av), Dict{Symbol, Any}(), Set([correct]), 1.0))
+    function mk_state(g)
+        progs = enumerate_programs(g, 2; action_space = as)
+        comps = TaggedBetaPrevision[TaggedBetaPrevision(i, BetaPrevision(1.0, 1.0))
+                                    for i in eachindex(progs)]
+        lw = Float64[complexity_logprior(g.complexity; λ = log(2)) +
+                     complexity_logprior(p.complexity; λ = log(2)) for p in progs]
+        AgentState(MixturePrevision(Prevision[comps...], lw),
+                   [(g.id, i) for i in eachindex(progs)],
+                   CompiledKernel[compile_kernel(p, g, i) for (i, p) in enumerate(progs)],
+                   Program[progs...], Dict{Int, Grammar}(g.id => g), 2)
+    end
+    function live!(state, raw)
+        buf = ExploreObservation[]
+        for (features, correct) in raw
+            k = program_space_observation_kernel(state.compiled_kernels, features,
+                                                 Dict{Symbol, Any}(), correct)
+            res = -log_predictive(state.belief, k, 1.0)
+            push!(buf, ExploreObservation(features, Dict{Symbol, Any}(), correct, res))
+            state.belief = condition(state.belief, k, 1.0)
+        end
+        buf
     end
 
-    fit = exploration_fit(g, obs, 2; action_space = as)
-    v_default = exploration_voi(g, obs, 2; action_space = as)
-    check("§6 fit accessor == default voi (thresholds carry no prior term)", fit == v_default)
+    # A refinement inexpressible at the default grid: the boundary sits at :a ≈ 0.62.
+    g = Grammar(Set([:a]), ProductionRule[], 923)
+    raw = [(Dict(:a => 0.65), Set([:food])), (Dict(:a => 0.60), Set([:enemy])),
+           (Dict(:a => 0.66), Set([:food])), (Dict(:a => 0.58), Set([:enemy])),
+           (Dict(:a => 0.70), Set([:food])), (Dict(:a => 0.61), Set([:enemy]))]
+    s = mk_state(g)
+    buf = live!(s, raw)
+    prop = threshold_growth_proposal(s, g, buf; action_space = as)
+    check("§6 the growth proposal computes a non-negative yield (the same observable escape learns)",
+          prop !== nothing && prop.yield_nats >= 0.0)
 
-    v_short = exploration_voi(g, obs, 2; action_space = as, plateau = 1.0,
-                              horizon = Float64(length(obs)))
-    check("§6 horizon == n_buf reproduces the default voi bit-exactly", v_short == v_default)
+    # ONE SCORE FORM: both tiers are net_value(yield-quantity, declared price). The escape
+    # side's yield-quantity is the posterior-predictive expectation of the SAME observable the
+    # growth side computes exactly by virtually firing.
+    gr = GrowthReturns(Symbol[:op])
+    observe_yield!(gr, :op, true, prop.yield_nats)
+    # credence-lint: allow — precedent:test-oracle — the shared net_value form, recomputed
+    check("§6 escape tier: score == net_value(E[next yield], cost) — the learned fidelity",
+          escape_score(gr, :op, true; compute_cost = 0.25) ==
+          net_value(expect(gr.cells[(:op, true)], ExponentialMean()), 0.25))
+    check("§6 growth tier: score == net_value(computed yield, cost) — the exact fidelity",
+          net_value(prop.yield_nats, 0.25) == prop.yield_nats - 0.25)
 
-    v_long = exploration_voi(g, obs, 2; action_space = as, plateau = 1.0, horizon = 60.0)
-    check("§6 longer horizon scales the value exactly (H/n multiplier)",
-          v_long == fit * (60.0 / length(obs)),
-          "v_long=$v_long fit=$fit")
-
-    # Pairing: the edit applies iff the SAME value is positive — one core, two projections.
-    g_hi = explore_grammar(g, obs, 2; action_space = as, plateau = 1.0, horizon = 60.0)
-    check("§6 positive value ⟺ refinement applied", (v_long > 0.0) == (g_hi.id != g.id))
-
-    # A plateau of zero kills the value and the edit together.
-    v_zero = exploration_voi(g, obs, 2; action_space = as, plateau = 0.0, horizon = 60.0)
-    g_zero = explore_grammar(g, obs, 2; action_space = as, plateau = 0.0, horizon = 60.0)
-    check("§6 zero plateau: value 0 and no edit", v_zero == 0.0 && g_zero.id == g.id)
-
-    # Feature side: fit + one-time log2 prior; defaults reduce to the old fdvoi.
-    g0 = Grammar(Set([:a]), ProductionRule[], 924)
-    fobs = ExploreObservation[]
-    for (a, b, correct) in [(0.5, 0.9, :enemy), (0.5, 0.1, :food), (0.5, 0.8, :enemy),
-                            (0.5, 0.2, :food), (0.5, 0.85, :enemy), (0.5, 0.15, :food)]
-        push!(fobs, ExploreObservation(Dict(:a => a, :b => b), Dict{Symbol, Any}(),
-                                       Set([correct]), 1.0))
-    end
-    ffit = feature_discovery_fit(g0, fobs, Set([:a, :b]), 2; action_space = as)
-    fv = feature_discovery_voi(g0, fobs, Set([:a, :b]), 2; action_space = as)
-    check("§6 feature fit − log2 == default fdvoi (one-time prior, exact)",
-          fv == max(0.0, ffit - log(2.0)), "ffit=$ffit fv=$fv")
-    fv_long = feature_discovery_voi(g0, fobs, Set([:a, :b]), 2; action_space = as,
-                                    plateau = 1.0, horizon = 60.0)
-    check("§6 feature horizon completion: fit·(H/n) − log2, exact",
-          fv_long == ffit * (60.0 / length(fobs)) - log(2.0))
+    # Score/edit pairing survives the re-founding: the score and the transition project ONE
+    # GrowthProposal (identity-pinned end-to-end in test_virtual_injection.jl §1); here the
+    # engine-level floor — an evidence-free union prices at the clamp floor, exactly 0.
+    g_flat = Grammar(Set([:z]), ProductionRule[], 924)
+    raw_flat = [(Dict(:z => 0.5), Set([:food])) for _ in 1:4]
+    s_flat = mk_state(g_flat)
+    buf_flat = live!(s_flat, raw_flat)
+    p_flat = threshold_growth_proposal(s_flat, g_flat, buf_flat; action_space = as)
+    check("§6 no observed spread ⇒ no threshold candidates ⇒ no proposal (structural no-op)",
+          p_flat === nothing)
 end
 
 println("="^64)

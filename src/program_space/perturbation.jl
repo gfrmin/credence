@@ -334,9 +334,9 @@ is NOT a different currency from exploration's lookahead VOI — both are **Δ l
 (`Δlog P(g) + Δlog P(data|g)`). `net_voc` scores the **prior-only term**, dropping the likelihood term —
 not because it is zero (abbreviating reweights the mixture) but because the prior-only signature (no
 belief, no re-conditioning) cannot afford to measure it (Russell–Wefald). So `net_voc` is the
-**cheap-surrogate** fidelity of the one currency `explore_features` computes **exactly** (the general
-instance, both terms); `explore_grammar` is the `Δprior = 0` instance; `net_voc` is the Δℓ-dropped
-instance. The cheap/exact fidelity gap — not a currency gap — is what the two-tier cascade orders
+**cheap-surrogate** fidelity of the one currency the growth lookahead computes **exactly** (the
+virtual injection's realised yield — the union-over-incumbent window Bayes factor, both axes
+priced inside the mixture; winners-curse design §8.2); `net_voc` is the Δℓ-dropped instance. The cheap/exact fidelity gap — not a currency gap — is what the two-tier cascade orders
 (`docs/exploration-budget/move-5-design.md`). At `compute_cost = 0` the gate `net_voc > 0`
 is exactly `propose_nonterminal`'s `net_payoff > 0`. Governs the COMPRESSION class — `:add_rule`
 (payoff = compression saving), `:remove_rule` (payoff = the dead rule's reclaimed cost,
@@ -503,8 +503,8 @@ end
 The scalar net VOC of the best compression-class perturbation — the winning candidate's `net_voc`, or `0.0`
 when none clears (the saturation no-op floor). The `expect`-side value of `perturb_grammar`'s edit: the
 selection layer ranks the `:gw_perturb_grammar` meta-action by this scalar — the **prior-only surrogate**
-fidelity of the one Δ log-evidence currency (Move 5), the cheap-screen peer of `exploration_voi`'s exact
-lookahead. Shares `_best_compression_candidate` with `perturb_grammar` and `compression_exhausted`, so the
+fidelity of the one Δ log-evidence currency (Move 5), the cheap-screen peer of the virtual
+injection's exact realised yield (winners-curse design §8.2). Shares `_best_compression_candidate` with `perturb_grammar` and `compression_exhausted`, so the
 ranked value, the applied edit, and the saturation signal can never disagree (Invariant 3). At
 `compute_cost = 0`, `perturbation_voc > 0` iff `!compression_exhausted`.
 """

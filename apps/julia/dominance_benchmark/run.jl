@@ -108,10 +108,12 @@ end
 rate_final_regime(r::RunSummary) =
     (r.ce[end] - r.ce[DB_REGIME_STEPS[end] - 1]) / (length(r.ce) - DB_REGIME_STEPS[end] + 1)
 
-# The PRIMARY realised-value measure (§8 amendment, ratified 2026-07-03): the mean per-step
-# energy rate over the whole episode — ce[end]/n, i.e. total episode energy normalised. This is
-# the uniform-weight statistic the agent's declared utility maximises (growth_value prices ops
-# by remaining-episode payoff); the former primary, AUC of the CUMULATIVE trajectory
+# The PRIMARY realised-value measure (dominance-design §8 amendment, ratified 2026-07-03): the
+# mean per-step energy rate over the whole episode — ce[end]/n, i.e. total episode energy
+# normalised — the uniform-weight statistic of the agent's declared utility. (The winners-curse
+# §8.2 amendment later replaced the growth ops' remaining-episode pricing with the horizon-free
+# yield rule; the asserted measure is utility-derived, not mechanism-derived, so it is
+# unchanged.) The former primary, AUC of the CUMULATIVE trajectory
 # (Σ_t ce[t]/n = Σ_s e_s·(n−s+1)/n), weighs a step-1 unit ≈ n× a step-n unit — a front-loaded
 # discount nobody declared. AUC stays in the reported panel for cross-round comparability.
 mean_rate(r::RunSummary) = r.ce[end] / length(r.ce)

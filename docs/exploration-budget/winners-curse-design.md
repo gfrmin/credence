@@ -37,6 +37,19 @@
   total over them), and score/transition unity holds **by construction** because the score is
   computed by running the transition virtually.
 
+- **Revision 4 (the ratified amendment — see §8):** TDD deleted the flow. The §1b flow story
+  is unsatisfiable by theorem: any forward per-event flow taken in the union's own posterior
+  expectation equals `KL(P_union ‖ P_inc) ≥ 0` per context (Gibbs) — a Bayesian mixture cannot
+  expect its own enlargement to score worse by its own lights, so no derivation delivers
+  "zero-or-negative on chance windows", and `× H` amplifies whatever positive remains (measured:
+  a clean 4-event chance fit fires at +0.55 nats with P_newcomers ≈ 0.11 — failing this
+  design's own mechanism claim (i)). The resolution is a further deletion: the ratified yield
+  observable **is** the union-over-incumbent window Bayes factor
+  (`log((1−m₀)/(1−m)) = log[(1−m₀) + m₀·BF]`), so the score is `net_value(yield, op_cost)` —
+  fire when the realised evidence clears the declared price. No flow, no `× H`, no plateau at
+  the growth seam. Rev 3's one genuinely new computation is retired; every score read now
+  pre-existed this design.
+
 ## 1. Purpose
 
 Make the growth ops (`:gw_explore`, `:gw_add_feature`) score and transition through **one pass of
@@ -293,3 +306,116 @@ Gate re-run (20 seeds, background), judged against the §8 measure set **fixed b
   baselines do not become significantly negative; the bracket holds; suite wall-clock within
   budget.
 - Halt-the-line on any degrade; results commit honestly either way.
+
+## 8. Amendment (revision 4, ratified 2026-07-03): the yield is the score
+
+**Supersedes:** §1's SCORE step and flow bullet (§1b), §5 Q2 (the flow functional's declared
+form — the question dissolves with the flow), and — beyond this document — two coordinates of
+the belief-derived-valuation design (#188 §2a) at the growth seam: the `plateau · fit · (H /
+n_buf)` horizon-completion and the plateau multiplier. Everything else in rev 3 stands
+unchanged: the virtual injection as the transition, FIRE = adopt the scratch (score ≡
+transition as identity), programs-as-atoms multiplicity pricing, Q1 scratch memo, Q3
+inject-all, Q4 no-double-charge, §5-commutation inheritance, §6 self-healing.
+
+### 8.1 The finding (Gibbs kills the flow)
+
+Rev 3 warned in §1 that scoring growth by "the expected predictive gain of the enlarged
+belief" is degenerate — and §1b then used exactly that quantity under the union's own
+posterior view. For any world-measure the union itself endorses (including the "who is
+probably right" group decomposition, which is algebraically the union's own predictive):
+
+    E_world[ log P_union(o) − log P_inc(o) ] = KL(P_union ‖ P_inc) ≥ 0        (Gibbs)
+
+The hedging term is real — `−(1−m)·KL(P_inc ‖ P_union)` — but can never dominate its own KL.
+Adding hypotheses is weakly informative from inside, always. So the flow is a fixed-sign
+quantity multiplied by a horizon: chronic over-fire, mechanically. Measured on the §4-shaped
+fixture (test_virtual_injection.jl §2): retired argmax +5.12 nats; rev-3 flow (retrodictive
+read) +12.92; rev-3 flow (group-conditional read) +0.55 — every form fires the chance window.
+
+### 8.2 The score
+
+    score = net_value( injection_yield_nats(scratch), op_compute_cost )
+
+The identity that makes this the honest object: with `m₀` the newcomers' prior-counterfactual
+mass and `m` their posterior mass in the scratch,
+
+    injection_yield_nats = log((1−m₀)/(1−m)) = log[ (1−m₀) + m₀ · BF_window ]
+
+— the **marginal-likelihood ratio of the enlarged space over the incumbent space on the
+window, under the complexity prior**: the exact quantity the draft-1 review named as what the
+machinery already computes. Fire when the realised evidence clears the declared price.
+
+**Why no horizon term — the wait-option argument (what earns the deletion of `× H` rather
+than asserting it).** The naive score prices adopt-now against hold-the-incumbent-forever;
+that comparison genuinely scales with H. But the real choice is adopt-now against
+wait-and-re-decide, and the long-run value is common to both arms: if the signal is real the
+wait-arm adopts a few events later (forgoing a few events' gain); if it is junk the adopt-arm
+prunes a few events later (paying a few events' hedge). The horizon-extrapolated term
+cancels, and what survives is a timing question governed by the realised evidence — a
+Gittins-style decomposition: the value of committing now reduces to a near-term index
+(yield − cost) because the far-term value factors out.
+
+**Why no plateau.** The yield is realised posterior evidence that the gain is real;
+multiplying by P(plateau) would charge that doubt twice. This supersedes the #188 coordinate
+that held the reality-of-gain and duration-of-gain multipliers orthogonal to the fit: once
+the score is realised yield, the plateau question is subsumed at this seam. (Whether the same
+argument retires plateau elsewhere is a separate finding with its own gate — out of scope.)
+
+**T-3.53, exact in form.** Escape ops score `E[next yield] − cost` (learned, GrowthReturns);
+growth ops score `computed yield − cost` (exact, the virtual injection). One observable, one
+currency, **one score form**, two fidelities.
+
+### 8.3 The two named assumptions (so nothing hides)
+
+1. **The cost slot is a price, not a threshold.** `op_compute_cost` (= log 2 by default) is
+   the #189-inherited declared compute price (ratified #188 Q6: prices are utility data),
+   passed uniformly to every benchmark policy; it predates this design. The discipline it
+   carries forward: any adjustment is a declared-data change ratified in advance — tuning it
+   to move the gate would be the threshold this design spent three revisions deleting,
+   walking back in through the cost slot. No escape hatch.
+2. **The wait-arm regeneration assumption (the named bridge to non-stationarity).** The
+   wait-option cancellation holds iff the wait-arm can re-accumulate the evidence — i.e.
+   persistent signals re-evidence themselves faster than the buffer scrolls. True for every
+   signal worth capturing (a genuinely predictive feature keeps throwing off evidence); false
+   only for transients not worth the carry. It is exactly the assumption a regime change
+   stresses, and it is where the deferred ρ-as-latent / change-point work attaches. Note the
+   direction of fit: the horizon-free yield rule is *better* suited to a changing world than
+   the `flow · H` it replaces — it fires on the evidence a signal is currently throwing off
+   and lets the existing prune/replacement hygiene retire the signal when the regime moves
+   and it stops earning. Fire on present evidence, heal on its absence. The §1 fixed-H
+   stationarity residual is thereby DISCHARGED at the growth seam — not by pricing the
+   horizon better but by deleting the term that carried it. (`H` bookkeeping remains only
+   where a consumer still declares it; nothing at this seam multiplies by a horizon.)
+
+### 8.4 Consequential edits
+
+- `GrowthProposal` carries `(scratch, n_added, yield_nats, p_newcomers)`; the flow and fit
+  fields never ship. The per-fire mechanism log is the pair `(yield, P_newcomers)` plus
+  `n_added`; §7's mechanism claim (i) reads P_newcomers.
+- `_growth_flow` is never written. The host score seam is
+  `net_value(prop.yield_nats, op_compute_cost)`; `growth_value` remains in the stdlib for
+  consumers with an honest persistent-rate claim, but the grid host's growth tier no longer
+  calls it, and the run loop's declared-horizon estimate (`h_events`/`n_cond_events`) retires
+  with it (nothing consumed it).
+- The `:gw_add_feature` attribution gate re-expresses as "refinement fires first": features
+  are gated `-Inf` iff the threshold proposal's own score clears the floor (`yield > cost`),
+  not on any positive fit — under the union mechanism a chance-positive threshold yield no
+  longer measures an attribution confound, only a competing fire.
+- test_virtual_injection.jl §2/§3 pin the yield rule (the chance window WAITS at −0.56; the
+  informed window fires from n ≈ 8 at +1.15); the §2 counter-oracle keeps pinning that the
+  retired argmax fires (+5.12) on the same fixture.
+
+### 8.5 The boundary framing (why a rule exists at all — recorded from ratification)
+
+The infinite-posterior agent needs none of this: discovery is not an action it takes but a
+shape its posterior has. That agent is uncomputable. The finite agent holds a posterior over
+an entertained set inside an infinite generable space, and every mechanism in this arc is
+bookkeeping at that boundary: the winner's curse was the boundary priced by a max; the flow
+degeneracy was the carried set asked to evaluate its own edge; the yield rule is the boundary
+priced honestly — a READ of the machinery (what conditioning produced when the candidates
+were injected) against the compute the metareasoner already tracks. Discovery is inference,
+evaluated at the boundary; the only thing that is not free is deciding when the boundary is
+worth moving, and that is a metareasoning question — the one question a Bayesian agent cannot
+answer by being more Bayesian. The same shape governs the non-stationarity work to come:
+regime hypotheses are more programs, priced across the same boundary by the same yield
+against the same cost, no bespoke detector.

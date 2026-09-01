@@ -8,9 +8,12 @@
 #   - threshold_exhausted stays HARD on :gw_add_feature, gating on FIT (attribution is a
 #     measurement concern, valuation-independent) (§3);
 #   - the act-now floor and the GW_META_ACTIONS tie order (§6).
-# What changes:
-#   - growth scores are horizon-completed: growth_value(fit, n_buf, plateau, H) with the
-#     one-time −log2 Occam charge on features (§3, §4);
+# What changes (re-baselined again by the winners-curse design revs 3–4):
+#   - growth scores are the YIELD RULE (§8.2): net_value(prop.yield_nats, op_compute_cost) —
+#     the union-over-incumbent window Bayes factor net of the declared price; no plateau, no
+#     horizon, no prior term at the seam (§3, §4);
+#   - the attribution gate re-expresses as "refinement fires first": add_feature is -Inf iff
+#     the threshold proposal's own score clears the floor (§3);
 #   - the escape tier is the LEARNED returns model: escape_score(returns, op, changed) − price,
 #     with NO saturation-ordering eligibility gate (ratified Q5) — bounded prior optimism that
 #     decays under zero-yield evidence (§5).
@@ -21,10 +24,10 @@
 #       grammar — one candidate function, T-3.55); explore exactly 0.
 #   §2  fresh returns prior — escape scores prior-optimism − price at BOTH contexts; a
 #       zero-yield-collapsed cell loses to the do-nothing floor (the entropy score never did).
-#   §3  refinable buffer — explore == growth_value(fit, n, plateau, H); horizon scaling exact;
-#       add_feature hard-gated -Inf; escape ops COMPETE (no -Inf) at their learned scores.
-#   §4  thresholds exhausted, new feature separates — add_feature == growth_value(fit, …,
-#       prior_term = −log2); defaults reduce to the old plateau·fdvoi.
+#   §3  refinable buffer — explore == net_value(yield, price) via the shared proposal;
+#       add_feature gated -Inf while refinement clears its price; escape ops COMPETE.
+#   §4  thresholds exhausted (no candidates), new feature separates — add_feature ==
+#       net_value(yield, price); the Occam charge rides inside the mixture (Q4).
 #   §5  returns-model dynamics through the score seam: prior fires once, three zero yields kill
 #       the cell, a real yield sustains it, context cells are independent.
 #   §6  default_eu_max_policy: act-now floor and deterministic tie order on synthetic dicts.
@@ -35,10 +38,11 @@ push!(LOAD_PATH, joinpath(@__DIR__, "..", "src"))
 using Credence
 using Credence: Grammar, ProductionRule, Program, FeatureRef, GTExpr, AndExpr, IfExpr, ActionExpr, NonterminalRef,
                 AgentState, MixturePrevision, TaggedBetaPrevision, BetaPrevision, Prevision,
-                compile_kernel, update_learning_regime, plateau_probability,
+                compile_kernel, update_learning_regime,
                 analyse_posterior_subtrees, compression_exhausted, ExploreObservation,
-                exploration_voi, exploration_fit, feature_discovery_voi, feature_discovery_fit,
-                growth_value, weights, best_replacement, replacement_value,
+                program_space_observation_kernel, condition, log_predictive,
+                threshold_growth_proposal, feature_growth_proposal, net_value,
+                weights, best_replacement, replacement_value,
                 GrowthReturns, observe_yield!, escape_score
 
 include(joinpath(@__DIR__, "..", "apps", "julia", "grid_world", "host.jl"))
@@ -53,6 +57,20 @@ function mk_state(g::Grammar, prog::Program; gid::Int = g.id, k::Int = 1)
     AgentState(MixturePrevision(comps, zeros(k)), [(gid, i) for i in 1:k],
                [compile_kernel(prog, g, i) for i in 1:k], Program[prog for _ in 1:k],
                Dict(gid => g), 2)
+end
+
+# Condition the state live and return the honest-residual buffer (the coherence ledger the
+# virtual injection replays — synthetic residuals would distort the union's scale).
+function live!(state, raw)
+    buf = ExploreObservation[]
+    for (features, correct) in raw
+        k = program_space_observation_kernel(state.compiled_kernels, features,
+                                             Dict{Symbol, Any}(), correct)
+        res = -log_predictive(state.belief, k, 1.0)
+        push!(buf, ExploreObservation(features, Dict{Symbol, Any}(), correct, res))
+        state.belief = condition(state.belief, k, 1.0)
+    end
+    buf
 end
 
 # Drive the regime to a PLATEAU (bouncing-flat residuals ⇒ high plateau_probability).
@@ -98,10 +116,11 @@ let
           "scored=$(scored[:gw_perturb_grammar])")
     check("§1 the reclaim is positive (a 2-symbol dead rule at W_G = 1 outbids the one-bit price)",
           scored[:gw_perturb_grammar] > 0.0, "scored=$(scored[:gw_perturb_grammar])")
-    # Empty buffer ⇒ the exact lookahead has nothing to price ⇒ exactly 0, NOT a veto (-Inf):
-    # compression availability never gates exploration (#174 PR 2, re-asserted).
-    check("§1 :gw_explore == 0.0 exactly on an empty buffer (no compression veto)",
-          scored[:gw_explore] == 0.0, "scored=$(scored[:gw_explore])")
+    # Empty buffer ⇒ no proposal ⇒ the price with nothing to buy: exactly −op_cost, NOT a
+    # veto (-Inf): compression availability never gates exploration (#174 PR 2, re-asserted).
+    check("§1 :gw_explore == net_value(0, price) exactly on an empty buffer (no compression veto)",
+          scored[:gw_explore] == net_value(0.0, GW_OP_COMPUTE_COST_DEFAULT),
+          "scored=$(scored[:gw_explore])")
 end
 
 # ── §2  the returns prior at the score seam: bounded optimism, price-netted; dead cells floor ──
@@ -136,87 +155,72 @@ let
     check("§2 nothing positive ⇒ act now", default_eu_max_policy(scored2) == :gw_do_nothing)
 end
 
-# ── §3  refinable buffer: explore == growth_value(fit, n, plateau, H); escape competes freely ──
+# ── §3  refinable buffer: explore == net_value(yield, price); the gate; escape competes ──
 let
     g = Grammar(Set([:red]), ProductionRule[], 3)
     prog = Program(IfExpr(GTExpr(FeatureRef(:red), 0.5), ActionExpr(:a), ActionExpr(:b)), 3, 1)
     state = plateau!(mk_state(g, prog))
     # Separable only at ~0.4 (off the default grid {0.1,0.3,0.5,0.7,0.9}): 0.35 vs 0.45 land on
-    # the same side of every existing threshold, so refinement MUST add ~0.4 ⇒ positive fit.
-    buf = ExploreObservation[]
+    # the same side of every existing threshold, so refinement MUST add ~0.4 ⇒ real evidence.
+    raw = Tuple{Dict{Symbol, Float64}, Set{Symbol}}[]
     for _ in 1:6
-        push!(buf, ExploreObservation(Dict(:red => 0.35), Dict{Symbol, Any}(), Set([:food]), 1.0))
-        push!(buf, ExploreObservation(Dict(:red => 0.45), Dict{Symbol, Any}(), Set([:enemy]), 1.0))
+        push!(raw, (Dict(:red => 0.35), Set([:food])))
+        push!(raw, (Dict(:red => 0.45), Set([:enemy])))
     end
-    fit = exploration_fit(state.grammars[3], buf, state.current_max_depth; action_space = GW_AS)
-    check("§3 precondition: refinement fit is positive on this buffer", fit > 0.0, "fit=$fit")
+    buf = live!(state, raw)
 
-    pl = plateau_probability(state.learning_regime)
-    n = length(buf)
+    prop = threshold_growth_proposal(state, state.grammars[3], buf; action_space = GW_AS)
+    check("§3 precondition: the refinement union carries decisive evidence (yield > price)",
+          prop !== nothing && net_value(prop.yield_nats, GW_OP_COMPUTE_COST_DEFAULT) > 0.0,
+          prop === nothing ? "no proposal" : "yield=$(prop.yield_nats)")
 
-    # Window-total horizon (H = n_buf) reproduces the pre-move plateau·voi exactly.
-    scored = score_gw_meta_actions(state, buf, fresh_returns(), allchanged();
-                                   horizon = Float64(n))
-    voi_default = exploration_voi(state.grammars[3], buf, state.current_max_depth;
-                                  action_space = GW_AS)
-    check("§3 :gw_explore at H == n_buf == plateau · exploration_voi (the pre-move score)",
-          scored[:gw_explore] == pl * voi_default,
-          "scored=$(scored[:gw_explore]) expected=$(pl * voi_default)")
-
-    # Horizon completion scales the fit term exactly: growth_value through the engine functional.
-    scored_h = score_gw_meta_actions(state, buf, fresh_returns(), allchanged(); horizon = 60.0)
-    check("§3 :gw_explore horizon-completed == growth_value(fit, n, plateau, 60)",
-          scored_h[:gw_explore] == growth_value(fit, n, pl, 60.0),
-          "scored=$(scored_h[:gw_explore])")
-    check("§3 :gw_add_feature == -Inf while thresholds NOT exhausted (hard gate, on FIT)",
-          scored_h[:gw_add_feature] == -Inf)
+    scored = score_gw_meta_actions(state, buf, fresh_returns(), allchanged())
+    # The yield rule at the seam: the score is the realised evidence net of the declared price
+    # — the same GrowthProposal the executor adopts (T-3.55; identity-pinned in
+    # test_virtual_injection.jl §1). No plateau, no horizon, no prior term.
+    check("§3 :gw_explore == net_value(yield, price) exactly",
+          scored[:gw_explore] == net_value(prop.yield_nats, GW_OP_COMPUTE_COST_DEFAULT),
+          "scored=$(scored[:gw_explore]) expected=$(net_value(prop.yield_nats, GW_OP_COMPUTE_COST_DEFAULT))")
+    check("§3 :gw_add_feature == -Inf while refinement clears its price (refinement fires first)",
+          scored[:gw_add_feature] == -Inf)
     # No saturation-ordering gate (ratified Q5): enumerate carries its learned score, not -Inf.
     check("§3 :gw_enumerate_more COMPETES at its learned score (no eligibility -Inf)",
-          scored_h[:gw_enumerate_more] == 1.0 - GW_OP_COMPUTE_COST_DEFAULT)
-    # With a long horizon the exact tier outbids prior escape optimism here.
-    check("§3 policy selects :gw_explore (exact value outbids prior escape optimism)",
-          default_eu_max_policy(scored_h) == :gw_explore,
-          "explore=$(scored_h[:gw_explore]) enum=$(scored_h[:gw_enumerate_more])")
+          scored[:gw_enumerate_more] == 1.0 - GW_OP_COMPUTE_COST_DEFAULT)
+    # Decisive realised evidence outbids prior escape optimism.
+    check("§3 policy selects :gw_explore (realised evidence outbids prior escape optimism)",
+          default_eu_max_policy(scored) == :gw_explore,
+          "explore=$(scored[:gw_explore]) enum=$(scored[:gw_enumerate_more])")
 end
 
-# ── §4  thresholds exhausted, a NEW feature separates: the two-axis horizon-completed score ──
+# ── §4  thresholds exhausted, a NEW feature separates: the yield rule prices the feature ──
 let
     g = Grammar(Set([:red]), ProductionRule[], 4)
     prog = Program(IfExpr(GTExpr(FeatureRef(:red), 0.5), ActionExpr(:a), ActionExpr(:b)), 3, 1)
     state = plateau!(mk_state(g, prog))
-    # :red is CONSTANT across classes (no refinement can help ⇒ thresholds exhausted); :speed
-    # separates cleanly at the default grid ⇒ feature discovery carries real fit value.
-    buf = ExploreObservation[]
+    # :red is CONSTANT across classes ⇒ no midpoint candidates ⇒ the threshold class is silent
+    # (structurally exhausted); :speed separates cleanly at the default grid.
+    raw = Tuple{Dict{Symbol, Float64}, Set{Symbol}}[]
     for _ in 1:8
-        push!(buf, ExploreObservation(Dict(:red => 0.5, :speed => 0.2), Dict{Symbol, Any}(), Set([:food]), 1.0))
-        push!(buf, ExploreObservation(Dict(:red => 0.5, :speed => 0.8), Dict{Symbol, Any}(), Set([:enemy]), 1.0))
+        push!(raw, (Dict(:red => 0.5, :speed => 0.2), Set([:food])))
+        push!(raw, (Dict(:red => 0.5, :speed => 0.8), Set([:enemy])))
     end
-    check("§4 precondition: thresholds exhausted (zero refinement fit on a constant feature)",
-          exploration_fit(state.grammars[4], buf, state.current_max_depth; action_space = GW_AS) == 0.0)
-    ffit = feature_discovery_fit(state.grammars[4], buf, ALL_GW_FEATURES,
-                                 state.current_max_depth; action_space = GW_AS)
-    check("§4 precondition: the new feature carries positive fit", ffit > 0.0, "ffit=$ffit")
+    buf = live!(state, raw)
+    check("§4 precondition: thresholds exhausted (a constant feature generates no candidates)",
+          threshold_growth_proposal(state, state.grammars[4], buf; action_space = GW_AS) === nothing)
+    fprop = feature_growth_proposal(state, state.grammars[4], buf, ALL_GW_FEATURES;
+                                    action_space = GW_AS)
+    check("§4 precondition: the feature union carries decisive evidence",
+          fprop !== nothing && fprop.yield_nats > 0.0, "fprop=$(fprop)")
 
-    pl = plateau_probability(state.learning_regime)
-    n = length(buf)
-
-    # Window-total horizon reproduces the pre-move plateau·fdvoi... for plateau == 1; in general
-    # the NEW semantics differ deliberately: the old score multiplied the WHOLE net (fit − log2)
-    # by plateau; the new one plateau-scales the FIT only — the one-time prior charge is a prior,
-    # not a gain, so the regime gate does not touch it. Pin the new form exactly.
-    scored = score_gw_meta_actions(state, buf, fresh_returns(), allchanged();
-                                   horizon = Float64(n))
-    check("§4 :gw_add_feature == growth_value(fit, n, plateau, n; prior = −log2) — fit scaled, prior not",
-          scored[:gw_add_feature] == growth_value(ffit, n, pl, Float64(n);
-                                                  prior_term = GW_FEATURE_PRIOR_TERM),
+    scored = score_gw_meta_actions(state, buf, fresh_returns(), allchanged())
+    # The yield rule: net of the declared price only — the −log2 Occam charge for the feature
+    # symbol rides INSIDE the mixture (each newcomer's 2^{−|G|−1−|p|} prior; winners-curse Q4),
+    # never at the seam. GW_FEATURE_PRIOR_TERM is retired (pinned in test_virtual_injection §1).
+    check("§4 :gw_add_feature == net_value(yield, price) exactly (no seam prior term)",
+          scored[:gw_add_feature] == net_value(fprop.yield_nats, GW_OP_COMPUTE_COST_DEFAULT),
           "scored=$(scored[:gw_add_feature])")
-
-    scored_h = score_gw_meta_actions(state, buf, fresh_returns(), allchanged(); horizon = 60.0)
-    check("§4 horizon completion multiplies the fit term only (one-time Occam charge)",
-          scored_h[:gw_add_feature] == growth_value(ffit, n, pl, 60.0;
-                                                    prior_term = GW_FEATURE_PRIOR_TERM))
-    check("§4 policy selects :gw_add_feature at the long horizon",
-          default_eu_max_policy(scored_h) == :gw_add_feature)
+    check("§4 policy selects :gw_add_feature",
+          default_eu_max_policy(scored) == :gw_add_feature)
 end
 
 # ── §5  returns dynamics through the seam: independent contexts, sustain on real yield ──
