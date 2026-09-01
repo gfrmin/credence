@@ -23,6 +23,18 @@ The channel is that way because of **our own label definition**, not proplang's
 ceiling. And so the ceiling's dissolution at the `#19` sitting — the event that
 prompted this replan — **does not unblock this consumer**.
 
+> **[CORRECTED 2026-08-09 by Stage A′.]** The verdict and every number above
+> stand. The falsified words are ***"because of our own label definition"***.
+> Re-running the grounding classifier over the raw capture (99.81% agreement on
+> `completed`, 100% on `reverted`) shows the discarded records are **94.66%
+> calls the classifier could not locate** — 95.09% among calls the live result
+> hook proves executed — against **4.31%** that genuinely errored. The label is
+> not suppressing negatives; the instrument cannot see them. R2 therefore
+> resolves *into* an instrument-coverage finding rather than a labelling one,
+> and the remedy named in §7 below (choose a label) is replaced by: fix the
+> result hook's error test. Reading:
+> `2026-08-09-stage-a-prime-results.md`.
+
 ## 2. What the engine was actually fed
 
 Three evidence paths reach it, not the two the pre-statement named. The third
@@ -138,14 +150,30 @@ adequate** — 0.5068 lands on the interior rung 0.5, nowhere near an extreme.
 
 **The grid was never this consumer's binding constraint.**
 
+> **[CORRECTED 2026-08-09 by Stage A′.]** The bolded conclusion stands; its
+> stated reason does not. Falsified words: ***"0.5068 lands on the interior rung
+> 0.5"***. 0.5068 is V1's rate — treating every `completed=False` as a negative
+> — and V1 is now known to be the **wrong** correction: 94.66% of its zeros are
+> calls that ran fine and could not be located, so its rate and its large
+> per-context spread are both measures of observability. The defensible
+> correction (`errored`→0) gives **0.9592**, whose KL-nearest rung on the
+> shipped grid is **0.9** — the same rung, not an interior one. The final
+> column of the table above should therefore read 0.9, not 0.5. The grid is
+> still not the binding constraint, but that is because the *instrument* is.
+
 ## 6. What this does not establish
 
 - **Not a measurement of `said@1` on current `proplang-host`.** These records
   come from the retired `proplang-govhost` at `d-close`. Stage A makes no claim
   about the current engine, as the pre-statement fixed in advance.
-- **Not a verdict on which label is correct.** V1/V2 are the range the rate
+- ~~**Not a verdict on which label is correct.** V1/V2 are the range the rate
   moves over, not proposals. Choosing among them is a decision about what waste
-  means and it is not a measurement's to make.
+  means and it is not a measurement's to make.~~
+  **[WITHDRAWN 2026-08-09 by Stage A′.]** Falsified words: ***"not a
+  measurement's to make"***. It was a measurement's to make, and it made it:
+  the shipped label is correct, because what it discards is 94.66% absence.
+  This non-claim was too modest, and being too modest about what the data can
+  settle is how the question got handed to the user in the first place.
 - **Not a claim that proplang's ceiling never mattered.** It bound here — but it
   bound *because* our stream sat above it, and the second consumer (life-agent)
   hit it on a genuinely different path.
