@@ -29,9 +29,9 @@ The label, plainly: research-stage. Waste-blocking is enforced (the proven part)
 
 | Metric | Always Sonnet | Credence routing | Change |
 |--------|--------------|-----------------|--------|
-| Quality (0-10) | 6.56 | 7.80 | **+1.24** |
-| Avg latency | 8.4s | 4.0s | **-52%** |
-| Avg cost/request | $0.024 | $0.001 | **-96%** |
+| Quality (0-10) | 7.29 | 8.54 | **+1.24** |
+| Avg latency | 14.9s | 7.2s | **-52%** |
+| Avg cost/request | $0.089 | $0.003 | **-96%** |
 
 ```bash
 docker run -p 8377:8377 \
